@@ -1,0 +1,161 @@
+{
+  "entities": {
+    "EnergyReading": {
+      "title": "EnergyReading",
+      "description": "Lettura giornaliera o oraria dei consumi elettrici estratti da e-distribuzione suddivisi per fascia F1, F2, F3.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "UID dell'utente proprietario"
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 20,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Data della lettura in formato YYYY-MM-DD"
+        },
+        "f1Kwh": {
+          "type": "number",
+          "description": "Consumo in fascia F1 (ore di punta) in kWh"
+        },
+        "f2Kwh": {
+          "type": "number",
+          "description": "Consumo in fascia F2 (ore intermedie) in kWh"
+        },
+        "f3Kwh": {
+          "type": "number",
+          "description": "Consumo in fascia F3 (ore fuori punta) in kWh"
+        },
+        "totalKwh": {
+          "type": "number",
+          "description": "Consumo totale giornaliero in kWh"
+        },
+        "peakKw": {
+          "type": "number",
+          "description": "Picco di potenza massima assorbita in kW"
+        },
+        "estimatedCostEur": {
+          "type": "number",
+          "description": "Costo stimato in Euro"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["e-distribuzione-csv", "e-distribuzione-api", "manuale"],
+          "maxLength": 40,
+          "description": "Origine del dato"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 240,
+          "description": "Note opzionali"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp di creazione server"
+        }
+      },
+      "required": ["ownerId", "date", "f1Kwh", "f2Kwh", "f3Kwh", "totalKwh", "peakKw", "estimatedCostEur", "source", "createdAt"]
+    },
+    "HomeSystemConfig": {
+      "title": "HomeSystemConfig",
+      "description": "Stato centralizzato e setpoint della pompa di calore Ariston, impianto a pavimento e deumidificatore NeaSmart.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "UID dell'utente proprietario"
+        },
+        "aristonMode": {
+          "type": "string",
+          "enum": ["riscaldamento", "raffrescamento", "acs_solo", "spento"],
+          "maxLength": 32,
+          "description": "Modalità operativa pompa di calore Ariston"
+        },
+        "aristonProfile": {
+          "type": "string",
+          "enum": ["eco", "comfort", "boost"],
+          "maxLength": 24,
+          "description": "Profilo energetico Ariston"
+        },
+        "floorFlowTemp": {
+          "type": "number",
+          "description": "Temperatura mandata impianto a pavimento (°C)"
+        },
+        "dhwTargetTemp": {
+          "type": "number",
+          "description": "Temperatura target Acqua Calda Sanitaria (°C)"
+        },
+        "zoneLivingTarget": {
+          "type": "number",
+          "description": "Temperatura target Zona Giorno (°C)"
+        },
+        "zoneBedroomTarget": {
+          "type": "number",
+          "description": "Temperatura target Zona Notte (°C)"
+        },
+        "neasmartPower": {
+          "type": "boolean",
+          "description": "Stato accensione deumidificatore NeaSmart"
+        },
+        "neasmartTargetHumidity": {
+          "type": "number",
+          "description": "Umidità relativa target NeaSmart (%)"
+        },
+        "neasmartFanSpeed": {
+          "type": "string",
+          "enum": ["auto", "bassa", "media", "alta"],
+          "maxLength": 16,
+          "description": "Velocità ventilazione NeaSmart"
+        },
+        "dewPointProtection": {
+          "type": "boolean",
+          "description": "Protezione automatica punto di rugiada per raffrescamento a pavimento"
+        },
+        "tariffEurPerKwh": {
+          "type": "number",
+          "description": "Tariffa media energia elettrica €/kWh"
+        },
+        "podCode": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Codice POD contatore e-distribuzione"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp ultimo aggiornamento server"
+        }
+      },
+      "required": [
+        "ownerId",
+        "aristonMode",
+        "aristonProfile",
+        "floorFlowTemp",
+        "dhwTargetTemp",
+        "zoneLivingTarget",
+        "zoneBedroomTarget",
+        "neasmartPower",
+        "neasmartTargetHumidity",
+        "neasmartFanSpeed",
+        "dewPointProtection",
+        "tariffEurPerKwh",
+        "podCode",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/energyReadings/{readingId}": {
+      "schema": { "$ref": "#/entities/EnergyReading" },
+      "description": "Letture consumi elettrici e-distribuzione dell'utente"
+    },
+    "/users/{userId}/homeConfig/{configId}": {
+      "schema": { "$ref": "#/entities/HomeSystemConfig" },
+      "description": "Configurazione e stato in tempo reale dei sistemi Ariston e NeaSmart"
+    }
+  }
+}

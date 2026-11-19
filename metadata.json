@@ -1,0 +1,6 @@
+{
+  "name": "My Home — Domotica & Energia",
+  "description": "Sistema centralizzato di controllo domotico per pompa di calore Ariston, deumidificatore NeaSmart e monitoraggio consumi energetici e-distribuzione.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
