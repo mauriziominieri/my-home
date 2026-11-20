@@ -17,6 +17,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import {
+  BookOpen,
   Database,
   Home,
   LayoutDashboard,
@@ -48,12 +49,14 @@ import { OverviewView } from './components/OverviewView';
 import { DomoticsView } from './components/DomoticsView';
 import { EnergyDatabaseView } from './components/EnergyDatabaseView';
 import { BillsView } from './components/BillsView';
+import { InfoGuideView } from './components/InfoGuideView';
 
 const NAV_ITEMS: { id: NavSection; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'panoramica', label: 'Panoramica', icon: LayoutDashboard },
   { id: 'consumi', label: 'Consumi Annuali', icon: Database },
   { id: 'domotica', label: 'Clima & Domotica', icon: Thermometer },
   { id: 'bollette', label: 'Bollette', icon: Receipt },
+  { id: 'info', label: 'Info Utili', icon: BookOpen },
 ];
 
 const CURRENT_YEAR = new Date().getFullYear();
@@ -690,6 +693,8 @@ export default function App() {
               readOnly={!canEdit}
             />
           )}
+
+          {activeNav === 'info' && <InfoGuideView />}
         </main>
       </div>
     </div>

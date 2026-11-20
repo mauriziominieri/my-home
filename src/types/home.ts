@@ -4,7 +4,7 @@ export type NeaSmartFanSpeed = 'auto' | 'bassa' | 'media' | 'alta';
 export type ReadingSource = 'e-distribuzione-csv' | 'e-distribuzione-api' | 'manuale';
 export type ClimateMode = 'riscaldamento' | 'raffrescamento';
 
-export type NavSection = 'panoramica' | 'domotica' | 'consumi' | 'bollette';
+export type NavSection = 'panoramica' | 'domotica' | 'consumi' | 'bollette' | 'info';
 
 export interface BillRecord {
   invoiceNumber: string;
