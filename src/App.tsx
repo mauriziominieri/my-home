@@ -158,6 +158,15 @@ export default function App() {
     };
   }, [authReady, user]);
 
+  // Auto-load data/consumi.json published on GitHub Pages when user logs in
+  useEffect(() => {
+    if (!authReady || !user) return;
+    void handleSyncFromGithubJson('./data/consumi.json').catch(() => {
+      // Ignore if data/consumi.json is not yet deployed locally
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authReady, user]);
+
   async function handleImportCsv(items: ParsedReadingInput[]) {
     if (!user || items.length === 0) return;
     const basePath = `users/${user.uid}/energyReadings`;

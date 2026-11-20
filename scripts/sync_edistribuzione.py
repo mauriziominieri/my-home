@@ -1,10 +1,8 @@
 """
-Prelievo automatico del CSV reale di e-distribuzione dalla tua Gmail -> data/consumi.json.
-Eseguito periodicamente da GitHub Actions (zero blocchi WAF / 403).
-
-Secrets GitHub richiesti (solo 2):
-  - GMAIL_USER: La tua email Google (es. mauminieri@gmail.com)
-  - GMAIL_APP_PASSWORD: Password per le app di Google (16 caratteri)
+Prelievo automatico del CSV "Dettaglio curve di carico" di e-distribuzione da Gmail -> data/consumi.json.
+Mittente: notifichemailped@enel.com | Oggetto: Dettaglio curve di carico
+Supporta nativamente il formato quartorario (96 colonne 00:00-00:15 ... 23:45-00:00)
+calcolando automaticamente fasce ARERA F1/F2/F3, totale giornaliero kWh e picco kW.
 """
 
 import csv
@@ -30,7 +28,7 @@ def parse_it_float(raw: Optional[str]) -> float:
     cleaned = raw.strip().replace('"', "").replace(" ", "").replace(",", ".")
     try:
         val = float(cleaned)
-        return round(val, 2) if val >= 0 else 0.0
+        return val if val >= 0 else 0.0
     except ValueError:
         return 0.0
 
@@ -47,40 +45,115 @@ def normalize_date(raw: Optional[str]) -> Optional[str]:
     return None
 
 
+def get_arera_band(iso_date: str, hour: int) -> str:
+    """Calcola fascia ARERA (F1, F2, F3) in base al giorno della settimana e all'ora (0-23)."""
+    dt = datetime.strptime(iso_date, "%Y-%m-%d")
+    weekday = dt.weekday()  # 0=Lun .. 5=Sab, 6=Dom
+    if weekday == 6:
+        return "F3"
+    if weekday == 5:
+        return "F2" if 7 <= hour < 23 else "F3"
+    # Lun - Ven
+    if 8 <= hour < 19:
+        return "F1"
+    if (7 <= hour < 8) or (19 <= hour < 23):
+        return "F2"
+    return "F3"
+
+
 def parse_csv_content(text: str) -> List[Dict[str, Any]]:
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if len(lines) < 2:
         return []
 
-    # Trova la riga di intestazione contenente 'data' o 'giorno'
     header_idx = 0
-    for idx, ln in enumerate(lines[:15]):
+    for idx, ln in enumerate(lines[:20]):
         low = ln.lower()
-        if "data" in low or "giorno" in low or "date" in low:
+        if "giorno" in low or "data" in low or "00:00" in low or "00:15" in low:
             header_idx = idx
             break
 
     delimiter = ";" if ";" in lines[header_idx] else ","
     reader = csv.reader(lines[header_idx:], delimiter=delimiter)
-    headers = [h.strip().lower().replace('"', "") for h in next(reader, [])]
+    headers = [h.strip().replace('"', "") for h in next(reader, [])]
+    headers_low = [h.lower() for h in headers]
 
+    # Rileva colonne quartorarie (es. "00:00 - 00:15", "00:15", "00:00-00:15")
+    quarter_cols: List[tuple[int, int]] = []
+    for i, h in enumerate(headers):
+        m = re.search(r"(\d{2}):(\d{2})", h)
+        if m:
+            hour = int(m.group(1))
+            if 0 <= hour <= 23:
+                quarter_cols.append((i, hour))
+
+    date_idx = 0
+    for i, h in enumerate(headers_low):
+        if "giorno" in h or "data" in h or "date" in h:
+            date_idx = i
+            break
+
+    results: List[Dict[str, Any]] = []
+
+    # Caso 1: Formato "Dettaglio curve di carico" (96 colonne quartorarie per riga)
+    if len(quarter_cols) >= 24:
+        for row in reader:
+            if len(row) <= date_idx:
+                continue
+            iso = normalize_date(row[date_idx])
+            if not iso:
+                continue
+
+            f1 = 0.0
+            f2 = 0.0
+            f3 = 0.0
+            max_quarter_kwh = 0.0
+
+            for col_idx, hour in quarter_cols:
+                if col_idx >= len(row):
+                    continue
+                val = parse_it_float(row[col_idx])
+                if val > max_quarter_kwh:
+                    max_quarter_kwh = val
+                band = get_arera_band(iso, hour)
+                if band == "F1":
+                    f1 += val
+                elif band == "F2":
+                    f2 += val
+                else:
+                    f3 += val
+
+            f1 = round(f1, 2)
+            f2 = round(f2, 2)
+            f3 = round(f3, 2)
+            tot = round(f1 + f2 + f3, 2)
+            # Potenza media sul quarto d'ora = kWh_15min * 4
+            peak_kw = round(min(6.0, max_quarter_kwh * 4.0), 2)
+
+            results.append(
+                {
+                    "date": iso,
+                    "f1Kwh": f1,
+                    "f2Kwh": f2,
+                    "f3Kwh": f3,
+                    "totalKwh": tot,
+                    "peakKw": peak_kw,
+                }
+            )
+        return results
+
+    # Caso 2: Formato classico con colonne F1, F2, F3 o Totale
     def find_col(keywords: List[str]) -> int:
-        for i, h in enumerate(headers):
+        for i, h in enumerate(headers_low):
             if any(k in h for k in keywords):
                 return i
         return -1
 
-    date_idx = find_col(["data", "giorno", "date"])
     f1_idx = find_col(["f1"])
     f2_idx = find_col(["f2"])
     f3_idx = find_col(["f3"])
     tot_idx = find_col(["tot", "kwh", "consumo", "energia"])
     peak_idx = find_col(["picco", "potenza", "kw"])
-
-    if date_idx == -1:
-        return []
-
-    by_date: Dict[str, Dict[str, Any]] = {}
 
     for row in reader:
         if len(row) <= date_idx:
@@ -88,37 +161,26 @@ def parse_csv_content(text: str) -> List[Dict[str, Any]]:
         iso = normalize_date(row[date_idx])
         if not iso:
             continue
-
-        f1 = parse_it_float(row[f1_idx]) if f1_idx != -1 and len(row) > f1_idx else 0.0
-        f2 = parse_it_float(row[f2_idx]) if f2_idx != -1 and len(row) > f2_idx else 0.0
-        f3 = parse_it_float(row[f3_idx]) if f3_idx != -1 and len(row) > f3_idx else 0.0
+        f1 = round(parse_it_float(row[f1_idx]), 2) if f1_idx != -1 and len(row) > f1_idx else 0.0
+        f2 = round(parse_it_float(row[f2_idx]), 2) if f2_idx != -1 and len(row) > f2_idx else 0.0
+        f3 = round(parse_it_float(row[f3_idx]), 2) if f3_idx != -1 and len(row) > f3_idx else 0.0
         tot = round(f1 + f2 + f3, 2)
-
         if tot == 0.0 and tot_idx != -1 and len(row) > tot_idx:
-            tot = parse_it_float(row[tot_idx])
+            tot = round(parse_it_float(row[tot_idx]), 2)
             f3 = tot
-
-        peak = parse_it_float(row[peak_idx]) if peak_idx != -1 and len(row) > peak_idx else 0.0
-
-        # Se il CSV ha righe quartorarie/orarie per la stessa data, somma i kWh del giorno
-        if iso in by_date:
-            prev = by_date[iso]
-            prev["f1Kwh"] = round(prev["f1Kwh"] + f1, 2)
-            prev["f2Kwh"] = round(prev["f2Kwh"] + f2, 2)
-            prev["f3Kwh"] = round(prev["f3Kwh"] + f3, 2)
-            prev["totalKwh"] = round(prev["totalKwh"] + tot, 2)
-            prev["peakKw"] = round(max(prev["peakKw"], min(6.0, peak)), 2)
-        else:
-            by_date[iso] = {
+        peak = round(min(6.0, parse_it_float(row[peak_idx])), 2) if peak_idx != -1 and len(row) > peak_idx else 0.0
+        results.append(
+            {
                 "date": iso,
                 "f1Kwh": f1,
                 "f2Kwh": f2,
                 "f3Kwh": f3,
                 "totalKwh": tot,
-                "peakKw": min(6.0, peak),
+                "peakKw": peak,
             }
+        )
 
-    return list(by_date.values())
+    return results
 
 
 def extract_csvs_from_gmail() -> List[Dict[str, Any]]:
@@ -131,14 +193,18 @@ def extract_csvs_from_gmail() -> List[Dict[str, Any]]:
     mail.login(gmail_user, gmail_pass)
     mail.select("INBOX")
 
-    # Cerca email da e-distribuzione (o con oggetto contenente e-distribuzione / misure / consumi)
-    status, data = mail.search(None, '(OR FROM "e-distribuzione" SUBJECT "e-distribuzione")')
+    # Cerca email da notifichemailped@enel.com o con oggetto "Dettaglio curve di carico"
+    status, data = mail.search(
+        None,
+        '(OR FROM "notifichemailped@enel.com" SUBJECT "Dettaglio curve di carico")',
+    )
     if status != "OK" or not data or not data[0]:
         mail.logout()
-        print("Nessuna email di e-distribuzione trovata nella casella INBOX.")
+        print("Nessuna email 'Dettaglio curve di carico' trovata nella INBOX.")
         return []
 
-    msg_ids = data[0].split()[-10:]  # Ultime 10 email ricevute
+    msg_ids = data[0].split()[-15:]
+    print(f"Trovate {len(msg_ids)} email di e-distribuzione / Enel.")
     all_readings: List[Dict[str, Any]] = []
 
     for msg_id in msg_ids:
@@ -157,9 +223,11 @@ def extract_csvs_from_gmail() -> List[Dict[str, Any]]:
                 continue
 
             if filename.endswith(".csv"):
+                print(f"Elaborazione allegato CSV: {filename}")
                 text = payload.decode("utf-8-sig", errors="replace")
                 all_readings.extend(parse_csv_content(text))
             elif filename.endswith(".zip"):
+                print(f"Elaborazione allegato ZIP: {filename}")
                 with zipfile.ZipFile(io.BytesIO(payload)) as zf:
                     for name in zf.namelist():
                         if name.lower().endswith(".csv"):
@@ -171,7 +239,7 @@ def extract_csvs_from_gmail() -> List[Dict[str, Any]]:
 
 
 def main() -> None:
-    print(f"Controllo Gmail per allegati CSV e-distribuzione (POD {POD_CODE})...")
+    print(f"Controllo Gmail per 'Dettaglio curve di carico' (POD {POD_CODE})...")
     new_readings = extract_csvs_from_gmail()
 
     existing_by_date: Dict[str, Dict[str, Any]] = {}
@@ -196,7 +264,7 @@ def main() -> None:
         "readings": merged,
     }
     OUTPUT_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    print(f"Completato: {len(new_readings)} letture estratte da Gmail, {len(merged)} giorni totali salvati.")
+    print(f"Completato: {len(new_readings)} giorni estratti da Gmail, {len(merged)} giorni totali salvati.")
 
 
 if __name__ == "__main__":
