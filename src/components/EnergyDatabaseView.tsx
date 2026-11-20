@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Bar,
   BarChart,
@@ -8,7 +8,18 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { AlertTriangle, Calendar, Flame, Pencil, Plus, Snowflake, Trash2, Trophy } from 'lucide-react';
+import {
+  AlertTriangle,
+  Calendar,
+  ClipboardPaste,
+  Copy,
+  Flame,
+  Pencil,
+  Plus,
+  Snowflake,
+  Trash2,
+  Trophy,
+} from 'lucide-react';
 import {
   ClimateMode,
   ClimateSession,
@@ -66,6 +77,11 @@ function getDefaultModeForIso(iso: string): ClimateMode {
   return month >= 5 && month <= 9 ? 'raffrescamento' : 'riscaldamento';
 }
 
+function getComboKey(log: ClimateSession): string {
+  const sortedRooms = [...log.rooms].sort();
+  return `${log.mode}|${log.startTime}-${log.endTime}|${log.targetTemp.toFixed(1)}|${sortedRooms.join(',')}`;
+}
+
 export function EnergyDatabaseView({
   readings,
   climateLogs,
@@ -90,6 +106,16 @@ export function EnergyDatabaseView({
   const [pendingDeleteLog, setPendingDeleteLog] = useState<ClimateSession | null>(null);
   const [deletingLog, setDeletingLog] = useState(false);
   const [rankingFilter, setRankingFilter] = useState<'all' | ClimateMode>('all');
+  const [copiedSession, setCopiedSession] = useState<{
+    mode: ClimateMode;
+    startTime: string;
+    endTime: string;
+    targetTemp: number;
+    rooms: RoomId[];
+    notes?: string;
+    sourceDate: string;
+  } | null>(null);
+  const [clipboardNotice, setClipboardNotice] = useState<string | null>(null);
   const [inlineMode, setInlineMode] = useState<ClimateMode>('riscaldamento');
   const [inlineStartTime, setInlineStartTime] = useState('09:00');
   const [inlineEndTime, setInlineEndTime] = useState('20:00');
@@ -177,6 +203,52 @@ export function EnergyDatabaseView({
     }
   }
 
+  function showClipboardFeedback(msg: string) {
+    setClipboardNotice(msg);
+    window.setTimeout(() => {
+      setClipboardNotice((curr) => (curr === msg ? null : curr));
+    }, 2800);
+  }
+
+  function copySessionFromLog(log: ClimateSession) {
+    setCopiedSession({
+      mode: log.mode,
+      startTime: log.startTime,
+      endTime: log.endTime,
+      targetTemp: log.targetTemp,
+      rooms: [...log.rooms],
+      notes: log.notes,
+      sourceDate: log.date,
+    });
+    showClipboardFeedback(
+      `Combinazione del ${formatReadingDate(log.date)} copiata (premi Ctrl+V su un altro giorno per incollarla).`
+    );
+  }
+
+  async function pasteSessionToDay(targetIso: string) {
+    if (!copiedSession) return;
+    const existingLogs = climateByDate.get(targetIso) || [];
+    const payload = {
+      date: targetIso,
+      mode: copiedSession.mode,
+      startTime: copiedSession.startTime,
+      endTime: copiedSession.endTime,
+      targetTemp: copiedSession.targetTemp,
+      rooms: [...copiedSession.rooms],
+      notes: copiedSession.notes,
+    };
+    if (existingLogs.length > 0) {
+      await onUpdateClimateLog(existingLogs[0].id, payload);
+    } else {
+      await onAddClimateLog(payload);
+    }
+    setShowInlineForm(false);
+    setEditingLogId(null);
+    showClipboardFeedback(
+      `Combinazione del ${formatReadingDate(copiedSession.sourceDate)} incollata sul ${formatReadingDate(targetIso)}.`
+    );
+  }
+
   const readingsByDate = useMemo(() => {
     const map = new Map<string, EnergyReading>();
     for (const r of readings) {
@@ -194,6 +266,37 @@ export function EnergyDatabaseView({
     }
     return map;
   }, [climateLogs]);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      const key = e.key.toLowerCase();
+      if (key === 'c' && selectedDayIso) {
+        const dayLogs = climateByDate.get(selectedDayIso);
+        if (dayLogs && dayLogs.length > 0) {
+          e.preventDefault();
+          copySessionFromLog(dayLogs[0]);
+        }
+      } else if (key === 'v' && selectedDayIso && copiedSession) {
+        e.preventDefault();
+        void pasteSessionToDay(selectedDayIso);
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedDayIso, copiedSession, climateByDate]);
 
   // Calcola fase termica impianto a pavimento (1° giorno: Prima accensione, 2°: Assestamento, 3°+: A regime)
   const phaseByDate = useMemo(() => {
@@ -303,6 +406,33 @@ export function EnergyDatabaseView({
       }))
       .sort((a, b) => a.avgKwh - b.avgKwh);
   }, [climateLogs, selectedYear, rankingFilter, readingsByDate]);
+
+  // Mappa ogni combinazione univoca dell'anno a una lettera (A, B, C...) con i 2 colori di modalità
+  const comboMetaByKey = useMemo(() => {
+    const map = new Map<string, { code: string; badgeClass: string }>();
+    const entries: { key: string; mode: ClimateMode }[] = [];
+    for (const c of combinationRanking) {
+      if (!entries.some((e) => e.key === c.key)) {
+        entries.push({ key: c.key, mode: c.mode });
+      }
+    }
+    for (const log of climateLogs) {
+      if (!log.date.startsWith(`${selectedYear}-`)) continue;
+      const k = getComboKey(log);
+      if (!entries.some((e) => e.key === k)) {
+        entries.push({ key: k, mode: log.mode });
+      }
+    }
+    entries.forEach((entry, idx) => {
+      const code = String.fromCharCode(65 + (idx % 26)); // A, B, C...
+      const badgeClass =
+        entry.mode === 'riscaldamento'
+          ? 'bg-amber-400 text-slate-950'
+          : 'bg-cyan-400 text-slate-950';
+      map.set(entry.key, { code, badgeClass });
+    });
+    return map;
+  }, [combinationRanking, climateLogs, selectedYear]);
 
   const monthDays = useMemo(() => {
     const totalDays = getDaysInMonth(selectedYear, selectedMonth);
@@ -418,6 +548,19 @@ export function EnergyDatabaseView({
               Raffrescamento ON
             </span>
             <span className="text-slate-700">|</span>
+            <span className="inline-flex items-center gap-1.5 text-rose-300">
+              <span className="relative w-3.5 h-3.5 rounded-xs bg-slate-800/80 border-2 border-dashed border-amber-400/80 overflow-hidden">
+                <span className="absolute bottom-0 inset-x-0 h-[2.5px] bg-rose-400" />
+              </span>
+              1° Prima accensione
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-amber-200">
+              <span className="relative w-3.5 h-3.5 rounded-xs bg-slate-800/80 border-2 border-dotted border-amber-400/80 overflow-hidden">
+                <span className="absolute bottom-0 inset-x-0 h-[2.5px] bg-amber-300" />
+              </span>
+              2° Assestamento
+            </span>
+            <span className="text-slate-700">|</span>
             <span className="inline-flex items-center gap-1">
               <span className="w-2.5 h-2.5 rounded-xs bg-emerald-500/30 border border-emerald-500/40" />
               &lt;5 kWh
@@ -484,7 +627,19 @@ export function EnergyDatabaseView({
                     const dayClimate = climateByDate.get(iso);
                     const hasClimate = Boolean(dayClimate && dayClimate.length > 0);
                     const climateMode = dayClimate?.[0]?.mode;
+                    const dayPhase = phaseByDate.get(iso);
+                    const comboMeta = dayClimate?.[0]
+                      ? comboMetaByKey.get(getComboKey(dayClimate[0]))
+                      : undefined;
                     const hasData = Boolean(r) || hasClimate;
+                    const phaseLabel =
+                      dayPhase === 'prima_accensione'
+                        ? ' · 1° Prima accensione'
+                        : dayPhase === 'assestamento'
+                          ? ' · 2° Assestamento'
+                          : dayPhase === 'a_regime'
+                            ? ' · A regime'
+                            : '';
 
                     return (
                       <button
@@ -493,7 +648,7 @@ export function EnergyDatabaseView({
                         disabled={!hasData}
                         title={
                           r
-                            ? `${formatReadingDate(iso)}: ${r.totalKwh.toFixed(2)} kWh (€ ${r.estimatedCostEur.toFixed(2)})${hasClimate ? ` · ${climateMode === 'riscaldamento' ? 'Riscaldamento ON' : 'Raffrescamento ON'}` : ''}`
+                            ? `${formatReadingDate(iso)}: ${r.totalKwh.toFixed(2)} kWh (€ ${r.estimatedCostEur.toFixed(2)})${hasClimate ? ` · ${climateMode === 'riscaldamento' ? 'Riscaldamento ON' : 'Raffrescamento ON'}${comboMeta ? ` [Combo ${comboMeta.code}]` : ''}${phaseLabel}` : ''}`
                             : `${formatReadingDate(iso)}: nessun dato`
                         }
                         onClick={() => {
@@ -513,21 +668,33 @@ export function EnergyDatabaseView({
                           r?.totalKwh
                         )} ${
                           hasClimate
-                            ? climateMode === 'riscaldamento'
-                              ? 'border-2 border-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.45)]'
-                              : 'border-2 border-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.45)]'
+                            ? `${
+                                dayPhase === 'prima_accensione'
+                                  ? 'border-2 border-dashed'
+                                  : dayPhase === 'assestamento'
+                                    ? 'border-2 border-dotted'
+                                    : 'border-2 border-solid'
+                              } ${
+                                climateMode === 'riscaldamento'
+                                  ? 'border-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.45)]'
+                                  : 'border-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.45)]'
+                              }`
                             : 'border border-transparent'
                         } ${isPicked ? 'ring-2 ring-white ring-offset-1 ring-offset-slate-900 z-10' : ''}`}
                       >
                         {r ? r.totalKwh.toFixed(1) : '·'}
-                        {hasClimate && (
+                        {hasClimate && comboMeta && (
                           <span
-                            className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full ring-2 ring-slate-900 ${
-                              climateMode === 'riscaldamento'
-                                ? 'bg-amber-400'
-                                : 'bg-cyan-400'
-                            }`}
-                          />
+                            className={`absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full ring-2 ring-slate-900 text-[8px] font-sans font-extrabold flex items-center justify-center leading-none ${comboMeta.badgeClass}`}
+                          >
+                            {comboMeta.code}
+                          </span>
+                        )}
+                        {hasClimate && dayPhase === 'prima_accensione' && (
+                          <span className="absolute bottom-0.5 inset-x-1 h-[2.5px] rounded-full bg-rose-400" />
+                        )}
+                        {hasClimate && dayPhase === 'assestamento' && (
+                          <span className="absolute bottom-0.5 inset-x-1 h-[2.5px] rounded-full bg-amber-300" />
                         )}
                       </button>
                     );
@@ -797,7 +964,16 @@ export function EnergyDatabaseView({
                                 </>
                               )}
                             </div>
-                            <div className="flex items-center gap-2 shrink-0">
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => copySessionFromLog(log)}
+                                title="Copia combinazione (Ctrl+C)"
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-300 hover:text-slate-100 hover:bg-slate-800 rounded transition-colors"
+                              >
+                                <Copy className="w-3 h-3" />
+                                Copia
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => openEditInlineForm(log)}
@@ -826,16 +1002,35 @@ export function EnergyDatabaseView({
                           Nessuna accensione NeaSmart registrata per il{' '}
                           {formatReadingDate(selectedDayIso)}.
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => openNewInlineForm(selectedDayIso)}
-                          className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 font-medium whitespace-nowrap"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          Registra accensione NeaSmart
-                        </button>
+                        <div className="flex items-center gap-3">
+                          {copiedSession && (
+                            <button
+                              type="button"
+                              onClick={() => void pasteSessionToDay(selectedDayIso)}
+                              title="Incolla combinazione copiata (Ctrl+V)"
+                              className="inline-flex items-center gap-1 text-emerald-400 hover:text-emerald-300 font-medium whitespace-nowrap"
+                            >
+                              <ClipboardPaste className="w-3.5 h-3.5" />
+                              Incolla ({formatReadingDate(copiedSession.sourceDate)})
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => openNewInlineForm(selectedDayIso)}
+                            className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 font-medium whitespace-nowrap"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            Registra accensione NeaSmart
+                          </button>
+                        </div>
                       </div>
                     )
+                  )}
+
+                  {clipboardNotice && (
+                    <div className="text-[11px] font-medium text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-1.5">
+                      {clipboardNotice}
+                    </div>
                   )}
 
                   {showInlineForm && !editingLogId && inlineFormElement}
@@ -941,16 +1136,27 @@ export function EnergyDatabaseView({
                       }`}
                     >
                       <td className="py-3 px-4 whitespace-nowrap">
-                        {isBest ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-mono font-bold text-[11px]">
-                            <Trophy className="w-3 h-3" />
-                            #1 Migliore
-                          </span>
-                        ) : (
-                          <span className="font-mono text-slate-400 font-semibold pl-1">
-                            #{idx + 1}
-                          </span>
-                        )}
+                        <div className="inline-flex items-center gap-2">
+                          {comboMetaByKey.get(combo.key) && (
+                            <span
+                              className={`w-5 h-5 rounded-full text-[10px] font-extrabold flex items-center justify-center shrink-0 ${
+                                comboMetaByKey.get(combo.key)!.badgeClass
+                              }`}
+                            >
+                              {comboMetaByKey.get(combo.key)!.code}
+                            </span>
+                          )}
+                          {isBest ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-mono font-bold text-[11px]">
+                              <Trophy className="w-3 h-3" />
+                              #1 Migliore
+                            </span>
+                          ) : (
+                            <span className="font-mono text-slate-400 font-semibold">
+                              #{idx + 1}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-3 px-4 whitespace-nowrap">
                         {combo.mode === 'riscaldamento' ? (
