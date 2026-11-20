@@ -34,22 +34,36 @@ def parse_it_float(raw: Optional[str]) -> float:
         return 0.0
 
 
-def normalize_date(raw: Optional[str]) -> Optional[str]:
+def normalize_date(raw: Optional[str], prefer_mdy: bool = False) -> Optional[str]:
     if not raw:
         return None
     cleaned = raw.strip().replace('"', "").split(" ")[0]
+    today = datetime.now(timezone.utc).date()
+
+    def _valid_iso(y: int, m: int, d: int) -> Optional[str]:
+        try:
+            dt = datetime(y, m, d).date()
+            if dt <= today:
+                return dt.strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+        return None
+
     # YYYY-MM-DD or YYYY/MM/DD
     m = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$", cleaned)
     if m:
-        return f"{m.group(1)}-{m.group(2).zfill(2)}-{m.group(3).zfill(2)}"
-    # DD/MM/YYYY or D/M/YYYY or DD-MM-YYYY
+        return _valid_iso(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    # DD/MM/YYYY or MM/DD/YYYY
     m = re.match(r"^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$", cleaned)
     if m:
-        return f"{m.group(3)}-{m.group(2).zfill(2)}-{m.group(1).zfill(2)}"
+        p1, p2, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if prefer_mdy:
+            return _valid_iso(y, p1, p2) or _valid_iso(y, p2, p1)
+        return _valid_iso(y, p2, p1) or _valid_iso(y, p1, p2)
     # YYYYMMDD
     m = re.match(r"^(\d{4})(\d{2})(\d{2})$", cleaned)
     if m:
-        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+        return _valid_iso(int(m.group(1)), int(m.group(2)), int(m.group(3)))
     return None
 
 
@@ -83,6 +97,21 @@ def parse_csv_content(text: str) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     reader = list(csv.reader(lines, delimiter=delimiter))
 
+    # Rileva a livello di intero file se il CSV usa MM/DD/YYYY invece di DD/MM/YYYY
+    mdy_votes = 0
+    dmy_votes = 0
+    for row in reader:
+        for idx in range(min(3, len(row))):
+            cleaned = row[idx].strip().replace('"', "").split(" ")[0]
+            m = re.match(r"^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$", cleaned)
+            if m:
+                p1, p2 = int(m.group(1)), int(m.group(2))
+                if p1 > 12:
+                    dmy_votes += 1
+                elif p2 > 12:
+                    mdy_votes += 1
+    prefer_mdy = mdy_votes > dmy_votes
+
     # Scansiona tutte le righe: appena trova una riga che inizia con una data valida
     # e ha almeno 24 colonne numeriche, la elabora come curva di carico quartoraria/oraria!
     for row in reader:
@@ -93,7 +122,7 @@ def parse_csv_content(text: str) -> List[Dict[str, Any]]:
         date_idx = -1
         iso = None
         for idx in range(min(3, len(row))):
-            cand = normalize_date(row[idx])
+            cand = normalize_date(row[idx], prefer_mdy=prefer_mdy)
             if cand:
                 date_idx = idx
                 iso = cand
@@ -224,6 +253,56 @@ def extract_csvs_from_gmail() -> tuple[List[Dict[str, Any]], List[bytes], Option
             processed_msg_ids.append(msg_id)
 
     return all_readings, processed_msg_ids, mail
+
+
+def extract_csvs_from_trash(mail: Optional[imaplib.IMAP4_SSL]) -> List[Dict[str, Any]]:
+    """Legge eventuali CSV di e-distribuzione presenti nel Cestino/Trash di Gmail per recuperare lo storico."""
+    if not mail:
+        return []
+    recovered: List[Dict[str, Any]] = []
+    for folder in ['"[Gmail]/Cestino"', '"[Gmail]/Trash"']:
+        try:
+            status, _ = mail.select(folder, readonly=True)
+            if status != "OK":
+                continue
+            status, data = mail.search(
+                None,
+                '(OR FROM "notifichemailped@enel.com" SUBJECT "Dettaglio curve di carico")',
+            )
+            if status != "OK" or not data or not data[0]:
+                continue
+            msg_ids = data[0].split()[-40:]
+            print(f"Trovate {len(msg_ids)} email e-distribuzione in {folder}.")
+            for msg_id in msg_ids:
+                _, msg_data = mail.fetch(msg_id, "(RFC822)")
+                if not msg_data or not isinstance(msg_data[0], tuple):
+                    continue
+                msg = email.message_from_bytes(msg_data[0][1])
+                for part in msg.walk():
+                    filename = (part.get_filename() or "").lower()
+                    if not filename:
+                        continue
+                    payload = part.get_payload(decode=True)
+                    if not payload:
+                        continue
+                    if filename.endswith(".csv"):
+                        text = payload.decode("utf-8-sig", errors="replace")
+                        recovered.extend(parse_csv_content(text))
+                    elif filename.endswith(".zip"):
+                        with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+                            for name in zf.namelist():
+                                if name.lower().endswith(".csv"):
+                                    text = zf.read(name).decode("utf-8-sig", errors="replace")
+                                    recovered.extend(parse_csv_content(text))
+            break
+        except Exception as exc:
+            print(f"Impossibile leggere {folder}: {exc}")
+    # Torna su INBOX per eventuali operazioni successive
+    try:
+        mail.select("INBOX")
+    except Exception:
+        pass
+    return recovered
 
 
 def delete_processed_emails(mail: Optional[imaplib.IMAP4_SSL], msg_ids: List[bytes]) -> None:
@@ -376,6 +455,9 @@ def main() -> None:
         # 1. Estrai eventuali nuove bollette PDF Edison (senza eliminare le email delle fatture)
         new_bills = extract_edison_bills_from_gmail(mail)
 
+        # 1b. Recupera eventuali CSV e-distribuzione presenti nel Cestino di Gmail
+        trash_readings = extract_csvs_from_trash(mail)
+
         # 2. Aggiorna data/consumi.json
         existing_by_date: Dict[str, Dict[str, Any]] = {}
         if OUTPUT_FILE.exists():
@@ -387,10 +469,16 @@ def main() -> None:
             except Exception:
                 pass
 
+        for item in trash_readings:
+            existing_by_date[item["date"]] = item
         for item in new_readings:
             existing_by_date[item["date"]] = item
 
-        merged = sorted(existing_by_date.values(), key=lambda x: x["date"])
+        today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        merged = sorted(
+            (v for v in existing_by_date.values() if v.get("date", "") <= today_iso),
+            key=lambda x: x["date"],
+        )
 
         OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
         payload = {

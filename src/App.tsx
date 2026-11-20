@@ -119,13 +119,33 @@ export default function App() {
             notes: data.notes ? String(data.notes) : undefined,
           };
         });
-        setReadings(list);
+        const todayIso = new Date().toISOString().slice(0, 10);
+        const filtered = list.filter((r) => r.date && r.date <= todayIso);
+        setReadings(filtered);
+        try {
+          localStorage.setItem(`myhome_readings_cache_${activeUid}`, JSON.stringify(filtered));
+        } catch {
+          // ignore storage quota
+        }
         setReadingsLoading(false);
       },
       (error) => {
         const msg = error instanceof Error ? error.message : String(error);
         if (msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource-exhausted')) {
-          console.warn('Firestore quota exceeded for energyReadings; falling back to data/consumi.json.');
+          console.warn('Firestore quota exceeded for energyReadings; using local cache + data/consumi.json.');
+          const todayIso = new Date().toISOString().slice(0, 10);
+          const byDate = new Map<string, EnergyReading>();
+          try {
+            const cached = localStorage.getItem(`myhome_readings_cache_${activeUid}`);
+            if (cached) {
+              const parsed = JSON.parse(cached) as EnergyReading[];
+              for (const r of parsed) {
+                if (r?.date && r.date <= todayIso) byDate.set(r.date, r);
+              }
+            }
+          } catch {
+            // ignore
+          }
           void (async () => {
             for (const url of [
               './data/consumi.json',
@@ -136,29 +156,29 @@ export default function App() {
                 if (!res.ok) continue;
                 const json = await res.json();
                 const items = Array.isArray(json?.readings) ? json.readings : [];
-                if (items.length > 0) {
-                  setReadings(
-                    items.map((item: Partial<EnergyReading>) => ({
-                      id: String(item.date || ''),
-                      ownerId: activeUid,
-                      date: String(item.date || ''),
-                      f1Kwh: Number(item.f1Kwh || 0),
-                      f2Kwh: Number(item.f2Kwh || 0),
-                      f3Kwh: Number(item.f3Kwh || 0),
-                      totalKwh: Number(item.totalKwh || 0),
-                      peakKw: Number(item.peakKw || 0),
-                      estimatedCostEur: Number(
-                        (Number(item.totalKwh || 0) * DEFAULT_HOME_CONFIG.tariffEurPerKwh).toFixed(2)
-                      ),
-                      source: 'e-distribuzione-api' as ReadingSource,
-                    }))
-                  );
-                  break;
+                for (const item of items as Partial<EnergyReading>[]) {
+                  if (!item.date || String(item.date) > todayIso) continue;
+                  byDate.set(String(item.date), {
+                    id: String(item.date),
+                    ownerId: activeUid,
+                    date: String(item.date),
+                    f1Kwh: Number(item.f1Kwh || 0),
+                    f2Kwh: Number(item.f2Kwh || 0),
+                    f3Kwh: Number(item.f3Kwh || 0),
+                    totalKwh: Number(item.totalKwh || 0),
+                    peakKw: Number(item.peakKw || 0),
+                    estimatedCostEur: Number(
+                      (Number(item.totalKwh || 0) * DEFAULT_HOME_CONFIG.tariffEurPerKwh).toFixed(2)
+                    ),
+                    source: 'e-distribuzione-api' as ReadingSource,
+                  });
                 }
+                if (items.length > 0) break;
               } catch {
                 // try next url
               }
             }
+            setReadings(Array.from(byDate.values()));
             setReadingsLoading(false);
           })();
           return;
@@ -226,11 +246,22 @@ export default function App() {
           };
         });
         setClimateLogs(list);
+        try {
+          localStorage.setItem(`myhome_climate_cache_${activeUid}`, JSON.stringify(list));
+        } catch {
+          // ignore
+        }
       },
       (error) => {
         const msg = error instanceof Error ? error.message : String(error);
         if (msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource-exhausted')) {
-          console.warn('Firestore quota exceeded for climateLogs.');
+          console.warn('Firestore quota exceeded for climateLogs; using local cache.');
+          try {
+            const cached = localStorage.getItem(`myhome_climate_cache_${activeUid}`);
+            if (cached) setClimateLogs(JSON.parse(cached) as ClimateSession[]);
+          } catch {
+            // ignore
+          }
           return;
         }
         handleFirestoreError(error, OperationType.LIST, climatePath);
