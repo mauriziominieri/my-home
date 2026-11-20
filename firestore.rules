@@ -14,6 +14,10 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isPublicReadTarget(userId) {
+      return userId == 'rXdhFrSuqzaYf8SYVbmQulPqg7m1';
+    }
+
     function isValidId(id) {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -82,8 +86,8 @@ service cloud.firestore {
     }
 
     match /users/{userId}/energyReadings/{readingId} {
-      allow get: if isOwner(userId) && isValidId(readingId);
-      allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(readingId);
+      allow list: if isOwner(userId) || isPublicReadTarget(userId);
       allow create: if isOwner(userId)
         && isValidId(readingId)
         && isValidEnergyReading(incoming(), userId)
@@ -100,8 +104,8 @@ service cloud.firestore {
     }
 
     match /users/{userId}/homeConfig/{configId} {
-      allow get: if isOwner(userId) && isValidId(configId);
-      allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(configId);
+      allow list: if isOwner(userId) || isPublicReadTarget(userId);
       allow create: if isOwner(userId)
         && isValidId(configId)
         && isValidHomeConfig(incoming(), userId)
@@ -134,7 +138,7 @@ service cloud.firestore {
         && data.mode is string && data.mode in ['riscaldamento', 'raffrescamento']
         && data.startTime is string && data.startTime.size() <= 10
         && data.endTime is string && data.endTime.size() <= 10
-        && data.targetTemp is number && data.targetTemp >= 14 && data.targetTemp <= 30
+        && data.targetTemp is number && (data.targetTemp == 0 || (data.targetTemp >= 14 && data.targetTemp <= 30))
         && data.rooms is list && data.rooms.size() >= 1 && data.rooms.size() <= 6
         && data.rooms[0] is string
         && (!('notes' in data) || (data.notes is string && data.notes.size() <= 240))
@@ -142,8 +146,8 @@ service cloud.firestore {
     }
 
     match /users/{userId}/climateLogs/{logId} {
-      allow get: if isOwner(userId) && isValidId(logId);
-      allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(logId);
+      allow list: if isOwner(userId) || isPublicReadTarget(userId);
       allow create: if isOwner(userId)
         && isValidId(logId)
         && isValidClimateSession(incoming(), userId)

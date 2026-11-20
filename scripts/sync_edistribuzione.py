@@ -167,7 +167,7 @@ def parse_csv_content(text: str) -> List[Dict[str, Any]]:
     return results
 
 
-def extract_csvs_from_gmail() -> List[Dict[str, Any]]:
+def extract_csvs_from_gmail() -> tuple[List[Dict[str, Any]], List[bytes], Optional[imaplib.IMAP4_SSL]]:
     gmail_user = os.environ.get("GMAIL_USER", "").strip()
     gmail_pass = os.environ.get("GMAIL_APP_PASSWORD", "").strip().replace(" ", "")
     if not gmail_user or not gmail_pass:
@@ -184,17 +184,19 @@ def extract_csvs_from_gmail() -> List[Dict[str, Any]]:
     if status != "OK" or not data or not data[0]:
         mail.logout()
         print("Nessuna email 'Dettaglio curve di carico' trovata nella INBOX.")
-        return []
+        return [], [], None
 
     msg_ids = data[0].split()[-15:]
     print(f"Trovate {len(msg_ids)} email di e-distribuzione / Enel.")
     all_readings: List[Dict[str, Any]] = []
+    processed_msg_ids: List[bytes] = []
 
     for msg_id in msg_ids:
         _, msg_data = mail.fetch(msg_id, "(RFC822)")
         if not msg_data or not isinstance(msg_data[0], tuple):
             continue
         msg = email.message_from_bytes(msg_data[0][1])
+        msg_readings: List[Dict[str, Any]] = []
 
         for part in msg.walk():
             filename = (part.get_filename() or "").lower()
@@ -208,46 +210,78 @@ def extract_csvs_from_gmail() -> List[Dict[str, Any]]:
             if filename.endswith(".csv"):
                 print(f"Elaborazione allegato CSV: {filename}")
                 text = payload.decode("utf-8-sig", errors="replace")
-                all_readings.extend(parse_csv_content(text))
+                msg_readings.extend(parse_csv_content(text))
             elif filename.endswith(".zip"):
                 print(f"Elaborazione allegato ZIP: {filename}")
                 with zipfile.ZipFile(io.BytesIO(payload)) as zf:
                     for name in zf.namelist():
                         if name.lower().endswith(".csv"):
                             text = zf.read(name).decode("utf-8-sig", errors="replace")
-                            all_readings.extend(parse_csv_content(text))
+                            msg_readings.extend(parse_csv_content(text))
 
-    mail.logout()
-    return all_readings
+        if msg_readings:
+            all_readings.extend(msg_readings)
+            processed_msg_ids.append(msg_id)
+
+    return all_readings, processed_msg_ids, mail
+
+
+def delete_processed_emails(mail: Optional[imaplib.IMAP4_SSL], msg_ids: List[bytes]) -> None:
+    if not mail:
+        return
+    try:
+        if msg_ids:
+            for msg_id in msg_ids:
+                # Sposta nel Cestino di Gmail (funziona indipendentemente dalla lingua) e rimuove da INBOX
+                mail.store(msg_id, "+X-GM-LABELS", "\\Trash")
+                mail.store(msg_id, "+FLAGS", "\\Deleted")
+            mail.expunge()
+            print(f"Eliminate {len(msg_ids)} email elaborate dalla INBOX (spostate nel Cestino).")
+    finally:
+        try:
+            mail.logout()
+        except Exception:
+            pass
 
 
 def main() -> None:
     print(f"Controllo Gmail per 'Dettaglio curve di carico' (POD {POD_CODE})...")
-    new_readings = extract_csvs_from_gmail()
+    new_readings, processed_msg_ids, mail = extract_csvs_from_gmail()
 
-    existing_by_date: Dict[str, Dict[str, Any]] = {}
-    if OUTPUT_FILE.exists():
-        try:
-            old_data = json.loads(OUTPUT_FILE.read_text(encoding="utf-8"))
-            for item in old_data.get("readings", []):
-                if "date" in item:
-                    existing_by_date[item["date"]] = item
-        except Exception:
-            pass
+    try:
+        existing_by_date: Dict[str, Dict[str, Any]] = {}
+        if OUTPUT_FILE.exists():
+            try:
+                old_data = json.loads(OUTPUT_FILE.read_text(encoding="utf-8"))
+                for item in old_data.get("readings", []):
+                    if "date" in item:
+                        existing_by_date[item["date"]] = item
+            except Exception:
+                pass
 
-    for item in new_readings:
-        existing_by_date[item["date"]] = item
+        for item in new_readings:
+            existing_by_date[item["date"]] = item
 
-    merged = sorted(existing_by_date.values(), key=lambda x: x["date"])
+        merged = sorted(existing_by_date.values(), key=lambda x: x["date"])
 
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "pod": POD_CODE,
-        "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "readings": merged,
-    }
-    OUTPUT_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    print(f"Completato: {len(new_readings)} giorni estratti da Gmail, {len(merged)} giorni totali salvati.")
+        OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "pod": POD_CODE,
+            "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "readings": merged,
+        }
+        OUTPUT_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"Completato: {len(new_readings)} giorni estratti da Gmail, {len(merged)} giorni totali salvati.")
+
+        # Elimina le email solo dopo aver salvato correttamente data/consumi.json
+        delete_processed_emails(mail, processed_msg_ids)
+    except Exception:
+        if mail:
+            try:
+                mail.logout()
+            except Exception:
+                pass
+        raise
 
 
 if __name__ == "__main__":

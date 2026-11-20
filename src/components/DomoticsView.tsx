@@ -562,7 +562,7 @@ export function DomoticsView({
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-100 tabular-nums">
-                        {log.targetTemp.toFixed(1)} °C
+                        {log.targetTemp > 0 ? `${log.targetTemp.toFixed(1)} °C` : '? °C'}
                       </td>
                       <td className="py-2.5 px-3 text-slate-300">
                         {log.rooms.map((r) => ROOM_LABELS[r] || r).join(', ')}

@@ -85,19 +85,19 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Subscribe to user's real Firestore data only when authenticated
+  const PUBLIC_OWNER_UID = 'rXdhFrSuqzaYf8SYVbmQulPqg7m1';
+  const activeUid = user?.uid ?? PUBLIC_OWNER_UID;
+  const canEdit = Boolean(user);
+
+  // Subscribe to Firestore data (read-only for visitors, full edit when signed in)
   useEffect(() => {
-    if (!authReady || !user) {
-      setReadings([]);
-      setReadingsLoading(false);
-      return;
-    }
+    if (!authReady) return;
 
     setReadingsLoading(true);
-    const readingsPath = `users/${user.uid}/energyReadings`;
+    const readingsPath = `users/${activeUid}/energyReadings`;
     const readingsQuery = query(
       collection(db, readingsPath),
-      where('ownerId', '==', user.uid)
+      where('ownerId', '==', activeUid)
     );
 
     const unsubReadings = onSnapshot(
@@ -107,7 +107,7 @@ export default function App() {
           const data = d.data();
           return {
             id: d.id,
-            ownerId: String(data.ownerId || user.uid),
+            ownerId: String(data.ownerId || activeUid),
             date: String(data.date || ''),
             f1Kwh: Number(data.f1Kwh || 0),
             f2Kwh: Number(data.f2Kwh || 0),
@@ -127,14 +127,14 @@ export default function App() {
       }
     );
 
-    const configPath = `users/${user.uid}/homeConfig/main`;
+    const configPath = `users/${activeUid}/homeConfig/main`;
     const unsubConfig = onSnapshot(
       doc(db, configPath),
       (snap) => {
         if (snap.exists()) {
           const data = snap.data();
           setHomeConfig({
-            ownerId: user.uid,
+            ownerId: activeUid,
             aristonMode: data.aristonMode || DEFAULT_HOME_CONFIG.aristonMode,
             aristonProfile: data.aristonProfile || DEFAULT_HOME_CONFIG.aristonProfile,
             floorFlowTemp: Number(data.floorFlowTemp ?? DEFAULT_HOME_CONFIG.floorFlowTemp),
@@ -149,7 +149,7 @@ export default function App() {
             podCode: String(data.podCode || DEFAULT_HOME_CONFIG.podCode),
           });
         } else {
-          setHomeConfig({ ownerId: user.uid, ...DEFAULT_HOME_CONFIG });
+          setHomeConfig({ ownerId: activeUid, ...DEFAULT_HOME_CONFIG });
         }
       },
       (error) => {
@@ -157,10 +157,10 @@ export default function App() {
       }
     );
 
-    const climatePath = `users/${user.uid}/climateLogs`;
+    const climatePath = `users/${activeUid}/climateLogs`;
     const climateQuery = query(
       collection(db, climatePath),
-      where('ownerId', '==', user.uid)
+      where('ownerId', '==', activeUid)
     );
     const unsubClimate = onSnapshot(
       climateQuery,
@@ -169,12 +169,12 @@ export default function App() {
           const data = d.data();
           return {
             id: d.id,
-            ownerId: String(data.ownerId || user.uid),
+            ownerId: String(data.ownerId || activeUid),
             date: String(data.date || ''),
             mode: (data.mode as ClimateMode) || 'riscaldamento',
             startTime: String(data.startTime || '09:00'),
             endTime: String(data.endTime || '20:00'),
-            targetTemp: Number(data.targetTemp || 21),
+            targetTemp: typeof data.targetTemp === 'number' ? data.targetTemp : 21,
             rooms: Array.isArray(data.rooms) ? (data.rooms as RoomId[]) : [],
             notes: data.notes ? String(data.notes) : undefined,
           };
@@ -191,7 +191,7 @@ export default function App() {
       unsubConfig();
       unsubClimate();
     };
-  }, [authReady, user]);
+  }, [authReady, activeUid]);
 
   // Auto-load data/consumi.json directly from GitHub repo when user logs in
   useEffect(() => {
@@ -401,45 +401,6 @@ export default function App() {
     );
   }
 
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-xl p-8 space-y-6">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 text-sky-400">
-              <Home className="w-5 h-5" />
-              <span className="text-base font-bold tracking-tight text-slate-100">
-                my-home
-              </span>
-            </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-100">
-              Centro Domotico & Energia
-            </h1>
-            <p className="text-sm text-slate-400 leading-relaxed">
-              Monitoraggio reale giornaliero e-distribuzione (POD IT001E11251419 · 6 kW), pompa di calore Ariston e deumidificatore NeaSmart.
-            </p>
-          </div>
-
-          <div className="border-t border-slate-800 pt-5 space-y-3">
-            <button
-              type="button"
-              onClick={handleSignIn}
-              className="w-full py-2.5 px-4 text-sm font-medium text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors"
-            >
-              Accedi con Google
-            </button>
-            {authError && (
-              <p className="text-xs text-rose-400">{authError}</p>
-            )}
-            <p className="text-xs text-slate-500">
-              I tuoi dati energetici e i setpoint domotici sono protetti e accessibili solo dal tuo account Google.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   const currentNavLabel =
     NAV_ITEMS.find((n) => n.id === activeNav)?.label || 'Consumi Annuali';
 
@@ -486,23 +447,37 @@ export default function App() {
         </nav>
 
         <div className="p-2.5 border-t border-slate-800 flex items-center justify-between gap-2">
-          <div className="min-w-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pl-1">
-            <div className="text-xs font-medium text-slate-100 truncate">
-              {user.displayName || 'Proprietario'}
-            </div>
-            <div className="text-[11px] text-slate-400 truncate">
-              {user.email}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => signOut(auth)}
-            aria-label="Esci"
-            title="Esci"
-            className="p-2 text-slate-400 hover:text-slate-100 rounded-lg transition-colors shrink-0"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
+          {user ? (
+            <>
+              <div className="min-w-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pl-1">
+                <div className="text-xs font-medium text-slate-100 truncate">
+                  {user.displayName || 'Proprietario'}
+                </div>
+                <div className="text-[11px] text-slate-400 truncate">
+                  {user.email}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => signOut(auth)}
+                aria-label="Esci"
+                title="Esci"
+                className="p-2 text-slate-400 hover:text-slate-100 rounded-lg transition-colors shrink-0"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSignIn}
+              title="Accedi con Google per modificare"
+              className="w-full flex items-center justify-center gap-2 py-2 px-2 text-xs font-medium text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap overflow-hidden"
+            >
+              <span className="group-hover:hidden font-bold">G</span>
+              <span className="hidden group-hover:inline">Accedi con Google</span>
+            </button>
+          )}
         </div>
       </aside>
 
@@ -575,10 +550,27 @@ export default function App() {
             </div>
           </div>
 
-          <div className="text-xs font-mono text-slate-400 whitespace-nowrap shrink-0">
-            POD <span className="text-sky-400">{homeConfig.podCode}</span> · 6 kW
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="hidden sm:block text-xs font-mono text-slate-400 whitespace-nowrap">
+              POD <span className="text-sky-400">{homeConfig.podCode}</span> · 6 kW
+            </div>
+            {!canEdit && (
+              <button
+                type="button"
+                onClick={handleSignIn}
+                className="px-3 py-1.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap"
+              >
+                Accedi per modificare
+              </button>
+            )}
           </div>
         </header>
+
+        {authError && (
+          <div className="px-5 py-2 bg-rose-500/10 border-b border-rose-500/30 text-xs text-rose-300">
+            {authError}
+          </div>
+        )}
 
         <main className="flex-1 px-3 sm:px-5 py-4 sm:py-5 max-w-[1800px] w-full mx-auto">
           {activeNav === 'panoramica' && (
@@ -601,6 +593,7 @@ export default function App() {
               onSelectYear={setSelectedYear}
               availableYears={AVAILABLE_YEARS}
               loading={readingsLoading}
+              readOnly={!canEdit}
               onAddClimateLog={handleAddClimateLog}
               onUpdateClimateLog={handleUpdateClimateLog}
               onDeleteClimateLog={handleDeleteClimateLog}
