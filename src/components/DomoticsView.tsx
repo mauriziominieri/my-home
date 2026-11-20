@@ -388,7 +388,7 @@ export function DomoticsView({
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Note opzionali (es. prima accensione invernale, deumidificatore attivo...)"
-              className="flex-1 min-w-[220px] px-3 py-2 text-xs text-slate-100 bg-slate-950 border border-slate-800 rounded-lg focus:outline-none focus:border-sky-500"
+              className="w-full sm:flex-1 min-w-0 px-3 py-2 text-xs text-slate-100 bg-slate-950 border border-slate-800 rounded-lg focus:outline-none focus:border-sky-500"
             />
             <button
               type="submit"
@@ -805,7 +805,7 @@ export function DomoticsView({
             <label className="block text-xs font-medium text-slate-300">
               Velocità ventilazione
             </label>
-            <div className="grid grid-cols-4 gap-1.5 p-1 bg-slate-950 border border-slate-800 rounded-lg">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1 bg-slate-950 border border-slate-800 rounded-lg">
               {FAN_SPEEDS.map((f) => (
                 <button
                   key={f.value}

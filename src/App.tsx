@@ -642,7 +642,7 @@ export default function App() {
           </div>
         )}
 
-        <main className="flex-1 px-3 sm:px-5 py-4 sm:py-5 max-w-[1800px] w-full mx-auto">
+        <main className="flex-1 min-w-0 overflow-x-hidden px-3 sm:px-5 py-4 sm:py-5 max-w-[1800px] w-full mx-auto">
           {activeNav === 'panoramica' && (
             <OverviewView
               config={homeConfig}

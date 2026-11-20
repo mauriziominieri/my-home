@@ -610,11 +610,11 @@ export function BillsView(_props: BillsViewProps) {
       ) : (
         <div className="space-y-5">
           {/* Riepilogo reale per Fornitore / Offerta */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             {offerSummaries.map((item) => (
               <div
                 key={item.key}
-                className="bg-slate-900/70 border border-slate-800 rounded-xl p-4 space-y-3"
+                className="bg-slate-900/70 border border-slate-800 rounded-xl p-4 space-y-3 min-w-0"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
