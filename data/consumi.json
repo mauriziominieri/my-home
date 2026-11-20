@@ -1,7 +1,247 @@
 {
   "pod": "IT001E11251419",
-  "updatedAt": "2026-11-20T00:31:03.969678Z",
+  "updatedAt": "2026-11-20T00:42:59.671727Z",
   "readings": [
+    {
+      "date": "2026-04-01",
+      "f1Kwh": 0.02,
+      "f2Kwh": 0.59,
+      "f3Kwh": 1.07,
+      "totalKwh": 1.68,
+      "peakKw": 0.16
+    },
+    {
+      "date": "2026-04-02",
+      "f1Kwh": 0.0,
+      "f2Kwh": 0.48,
+      "f3Kwh": 1.07,
+      "totalKwh": 1.55,
+      "peakKw": 0.16
+    },
+    {
+      "date": "2026-04-03",
+      "f1Kwh": 0.01,
+      "f2Kwh": 0.45,
+      "f3Kwh": 0.85,
+      "totalKwh": 1.31,
+      "peakKw": 0.12
+    },
+    {
+      "date": "2026-04-04",
+      "f1Kwh": 0.0,
+      "f2Kwh": 0.42,
+      "f3Kwh": 0.92,
+      "totalKwh": 1.34,
+      "peakKw": 0.19
+    },
+    {
+      "date": "2026-04-05",
+      "f1Kwh": 0.0,
+      "f2Kwh": 0.0,
+      "f3Kwh": 1.26,
+      "totalKwh": 1.26,
+      "peakKw": 0.11
+    },
+    {
+      "date": "2026-04-06",
+      "f1Kwh": 0.0,
+      "f2Kwh": 0.41,
+      "f3Kwh": 0.92,
+      "totalKwh": 1.33,
+      "peakKw": 0.19
+    },
+    {
+      "date": "2026-04-07",
+      "f1Kwh": 0.0,
+      "f2Kwh": 0.41,
+      "f3Kwh": 0.85,
+      "totalKwh": 1.26,
+      "peakKw": 0.11
+    },
+    {
+      "date": "2026-04-08",
+      "f1Kwh": 0.0,
+      "f2Kwh": 0.41,
+      "f3Kwh": 0.85,
+      "totalKwh": 1.26,
+      "peakKw": 0.12
+    },
+    {
+      "date": "2026-04-09",
+      "f1Kwh": 0.11,
+      "f2Kwh": 1.32,
+      "f3Kwh": 0.92,
+      "totalKwh": 2.35,
+      "peakKw": 1.98
+    },
+    {
+      "date": "2026-04-10",
+      "f1Kwh": 0.86,
+      "f2Kwh": 2.62,
+      "f3Kwh": 1.4,
+      "totalKwh": 4.88,
+      "peakKw": 1.9
+    },
+    {
+      "date": "2026-04-11",
+      "f1Kwh": 0.0,
+      "f2Kwh": 2.38,
+      "f3Kwh": 1.78,
+      "totalKwh": 4.16,
+      "peakKw": 2.14
+    },
+    {
+      "date": "2026-04-12",
+      "f1Kwh": 0.0,
+      "f2Kwh": 0.0,
+      "f3Kwh": 6.12,
+      "totalKwh": 6.12,
+      "peakKw": 2.63
+    },
+    {
+      "date": "2026-04-13",
+      "f1Kwh": 0.11,
+      "f2Kwh": 2.19,
+      "f3Kwh": 1.64,
+      "totalKwh": 3.94,
+      "peakKw": 2.32
+    },
+    {
+      "date": "2026-04-14",
+      "f1Kwh": 0.74,
+      "f2Kwh": 1.6,
+      "f3Kwh": 0.93,
+      "totalKwh": 3.27,
+      "peakKw": 1.8
+    },
+    {
+      "date": "2026-04-15",
+      "f1Kwh": 1.11,
+      "f2Kwh": 1.98,
+      "f3Kwh": 1.66,
+      "totalKwh": 4.75,
+      "peakKw": 1.99
+    },
+    {
+      "date": "2026-04-16",
+      "f1Kwh": 0.18,
+      "f2Kwh": 2.32,
+      "f3Kwh": 1.25,
+      "totalKwh": 3.75,
+      "peakKw": 1.75
+    },
+    {
+      "date": "2026-04-17",
+      "f1Kwh": 0.0,
+      "f2Kwh": 2.54,
+      "f3Kwh": 1.62,
+      "totalKwh": 4.16,
+      "peakKw": 2.62
+    },
+    {
+      "date": "2026-04-18",
+      "f1Kwh": 0.0,
+      "f2Kwh": 2.88,
+      "f3Kwh": 1.78,
+      "totalKwh": 4.66,
+      "peakKw": 2.63
+    },
+    {
+      "date": "2026-04-19",
+      "f1Kwh": 0.0,
+      "f2Kwh": 0.0,
+      "f3Kwh": 3.26,
+      "totalKwh": 3.26,
+      "peakKw": 1.67
+    },
+    {
+      "date": "2026-04-20",
+      "f1Kwh": 0.21,
+      "f2Kwh": 2.31,
+      "f3Kwh": 1.12,
+      "totalKwh": 3.64,
+      "peakKw": 3.46
+    },
+    {
+      "date": "2026-04-21",
+      "f1Kwh": 0.0,
+      "f2Kwh": 1.61,
+      "f3Kwh": 1.03,
+      "totalKwh": 2.64,
+      "peakKw": 1.88
+    },
+    {
+      "date": "2026-04-22",
+      "f1Kwh": 0.18,
+      "f2Kwh": 2.91,
+      "f3Kwh": 1.1,
+      "totalKwh": 4.19,
+      "peakKw": 2.41
+    },
+    {
+      "date": "2026-04-23",
+      "f1Kwh": 0.68,
+      "f2Kwh": 3.85,
+      "f3Kwh": 1.39,
+      "totalKwh": 5.92,
+      "peakKw": 3.15
+    },
+    {
+      "date": "2026-04-24",
+      "f1Kwh": 0.0,
+      "f2Kwh": 2.85,
+      "f3Kwh": 1.16,
+      "totalKwh": 4.01,
+      "peakKw": 2.47
+    },
+    {
+      "date": "2026-04-25",
+      "f1Kwh": 0.0,
+      "f2Kwh": 1.84,
+      "f3Kwh": 1.09,
+      "totalKwh": 2.93,
+      "peakKw": 1.5
+    },
+    {
+      "date": "2026-04-26",
+      "f1Kwh": 0.0,
+      "f2Kwh": 0.0,
+      "f3Kwh": 1.56,
+      "totalKwh": 1.56,
+      "peakKw": 0.29
+    },
+    {
+      "date": "2026-04-27",
+      "f1Kwh": 0.0,
+      "f2Kwh": 1.05,
+      "f3Kwh": 1.66,
+      "totalKwh": 2.71,
+      "peakKw": 1.94
+    },
+    {
+      "date": "2026-04-28",
+      "f1Kwh": 0.02,
+      "f2Kwh": 2.1,
+      "f3Kwh": 0.95,
+      "totalKwh": 3.07,
+      "peakKw": 1.87
+    },
+    {
+      "date": "2026-04-29",
+      "f1Kwh": 0.23,
+      "f2Kwh": 2.19,
+      "f3Kwh": 1.03,
+      "totalKwh": 3.45,
+      "peakKw": 1.9
+    },
+    {
+      "date": "2026-04-30",
+      "f1Kwh": 0.29,
+      "f2Kwh": 2.12,
+      "f3Kwh": 1.16,
+      "totalKwh": 3.57,
+      "peakKw": 2.58
+    },
     {
       "date": "2026-11-01",
       "f1Kwh": 0.0,
