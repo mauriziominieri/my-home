@@ -365,6 +365,26 @@ export function BillsView(_props: BillsViewProps) {
       .sort((a, b) => b.year - a.year);
   }, [bills]);
 
+  // Stima realistica tutto-incluso per Octopus basata sui consumi e sugli oneri reali delle ultime bollette Edison
+  const octopusEstimate = useMemo(() => {
+    const ref = offerSummaries[0];
+    if (!ref || ref.totalKwh <= 0) {
+      return { allInPerKwh: 0.285, monthlyEur: null as number | null };
+    }
+    const monthsCovered = Math.max(1, ref.billCount * 2); // bollette Edison bimestrali
+    const avgMonthlyKwh = ref.totalKwh / monthsCovered;
+    const overheadPerKwh = Math.max(0.08, ref.avgRealPerKwh - ref.avgVariablePerKwh);
+    const fixedFeeSavingPerKwh = (8.33 - 6.0) / Math.max(50, avgMonthlyKwh);
+    const allInPerKwh = Math.max(
+      octopusMonitor.myLockedRate,
+      octopusMonitor.myLockedRate + overheadPerKwh - fixedFeeSavingPerKwh
+    );
+    return {
+      allInPerKwh,
+      monthlyEur: allInPerKwh * avgMonthlyKwh,
+    };
+  }, [offerSummaries, octopusMonitor.myLockedRate]);
+
   const billYears = useMemo(
     () => Array.from(new Set(bills.map((b) => String(b.year)))).sort().reverse(),
     [bills]
@@ -609,56 +629,95 @@ export function BillsView(_props: BillsViewProps) {
                     <h2 className="text-base font-bold text-slate-100 mt-1.5">
                       {item.supplier} — {item.offerName}
                     </h2>
-                    {item.year === 2026 && item.supplier.toLowerCase().includes('edison') && (
+                    {item.supplier.toLowerCase().includes('edison') && (
                       <p className="text-[11px] text-slate-400 mt-0.5">
-                        Mercato Libero · Monorario F0 (PUN Index GME) · 6 kW · Scadenza condizioni: 07/01/2027
+                        Mercato Libero · Variabile (PUN Index GME) · 6 kW
+                        {item.year === 2026 ? ' · Scadenza condizioni: 07/01/2027' : ''}
                       </p>
                     )}
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                   <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
                     <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Media Reale
-                    </div>
-                    <div className="text-sm font-bold font-mono text-sky-300 mt-0.5">
-                      {item.avgRealPerKwh.toFixed(3).replace('.', ',')} €/kWh
-                    </div>
-                    <div className="text-[10px] text-slate-500">solo luce / kWh</div>
-                  </div>
-                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Costo Variabile
+                      Materia Prima (PUN)
                     </div>
                     <div className="text-sm font-bold font-mono text-emerald-300 mt-0.5">
                       ~{item.avgVariablePerKwh.toFixed(3).replace('.', ',')} €/kWh
                     </div>
-                    <div className="text-[10px] text-slate-500">media bollette</div>
+                    <div className="text-[10px] text-slate-500">variabile · segue il PUN</div>
                   </div>
                   <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
                     <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Solo Luce
+                      Fisso Fornitore
+                    </div>
+                    <div className="text-sm font-bold font-mono text-sky-300 mt-0.5">
+                      {item.supplier.toLowerCase().includes('edison') ? '8,33 €/mese' : '—'}
+                    </div>
+                    <div className="text-[10px] text-slate-500">
+                      {item.supplier.toLowerCase().includes('edison')
+                        ? '100 €/anno (+28 €/a vs Octopus)'
+                        : 'commercializzazione'}
+                    </div>
+                  </div>
+                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                      Costo Reale / kWh
+                    </div>
+                    <div className="text-sm font-bold font-mono text-violet-300 mt-0.5">
+                      {item.avgRealPerKwh.toFixed(3).replace('.', ',')} €/kWh
+                    </div>
+                    <div className="text-[10px] text-slate-500">tutto incluso · no TV</div>
+                  </div>
+                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                      Speso Solo Luce
                     </div>
                     <div className="text-sm font-bold font-mono text-slate-100 mt-0.5">
                       {item.totalElectricityOnly.toFixed(2).replace('.', ',')} €
                     </div>
-                    <div className="text-[10px] text-slate-500">{item.totalKwh} kWh</div>
+                    <div className="text-[10px] text-slate-500">
+                      {item.totalKwh} kWh
+                    </div>
                   </div>
                   <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
                     <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Canone TV
+                      Media Mensile
                     </div>
                     <div className="text-sm font-bold font-mono text-amber-300 mt-0.5">
-                      {item.totalCanoneTv.toFixed(2).replace('.', ',')} €
+                      {(item.totalElectricityOnly / Math.max(1, item.billCount * 2))
+                        .toFixed(0)}{' '}
+                      €/mese
                     </div>
-                    <div className="text-[10px] text-slate-500">9,00 €/mese</div>
+                    <div className="text-[10px] text-slate-500">
+                      su {item.billCount} {item.billCount === 1 ? 'bolletta' : 'bollette'} bimestrali
+                    </div>
+                  </div>
+                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                      Scadenza / Vincoli
+                    </div>
+                    <div className="text-sm font-bold font-mono text-slate-200 mt-0.5">
+                      {item.year === 2026 ? '07/01/2027' : 'Concluso'}
+                    </div>
+                    <div className="text-[10px] text-slate-500">
+                      {item.year === 2026 ? '0 € penali recesso' : `anno ${item.year}`}
+                    </div>
                   </div>
                 </div>
+
+                {item.supplier.toLowerCase().includes('edison') && (
+                  <p className="text-[11px] text-slate-400 leading-relaxed pt-2 border-t border-slate-800/80">
+                    Tariffa <strong className="text-slate-200">variabile</strong> legata al <strong className="text-slate-200">PUN</strong>, più dispacciamento (~0,015 €/kWh) e oneri/imposte di legge.
+                  </p>
+                )}
               </div>
             ))}
 
-            {offerSummaries.length === 1 && (
+            {!offerSummaries.some((o) =>
+              o.supplier.toLowerCase().includes('octopus')
+            ) && (
               <div className="bg-slate-900/70 border border-emerald-500/30 rounded-xl p-4 space-y-3">
                 <div className="flex items-start justify-between gap-2">
                   <div>
@@ -679,15 +738,15 @@ export function BillsView(_props: BillsViewProps) {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                   <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
                     <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Prezzo Energia
+                      Materia Prima (Fissa)
                     </div>
                     <div className="text-sm font-bold font-mono text-emerald-300 mt-0.5">
                       0,1595 €/kWh
                     </div>
-                    <div className="text-[10px] text-slate-500">fisso 24m (perd. incl.)</div>
+                    <div className="text-[10px] text-slate-500">bloccato 24m · no PUN</div>
                   </div>
                   <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
                     <div className="text-[10px] uppercase tracking-wider text-slate-400">
@@ -700,23 +759,47 @@ export function BillsView(_props: BillsViewProps) {
                   </div>
                   <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
                     <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Dispacciamento
+                      Costo Reale / kWh
                     </div>
-                    <div className="text-sm font-bold font-mono text-slate-100 mt-0.5">
-                      0,0146 €/kWh
+                    <div className="text-sm font-bold font-mono text-violet-300 mt-0.5">
+                      ~{octopusEstimate.allInPerKwh.toFixed(3).replace('.', ',')} €/kWh
                     </div>
-                    <div className="text-[10px] text-slate-500">CdispD · DispBT 0 €</div>
+                    <div className="text-[10px] text-slate-500">stima tutto incluso · no TV</div>
                   </div>
                   <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
                     <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Bollette 2027
+                      Speso Solo Luce
                     </div>
                     <div className="text-sm font-bold font-mono text-slate-400 mt-0.5">
                       In attesa
                     </div>
-                    <div className="text-[10px] text-slate-500">mensile · SDD</div>
+                    <div className="text-[10px] text-slate-500">bollette 2027 · SDD</div>
+                  </div>
+                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                      Media Mensile
+                    </div>
+                    <div className="text-sm font-bold font-mono text-amber-300 mt-0.5">
+                      {octopusEstimate.monthlyEur !== null
+                        ? `~${octopusEstimate.monthlyEur.toFixed(0)} €/mese`
+                        : '—'}
+                    </div>
+                    <div className="text-[10px] text-slate-500">stima ai tuoi consumi</div>
+                  </div>
+                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                      Scadenza / Vincoli
+                    </div>
+                    <div className="text-sm font-bold font-mono text-slate-200 mt-0.5">
+                      24 mesi
+                    </div>
+                    <div className="text-[10px] text-slate-500">0 € penali · ribasso libero</div>
                   </div>
                 </div>
+
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  <strong className="text-slate-200">0,1595 €/kWh non è il PUN</strong>: è il prezzo fisso della materia prima energia (perdite incluse), bloccato per <strong className="text-slate-200">24 mesi</strong>. Si aggiungono solo i 6 €/mese di commercializzazione, il dispacciamento (0,0146 €/kWh) e gli oneri/imposte di legge.
+                </p>
 
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-slate-800/80 text-[11px] text-slate-300">
                   <div className="flex items-center gap-1.5">

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bar,
   BarChart,
@@ -105,6 +105,7 @@ export function EnergyDatabaseView({
   const [selectedDayIso, setSelectedDayIso] = useState<string | null>(null);
   const [selectedDayIsos, setSelectedDayIsos] = useState<string[]>([]);
   const [dragAnchorIso, setDragAnchorIso] = useState<string | null>(null);
+  const selectedDayPanelRef = useRef<HTMLDivElement | null>(null);
 
   // Schede richiudibili: di default solo Mappa Annuale e Classifica aperte
   const [openSections, setOpenSections] = useState({
@@ -163,6 +164,25 @@ export function EnergyDatabaseView({
       : compact
         ? '?°C'
         : '? °C';
+
+  useEffect(() => {
+    if (!selectedDayIso) return;
+    const handlePointerDownOutside = (event: MouseEvent) => {
+      if (pendingDeleteLog) return;
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (selectedDayPanelRef.current?.contains(target)) return;
+      if (target instanceof Element && target.closest('[data-day-cell="true"]')) return;
+      setSelectedDayIso(null);
+      setSelectedDayIsos([]);
+      setShowInlineForm(false);
+      setEditingLogId(null);
+    };
+    document.addEventListener('mousedown', handlePointerDownOutside);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDownOutside);
+    };
+  }, [selectedDayIso, pendingDeleteLog]);
 
   function openNewInlineForm(iso: string) {
     const defaultMode = getDefaultModeForIso(iso);
@@ -829,7 +849,8 @@ export function EnergyDatabaseView({
                       <button
                         key={dIdx}
                         type="button"
-                        disabled={!hasData}
+                        aria-disabled={!hasData}
+                        data-day-cell={hasData ? 'true' : undefined}
                         title={
                           r
                             ? `${formatReadingDate(iso)}: ${r.totalKwh.toFixed(2)} kWh (€ ${r.estimatedCostEur.toFixed(2)})${hasClimate ? ` · ${climateMode === 'riscaldamento' ? 'Riscaldamento ON' : 'Raffrescamento ON'}${comboMeta ? ` [Combo ${comboMeta.code}]` : ''}${phaseLabel}` : ''}`
@@ -993,7 +1014,10 @@ export function EnergyDatabaseView({
         </div>
 
         {selectedDayIso && (
-          <div className="pt-3 border-t border-slate-800 space-y-2 text-xs">
+          <div
+            ref={selectedDayPanelRef}
+            className="pt-3 border-t border-slate-800 space-y-2 text-xs"
+          >
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex flex-wrap items-center gap-2 text-slate-300">
                 {selectedDayIsos.length > 1 ? (
