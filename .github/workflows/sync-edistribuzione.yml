@@ -2,7 +2,7 @@ name: Sync automatico e-distribuzione (da Gmail)
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Ogni 6 ore
+    - cron: '*/30 * * * *' # Ogni 30 minuti
   workflow_dispatch:
 
 permissions:
