@@ -5,6 +5,7 @@ import { HomeSystemConfig } from '../types/home';
 interface IntegrationViewProps {
   config: HomeSystemConfig;
   syncIntervalHours: number;
+  readOnly?: boolean;
   onUpdateConfig: (patch: Partial<HomeSystemConfig>) => Promise<void>;
   onSyncFromGithubJson: (jsonUrl: string) => Promise<number>;
 }
@@ -14,6 +15,7 @@ const DEFAULT_JSON_URL = 'https://mauriziominieri.github.io/my-home/data/consumi
 export function IntegrationView({
   config,
   syncIntervalHours,
+  readOnly = false,
   onUpdateConfig,
   onSyncFromGithubJson,
 }: IntegrationViewProps) {
@@ -205,19 +207,22 @@ if __name__ == "__main__":
         <div className="flex flex-wrap items-center gap-2">
           <input
             type="url"
+            disabled={readOnly}
             value={jsonUrl}
             onChange={(e) => setJsonUrl(e.target.value)}
-            className="flex-1 min-w-[260px] px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg focus:outline-none focus:border-sky-500"
+            className="flex-1 min-w-[260px] px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg disabled:opacity-70 focus:outline-none focus:border-sky-500"
           />
-          <button
-            type="button"
-            disabled={syncingJson}
-            onClick={handleSyncJson}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${syncingJson ? 'animate-spin' : ''}`} />
-            {syncingJson ? 'Sincronizzazione...' : 'Carica da GitHub'}
-          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              disabled={syncingJson}
+              onClick={handleSyncJson}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncingJson ? 'animate-spin' : ''}`} />
+              {syncingJson ? 'Sincronizzazione...' : 'Carica da GitHub'}
+            </button>
+          )}
         </div>
 
         {syncMessage && (
@@ -254,10 +259,11 @@ if __name__ == "__main__":
             </label>
             <input
               type="text"
+              disabled={readOnly}
               value={podCode}
               onChange={(e) => setPodCode(e.target.value)}
               maxLength={32}
-              className="w-full px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg focus:outline-none focus:border-sky-500"
+              className="w-full px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg disabled:opacity-70 focus:outline-none focus:border-sky-500"
             />
           </div>
 
@@ -270,23 +276,142 @@ if __name__ == "__main__":
               step="0.01"
               min="0.05"
               max="2.00"
+              disabled={readOnly}
               value={tariff}
               onChange={(e) => setTariff(e.target.value)}
-              className="w-full px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg focus:outline-none focus:border-sky-500"
+              className="w-full px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg disabled:opacity-70 focus:outline-none focus:border-sky-500"
             />
           </div>
         </div>
 
-        <div className="pt-1">
-          <button
-            type="submit"
-            disabled={saving}
-            className="px-4 py-2 text-xs font-medium text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors"
-          >
-            Salva parametri fornitura
-          </button>
-        </div>
+        {!readOnly && (
+          <div className="pt-1 flex flex-wrap items-center gap-3">
+            <button
+              type="submit"
+              disabled={saving}
+              className="px-4 py-2 text-xs font-medium text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors"
+            >
+              Salva parametri fornitura
+            </button>
+            {tariff !== '0.31' && (
+              <button
+                type="button"
+                onClick={() => setTariff('0.31')}
+                className="px-3 py-2 text-xs font-medium text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-lg transition-colors"
+              >
+                Usa media reale bollette (0,31 €/kWh)
+              </button>
+            )}
+          </div>
+        )}
       </form>
+
+      {/* Real Edison Contract & Last 3 Bills */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
+        <div className="flex flex-wrap items-start justify-between gap-4 pb-4 border-b border-slate-800">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-100">
+              Contratto & Ultime Bollette — Edison Dynamic Luce
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Mercato Libero · Monorario F0 indicizzato PUN Index GME · 100% Fonti Rinnovabili · Scadenza condizioni: 07/01/2027
+            </p>
+          </div>
+          <span className="text-xs font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-md">
+            Contatore: 23E4E5KA104198693
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+          <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-3.5 space-y-1">
+            <div className="text-slate-400">Formula Energia (F0)</div>
+            <div className="font-mono font-semibold text-slate-100">
+              PUN × 1,10 + 0,021 + C_DISPD
+            </div>
+            <div className="text-[11px] text-slate-500">
+              Oltre 2.200 kWh/anno: contributo 0,000 €/kWh
+            </div>
+          </div>
+
+          <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-3.5 space-y-1">
+            <div className="text-slate-400">Costi Fissi Luce (IVA incl.)</div>
+            <div className="font-mono font-semibold text-amber-300">
+              24,35 €/mese
+            </div>
+            <div className="text-[11px] text-slate-500">
+              8,35 € comm. + 1,93 € rete + 11,86 € pot. 6 kW (+10% IVA)
+            </div>
+          </div>
+
+          <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-3.5 space-y-1">
+            <div className="text-slate-400">Media Variabile (Apr–Set 2026)</div>
+            <div className="font-mono font-semibold text-sky-400">
+              0,315 €/kWh <span className="text-[11px] font-normal text-slate-400">IVA incl.</span>
+            </div>
+            <div className="text-[11px] text-slate-500">
+              Include energia, rete, oneri ASOS/ARIM e accisa 0,0227
+            </div>
+          </div>
+
+          <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-3.5 space-y-1">
+            <div className="text-slate-400">Spesa Annua Reale (Ott 25–Set 26)</div>
+            <div className="font-mono font-semibold text-emerald-400">
+              922,44 € · 2.332 kWh
+            </div>
+            <div className="text-[11px] text-slate-500">
+              ~0,395 €/kWh tutto incluso (fissi + potenza 6 kW)
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="border-b border-slate-800 text-[11px] text-slate-400">
+                <th className="py-2 pr-3">Periodo</th>
+                <th className="py-2 px-3">Fattura</th>
+                <th className="py-2 px-3 text-right">Consumo</th>
+                <th className="py-2 px-3 text-right">PUN F0</th>
+                <th className="py-2 px-3 text-right">Costo Var. (IVA incl.)</th>
+                <th className="py-2 px-3 text-right">Luce (no TV)</th>
+                <th className="py-2 pl-3 text-right">Totale Pagato</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/70 font-mono tabular-nums">
+              <tr>
+                <td className="py-2.5 pr-3 font-sans font-medium text-slate-200">Apr – Mag 2026</td>
+                <td className="py-2.5 px-3 text-slate-400">6111444860</td>
+                <td className="py-2.5 px-3 text-right text-slate-200">190 kWh</td>
+                <td className="py-2.5 px-3 text-right text-slate-400">0,131 €</td>
+                <td className="py-2.5 px-3 text-right text-emerald-400 font-semibold">0,261 €/kWh</td>
+                <td className="py-2.5 px-3 text-right text-slate-300">65,31 €*</td>
+                <td className="py-2.5 pl-3 text-right text-slate-100 font-semibold">83,31 €</td>
+              </tr>
+              <tr>
+                <td className="py-2.5 pr-3 font-sans font-medium text-slate-200">Giu – Lug 2026</td>
+                <td className="py-2.5 px-3 text-slate-400">6113821093</td>
+                <td className="py-2.5 px-3 text-right text-slate-200">244 kWh</td>
+                <td className="py-2.5 px-3 text-right text-slate-400">0,146 / 0,173 €</td>
+                <td className="py-2.5 px-3 text-right text-sky-400 font-semibold">0,301 €/kWh</td>
+                <td className="py-2.5 px-3 text-right text-slate-300">122,09 €</td>
+                <td className="py-2.5 pl-3 text-right text-slate-100 font-semibold">140,09 €</td>
+              </tr>
+              <tr>
+                <td className="py-2.5 pr-3 font-sans font-medium text-slate-200">Ago – Set 2026</td>
+                <td className="py-2.5 px-3 text-slate-400">6116408117</td>
+                <td className="py-2.5 px-3 text-right text-slate-200">313 kWh</td>
+                <td className="py-2.5 px-3 text-right text-slate-400">0,198 / 0,228 €</td>
+                <td className="py-2.5 px-3 text-right text-amber-300 font-semibold">0,359 €/kWh</td>
+                <td className="py-2.5 px-3 text-right text-slate-300">160,99 €</td>
+                <td className="py-2.5 pl-3 text-right text-slate-100 font-semibold">178,99 €</td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="text-[11px] text-slate-500 mt-2">
+            * La bolletta Apr–Mag 2026 include lo sconto Spendi&Riprendi di -30,00 € (+IVA). Tutte le bollette includono 18,00 € bimestrali di Canone TV.
+          </p>
+        </div>
+      </div>
 
       {/* Step 1: Only 2 GitHub Secrets */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">

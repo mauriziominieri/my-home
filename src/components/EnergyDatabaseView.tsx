@@ -112,6 +112,7 @@ export function EnergyDatabaseView({
     classifica: true,
     accensioni: false,
     dettaglioMensile: false,
+    bollette: false,
   });
 
   function toggleSection(key: keyof typeof openSections) {
@@ -122,7 +123,8 @@ export function EnergyDatabaseView({
     openSections.mappa &&
     openSections.classifica &&
     openSections.accensioni &&
-    openSections.dettaglioMensile;
+    openSections.dettaglioMensile &&
+    openSections.bollette;
 
   // Stato form inline per registrare o modificare accensione NeaSmart sul giorno selezionato
   const [showInlineForm, setShowInlineForm] = useState(false);
@@ -658,12 +660,14 @@ export function EnergyDatabaseView({
                     classifica: true,
                     accensioni: false,
                     dettaglioMensile: false,
+                    bollette: false,
                   }
                 : {
                     mappa: true,
                     classifica: true,
                     accensioni: true,
                     dettaglioMensile: true,
+                    bollette: true,
                   }
             )
           }
@@ -673,25 +677,7 @@ export function EnergyDatabaseView({
         </button>
       </div>
 
-      {readings.length === 0 && !loading && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-wrap items-center justify-between gap-4">
-          <div className="space-y-1 max-w-2xl">
-            <h3 className="text-sm font-semibold text-slate-100">
-              Database pronto per i tuoi consumi reali (POD IT001E11251419 · 6 kW)
-            </h3>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Nessun dato simulato presente. Per popolare automaticamente il database con i tuoi veri kWh da e-distribuzione senza caricarli a mano, attiva lo script Python schedulato nella scheda <strong className="text-slate-200">Integrazione GitHub</strong> (oppure importa il CSV esportato dal portale e-distribuzione).
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => onNavigate('integrazione')}
-            className="px-4 py-2 text-xs font-medium text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap"
-          >
-            Configura Sync Automatico
-          </button>
-        </div>
-      )}
+
 
       {/* Annual 12 Months x 31 Days Matrix */}
       <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
@@ -1889,6 +1875,8 @@ export function EnergyDatabaseView({
         </>
         )}
       </section>
+
+
 
       {pendingDeleteLog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">

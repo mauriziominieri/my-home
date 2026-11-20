@@ -18,11 +18,11 @@ import {
 } from 'firebase/firestore';
 import {
   Database,
-  Globe,
   Home,
   LayoutDashboard,
   LogOut,
   Menu,
+  Receipt,
   Thermometer,
   X,
 } from 'lucide-react';
@@ -47,13 +47,13 @@ import { ParsedReadingInput } from './utils/edistribuzioneCsv';
 import { OverviewView } from './components/OverviewView';
 import { DomoticsView } from './components/DomoticsView';
 import { EnergyDatabaseView } from './components/EnergyDatabaseView';
-import { IntegrationView } from './components/IntegrationView';
+import { BillsView } from './components/BillsView';
 
 const NAV_ITEMS: { id: NavSection; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'panoramica', label: 'Panoramica', icon: LayoutDashboard },
   { id: 'consumi', label: 'Consumi Annuali', icon: Database },
   { id: 'domotica', label: 'Clima & Domotica', icon: Thermometer },
-  { id: 'integrazione', label: 'Integrazione GitHub', icon: Globe },
+  { id: 'bollette', label: 'Bollette', icon: Receipt },
 ];
 
 const CURRENT_YEAR = new Date().getFullYear();
@@ -123,6 +123,46 @@ export default function App() {
         setReadingsLoading(false);
       },
       (error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource-exhausted')) {
+          console.warn('Firestore quota exceeded for energyReadings; falling back to data/consumi.json.');
+          void (async () => {
+            for (const url of [
+              './data/consumi.json',
+              'https://raw.githubusercontent.com/mauriziominieri/my-home/main/data/consumi.json',
+            ]) {
+              try {
+                const res = await fetch(url, { cache: 'no-store' });
+                if (!res.ok) continue;
+                const json = await res.json();
+                const items = Array.isArray(json?.readings) ? json.readings : [];
+                if (items.length > 0) {
+                  setReadings(
+                    items.map((item: Partial<EnergyReading>) => ({
+                      id: String(item.date || ''),
+                      ownerId: activeUid,
+                      date: String(item.date || ''),
+                      f1Kwh: Number(item.f1Kwh || 0),
+                      f2Kwh: Number(item.f2Kwh || 0),
+                      f3Kwh: Number(item.f3Kwh || 0),
+                      totalKwh: Number(item.totalKwh || 0),
+                      peakKw: Number(item.peakKw || 0),
+                      estimatedCostEur: Number(
+                        (Number(item.totalKwh || 0) * DEFAULT_HOME_CONFIG.tariffEurPerKwh).toFixed(2)
+                      ),
+                      source: 'e-distribuzione-api' as ReadingSource,
+                    }))
+                  );
+                  break;
+                }
+              } catch {
+                // try next url
+              }
+            }
+            setReadingsLoading(false);
+          })();
+          return;
+        }
         handleFirestoreError(error, OperationType.LIST, readingsPath);
       }
     );
@@ -153,6 +193,12 @@ export default function App() {
         }
       },
       (error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource-exhausted')) {
+          console.warn('Firestore quota exceeded for homeConfig; using defaults.');
+          setHomeConfig({ ownerId: activeUid, ...DEFAULT_HOME_CONFIG });
+          return;
+        }
         handleFirestoreError(error, OperationType.GET, configPath);
       }
     );
@@ -182,6 +228,11 @@ export default function App() {
         setClimateLogs(list);
       },
       (error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource-exhausted')) {
+          console.warn('Firestore quota exceeded for climateLogs.');
+          return;
+        }
         handleFirestoreError(error, OperationType.LIST, climatePath);
       }
     );
@@ -192,18 +243,6 @@ export default function App() {
       unsubClimate();
     };
   }, [authReady, activeUid]);
-
-  // Auto-load data/consumi.json directly from GitHub repo when user logs in
-  useEffect(() => {
-    if (!authReady || !user) return;
-    void handleSyncFromGithubJson(
-      'https://raw.githubusercontent.com/mauriziominieri/my-home/main/data/consumi.json'
-    ).catch(() => {
-      // Fallback to local ./data/consumi.json if raw fetch fails
-      void handleSyncFromGithubJson('./data/consumi.json').catch(() => {});
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authReady, user]);
 
   async function handleImportCsv(items: ParsedReadingInput[]) {
     if (!user || items.length === 0) return;
@@ -606,6 +645,7 @@ export default function App() {
               config={homeConfig}
               readings={readings}
               climateLogs={climateLogs}
+              readOnly={!canEdit}
               onUpdateConfig={handleUpdateConfig}
               onAddClimateLog={handleAddClimateLog}
               onUpdateClimateLog={handleUpdateClimateLog}
@@ -613,12 +653,10 @@ export default function App() {
             />
           )}
 
-          {activeNav === 'integrazione' && (
-            <IntegrationView
-              config={homeConfig}
-              syncIntervalHours={syncIntervalHours}
-              onUpdateConfig={handleUpdateConfig}
-              onSyncFromGithubJson={handleSyncFromGithubJson}
+          {activeNav === 'bollette' && (
+            <BillsView
+              readings={readings}
+              readOnly={!canEdit}
             />
           )}
         </main>

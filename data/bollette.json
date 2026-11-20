@@ -1,0 +1,82 @@
+{
+  "pod": "IT001E11251419",
+  "updatedAt": "2026-11-20T11:00:00Z",
+  "bills": [
+    {
+      "invoiceNumber": "6106606060",
+      "issueDate": "16/02/2026",
+      "sortKey": "2026-01",
+      "year": 2026,
+      "period": "Dic 25 – Gen 26",
+      "supplier": "Edison Energia",
+      "offerName": "EDISON DYNAMIC LUCE",
+      "kwh": 754,
+      "punText": "0,127 / 0,146 €",
+      "variableCostPerKwh": 0.272,
+      "canoneTv": 18.0,
+      "electricityOnly": 255.32,
+      "totalPaid": 273.32
+    },
+    {
+      "invoiceNumber": "6109009993",
+      "issueDate": "14/04/2026",
+      "sortKey": "2026-03",
+      "year": 2026,
+      "period": "Feb – Mar 2026",
+      "supplier": "Edison Energia",
+      "offerName": "EDISON DYNAMIC LUCE",
+      "kwh": 426,
+      "punText": "0,126 / 0,158 €",
+      "variableCostPerKwh": 0.274,
+      "canoneTv": 18.0,
+      "electricityOnly": 164.76,
+      "totalPaid": 182.76
+    },
+    {
+      "invoiceNumber": "6111444860",
+      "issueDate": "11/06/2026",
+      "sortKey": "2026-05",
+      "year": 2026,
+      "period": "Apr – Mag 2026",
+      "supplier": "Edison Energia",
+      "offerName": "EDISON DYNAMIC LUCE",
+      "kwh": 190,
+      "punText": "0,131 €",
+      "variableCostPerKwh": 0.261,
+      "canoneTv": 18.0,
+      "electricityOnly": 65.31,
+      "totalPaid": 83.31,
+      "note": "Include sconto Spendi&Riprendi -30,00 € (+IVA)"
+    },
+    {
+      "invoiceNumber": "6113821093",
+      "issueDate": "11/08/2026",
+      "sortKey": "2026-07",
+      "year": 2026,
+      "period": "Giu – Lug 2026",
+      "supplier": "Edison Energia",
+      "offerName": "EDISON DYNAMIC LUCE",
+      "kwh": 244,
+      "punText": "0,146 / 0,173 €",
+      "variableCostPerKwh": 0.301,
+      "canoneTv": 18.0,
+      "electricityOnly": 122.09,
+      "totalPaid": 140.09
+    },
+    {
+      "invoiceNumber": "6116408117",
+      "issueDate": "13/10/2026",
+      "sortKey": "2026-09",
+      "year": 2026,
+      "period": "Ago – Set 2026",
+      "supplier": "Edison Energia",
+      "offerName": "EDISON DYNAMIC LUCE",
+      "kwh": 313,
+      "punText": "0,198 / 0,228 €",
+      "variableCostPerKwh": 0.359,
+      "canoneTv": 18.0,
+      "electricityOnly": 160.99,
+      "totalPaid": 178.99
+    }
+  ]
+}

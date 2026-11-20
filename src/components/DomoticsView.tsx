@@ -29,6 +29,7 @@ interface DomoticsViewProps {
   config: HomeSystemConfig;
   readings: EnergyReading[];
   climateLogs: ClimateSession[];
+  readOnly?: boolean;
   onUpdateConfig: (patch: Partial<HomeSystemConfig>) => Promise<void>;
   onAddClimateLog: (
     session: Omit<ClimateSession, 'id' | 'ownerId'>
@@ -73,6 +74,7 @@ export function DomoticsView({
   config,
   readings,
   climateLogs,
+  readOnly = false,
   onUpdateConfig,
   onAddClimateLog,
   onUpdateClimateLog,
@@ -275,6 +277,7 @@ export function DomoticsView({
           </div>
         </div>
 
+        {!readOnly && (
         <form onSubmit={handleSaveSession} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="space-y-1">
@@ -397,6 +400,7 @@ export function DomoticsView({
             </button>
           </div>
         </form>
+        )}
 
         {/* Sessions Table correlated with real e-distribuzione kWh */}
         <div className="pt-4 border-t border-slate-800 overflow-x-auto">
@@ -409,7 +413,7 @@ export function DomoticsView({
                 <th className="py-2 px-3 text-right">Temp.</th>
                 <th className="py-2 px-3">Stanze</th>
                 <th className="py-2 px-3 text-right">Consumo Reale</th>
-                <th className="py-2 px-3 text-right">Azioni</th>
+                {!readOnly && <th className="py-2 px-3 text-right">Azioni</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/70 text-xs">
@@ -580,6 +584,7 @@ export function DomoticsView({
                           <span className="text-slate-500">—</span>
                         )}
                       </td>
+                      {!readOnly && (
                       <td className="py-2.5 px-3 text-right whitespace-nowrap">
                         <div className="inline-flex items-center gap-1">
                           <button
@@ -602,6 +607,7 @@ export function DomoticsView({
                           </button>
                         </div>
                       </td>
+                      )}
                     </tr>
                   );
                 })
@@ -611,7 +617,7 @@ export function DomoticsView({
         </div>
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className={`grid grid-cols-1 lg:grid-cols-2 gap-6 ${readOnly ? 'pointer-events-none opacity-85' : ''}`}>
         {/* Ariston Heat Pump Panel */}
         <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
           <div className="flex items-start justify-between gap-4 pb-4 border-b border-slate-800">

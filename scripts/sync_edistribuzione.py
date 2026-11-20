@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 
 POD_CODE = os.environ.get("POD_CODE", "IT001E11251419")
 OUTPUT_FILE = Path("data/consumi.json")
+BILLS_OUTPUT_FILE = Path("data/bollette.json")
 
 
 def parse_it_float(raw: Optional[str]) -> float:
@@ -182,9 +183,8 @@ def extract_csvs_from_gmail() -> tuple[List[Dict[str, Any]], List[bytes], Option
         '(OR FROM "notifichemailped@enel.com" SUBJECT "Dettaglio curve di carico")',
     )
     if status != "OK" or not data or not data[0]:
-        mail.logout()
         print("Nessuna email 'Dettaglio curve di carico' trovata nella INBOX.")
-        return [], [], None
+        return [], [], mail
 
     msg_ids = data[0].split()[-15:]
     print(f"Trovate {len(msg_ids)} email di e-distribuzione / Enel.")
@@ -244,11 +244,139 @@ def delete_processed_emails(mail: Optional[imaplib.IMAP4_SSL], msg_ids: List[byt
             pass
 
 
+def parse_edison_pdf_bytes(pdf_bytes: bytes) -> Optional[Dict[str, Any]]:
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        print("Modulo pypdf non installato: salto estrazione bollette PDF.")
+        return None
+
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    text = "\n".join((page.extract_text() or "") for page in reader.pages[:2])
+    if not text.strip():
+        return None
+
+    inv_m = re.search(r"Bolletta\s+n\.?\s*(\d+)\s+del\s+(\d{2}/\d{2}/\d{4})", text, re.IGNORECASE)
+    if not inv_m:
+        inv_m = re.search(r"Fattura\s+N°?\s*(\d+)\s+del\s+(\d{2}/\d{2}/\d{4})", text, re.IGNORECASE)
+    if not inv_m:
+        return None
+
+    invoice_number = inv_m.group(1)
+    issue_date = inv_m.group(2)
+
+    period_m = re.search(r"Periodo\s+([A-Z]{3}\s+\d{4}\s*-\s*[A-Z]{3}\s+\d{4})", text, re.IGNORECASE)
+    raw_period = period_m.group(1).strip() if period_m else issue_date
+
+    # Calcola anno e sortKey dal periodo o dalla data di emissione
+    month_map = {
+        "GEN": "01", "FEB": "02", "MAR": "03", "APR": "04",
+        "MAG": "05", "GIU": "06", "LUG": "07", "AGO": "08",
+        "SET": "09", "OTT": "10", "NOV": "11", "DIC": "12",
+    }
+    end_m = re.search(r"-\s*([A-Z]{3})\s+(\d{4})", raw_period, re.IGNORECASE)
+    if end_m:
+        year = int(end_m.group(2))
+        mm = month_map.get(end_m.group(1).upper(), "01")
+        sort_key = f"{year}-{mm}"
+    else:
+        parts = issue_date.split("/")
+        year = int(parts[2])
+        sort_key = f"{parts[2]}-{parts[1]}"
+
+    # Consumo kWh
+    kwh_m = re.search(r"(\d+(?:\.\d+)?)\s*kWh\s+0,\d+\s*€/kWh", text)
+    if not kwh_m:
+        kwh_m = re.search(r"TOTALI\s+(\d+(?:\.\d+)?)\s*kWh", text, re.IGNORECASE)
+    kwh = int(round(parse_it_float(kwh_m.group(1).replace(".", "")))) if kwh_m else 0
+
+    # Prezzo medio quota consumi (senza accisa e IVA)
+    var_m = re.search(r"\d+\s*kWh\s+(0,\d+)\s*€/kWh", text)
+    var_net = parse_it_float(var_m.group(1)) if var_m else 0.0
+    variable_cost_incl_vat = round((var_net + 0.0227) * 1.10, 3) if var_net > 0 else 0.0
+
+    # Totale da pagare e Canone TV
+    tot_m = re.search(r"TOTALE\s+DA\s+PAGARE\s+([\d.,]+)\s*€", text, re.IGNORECASE)
+    total_paid = round(parse_it_float(tot_m.group(1).replace(".", "")), 2) if tot_m else 0.0
+
+    tv_m = re.search(r"Canone\s+di\s+abbonamento\s+alla\s+televisione[^\n]*?([\d.,]+)\s*€", text, re.IGNORECASE)
+    canone_tv = round(parse_it_float(tv_m.group(1).replace(".", "")), 2) if tv_m else 0.0
+
+    elec_m = re.search(r"TOTALE\s+BOLLETTA\s+([\d.,]+)\s*€", text, re.IGNORECASE)
+    electricity_only = (
+        round(parse_it_float(elec_m.group(1).replace(".", "")), 2)
+        if elec_m
+        else round(max(0.0, total_paid - canone_tv), 2)
+    )
+
+    # PUN mensili
+    puns = re.findall(r"\d{2}/\d{4}\s+(0,\d{4,6})", text)
+    pun_vals = [f"{parse_it_float(p):.3f}".replace(".", ",") for p in puns[:2]]
+    pun_text = f"{' / '.join(pun_vals)} €" if pun_vals else "—"
+
+    offer_m = re.search(r"Nome\s+Offerta:\s*([^\n]+)", text, re.IGNORECASE)
+    offer_name = offer_m.group(1).strip() if offer_m else "EDISON DYNAMIC LUCE"
+
+    return {
+        "invoiceNumber": invoice_number,
+        "issueDate": issue_date,
+        "sortKey": sort_key,
+        "year": year,
+        "period": raw_period.title().replace(" - ", " – "),
+        "supplier": "Edison Energia",
+        "offerName": offer_name,
+        "kwh": kwh,
+        "punText": pun_text,
+        "variableCostPerKwh": variable_cost_incl_vat,
+        "canoneTv": canone_tv,
+        "electricityOnly": electricity_only,
+        "totalPaid": total_paid,
+    }
+
+
+def extract_edison_bills_from_gmail(mail: Optional[imaplib.IMAP4_SSL]) -> List[Dict[str, Any]]:
+    if not mail:
+        return []
+    bills: List[Dict[str, Any]] = []
+    status, data = mail.search(
+        None,
+        '(OR FROM "fatturazione@edisonenergia.it" SUBJECT "Fattura Edison Energia")',
+    )
+    if status != "OK" or not data or not data[0]:
+        print("Nessuna bolletta Edison trovata nella INBOX.")
+        return []
+
+    msg_ids = data[0].split()[-12:]
+    print(f"Trovate {len(msg_ids)} email di fatturazione Edison Energia.")
+    for msg_id in msg_ids:
+        _, msg_data = mail.fetch(msg_id, "(RFC822)")
+        if not msg_data or not isinstance(msg_data[0], tuple):
+            continue
+        msg = email.message_from_bytes(msg_data[0][1])
+        for part in msg.walk():
+            filename = (part.get_filename() or "").lower()
+            if not filename.endswith(".pdf"):
+                continue
+            payload = part.get_payload(decode=True)
+            if not payload:
+                continue
+            print(f"Elaborazione bolletta PDF Edison: {filename}")
+            parsed = parse_edison_pdf_bytes(payload)
+            if parsed:
+                bills.append(parsed)
+    return bills
+
+
 def main() -> None:
-    print(f"Controllo Gmail per 'Dettaglio curve di carico' (POD {POD_CODE})...")
+    print(f"Controllo Gmail per 'Dettaglio curve di carico' e bollette Edison (POD {POD_CODE})...")
     new_readings, processed_msg_ids, mail = extract_csvs_from_gmail()
+    new_bills: List[Dict[str, Any]] = []
 
     try:
+        # 1. Estrai eventuali nuove bollette PDF Edison (senza eliminare le email delle fatture)
+        new_bills = extract_edison_bills_from_gmail(mail)
+
+        # 2. Aggiorna data/consumi.json
         existing_by_date: Dict[str, Dict[str, Any]] = {}
         if OUTPUT_FILE.exists():
             try:
@@ -271,9 +399,31 @@ def main() -> None:
             "readings": merged,
         }
         OUTPUT_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        print(f"Completato: {len(new_readings)} giorni estratti da Gmail, {len(merged)} giorni totali salvati.")
+        print(f"Completato consumi: {len(new_readings)} giorni estratti, {len(merged)} giorni totali salvati.")
 
-        # Elimina le email solo dopo aver salvato correttamente data/consumi.json
+        # 3. Aggiorna data/bollette.json
+        if new_bills or not BILLS_OUTPUT_FILE.exists():
+            existing_bills: Dict[str, Dict[str, Any]] = {}
+            if BILLS_OUTPUT_FILE.exists():
+                try:
+                    old_bills = json.loads(BILLS_OUTPUT_FILE.read_text(encoding="utf-8"))
+                    for b in old_bills.get("bills", []):
+                        if "invoiceNumber" in b:
+                            existing_bills[str(b["invoiceNumber"])] = b
+                except Exception:
+                    pass
+            for b in new_bills:
+                existing_bills[str(b["invoiceNumber"])] = b
+            merged_bills = sorted(existing_bills.values(), key=lambda x: x.get("sortKey", ""))
+            bills_payload = {
+                "pod": POD_CODE,
+                "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "bills": merged_bills,
+            }
+            BILLS_OUTPUT_FILE.write_text(json.dumps(bills_payload, indent=2), encoding="utf-8")
+            print(f"Completato bollette: {len(new_bills)} PDF analizzati, {len(merged_bills)} bollette totali salvate.")
+
+        # 4. Elimina solo le email dei CSV e-distribuzione dopo il salvataggio
         delete_processed_emails(mail, processed_msg_ids)
     except Exception:
         if mail:

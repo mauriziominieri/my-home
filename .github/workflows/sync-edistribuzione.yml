@@ -20,17 +20,27 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Estrai CSV e-distribuzione da Gmail
+      - name: Installa dipendenze PDF
+        run: pip install --quiet pypdf
+
+      - name: Estrai CSV e-distribuzione e Bollette Edison da Gmail
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           POD_CODE: "IT001E11251419"
         run: python scripts/sync_edistribuzione.py
 
-      - name: Salva data/consumi.json nel repository
+      - name: Controlla tariffa Octopus Energy (avviso email se < 0,1595 €/kWh)
+        continue-on-error: true
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python scripts/check_octopus_tariff.py
+
+      - name: Salva dati aggiornati nel repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/consumi.json
-          git diff --staged --quiet || git commit -m "Aggiornamento automatico consumi da Gmail e-distribuzione"
+          git add data/consumi.json data/bollette.json data/octopus_tariff.json
+          git diff --staged --quiet || git commit -m "Aggiornamento automatico consumi, bollette e controllo tariffa Octopus"
           git push

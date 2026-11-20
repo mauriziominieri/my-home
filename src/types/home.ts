@@ -4,7 +4,55 @@ export type NeaSmartFanSpeed = 'auto' | 'bassa' | 'media' | 'alta';
 export type ReadingSource = 'e-distribuzione-csv' | 'e-distribuzione-api' | 'manuale';
 export type ClimateMode = 'riscaldamento' | 'raffrescamento';
 
-export type NavSection = 'panoramica' | 'domotica' | 'consumi' | 'integrazione';
+export type NavSection = 'panoramica' | 'domotica' | 'consumi' | 'bollette';
+
+export interface BillRecord {
+  invoiceNumber: string;
+  issueDate: string;
+  sortKey: string;
+  year: number;
+  period: string;
+  supplier: string;
+  offerName: string;
+  kwh: number;
+  punText: string;
+  variableCostPerKwh: number;
+  canoneTv: number;
+  electricityOnly: number;
+  totalPaid: number;
+  note?: string;
+}
+
+export interface WaterBillRecord {
+  id: string;
+  invoiceNumber: string;
+  issueDate: string;
+  year: number;
+  period: string;
+  cubicMeters: number;
+  fixedCostEur: number;
+  totalPaid: number;
+  note?: string;
+}
+
+export interface EnergyOffer {
+  id: string;
+  supplier: string;
+  offerName: string;
+  yearLabel: string;
+  status: 'attuale' | 'prossima' | 'passata';
+  pricingType: 'indicizzata' | 'fissa';
+  /** Se fissa: prezzo materia energia €/kWh. Se indicizzata: spread sopra il PUN (€/kWh). */
+  energyRateOrSpread: number;
+  /** Quota fissa commercializzazione fornitore (PCV) €/mese IVA inclusa */
+  commercializationEurMonth: number;
+  /** Altri fissi (trasporto, contatore 6 kW, IVA) €/mese - fissati da ARERA */
+  networkFixedEurMonth: number;
+  /** Sconto / bonus una tantum anno (€) */
+  annualBonusEur: number;
+  billingFrequency: 'Mensile' | 'Bimestrale';
+  notes: string;
+}
 
 export type RoomId =
   | 'salone'
@@ -76,6 +124,6 @@ export const DEFAULT_HOME_CONFIG: Omit<HomeSystemConfig, 'ownerId'> = {
   neasmartTargetHumidity: 50,
   neasmartFanSpeed: 'auto',
   dewPointProtection: true,
-  tariffEurPerKwh: 0.24,
+  tariffEurPerKwh: 0.31,
   podCode: 'IT001E11251419',
 };

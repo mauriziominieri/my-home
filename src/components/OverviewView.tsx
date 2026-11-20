@@ -187,15 +187,8 @@ export function OverviewView({
                   Nessun dato reale ancora presente per il {selectedYear}
                 </p>
                 <p className="text-xs text-slate-400 mt-1 max-w-sm">
-                  Configura il workflow GitHub Actions con le tue credenziali e-distribuzione per scaricare automaticamente i kWh reali del POD {config.podCode}.
+                  I consumi reali del POD {config.podCode} vengono sincronizzati automaticamente da e-distribuzione.
                 </p>
-                <button
-                  type="button"
-                  onClick={() => onNavigate('integrazione')}
-                  className="mt-4 inline-flex items-center gap-2 px-4 py-2 text-xs font-medium text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors"
-                >
-                  Configura Sync e-distribuzione
-                </button>
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
