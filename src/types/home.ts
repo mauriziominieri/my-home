@@ -2,8 +2,38 @@ export type AristonMode = 'riscaldamento' | 'raffrescamento' | 'acs_solo' | 'spe
 export type AristonProfile = 'eco' | 'comfort' | 'boost';
 export type NeaSmartFanSpeed = 'auto' | 'bassa' | 'media' | 'alta';
 export type ReadingSource = 'e-distribuzione-csv' | 'e-distribuzione-api' | 'manuale';
+export type ClimateMode = 'riscaldamento' | 'raffrescamento';
 
 export type NavSection = 'panoramica' | 'domotica' | 'consumi' | 'integrazione';
+
+export type RoomId =
+  | 'salone'
+  | 'roberta'
+  | 'bagno1'
+  | 'matrimoniale'
+  | 'bagno2'
+  | 'maurizio';
+
+export const HOME_ROOMS: { id: RoomId; label: string }[] = [
+  { id: 'salone', label: 'Salone' },
+  { id: 'roberta', label: 'Roberta' },
+  { id: 'bagno1', label: 'Bagno 1' },
+  { id: 'matrimoniale', label: 'Matrimoniale' },
+  { id: 'bagno2', label: 'Bagno 2' },
+  { id: 'maurizio', label: 'Maurizio' },
+];
+
+export interface ClimateSession {
+  id: string;
+  ownerId: string;
+  date: string; // YYYY-MM-DD
+  mode: ClimateMode;
+  startTime: string; // e.g. "09:00"
+  endTime: string; // e.g. "20:00"
+  targetTemp: number; // °C
+  rooms: RoomId[];
+  notes?: string;
+}
 
 export interface EnergyReading {
   id: string;

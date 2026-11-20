@@ -146,6 +146,23 @@
         "podCode",
         "updatedAt"
       ]
+    },
+    "ClimateSession": {
+      "title": "ClimateSession",
+      "description": "Sessione di accensione riscaldamento o raffrescamento NeaSmart per data, fascia oraria, temperatura e stanze.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 20, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "mode": { "type": "string", "enum": ["riscaldamento", "raffrescamento"], "maxLength": 24 },
+        "startTime": { "type": "string", "maxLength": 10 },
+        "endTime": { "type": "string", "maxLength": 10 },
+        "targetTemp": { "type": "number" },
+        "rooms": { "type": "array" },
+        "notes": { "type": "string", "maxLength": 240 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "date", "mode", "startTime", "endTime", "targetTemp", "rooms", "createdAt"]
     }
   },
   "firestore": {
@@ -156,6 +173,10 @@
     "/users/{userId}/homeConfig/{configId}": {
       "schema": { "$ref": "#/entities/HomeSystemConfig" },
       "description": "Configurazione e stato in tempo reale dei sistemi Ariston e NeaSmart"
+    },
+    "/users/{userId}/climateLogs/{logId}": {
+      "schema": { "$ref": "#/entities/ClimateSession" },
+      "description": "Registro accensioni riscaldamento e raffrescamento NeaSmart per stanza e fascia oraria"
     }
   }
 }

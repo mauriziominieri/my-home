@@ -7,6 +7,7 @@ import {
 } from 'firebase/auth';
 import {
   collection,
+  deleteDoc,
   doc,
   onSnapshot,
   query,
@@ -33,11 +34,14 @@ import {
   OperationType,
 } from './firebase';
 import {
+  ClimateMode,
+  ClimateSession,
   DEFAULT_HOME_CONFIG,
   EnergyReading,
   HomeSystemConfig,
   NavSection,
   ReadingSource,
+  RoomId,
 } from './types/home';
 import { ParsedReadingInput } from './utils/edistribuzioneCsv';
 import { OverviewView } from './components/OverviewView';
@@ -66,6 +70,7 @@ export default function App() {
   const [syncIntervalHours, setSyncIntervalHours] = useState<number>(6);
 
   const [readings, setReadings] = useState<EnergyReading[]>([]);
+  const [climateLogs, setClimateLogs] = useState<ClimateSession[]>([]);
   const [readingsLoading, setReadingsLoading] = useState(true);
   const [homeConfig, setHomeConfig] = useState<HomeSystemConfig>({
     ownerId: '',
@@ -152,9 +157,39 @@ export default function App() {
       }
     );
 
+    const climatePath = `users/${user.uid}/climateLogs`;
+    const climateQuery = query(
+      collection(db, climatePath),
+      where('ownerId', '==', user.uid)
+    );
+    const unsubClimate = onSnapshot(
+      climateQuery,
+      (snap) => {
+        const list: ClimateSession[] = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            ownerId: String(data.ownerId || user.uid),
+            date: String(data.date || ''),
+            mode: (data.mode as ClimateMode) || 'riscaldamento',
+            startTime: String(data.startTime || '09:00'),
+            endTime: String(data.endTime || '20:00'),
+            targetTemp: Number(data.targetTemp || 21),
+            rooms: Array.isArray(data.rooms) ? (data.rooms as RoomId[]) : [],
+            notes: data.notes ? String(data.notes) : undefined,
+          };
+        });
+        setClimateLogs(list);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, climatePath);
+      }
+    );
+
     return () => {
       unsubReadings();
       unsubConfig();
+      unsubClimate();
     };
   }, [authReady, user]);
 
@@ -280,6 +315,65 @@ export default function App() {
     }
   }
 
+  async function handleAddClimateLog(
+    session: Omit<ClimateSession, 'id' | 'ownerId'>
+  ) {
+    if (!user) return;
+    const basePath = `users/${user.uid}/climateLogs`;
+    const docId = `log_${session.date.replace(/-/g, '')}_${Date.now()}`;
+    const payload: Record<string, unknown> = {
+      ownerId: user.uid,
+      date: session.date,
+      mode: session.mode,
+      startTime: session.startTime,
+      endTime: session.endTime,
+      targetTemp: session.targetTemp,
+      rooms: session.rooms,
+      createdAt: serverTimestamp(),
+    };
+    if (session.notes) {
+      payload.notes = session.notes.slice(0, 240);
+    }
+    try {
+      await setDoc(doc(db, basePath, docId), payload);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
+    }
+  }
+
+  async function handleUpdateClimateLog(
+    id: string,
+    session: Omit<ClimateSession, 'id' | 'ownerId'>
+  ) {
+    if (!user) return;
+    const path = `users/${user.uid}/climateLogs/${id}`;
+    const payload: Record<string, unknown> = {
+      ownerId: user.uid,
+      date: session.date,
+      mode: session.mode,
+      startTime: session.startTime,
+      endTime: session.endTime,
+      targetTemp: session.targetTemp,
+      rooms: session.rooms,
+      notes: session.notes ? session.notes.slice(0, 240) : '',
+    };
+    try {
+      await setDoc(doc(db, path), payload, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    }
+  }
+
+  async function handleDeleteClimateLog(id: string) {
+    if (!user) return;
+    const path = `users/${user.uid}/climateLogs/${id}`;
+    try {
+      await deleteDoc(doc(db, path));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    }
+  }
+
   async function handleUpdateConfig(patch: Partial<HomeSystemConfig>) {
     if (!user) return;
     const configPath = `users/${user.uid}/homeConfig/main`;
@@ -351,20 +445,22 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex">
-      {/* Desktop Sidebar */}
-      <aside className="hidden md:flex md:w-64 md:flex-col md:fixed md:inset-y-0 bg-slate-900 border-r border-slate-800">
-        <div className="h-14 px-5 flex items-center border-b border-slate-800">
+      {/* Desktop Sidebar (chiusa di default, si apre al passaggio del mouse) */}
+      <aside className="group hidden md:flex md:w-14 hover:md:w-60 md:flex-col md:fixed md:inset-y-0 left-0 z-40 bg-slate-900/95 backdrop-blur-sm border-r border-slate-800 transition-all duration-200 overflow-hidden hover:shadow-2xl hover:shadow-black/60">
+        <div className="h-14 px-3.5 flex items-center border-b border-slate-800">
           <button
             type="button"
             onClick={() => setActiveNav('panoramica')}
-            className="inline-flex items-center gap-2 text-slate-100 font-bold tracking-tight text-base whitespace-nowrap"
+            className="inline-flex items-center gap-3 text-slate-100 font-bold tracking-tight text-base whitespace-nowrap"
           >
-            <Home className="w-4 h-4 text-sky-400" />
-            <span>my-home</span>
+            <Home className="w-5 h-5 text-sky-400 shrink-0" />
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+              my-home
+            </span>
           </button>
         </div>
 
-        <nav className="flex-1 p-3 space-y-1">
+        <nav className="flex-1 p-2 space-y-1">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const active = activeNav === item.id;
@@ -372,22 +468,25 @@ export default function App() {
               <button
                 key={item.id}
                 type="button"
+                title={item.label}
                 onClick={() => setActiveNav(item.id)}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+                className={`w-full flex items-center gap-3 px-2.5 py-2.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
                   active
                     ? 'bg-sky-500 text-slate-950'
                     : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
                 }`}
               >
                 <Icon className="w-4 h-4 shrink-0" />
-                <span>{item.label}</span>
+                <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                  {item.label}
+                </span>
               </button>
             );
           })}
         </nav>
 
-        <div className="p-4 border-t border-slate-800 flex items-center justify-between gap-2">
-          <div className="min-w-0">
+        <div className="p-2.5 border-t border-slate-800 flex items-center justify-between gap-2">
+          <div className="min-w-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pl-1">
             <div className="text-xs font-medium text-slate-100 truncate">
               {user.displayName || 'Proprietario'}
             </div>
@@ -399,7 +498,8 @@ export default function App() {
             type="button"
             onClick={() => signOut(auth)}
             aria-label="Esci"
-            className="p-1.5 text-slate-400 hover:text-slate-100 rounded-lg transition-colors"
+            title="Esci"
+            className="p-2 text-slate-400 hover:text-slate-100 rounded-lg transition-colors shrink-0"
           >
             <LogOut className="w-4 h-4" />
           </button>
@@ -453,7 +553,7 @@ export default function App() {
       )}
 
       {/* Main Content */}
-      <div className="flex-1 md:pl-64 flex flex-col min-w-0">
+      <div className="flex-1 md:pl-14 flex flex-col min-w-0">
         <header className="h-14 bg-slate-900/90 backdrop-blur-xs border-b border-slate-800 px-4 sm:px-6 flex items-center justify-between gap-4 sticky top-0 z-30">
           <div className="flex items-center gap-3 min-w-0">
             <button
@@ -480,7 +580,7 @@ export default function App() {
           </div>
         </header>
 
-        <main className="flex-1 p-4 sm:p-6 max-w-6xl w-full mx-auto">
+        <main className="flex-1 px-3 sm:px-5 py-4 sm:py-5 max-w-[1800px] w-full mx-auto">
           {activeNav === 'panoramica' && (
             <OverviewView
               config={homeConfig}
@@ -496,14 +596,14 @@ export default function App() {
           {activeNav === 'consumi' && (
             <EnergyDatabaseView
               readings={readings}
+              climateLogs={climateLogs}
               selectedYear={selectedYear}
               onSelectYear={setSelectedYear}
               availableYears={AVAILABLE_YEARS}
               loading={readingsLoading}
-              syncIntervalHours={syncIntervalHours}
-              onChangeSyncInterval={setSyncIntervalHours}
-              onImportCsv={handleImportCsv}
-              onClearAllReadings={handleClearAllReadings}
+              onAddClimateLog={handleAddClimateLog}
+              onUpdateClimateLog={handleUpdateClimateLog}
+              onDeleteClimateLog={handleDeleteClimateLog}
               onNavigate={setActiveNav}
             />
           )}
@@ -511,7 +611,12 @@ export default function App() {
           {activeNav === 'domotica' && (
             <DomoticsView
               config={homeConfig}
+              readings={readings}
+              climateLogs={climateLogs}
               onUpdateConfig={handleUpdateConfig}
+              onAddClimateLog={handleAddClimateLog}
+              onUpdateClimateLog={handleUpdateClimateLog}
+              onDeleteClimateLog={handleDeleteClimateLog}
             />
           )}
 
