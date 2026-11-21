@@ -4,7 +4,13 @@ export type NeaSmartFanSpeed = 'auto' | 'bassa' | 'media' | 'alta';
 export type ReadingSource = 'e-distribuzione-csv' | 'e-distribuzione-api' | 'manuale';
 export type ClimateMode = 'riscaldamento' | 'raffrescamento';
 
-export type NavSection = 'panoramica' | 'domotica' | 'consumi' | 'bollette' | 'info';
+export type NavSection =
+  | 'panoramica'
+  | 'domotica'
+  | 'consumi'
+  | 'bollette'
+  | 'articoli'
+  | 'info';
 
 export interface BillRecord {
   invoiceNumber: string;
@@ -33,6 +39,67 @@ export interface WaterBillRecord {
   fixedCostEur: number;
   totalPaid: number;
   note?: string;
+}
+
+export interface TariBillRecord {
+  id: string;
+  noticeNumber: string;
+  issueDate: string;
+  dueDate: string;
+  year: number;
+  period: string;
+  supplier: string;
+  totalPaid: number;
+  paid: boolean;
+  source: 'gmail-pdf' | 'manuale';
+  note?: string;
+}
+
+export type GsePaymentType = 'acconto' | 'conguaglio' | 'altro';
+
+export interface GsePaymentRecord {
+  id: string;
+  paymentDate: string;
+  year: number;
+  paymentType: GsePaymentType;
+  period: string;
+  amountEur: number;
+  kwhInjected?: number;
+  reference?: string;
+  note?: string;
+}
+
+export type HomeArticleCategory =
+  | 'elettrodomestici'
+  | 'elettronica'
+  | 'sicurezza'
+  | 'fotovoltaico'
+  | 'clima'
+  | 'altro';
+
+export interface HomeArticleRecord {
+  id: string;
+  name: string;
+  brand: string;
+  model: string;
+  category: HomeArticleCategory;
+  room: string;
+  purchaseDate?: string;
+  warrantyEnd?: string;
+  familyWarranty: boolean;
+  serialNumber?: string;
+  specs?: string;
+  notes?: string;
+}
+
+export interface SupplierMarketOffer {
+  supplier: string;
+  offerName: string;
+  rateEurKwh: number | null;
+  fixedEurMonth: number | null;
+  estAnnualEur: number | null;
+  url: string;
+  status: 'ok' | 'unavailable';
 }
 
 export interface EnergyOffer {
@@ -77,7 +144,7 @@ export interface ClimateSession {
   date: string; // YYYY-MM-DD
   mode: ClimateMode;
   startTime: string; // e.g. "09:00"
-  endTime: string; // e.g. "20:00"
+  endTime: string; // e.g. "20:00" (or "24:00" / "00:00" when all day)
   targetTemp: number; // °C
   rooms: RoomId[];
   notes?: string;

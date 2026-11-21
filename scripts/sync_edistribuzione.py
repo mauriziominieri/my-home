@@ -446,14 +446,158 @@ def extract_edison_bills_from_gmail(mail: Optional[imaplib.IMAP4_SSL]) -> List[D
     return bills
 
 
-def main() -> None:
-    print(f"Controllo Gmail per 'Dettaglio curve di carico' e bollette Edison (POD {POD_CODE})...")
-    new_readings, processed_msg_ids, mail = extract_csvs_from_gmail()
-    new_bills: List[Dict[str, Any]] = []
+def parse_tari_pdf_bytes(
+    pdf_bytes: bytes, msg_subject: str = "", msg_date: str = ""
+) -> Optional[Dict[str, Any]]:
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        print("Modulo pypdf non installato: salto estrazione PDF TARI.")
+        return None
 
     try:
-        # 1. Estrai eventuali nuove bollette PDF Edison (senza eliminare le email delle fatture)
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        text = "\n".join((page.extract_text() or "") for page in reader.pages[:4])
+    except Exception as exc:
+        print(f"Errore lettura PDF TARI: {exc}")
+        return None
+
+    if not text.strip():
+        return None
+
+    notice_m = re.search(
+        r"(?:Avviso(?:\s+di\s+pagamento)?|Documento|N°|Numero|Codice\s+Avviso)\s*(?:n\.?|numero)?\s*[:#]?\s*([A-Z0-9/-]{5,30})",
+        text,
+        re.IGNORECASE,
+    )
+    notice_number = notice_m.group(1).strip() if notice_m else ""
+
+    # Estrai date (emissione e scadenza)
+    issue_m = re.search(
+        r"(?:data\s+emissione|emesso\s+il|del)\s*[:.]?\s*(\d{2}/\d{2}/\d{4})",
+        text,
+        re.IGNORECASE,
+    )
+    due_m = re.search(
+        r"(?:scadenza|entro\s+il|pagare\s+entro\s+il)\s*[:.]?\s*(\d{2}/\d{2}/\d{4})",
+        text,
+        re.IGNORECASE,
+    )
+    all_dates = re.findall(r"\b(\d{2}/\d{2}/\d{4})\b", text)
+    issue_date = issue_m.group(1) if issue_m else (all_dates[0] if all_dates else "—")
+    due_date = due_m.group(1) if due_m else (all_dates[-1] if all_dates else issue_date)
+
+    # Estrai anno di riferimento TARI
+    year_m = re.search(r"TARI\s+(20\d{2})", text + " " + msg_subject, re.IGNORECASE)
+    if not year_m:
+        year_m = re.search(r"Anno(?:\s+d['’]imposta)?\s*[:.]?\s*(20\d{2})", text, re.IGNORECASE)
+    if year_m:
+        year = int(year_m.group(1))
+    elif due_date and "/" in due_date:
+        year = int(due_date.split("/")[-1])
+    else:
+        year = datetime.now(timezone.utc).year
+
+    # Estrai importo totale da pagare
+    amount_patterns = [
+        r"(?:TOTALE\s+DA\s+PAGARE|IMPORTO\s+DA\s+PAGARE|TOTALE\s+AVVISO|TOTALE\s+DOVUTO)\s*[:€\s]*([\d.,]+)",
+        r"(?:Importo|Totale)\s*[:\s]*€?\s*([\d.,]+)\s*€",
+        r"€\s*([\d]{1,4}[.,]\d{2})",
+    ]
+    total_paid = 0.0
+    for pat in amount_patterns:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            candidate = round(parse_it_float(m.group(1).replace(".", "")), 2)
+            if candidate > 0:
+                total_paid = candidate
+                break
+
+    if total_paid <= 0 and not notice_number:
+        return None
+
+    if not notice_number:
+        # Fallback deterministico su anno + scadenza/importo
+        clean_due = due_date.replace("/", "")
+        notice_number = f"TARI_{year}_{clean_due or int(total_paid * 100)}"
+
+    # Identifica rata / periodo
+    rata_m = re.search(r"(Rata\s+\d+|Unica\s+Soluzione|Saldo|Acconto)", text, re.IGNORECASE)
+    rata_label = rata_m.group(1).title() if rata_m else "Avviso di pagamento"
+    period = f"TARI {year} – {rata_label}"
+
+    return {
+        "noticeNumber": notice_number[:50],
+        "issueDate": issue_date[:20],
+        "dueDate": due_date[:20],
+        "year": year,
+        "period": period[:80],
+        "supplier": "AcegasApsAmga (TARI)",
+        "totalPaid": total_paid,
+        "paid": False,
+        "source": "gmail-pdf",
+        "note": f"Estratto automaticamente da Gmail ({msg_date[:16]})".strip() if msg_date else "Estratto automaticamente da Gmail",
+    }
+
+
+def extract_tari_bills_from_gmail(mail: Optional[imaplib.IMAP4_SSL]) -> List[Dict[str, Any]]:
+    if not mail:
+        return []
+    found_by_notice: Dict[str, Dict[str, Any]] = {}
+    search_criteria = '(OR FROM "tassa_rifiuti@acegasapsamga.it" SUBJECT "Avviso di pagamento TARI")'
+
+    folders_to_check = ["INBOX", '"[Gmail]/Tutti i messaggi"', '"[Gmail]/All Mail"']
+    for folder in folders_to_check:
+        try:
+            status, _ = mail.select(folder, readonly=True)
+            if status != "OK":
+                continue
+            status, data = mail.search(None, search_criteria)
+            if status != "OK" or not data or not data[0]:
+                continue
+            msg_ids = data[0].split()[-15:]
+            print(f"Trovate {len(msg_ids)} email TARI AcegasApsAmga in {folder}.")
+            for msg_id in msg_ids:
+                _, msg_data = mail.fetch(msg_id, "(RFC822)")
+                if not msg_data or not isinstance(msg_data[0], tuple):
+                    continue
+                msg = email.message_from_bytes(msg_data[0][1])
+                subj = str(msg.get("Subject", ""))
+                msg_date = str(msg.get("Date", ""))
+                for part in msg.walk():
+                    filename = (part.get_filename() or "").lower()
+                    content_type = (part.get_content_type() or "").lower()
+                    if not (filename.endswith(".pdf") or content_type == "application/pdf"):
+                        continue
+                    payload = part.get_payload(decode=True)
+                    if not payload:
+                        continue
+                    print(f"Elaborazione PDF TARI: {filename or 'avviso.pdf'}")
+                    parsed = parse_tari_pdf_bytes(payload, subj, msg_date)
+                    if parsed:
+                        found_by_notice[parsed["noticeNumber"]] = parsed
+            if found_by_notice:
+                break
+        except Exception as exc:
+            print(f"Nota lettura TARI da {folder}: {exc}")
+
+    try:
+        mail.select("INBOX")
+    except Exception:
+        pass
+    return list(found_by_notice.values())
+
+
+def main() -> None:
+    print(f"Controllo Gmail per 'Dettaglio curve di carico', bollette Edison e TARI (POD {POD_CODE})...")
+    new_readings, processed_msg_ids, mail = extract_csvs_from_gmail()
+    new_bills: List[Dict[str, Any]] = []
+    new_tari_bills: List[Dict[str, Any]] = []
+
+    try:
+        # 1. Estrai eventuali nuove bollette PDF Edison e TARI (senza eliminare mai le email)
         new_bills = extract_edison_bills_from_gmail(mail)
+        new_tari_bills = extract_tari_bills_from_gmail(mail)
 
         # 1b. Recupera eventuali CSV e-distribuzione presenti nel Cestino di Gmail
         trash_readings = extract_csvs_from_trash(mail)
@@ -489,27 +633,42 @@ def main() -> None:
         OUTPUT_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"Completato consumi: {len(new_readings)} giorni estratti, {len(merged)} giorni totali salvati.")
 
-        # 3. Aggiorna data/bollette.json
-        if new_bills or not BILLS_OUTPUT_FILE.exists():
+        # 3. Aggiorna data/bollette.json (luce + TARI)
+        if new_bills or new_tari_bills or not BILLS_OUTPUT_FILE.exists():
             existing_bills: Dict[str, Dict[str, Any]] = {}
+            existing_tari: Dict[str, Dict[str, Any]] = {}
             if BILLS_OUTPUT_FILE.exists():
                 try:
                     old_bills = json.loads(BILLS_OUTPUT_FILE.read_text(encoding="utf-8"))
                     for b in old_bills.get("bills", []):
                         if "invoiceNumber" in b:
                             existing_bills[str(b["invoiceNumber"])] = b
+                    for t in old_bills.get("tariBills", []):
+                        if "noticeNumber" in t:
+                            existing_tari[str(t["noticeNumber"])] = t
                 except Exception:
                     pass
             for b in new_bills:
                 existing_bills[str(b["invoiceNumber"])] = b
+            for t in new_tari_bills:
+                key = str(t["noticeNumber"])
+                if key in existing_tari:
+                    t["paid"] = bool(existing_tari[key].get("paid", False))
+                existing_tari[key] = t
+
             merged_bills = sorted(existing_bills.values(), key=lambda x: x.get("sortKey", ""))
+            merged_tari = sorted(existing_tari.values(), key=lambda x: (int(x.get("year", 0)), str(x.get("noticeNumber", ""))))
             bills_payload = {
                 "pod": POD_CODE,
                 "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "bills": merged_bills,
+                "tariBills": merged_tari,
             }
             BILLS_OUTPUT_FILE.write_text(json.dumps(bills_payload, indent=2), encoding="utf-8")
-            print(f"Completato bollette: {len(new_bills)} PDF analizzati, {len(merged_bills)} bollette totali salvate.")
+            print(
+                f"Completato bollette: {len(new_bills)} Edison + {len(new_tari_bills)} TARI analizzati "
+                f"({len(merged_bills)} luce, {len(merged_tari)} TARI totali)."
+            )
 
         # 4. Elimina solo le email dei CSV e-distribuzione dopo il salvataggio
         delete_processed_emails(mail, processed_msg_ids)

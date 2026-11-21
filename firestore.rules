@@ -135,7 +135,7 @@ service cloud.firestore {
         ])
         && data.ownerId is string && data.ownerId == userId && data.ownerId.size() <= 128
         && data.date is string && data.date.size() == 10 && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
-        && data.mode is string && data.mode in ['riscaldamento', 'raffrescamento']
+        && data.mode is string && data.mode.size() <= 24 && data.mode in ['riscaldamento', 'raffrescamento']
         && data.startTime is string && data.startTime.size() <= 10
         && data.endTime is string && data.endTime.size() <= 10
         && data.targetTemp is number && (data.targetTemp == 0 || (data.targetTemp >= 14 && data.targetTemp <= 30))
@@ -161,6 +161,221 @@ service cloud.firestore {
           'date', 'mode', 'startTime', 'endTime', 'targetTemp', 'rooms', 'notes', 'createdAt'
         ]);
       allow delete: if isOwner(userId) && isValidId(logId);
+    }
+
+    function isValidElectricityBill(data, userId) {
+      return data.keys().hasAll([
+          'ownerId', 'invoiceNumber', 'issueDate', 'sortKey', 'year', 'period',
+          'supplier', 'offerName', 'kwh', 'punText', 'variableCostPerKwh',
+          'canoneTv', 'electricityOnly', 'totalPaid', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'invoiceNumber', 'issueDate', 'sortKey', 'year', 'period',
+          'supplier', 'offerName', 'kwh', 'punText', 'variableCostPerKwh',
+          'canoneTv', 'electricityOnly', 'totalPaid', 'note', 'createdAt'
+        ])
+        && data.ownerId is string && data.ownerId == userId && data.ownerId.size() <= 128
+        && data.invoiceNumber is string && data.invoiceNumber.size() >= 1 && data.invoiceNumber.size() <= 40
+        && data.issueDate is string && data.issueDate.size() >= 8 && data.issueDate.size() <= 20
+        && data.sortKey is string && data.sortKey.size() == 7 && data.sortKey.matches('^[0-9]{4}-[0-9]{2}$')
+        && data.year is number && data.year >= 2020 && data.year <= 2100
+        && data.period is string && data.period.size() >= 1 && data.period.size() <= 80
+        && data.supplier is string && data.supplier.size() >= 1 && data.supplier.size() <= 80
+        && data.offerName is string && data.offerName.size() >= 1 && data.offerName.size() <= 100
+        && data.kwh is number && data.kwh >= 0 && data.kwh <= 100000
+        && data.punText is string && data.punText.size() <= 60
+        && data.variableCostPerKwh is number && data.variableCostPerKwh >= 0 && data.variableCostPerKwh <= 10
+        && data.canoneTv is number && data.canoneTv >= 0 && data.canoneTv <= 500
+        && data.electricityOnly is number && data.electricityOnly >= 0 && data.electricityOnly <= 50000
+        && data.totalPaid is number && data.totalPaid >= 0 && data.totalPaid <= 50000
+        && (!('note' in data) || (data.note is string && data.note.size() <= 240))
+        && data.createdAt is timestamp;
+    }
+
+    match /users/{userId}/electricityBills/{billId} {
+      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(billId);
+      allow list: if isOwner(userId) || isPublicReadTarget(userId);
+      allow create: if isOwner(userId)
+        && isValidId(billId)
+        && isValidElectricityBill(incoming(), userId)
+        && incoming().createdAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(billId)
+        && isValidElectricityBill(incoming(), userId)
+        && incoming().ownerId == existing().ownerId
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'invoiceNumber', 'issueDate', 'sortKey', 'year', 'period', 'supplier',
+          'offerName', 'kwh', 'punText', 'variableCostPerKwh', 'canoneTv',
+          'electricityOnly', 'totalPaid', 'note', 'createdAt'
+        ]);
+      allow delete: if isOwner(userId) && isValidId(billId);
+    }
+
+    function isValidWaterBill(data, userId) {
+      return data.keys().hasAll([
+          'ownerId', 'invoiceNumber', 'issueDate', 'year', 'period',
+          'cubicMeters', 'fixedCostEur', 'totalPaid', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'invoiceNumber', 'issueDate', 'year', 'period',
+          'cubicMeters', 'fixedCostEur', 'totalPaid', 'note', 'createdAt'
+        ])
+        && data.ownerId is string && data.ownerId == userId && data.ownerId.size() <= 128
+        && data.invoiceNumber is string && data.invoiceNumber.size() >= 1 && data.invoiceNumber.size() <= 40
+        && data.issueDate is string && data.issueDate.size() >= 8 && data.issueDate.size() <= 20
+        && data.year is number && data.year >= 2020 && data.year <= 2100
+        && data.period is string && data.period.size() >= 1 && data.period.size() <= 80
+        && data.cubicMeters is number && data.cubicMeters >= 0 && data.cubicMeters <= 10000
+        && data.fixedCostEur is number && data.fixedCostEur >= 0 && data.fixedCostEur <= 5000
+        && data.totalPaid is number && data.totalPaid >= 0 && data.totalPaid <= 50000
+        && (!('note' in data) || (data.note is string && data.note.size() <= 240))
+        && data.createdAt is timestamp;
+    }
+
+    match /users/{userId}/waterBills/{billId} {
+      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(billId);
+      allow list: if isOwner(userId) || isPublicReadTarget(userId);
+      allow create: if isOwner(userId)
+        && isValidId(billId)
+        && isValidWaterBill(incoming(), userId)
+        && incoming().createdAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(billId)
+        && isValidWaterBill(incoming(), userId)
+        && incoming().ownerId == existing().ownerId
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'invoiceNumber', 'issueDate', 'year', 'period', 'cubicMeters',
+          'fixedCostEur', 'totalPaid', 'note', 'createdAt'
+        ]);
+      allow delete: if isOwner(userId) && isValidId(billId);
+    }
+
+    function isValidTariBill(data, userId) {
+      return data.keys().hasAll([
+          'ownerId', 'noticeNumber', 'issueDate', 'dueDate', 'year',
+          'period', 'supplier', 'totalPaid', 'paid', 'source', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'noticeNumber', 'issueDate', 'dueDate', 'year',
+          'period', 'supplier', 'totalPaid', 'paid', 'source', 'note', 'createdAt'
+        ])
+        && data.ownerId is string && data.ownerId == userId && data.ownerId.size() <= 128
+        && data.noticeNumber is string && data.noticeNumber.size() >= 1 && data.noticeNumber.size() <= 50
+        && data.issueDate is string && data.issueDate.size() >= 1 && data.issueDate.size() <= 20
+        && data.dueDate is string && data.dueDate.size() >= 1 && data.dueDate.size() <= 20
+        && data.year is number && data.year >= 2020 && data.year <= 2100
+        && data.period is string && data.period.size() >= 1 && data.period.size() <= 80
+        && data.supplier is string && data.supplier.size() >= 1 && data.supplier.size() <= 80
+        && data.totalPaid is number && data.totalPaid >= 0 && data.totalPaid <= 50000
+        && data.paid is bool
+        && data.source is string && data.source.size() <= 20 && data.source in ['gmail-pdf', 'manuale']
+        && (!('note' in data) || (data.note is string && data.note.size() <= 240))
+        && data.createdAt is timestamp;
+    }
+
+    match /users/{userId}/tariBills/{billId} {
+      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(billId);
+      allow list: if isOwner(userId) || isPublicReadTarget(userId);
+      allow create: if isOwner(userId)
+        && isValidId(billId)
+        && isValidTariBill(incoming(), userId)
+        && incoming().createdAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(billId)
+        && isValidTariBill(incoming(), userId)
+        && incoming().ownerId == existing().ownerId
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'noticeNumber', 'issueDate', 'dueDate', 'year', 'period',
+          'supplier', 'totalPaid', 'paid', 'source', 'note', 'createdAt'
+        ]);
+      allow delete: if isOwner(userId) && isValidId(billId);
+    }
+
+    function isValidGsePayment(data, userId) {
+      return data.keys().hasAll([
+          'ownerId', 'paymentDate', 'year', 'paymentType', 'period', 'amountEur', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'paymentDate', 'year', 'paymentType', 'period',
+          'amountEur', 'kwhInjected', 'reference', 'note', 'createdAt'
+        ])
+        && data.ownerId is string && data.ownerId == userId && data.ownerId.size() <= 128
+        && data.paymentDate is string && data.paymentDate.size() >= 1 && data.paymentDate.size() <= 20
+        && data.year is number && data.year >= 2020 && data.year <= 2100
+        && data.paymentType is string && data.paymentType.size() <= 24 && data.paymentType in ['acconto', 'conguaglio', 'altro']
+        && data.period is string && data.period.size() >= 1 && data.period.size() <= 80
+        && data.amountEur is number && data.amountEur >= 0 && data.amountEur <= 50000
+        && (!('kwhInjected' in data) || (data.kwhInjected is number && data.kwhInjected >= 0 && data.kwhInjected <= 100000))
+        && (!('reference' in data) || (data.reference is string && data.reference.size() <= 80))
+        && (!('note' in data) || (data.note is string && data.note.size() <= 240))
+        && data.createdAt is timestamp;
+    }
+
+    match /users/{userId}/gsePayments/{paymentId} {
+      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(paymentId);
+      allow list: if isOwner(userId) || isPublicReadTarget(userId);
+      allow create: if isOwner(userId)
+        && isValidId(paymentId)
+        && isValidGsePayment(incoming(), userId)
+        && incoming().createdAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(paymentId)
+        && isValidGsePayment(incoming(), userId)
+        && incoming().ownerId == existing().ownerId
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'paymentDate', 'year', 'paymentType', 'period',
+          'amountEur', 'kwhInjected', 'reference', 'note', 'createdAt'
+        ]);
+      allow delete: if isOwner(userId) && isValidId(paymentId);
+    }
+
+    function isValidHomeArticle(data, userId) {
+      return data.keys().hasAll([
+          'ownerId', 'name', 'brand', 'model', 'category', 'room', 'familyWarranty', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'name', 'brand', 'model', 'category', 'room',
+          'purchaseDate', 'warrantyEnd', 'familyWarranty', 'serialNumber',
+          'specs', 'notes', 'createdAt'
+        ])
+        && data.ownerId is string && data.ownerId == userId && data.ownerId.size() <= 128
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.brand is string && data.brand.size() >= 1 && data.brand.size() <= 60
+        && data.model is string && data.model.size() >= 1 && data.model.size() <= 80
+        && data.category is string && data.category.size() <= 32
+        && data.category in ['elettrodomestici', 'elettronica', 'sicurezza', 'fotovoltaico', 'clima', 'altro']
+        && data.room is string && data.room.size() >= 1 && data.room.size() <= 60
+        && (!('purchaseDate' in data) || (data.purchaseDate is string && data.purchaseDate.size() <= 20))
+        && (!('warrantyEnd' in data) || (data.warrantyEnd is string && data.warrantyEnd.size() <= 20))
+        && data.familyWarranty is bool
+        && (!('serialNumber' in data) || (data.serialNumber is string && data.serialNumber.size() <= 80))
+        && (!('specs' in data) || (data.specs is string && data.specs.size() <= 240))
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 240))
+        && data.createdAt is timestamp;
+    }
+
+    match /users/{userId}/homeArticles/{articleId} {
+      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(articleId);
+      allow list: if isOwner(userId) || isPublicReadTarget(userId);
+      allow create: if isOwner(userId)
+        && isValidId(articleId)
+        && isValidHomeArticle(incoming(), userId)
+        && incoming().createdAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(articleId)
+        && isValidHomeArticle(incoming(), userId)
+        && incoming().ownerId == existing().ownerId
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'brand', 'model', 'category', 'room',
+          'purchaseDate', 'warrantyEnd', 'familyWarranty', 'serialNumber',
+          'specs', 'notes', 'createdAt'
+        ]);
+      allow delete: if isOwner(userId) && isValidId(articleId);
     }
   }
 }

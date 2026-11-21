@@ -164,16 +164,16 @@ export function OverviewView({
             </div>
             <div className="flex items-center gap-4 text-xs text-slate-300">
               <span className="inline-flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-sm bg-sky-400" />
-                F1
+                <span className="w-2.5 h-2.5 rounded-sm bg-rose-500" />
+                F1 Punta
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-sm bg-amber-400" />
-                F2
+                F2 Intermedia
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-sm bg-emerald-400" />
-                F3
+                <span className="w-2.5 h-2.5 rounded-sm bg-sky-400" />
+                F3 Fuori punta
               </span>
             </div>
           </div>
@@ -192,7 +192,7 @@ export function OverviewView({
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={monthlyData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+                <BarChart data={monthlyData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" vertical={false} />
                   <XAxis
                     dataKey="label"
@@ -201,22 +201,69 @@ export function OverviewView({
                     tickLine={false}
                   />
                   <YAxis
+                    width={62}
+                    tickFormatter={(v) => `${v} kWh`}
                     tick={{ fontSize: 11, fill: '#94A3B8' }}
                     axisLine={false}
                     tickLine={false}
                   />
                   <Tooltip
-                    contentStyle={{
-                      backgroundColor: '#0F172A',
-                      borderColor: '#334155',
-                      borderRadius: '8px',
-                      fontSize: '12px',
-                      color: '#F1F5F9',
+                    cursor={{
+                      fill: 'rgba(56, 189, 248, 0.08)',
+                      stroke: 'rgba(56, 189, 248, 0.32)',
+                      strokeWidth: 1,
+                      rx: 4,
+                      ry: 4,
+                    }}
+                    content={({ active, payload, label }) => {
+                      if (!active || !payload || payload.length === 0) return null;
+                      const byKey = new Map(
+                        payload.map((entry) => [
+                          String(entry.dataKey),
+                          Number(entry.value ?? 0),
+                        ])
+                      );
+                      const f1 = byKey.get('F1') ?? 0;
+                      const f2 = byKey.get('F2') ?? 0;
+                      const f3 = byKey.get('F3') ?? 0;
+                      const tot = f1 + f2 + f3;
+                      return (
+                        <div className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs shadow-xl space-y-1">
+                          <div className="font-semibold text-slate-100 border-b border-slate-800 pb-1">
+                            {label} {selectedYear}
+                          </div>
+                          <div className="flex items-center justify-between gap-4 font-mono tabular-nums">
+                            <span className="inline-flex items-center gap-1.5 text-sky-300">
+                              <span className="w-2 h-2 rounded-xs bg-sky-400" />
+                              F3 (Fuori punta)
+                            </span>
+                            <span className="text-slate-100">{f3.toFixed(1)} kWh</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-4 font-mono tabular-nums">
+                            <span className="inline-flex items-center gap-1.5 text-amber-300">
+                              <span className="w-2 h-2 rounded-xs bg-amber-400" />
+                              F2 (Intermedia)
+                            </span>
+                            <span className="text-slate-100">{f2.toFixed(1)} kWh</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-4 font-mono tabular-nums">
+                            <span className="inline-flex items-center gap-1.5 text-rose-300">
+                              <span className="w-2 h-2 rounded-xs bg-rose-500" />
+                              F1 (Punta)
+                            </span>
+                            <span className="text-slate-100">{f1.toFixed(1)} kWh</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-4 font-mono tabular-nums pt-1 border-t border-slate-800 font-semibold">
+                            <span className="text-slate-200">Totale</span>
+                            <span className="text-emerald-400">{tot.toFixed(1)} kWh</span>
+                          </div>
+                        </div>
+                      );
                     }}
                   />
-                  <Bar dataKey="F1" stackId="a" fill="#38BDF8" />
+                  <Bar dataKey="F1" stackId="a" fill="#F43F5E" />
                   <Bar dataKey="F2" stackId="a" fill="#FBBF24" />
-                  <Bar dataKey="F3" stackId="a" fill="#34D399" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="F3" stackId="a" fill="#38BDF8" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}

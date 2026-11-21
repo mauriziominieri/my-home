@@ -1,6 +1,12 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Check, Copy, Download, Globe, KeyRound, RefreshCw, Terminal } from 'lucide-react';
 import { HomeSystemConfig } from '../types/home';
+import {
+  compareSortValues,
+  SortableTh,
+  SortState,
+  toggleSort,
+} from './SortableHeader';
 
 interface IntegrationViewProps {
   config: HomeSystemConfig;
@@ -27,6 +33,81 @@ export function IntegrationView({
   const [syncingJson, setSyncingJson] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  type IntegBillSortKey =
+    | 'period'
+    | 'invoice'
+    | 'kwh'
+    | 'pun'
+    | 'varCost'
+    | 'elecOnly'
+    | 'total';
+  const [integSort, setIntegSort] = useState<SortState<IntegBillSortKey>>({
+    key: 'period',
+    dir: 'desc',
+  });
+
+  const summaryBillRows = useMemo(() => {
+    const rows = [
+      {
+        sortKey: '2026-04',
+        period: 'Apr – Mag 2026',
+        invoice: '6111444860',
+        kwh: 190,
+        pun: 0.131,
+        punText: '0,131 €',
+        varCost: 0.261,
+        varClass: 'text-emerald-400',
+        elecOnly: 65.31,
+        elecText: '65,31 €*',
+        total: 83.31,
+      },
+      {
+        sortKey: '2026-06',
+        period: 'Giu – Lug 2026',
+        invoice: '6113821093',
+        kwh: 244,
+        pun: 0.146,
+        punText: '0,146 / 0,173 €',
+        varCost: 0.301,
+        varClass: 'text-sky-400',
+        elecOnly: 122.09,
+        elecText: '122,09 €',
+        total: 140.09,
+      },
+      {
+        sortKey: '2026-08',
+        period: 'Ago – Set 2026',
+        invoice: '6116408117',
+        kwh: 313,
+        pun: 0.198,
+        punText: '0,198 / 0,228 €',
+        varCost: 0.359,
+        varClass: 'text-amber-300',
+        elecOnly: 160.99,
+        elecText: '160,99 €',
+        total: 178.99,
+      },
+    ];
+    return rows.sort((a, b) => {
+      switch (integSort.key) {
+        case 'period':
+          return compareSortValues(a.sortKey, b.sortKey, integSort.dir);
+        case 'invoice':
+          return compareSortValues(a.invoice, b.invoice, integSort.dir);
+        case 'kwh':
+          return compareSortValues(a.kwh, b.kwh, integSort.dir);
+        case 'pun':
+          return compareSortValues(a.pun, b.pun, integSort.dir);
+        case 'varCost':
+          return compareSortValues(a.varCost, b.varCost, integSort.dir);
+        case 'elecOnly':
+          return compareSortValues(a.elecOnly, b.elecOnly, integSort.dir);
+        case 'total':
+          return compareSortValues(a.total, b.total, integSort.dir);
+      }
+    });
+  }, [integSort]);
 
   const appUrl = window.location.origin;
   const cronExpr =
@@ -368,43 +449,85 @@ if __name__ == "__main__":
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="border-b border-slate-800 text-[11px] text-slate-400">
-                <th className="py-2 pr-3">Periodo</th>
-                <th className="py-2 px-3">Fattura</th>
-                <th className="py-2 px-3 text-right">Consumo</th>
-                <th className="py-2 px-3 text-right">PUN F0</th>
-                <th className="py-2 px-3 text-right">Costo Var. (IVA incl.)</th>
-                <th className="py-2 px-3 text-right">Luce (no TV)</th>
-                <th className="py-2 pl-3 text-right">Totale Pagato</th>
+                <SortableTh
+                  sortKey="period"
+                  currentSort={integSort}
+                  onSort={(k) => setIntegSort((prev) => toggleSort(prev, k, 'desc'))}
+                  className="py-2 pr-3"
+                >
+                  Periodo
+                </SortableTh>
+                <SortableTh
+                  sortKey="invoice"
+                  currentSort={integSort}
+                  onSort={(k) => setIntegSort((prev) => toggleSort(prev, k, 'asc'))}
+                  className="py-2 px-3"
+                >
+                  Fattura
+                </SortableTh>
+                <SortableTh
+                  sortKey="kwh"
+                  currentSort={integSort}
+                  onSort={(k) => setIntegSort((prev) => toggleSort(prev, k, 'desc'))}
+                  align="right"
+                  className="py-2 px-3 text-right"
+                >
+                  Consumo
+                </SortableTh>
+                <SortableTh
+                  sortKey="pun"
+                  currentSort={integSort}
+                  onSort={(k) => setIntegSort((prev) => toggleSort(prev, k, 'desc'))}
+                  align="right"
+                  className="py-2 px-3 text-right"
+                >
+                  PUN F0
+                </SortableTh>
+                <SortableTh
+                  sortKey="varCost"
+                  currentSort={integSort}
+                  onSort={(k) => setIntegSort((prev) => toggleSort(prev, k, 'desc'))}
+                  align="right"
+                  className="py-2 px-3 text-right"
+                >
+                  Costo Var. (IVA incl.)
+                </SortableTh>
+                <SortableTh
+                  sortKey="elecOnly"
+                  currentSort={integSort}
+                  onSort={(k) => setIntegSort((prev) => toggleSort(prev, k, 'desc'))}
+                  align="right"
+                  className="py-2 px-3 text-right"
+                >
+                  Luce (no TV)
+                </SortableTh>
+                <SortableTh
+                  sortKey="total"
+                  currentSort={integSort}
+                  onSort={(k) => setIntegSort((prev) => toggleSort(prev, k, 'desc'))}
+                  align="right"
+                  className="py-2 pl-3 text-right"
+                >
+                  Totale Pagato
+                </SortableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/70 font-mono tabular-nums">
-              <tr>
-                <td className="py-2.5 pr-3 font-sans font-medium text-slate-200">Apr – Mag 2026</td>
-                <td className="py-2.5 px-3 text-slate-400">6111444860</td>
-                <td className="py-2.5 px-3 text-right text-slate-200">190 kWh</td>
-                <td className="py-2.5 px-3 text-right text-slate-400">0,131 €</td>
-                <td className="py-2.5 px-3 text-right text-emerald-400 font-semibold">0,261 €/kWh</td>
-                <td className="py-2.5 px-3 text-right text-slate-300">65,31 €*</td>
-                <td className="py-2.5 pl-3 text-right text-slate-100 font-semibold">83,31 €</td>
-              </tr>
-              <tr>
-                <td className="py-2.5 pr-3 font-sans font-medium text-slate-200">Giu – Lug 2026</td>
-                <td className="py-2.5 px-3 text-slate-400">6113821093</td>
-                <td className="py-2.5 px-3 text-right text-slate-200">244 kWh</td>
-                <td className="py-2.5 px-3 text-right text-slate-400">0,146 / 0,173 €</td>
-                <td className="py-2.5 px-3 text-right text-sky-400 font-semibold">0,301 €/kWh</td>
-                <td className="py-2.5 px-3 text-right text-slate-300">122,09 €</td>
-                <td className="py-2.5 pl-3 text-right text-slate-100 font-semibold">140,09 €</td>
-              </tr>
-              <tr>
-                <td className="py-2.5 pr-3 font-sans font-medium text-slate-200">Ago – Set 2026</td>
-                <td className="py-2.5 px-3 text-slate-400">6116408117</td>
-                <td className="py-2.5 px-3 text-right text-slate-200">313 kWh</td>
-                <td className="py-2.5 px-3 text-right text-slate-400">0,198 / 0,228 €</td>
-                <td className="py-2.5 px-3 text-right text-amber-300 font-semibold">0,359 €/kWh</td>
-                <td className="py-2.5 px-3 text-right text-slate-300">160,99 €</td>
-                <td className="py-2.5 pl-3 text-right text-slate-100 font-semibold">178,99 €</td>
-              </tr>
+              {summaryBillRows.map((row) => (
+                <tr key={row.invoice}>
+                  <td className="py-2.5 pr-3 font-sans font-medium text-slate-200">{row.period}</td>
+                  <td className="py-2.5 px-3 text-slate-400">{row.invoice}</td>
+                  <td className="py-2.5 px-3 text-right text-slate-200">{row.kwh} kWh</td>
+                  <td className="py-2.5 px-3 text-right text-slate-400">{row.punText}</td>
+                  <td className={`py-2.5 px-3 text-right font-semibold ${row.varClass}`}>
+                    {row.varCost.toFixed(3).replace('.', ',')} €/kWh
+                  </td>
+                  <td className="py-2.5 px-3 text-right text-slate-300">{row.elecText}</td>
+                  <td className="py-2.5 pl-3 text-right text-slate-100 font-semibold">
+                    {row.total.toFixed(2).replace('.', ',')} €
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
           <p className="text-[11px] text-slate-500 mt-2">

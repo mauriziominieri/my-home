@@ -2,7 +2,7 @@ name: Sync automatico e-distribuzione (da Gmail)
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # Ogni 30 minuti
+    - cron: '*/15 * * * *' # Ogni 15 minuti (minimo sicuro contro blocchi anti-bot)
   workflow_dispatch:
 
 permissions:
@@ -23,14 +23,14 @@ jobs:
       - name: Installa dipendenze PDF
         run: pip install --quiet pypdf
 
-      - name: Estrai CSV e-distribuzione e Bollette Edison da Gmail
+      - name: Estrai CSV e-distribuzione, Bollette Edison e TARI Acegas da Gmail
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           POD_CODE: "IT001E11251419"
         run: python scripts/sync_edistribuzione.py
 
-      - name: Controlla tariffa Octopus Energy (avviso email se < 0,1595 €/kWh)
+      - name: Controlla tariffe luce (Octopus + principali fornitori)
         continue-on-error: true
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
@@ -42,5 +42,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/consumi.json data/bollette.json data/octopus_tariff.json
-          git diff --staged --quiet || git commit -m "Aggiornamento automatico consumi, bollette e controllo tariffa Octopus"
+          git diff --staged --quiet || git commit -m "Aggiornamento automatico consumi, bollette e tariffe mercato"
           git push

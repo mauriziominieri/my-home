@@ -24,6 +24,17 @@ import {
   RoomId,
 } from '../types/home';
 import { formatReadingDate } from '../utils/edistribuzioneCsv';
+import {
+  formatDurationCompact,
+  getSessionDurationHours,
+  isAllDaySession,
+} from '../utils/climateTime';
+import {
+  compareSortValues,
+  SortableTh,
+  SortState,
+  toggleSort,
+} from './SortableHeader';
 
 interface DomoticsViewProps {
   config: HomeSystemConfig;
@@ -119,10 +130,46 @@ export function DomoticsView({
     return map;
   }, [readings]);
 
-  const sortedLogs = useMemo(
-    () => [...climateLogs].sort((a, b) => b.date.localeCompare(a.date)),
-    [climateLogs]
-  );
+  type DomoticsSortKey = 'date' | 'mode' | 'time' | 'targetTemp' | 'rooms' | 'totalKwh';
+  const [domoticsSort, setDomoticsSort] = useState<SortState<DomoticsSortKey>>({
+    key: 'date',
+    dir: 'desc',
+  });
+
+  const sortedLogs = useMemo(() => {
+    return [...climateLogs].sort((a, b) => {
+      switch (domoticsSort.key) {
+        case 'date':
+          return compareSortValues(a.date, b.date, domoticsSort.dir);
+        case 'mode':
+          return compareSortValues(a.mode, b.mode, domoticsSort.dir);
+        case 'time':
+          return compareSortValues(
+            isAllDaySession(a.startTime, a.endTime) ? '00:00-24:00' : `${a.startTime}-${a.endTime}`,
+            isAllDaySession(b.startTime, b.endTime) ? '00:00-24:00' : `${b.startTime}-${b.endTime}`,
+            domoticsSort.dir
+          );
+        case 'targetTemp':
+          return compareSortValues(
+            a.targetTemp > 0 ? a.targetTemp : null,
+            b.targetTemp > 0 ? b.targetTemp : null,
+            domoticsSort.dir
+          );
+        case 'rooms':
+          return compareSortValues(
+            a.rooms.map((r) => ROOM_LABELS[r] || r).join(', '),
+            b.rooms.map((r) => ROOM_LABELS[r] || r).join(', '),
+            domoticsSort.dir
+          );
+        case 'totalKwh':
+          return compareSortValues(
+            readingsByDate.get(a.date)?.totalKwh ?? null,
+            readingsByDate.get(b.date)?.totalKwh ?? null,
+            domoticsSort.dir
+          );
+      }
+    });
+  }, [climateLogs, domoticsSort, readingsByDate]);
 
   async function applyChange(patch: Partial<HomeSystemConfig>) {
     setSaving(true);
@@ -294,29 +341,69 @@ export function DomoticsView({
             </div>
 
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-300">
-                Dalle (ora)
-              </label>
-              <input
-                type="time"
-                required
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className="w-full px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
-              />
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-medium text-slate-300">
+                  Dalle (ora)
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isAllDaySession(startTime, endTime)) {
+                      setStartTime('09:00');
+                      setEndTime('20:00');
+                    } else {
+                      setStartTime('00:00');
+                      setEndTime('24:00');
+                    }
+                  }}
+                  className={`text-[10px] px-1.5 py-0.5 rounded border font-medium transition-colors ${
+                    isAllDaySession(startTime, endTime)
+                      ? 'bg-sky-500/20 border-sky-400 text-sky-300'
+                      : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {isAllDaySession(startTime, endTime) ? '✓ 24h Attivo' : 'Tutto il giorno (24h)'}
+                </button>
+              </div>
+              {isAllDaySession(startTime, endTime) ? (
+                <div className="w-full px-3 py-2 text-xs font-medium text-sky-300 bg-sky-500/10 border border-sky-500/30 rounded-lg text-center">
+                  Tutto il giorno (24h)
+                </div>
+              ) : (
+                <input
+                  type="time"
+                  required
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="w-full px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                />
+              )}
             </div>
 
             <div className="space-y-1">
               <label className="block text-xs font-medium text-slate-300">
                 Alle (ora)
               </label>
-              <input
-                type="time"
-                required
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                className="w-full px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
-              />
+              {isAllDaySession(startTime, endTime) ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStartTime('09:00');
+                    setEndTime('20:00');
+                  }}
+                  className="w-full px-3 py-2 text-xs text-slate-400 hover:text-slate-200 bg-slate-950 border border-slate-800 rounded-lg"
+                >
+                  Imposta orario specifico
+                </button>
+              ) : (
+                <input
+                  type="time"
+                  required
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className="w-full px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                />
+              )}
             </div>
 
             <div className="space-y-1">
@@ -407,12 +494,56 @@ export function DomoticsView({
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-slate-800 text-[11px] font-medium text-slate-400">
-                <th className="py-2 px-3">Data</th>
-                <th className="py-2 px-3">Modalità</th>
-                <th className="py-2 px-3">Fascia Oraria</th>
-                <th className="py-2 px-3 text-right">Temp.</th>
-                <th className="py-2 px-3">Stanze</th>
-                <th className="py-2 px-3 text-right">Consumo Reale</th>
+                <SortableTh
+                  sortKey="date"
+                  currentSort={domoticsSort}
+                  onSort={(k) => setDomoticsSort((prev) => toggleSort(prev, k, 'desc'))}
+                  className="py-2 px-3"
+                >
+                  Data
+                </SortableTh>
+                <SortableTh
+                  sortKey="mode"
+                  currentSort={domoticsSort}
+                  onSort={(k) => setDomoticsSort((prev) => toggleSort(prev, k, 'asc'))}
+                  className="py-2 px-3"
+                >
+                  Modalità
+                </SortableTh>
+                <SortableTh
+                  sortKey="time"
+                  currentSort={domoticsSort}
+                  onSort={(k) => setDomoticsSort((prev) => toggleSort(prev, k, 'asc'))}
+                  className="py-2 px-3"
+                >
+                  Fascia Oraria
+                </SortableTh>
+                <SortableTh
+                  sortKey="targetTemp"
+                  currentSort={domoticsSort}
+                  onSort={(k) => setDomoticsSort((prev) => toggleSort(prev, k, 'asc'))}
+                  align="right"
+                  className="py-2 px-3 text-right"
+                >
+                  Temp.
+                </SortableTh>
+                <SortableTh
+                  sortKey="rooms"
+                  currentSort={domoticsSort}
+                  onSort={(k) => setDomoticsSort((prev) => toggleSort(prev, k, 'asc'))}
+                  className="py-2 px-3"
+                >
+                  Stanze
+                </SortableTh>
+                <SortableTh
+                  sortKey="totalKwh"
+                  currentSort={domoticsSort}
+                  onSort={(k) => setDomoticsSort((prev) => toggleSort(prev, k, 'desc'))}
+                  align="right"
+                  className="py-2 px-3 text-right"
+                >
+                  Consumo Reale
+                </SortableTh>
                 {!readOnly && <th className="py-2 px-3 text-right">Azioni</th>}
               </tr>
             </thead>
@@ -464,19 +595,42 @@ export function DomoticsView({
                                   Raffr.
                                 </button>
                               </div>
-                              <input
-                                type="time"
-                                value={editStartTime}
-                                onChange={(e) => setEditStartTime(e.target.value)}
-                                className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
-                              />
-                              <span className="text-slate-500">–</span>
-                              <input
-                                type="time"
-                                value={editEndTime}
-                                onChange={(e) => setEditEndTime(e.target.value)}
-                                className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
-                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (isAllDaySession(editStartTime, editEndTime)) {
+                                    setEditStartTime('09:00');
+                                    setEditEndTime('20:00');
+                                  } else {
+                                    setEditStartTime('00:00');
+                                    setEditEndTime('24:00');
+                                  }
+                                }}
+                                className={`px-2 py-1 text-xs rounded-lg border font-medium transition-colors ${
+                                  isAllDaySession(editStartTime, editEndTime)
+                                    ? 'bg-sky-500/20 border-sky-400 text-sky-300'
+                                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                Tutto il giorno (24h)
+                              </button>
+                              {!isAllDaySession(editStartTime, editEndTime) && (
+                                <>
+                                  <input
+                                    type="time"
+                                    value={editStartTime}
+                                    onChange={(e) => setEditStartTime(e.target.value)}
+                                    className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                                  />
+                                  <span className="text-slate-500">–</span>
+                                  <input
+                                    type="time"
+                                    value={editEndTime}
+                                    onChange={(e) => setEditEndTime(e.target.value)}
+                                    className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                                  />
+                                </>
+                              )}
                               <div className="inline-flex items-center gap-1">
                                 <input
                                   type="number"
@@ -559,11 +713,25 @@ export function DomoticsView({
                           </span>
                         )}
                       </td>
-                      <td className="py-2.5 px-3 font-mono text-slate-300 tabular-nums whitespace-nowrap">
-                        <span className="inline-flex items-center gap-1">
-                          <Clock className="w-3 h-3 text-slate-500" />
-                          {log.startTime}–{log.endTime}
-                        </span>
+                      <td className="py-2.5 px-3 text-slate-300 whitespace-nowrap">
+                        {isAllDaySession(log.startTime, log.endTime) ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[11px] font-medium">
+                            <Clock className="w-3 h-3" />
+                            Tutto il giorno · 24h
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 font-mono">
+                            <Clock className="w-3 h-3 text-slate-500" />
+                            <span>
+                              {log.startTime} → {log.endTime}
+                            </span>
+                            {formatDurationCompact(getSessionDurationHours(log.startTime, log.endTime)) && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                                {formatDurationCompact(getSessionDurationHours(log.startTime, log.endTime))}
+                              </span>
+                            )}
+                          </span>
+                        )}
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-100 tabular-nums">
                         {log.targetTemp > 0 ? `${log.targetTemp.toFixed(1)} °C` : '? °C'}
