@@ -1,6 +1,73 @@
 {
   "myLockedRate": 0.1595,
+  "myFixedEurMonth": 6.0,
   "currentRate": 0.1727,
   "lastAlertedRate": null,
-  "updatedAt": "2026-11-20T11:20:00Z"
+  "lastAlertedKey": null,
+  "competitors": [
+    {
+      "supplier": "Octopus Energy",
+      "offerName": "Octopus Fissa 12M / 24M",
+      "rateEurKwh": 0.1727,
+      "fixedEurMonth": 6.0,
+      "estAnnualEur": 469.21,
+      "url": "https://octopusenergy.it/offerta/tariffe",
+      "status": "ok"
+    },
+    {
+      "supplier": "Eni Plenitude",
+      "offerName": "Fixa Time Luce",
+      "rateEurKwh": 0.2339,
+      "fixedEurMonth": 8.0,
+      "estAnnualEur": 633.97,
+      "url": "https://eniplenitude.com/offerta/casa/gas-e-luce/fixa-time",
+      "status": "ok"
+    },
+    {
+      "supplier": "E.ON Energia",
+      "offerName": "LuceClick Verde",
+      "rateEurKwh": null,
+      "fixedEurMonth": 9.0,
+      "estAnnualEur": null,
+      "url": "https://www.eon-energia.com/luce/casa/eon-luceclick.html",
+      "status": "unavailable"
+    },
+    {
+      "supplier": "NeN",
+      "offerName": "Luce Special / Fissa",
+      "rateEurKwh": null,
+      "fixedEurMonth": 8.0,
+      "estAnnualEur": null,
+      "url": "https://nen.it/offerta-luce",
+      "status": "unavailable"
+    },
+    {
+      "supplier": "Sorgenia",
+      "offerName": "Next Energy Sunlight / Smart",
+      "rateEurKwh": null,
+      "fixedEurMonth": 9.5,
+      "estAnnualEur": null,
+      "url": "https://www.sorgenia.it/offerta-luce-e-gas",
+      "status": "unavailable"
+    },
+    {
+      "supplier": "Enel Energia",
+      "offerName": "Enel Fix Web Luce",
+      "rateEurKwh": 0.199,
+      "fixedEurMonth": 10.0,
+      "estAnnualEur": 577.7,
+      "url": "https://www.enel.it/it/luce-e-gas/luce/offerte/enel-fix-web-luce",
+      "status": "ok"
+    }
+  ],
+  "bestCompetitor": {
+    "supplier": "Octopus Energy",
+    "offerName": "Octopus Fissa 12M / 24M",
+    "rateEurKwh": 0.1727,
+    "fixedEurMonth": 6.0,
+    "estAnnualEur": 469.21,
+    "url": "https://octopusenergy.it/offerta/tariffe",
+    "status": "ok"
+  },
+  "updatedAt": "2026-11-21T13:07:45Z"
 }
