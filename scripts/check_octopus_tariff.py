@@ -24,6 +24,12 @@ SUPPLIER_TARGETS: List[Dict[str, Any]] = [
         "defaultFixedEurMonth": 6.0,
     },
     {
+        "supplier": "ENGIE",
+        "offerName": "Energia PuntoFisso 24M Solo Luce",
+        "url": "https://www.engie.it/casa/offerte-luce-gas/energia-puntofisso-24mesi-singleele/",
+        "defaultFixedEurMonth": 7.0,
+    },
+    {
         "supplier": "Eni Plenitude",
         "offerName": "Fixa Time Luce",
         "url": "https://eniplenitude.com/offerta/casa/gas-e-luce/fixa-time",
@@ -37,20 +43,20 @@ SUPPLIER_TARGETS: List[Dict[str, Any]] = [
     },
     {
         "supplier": "NeN",
-        "offerName": "Luce Special / Fissa",
-        "url": "https://nen.it/offerta-luce",
+        "offerName": "Luce Special / Prezzo Bloccato",
+        "url": "https://nen.it/offerte-e-prezzi/prezzo-bloccato",
         "defaultFixedEurMonth": 8.0,
     },
     {
         "supplier": "Sorgenia",
-        "offerName": "Next Energy Sunlight / Smart",
-        "url": "https://www.sorgenia.it/offerta-luce-e-gas",
+        "offerName": "Next Energy Luce Casa",
+        "url": "https://www.sorgenia.it/offerte-luce-casa",
         "defaultFixedEurMonth": 9.5,
     },
     {
         "supplier": "Enel Energia",
         "offerName": "Enel Fix Web Luce",
-        "url": "https://www.enel.it/it/luce-e-gas/luce/offerte/enel-fix-web-luce",
+        "url": "https://www.enel.it/it-it/offerte-luce/enel-fix-web-luce",
         "defaultFixedEurMonth": 10.0,
     },
 ]
@@ -82,26 +88,42 @@ def clean_visible_text(raw_html: str) -> str:
 
 def extract_rate_and_fixed(raw_html: str, default_fixed: float) -> tuple[Optional[float], float]:
     # Estrae prezzi €/kWh sia dal markup HTML sia dal testo pulito
-    candidates: List[float] = []
-    for source_text in (raw_html, clean_visible_text(raw_html)):
-        matches = re.findall(r"(0[.,]\d{3,4})\s*(?:€|&euro;|EUR)\s*/\s*kWh", source_text, re.IGNORECASE)
-        for raw in matches:
-            try:
-                val = float(raw.replace(",", "."))
-                if 0.06 <= val <= 0.40:
-                    candidates.append(val)
-            except ValueError:
-                continue
+    visible = clean_visible_text(raw_html)
 
-    rate = min(candidates) if candidates else None
+    # Se la pagina mostra esplicitamente sia Monorario che F1/F2/F3 (es. ENGIE), preferisci il valore Monorario
+    monorario_match = re.search(
+        r"Monorari[oa].{0,160}?(0[.,]\d{3,4})\s*(?:€|&euro;|EUR)\s*/\s*kWh",
+        visible,
+        re.IGNORECASE,
+    )
+    rate: Optional[float] = None
+    if monorario_match:
+        try:
+            mval = float(monorario_match.group(1).replace(",", "."))
+            if 0.06 <= mval <= 0.40:
+                rate = mval
+        except ValueError:
+            rate = None
+
+    if rate is None:
+        candidates: List[float] = []
+        for source_text in (raw_html, visible):
+            matches = re.findall(r"(0[.,]\d{3,4})\s*(?:€|&euro;|EUR)\s*/\s*kWh", source_text, re.IGNORECASE)
+            for raw in matches:
+                try:
+                    val = float(raw.replace(",", "."))
+                    if 0.06 <= val <= 0.40:
+                        candidates.append(val)
+                except ValueError:
+                    continue
+        rate = min(candidates) if candidates else None
 
     fixed_candidates: List[float] = []
-    visible = clean_visible_text(raw_html)
     for pat in (
         r"(\d{1,2}(?:[.,]\d{1,2})?)\s*€\s*/\s*mese",
-        r"commercializzazione[^0-9]{0,40}(\d{2,3}(?:[.,]\d{1,2})?)\s*€\s*/?\s*anno",
+        r"(?:commercializzazione|corrispettivo\s+annuo)[^0-9]{0,40}(\d{2,3}(?:[.,]\d{1,2})?)\s*€\s*/?\s*anno",
     ):
-        for idx, m in enumerate(re.findall(pat, visible, re.IGNORECASE)):
+        for m in re.findall(pat, visible, re.IGNORECASE):
             try:
                 val = float(m.replace(",", "."))
                 if "anno" in pat and val >= 36:

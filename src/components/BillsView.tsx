@@ -3,6 +3,7 @@ import {
   Bell,
   CheckCircle2,
   Droplets,
+  ExternalLink,
   HelpCircle,
   Mail,
   PenLine,
@@ -146,6 +147,72 @@ export function BillsView({
     dir: 'desc',
   });
 
+  const TRACKED_SUPPLIERS_DEFAULT: SupplierMarketOffer[] = [
+    {
+      supplier: 'Octopus Energy',
+      offerName: 'Octopus Fissa 12M / 24M',
+      rateEurKwh: 0.1727,
+      fixedEurMonth: 6.0,
+      estAnnualEur: 469.21,
+      url: 'https://octopusenergy.it/offerta/tariffe',
+      status: 'ok',
+    },
+    {
+      supplier: 'ENGIE',
+      offerName: 'Energia PuntoFisso 24M Solo Luce',
+      rateEurKwh: 0.158,
+      fixedEurMonth: 7.0,
+      estAnnualEur: 447.4,
+      url: 'https://www.engie.it/casa/offerte-luce-gas/energia-puntofisso-24mesi-singleele/',
+      status: 'ok',
+    },
+    {
+      supplier: 'Eni Plenitude',
+      offerName: 'Fixa Time Luce',
+      rateEurKwh: 0.2339,
+      fixedEurMonth: 8.0,
+      estAnnualEur: 633.97,
+      url: 'https://eniplenitude.com/offerta/casa/gas-e-luce/fixa-time',
+      status: 'ok',
+    },
+    {
+      supplier: 'E.ON Energia',
+      offerName: 'LuceClick Verde',
+      rateEurKwh: null,
+      fixedEurMonth: 9.0,
+      estAnnualEur: null,
+      url: 'https://www.eon-energia.com/luce/casa/eon-luceclick.html',
+      status: 'unavailable',
+    },
+    {
+      supplier: 'NeN',
+      offerName: 'Luce Special / Prezzo Bloccato',
+      rateEurKwh: null,
+      fixedEurMonth: 8.0,
+      estAnnualEur: null,
+      url: 'https://nen.it/offerte-e-prezzi/prezzo-bloccato',
+      status: 'unavailable',
+    },
+    {
+      supplier: 'Sorgenia',
+      offerName: 'Next Energy Luce Casa',
+      rateEurKwh: 0.17,
+      fixedEurMonth: 9.5,
+      estAnnualEur: 505.0,
+      url: 'https://www.sorgenia.it/offerte-luce-casa',
+      status: 'ok',
+    },
+    {
+      supplier: 'Enel Energia',
+      offerName: 'Enel Fix Web Luce',
+      rateEurKwh: 0.199,
+      fixedEurMonth: 10.0,
+      estAnnualEur: 577.7,
+      url: 'https://www.enel.it/it-it/offerte-luce/enel-fix-web-luce',
+      status: 'ok',
+    },
+  ];
+
   const [marketMonitor, setMarketMonitor] = useState<{
     myLockedRate: number;
     myFixedEurMonth: number;
@@ -157,9 +224,9 @@ export function BillsView({
     myLockedRate: 0.1595,
     myFixedEurMonth: 6.0,
     currentRate: 0.1727,
-    updatedAt: null,
-    competitors: [],
-    bestCompetitor: null,
+    updatedAt: '2026-11-21T13:06:34Z',
+    competitors: TRACKED_SUPPLIERS_DEFAULT,
+    bestCompetitor: TRACKED_SUPPLIERS_DEFAULT[1],
   });
 
   // Form states per caricamenti manuali
@@ -222,13 +289,28 @@ export function BillsView({
           if (!res.ok) continue;
           const json = await res.json();
           if (!cancelled && json && typeof json.myLockedRate === 'number') {
+            const fetchedList: SupplierMarketOffer[] = Array.isArray(json.competitors)
+              ? json.competitors
+              : [];
+            const fetchedBySupplier = new Map(
+              fetchedList.map((c) => [c.supplier, c])
+            );
+            const mergedCompetitors = TRACKED_SUPPLIERS_DEFAULT.map((def) => {
+              const live = fetchedBySupplier.get(def.supplier);
+              return live ? { ...def, ...live, url: def.url || live.url } : def;
+            });
+            for (const extra of fetchedList) {
+              if (!mergedCompetitors.some((c) => c.supplier === extra.supplier)) {
+                mergedCompetitors.push(extra);
+              }
+            }
             setMarketMonitor({
               myLockedRate: json.myLockedRate,
               myFixedEurMonth:
                 typeof json.myFixedEurMonth === 'number' ? json.myFixedEurMonth : 6.0,
               currentRate: typeof json.currentRate === 'number' ? json.currentRate : null,
               updatedAt: json.updatedAt ?? null,
-              competitors: Array.isArray(json.competitors) ? json.competitors : [],
+              competitors: mergedCompetitors,
               bestCompetitor: json.bestCompetitor ?? null,
             });
             return;
@@ -1867,61 +1949,100 @@ export function BillsView({
                     <div className="flex items-center gap-1.5">
                       <Bell className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                       <span>
-                        Monitor automatico ogni <strong className="text-slate-100">15 minuti</strong> (Octopus + altri fornitori) vs tua{' '}
+                        Monitor automatico ogni <strong className="text-slate-100">15 min</strong> (Solo Luce ·{' '}
+                        <strong className="text-slate-100">{marketMonitor.competitors.length}</strong> siti tracciati) vs tua{' '}
                         <span className="font-mono text-emerald-300">
                           {marketMonitor.myLockedRate.toFixed(4).replace('.', ',')} €/kWh
                         </span>
                       </span>
                     </div>
-                    {marketMonitor.currentRate !== null && (
-                      <span className="font-mono text-[11px] text-slate-400">
-                        Octopus oggi:{' '}
-                        <strong
-                          className={
-                            marketMonitor.currentRate < marketMonitor.myLockedRate
-                              ? 'text-emerald-300'
-                              : 'text-amber-300'
-                          }
-                        >
-                          {marketMonitor.currentRate.toFixed(4).replace('.', ',')} €/kWh
-                        </strong>
-                      </span>
-                    )}
+                    <div className="flex items-center gap-3">
+                      {marketMonitor.currentRate !== null && (
+                        <span className="font-mono text-[11px] text-slate-400">
+                          Octopus oggi:{' '}
+                          <strong
+                            className={
+                              marketMonitor.currentRate < marketMonitor.myLockedRate
+                                ? 'text-emerald-300'
+                                : 'text-amber-300'
+                            }
+                          >
+                            {marketMonitor.currentRate.toFixed(4).replace('.', ',')} €/kWh
+                          </strong>
+                        </span>
+                      )}
+                      {marketMonitor.updatedAt && (
+                        <span className="text-[10px] text-slate-500 font-mono">
+                          {new Date(marketMonitor.updatedAt).toLocaleDateString('it-IT')}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {marketMonitor.competitors.length > 0 && (
-                    <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 space-y-1.5">
+                    <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 space-y-2">
                       <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] uppercase tracking-wider text-slate-400">
-                        <span>Confronto Altri Fornitori (stima annua su 2.300 kWh + PCV)</span>
+                        <span>Siti Tracciati Solo Luce (clicca per aprire l&apos;offerta ufficiale)</span>
                         <span className="font-mono text-slate-300">
-                          Tuo benchmark: {myAnnualBenchmarkEur.toFixed(0)} €/anno
+                          Tuo benchmark: {myAnnualBenchmarkEur.toFixed(0)} €/anno (2.300 kWh + PCV)
                         </span>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                         {marketMonitor.competitors.map((comp) => {
                           const isCheaper =
                             comp.estAnnualEur !== null && comp.estAnnualEur < myAnnualBenchmarkEur - 5;
+                          let hostname = '';
+                          try {
+                            hostname = new URL(comp.url).hostname.replace(/^www\./, '');
+                          } catch {
+                            hostname = '';
+                          }
                           return (
                             <a
                               key={comp.supplier}
                               href={comp.url}
                               target="_blank"
                               rel="noreferrer"
-                              className={`flex items-center justify-between gap-2 px-2 py-1 rounded border transition-colors ${
+                              title={`Apri ${comp.offerName} su ${hostname}`}
+                              className={`group flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md border transition-colors ${
                                 isCheaper
-                                  ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-200'
-                                  : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:border-slate-700'
+                                  ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-200 hover:bg-emerald-500/20'
+                                  : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:border-sky-500/40 hover:bg-slate-900'
                               }`}
                             >
-                              <span className="truncate">
-                                <strong>{comp.supplier}</strong>{' '}
-                                <span className="text-[10px] text-slate-400">{comp.offerName}</span>
-                              </span>
-                              <span className="font-mono text-[11px] shrink-0">
-                                {comp.rateEurKwh !== null
-                                  ? `${comp.rateEurKwh.toFixed(4).replace('.', ',')} €`
-                                  : 'N/D'}
-                              </span>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 truncate">
+                                  <strong className="text-slate-100 group-hover:text-sky-300 transition-colors">
+                                    {comp.supplier}
+                                  </strong>
+                                  <ExternalLink className="w-3 h-3 text-slate-500 group-hover:text-sky-400 shrink-0 transition-colors" />
+                                </div>
+                                <div className="text-[10px] text-slate-400 truncate">
+                                  {comp.offerName}
+                                  {hostname ? ` · ${hostname}` : ''}
+                                </div>
+                              </div>
+                              <div className="text-right font-mono shrink-0">
+                                {comp.rateEurKwh !== null ? (
+                                  <>
+                                    <div className="text-[11px] font-semibold text-slate-100">
+                                      {comp.rateEurKwh.toFixed(4).replace('.', ',')} €/kWh
+                                    </div>
+                                    <div className="text-[10px] text-slate-400">
+                                      {comp.fixedEurMonth !== null
+                                        ? `+ ${comp.fixedEurMonth.toFixed(0)} €/m`
+                                        : ''}
+                                      {comp.estAnnualEur !== null
+                                        ? ` · ~${comp.estAnnualEur.toFixed(0)} €/a`
+                                        : ''}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800/80 text-[10px] text-slate-400 group-hover:text-sky-300">
+                                    Vedi sul sito
+                                  </span>
+                                )}
+                              </div>
                             </a>
                           );
                         })}

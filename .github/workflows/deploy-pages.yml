@@ -34,12 +34,14 @@ jobs:
           GITHUB_PAGES: 'true'
         run: npm run build
 
-      - name: Copia dati consumi se presenti
+      - name: Copia dati consumi, bollette e tariffe se presenti
         run: |
-          if [ -f data/consumi.json ]; then
-            mkdir -p dist/data
-            cp data/consumi.json dist/data/consumi.json
-          fi
+          mkdir -p dist/data
+          for f in data/consumi.json data/bollette.json data/octopus_tariff.json; do
+            if [ -f "$f" ]; then
+              cp "$f" dist/data/
+            fi
+          done
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

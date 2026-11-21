@@ -14,6 +14,7 @@ import {
   Snowflake,
   Sun,
   Thermometer,
+  Wind,
   Zap,
 } from 'lucide-react';
 
@@ -105,6 +106,39 @@ export function InfoGuideView() {
           <span>
             <strong className="text-slate-200">Nota sull&apos;integrazione diretta:</strong> Nea Smart 2.0 e Ariston NET usano API cloud private che non sono accessibili direttamente da un sito web statico senza un server domestico dedicato (es. Home Assistant). Per questo le accensioni si registrano manualmente nella sezione <strong className="text-slate-200">Consumi Annuali</strong>, mentre i consumi e-distribuzione e le bollette si sincronizzano in automatico.
           </span>
+        </div>
+      </div>
+
+      {/* Cos'è la VMC (Ventilazione Meccanica Controllata) */}
+      <div className="bg-slate-900/70 border border-fuchsia-500/25 rounded-xl p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+            <Wind className="w-4 h-4 text-fuchsia-400 shrink-0" />
+            <span>Cos&apos;è la VMC (Ventilazione Meccanica Controllata)</span>
+          </div>
+          <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-fuchsia-500/15 text-fuchsia-300 border border-fuchsia-500/30 rounded-md">
+            Ricambio d&apos;aria casa
+          </span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-3 space-y-1">
+            <div className="font-semibold text-slate-100">A cosa serve</div>
+            <p className="text-slate-400 leading-relaxed">
+              È il sistema di <strong className="text-slate-200">ricambio d&apos;aria continuo 24 ore su 24</strong>: aspira aria umida e viziata (soprattutto da bagni e cucina) ed immette aria nuova filtrata dall&apos;esterno senza aprire le finestre, riducendo umidità, odori, CO₂ e rischio muffe.
+            </p>
+          </div>
+          <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-3 space-y-1">
+            <div className="font-semibold text-slate-100">Recupero di calore</div>
+            <p className="text-slate-400 leading-relaxed">
+              Prima di espellere l&apos;aria interna, uno scambiatore trasferisce gran parte della sua temperatura all&apos;aria nuova in ingresso: in inverno non entra aria gelida e in estate non entra aria bollente, proteggendo il lavoro del radiante.
+            </p>
+          </div>
+          <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-3 space-y-1">
+            <div className="font-semibold text-fuchsia-300">Perché incide sui kWh</div>
+            <p className="text-slate-400 leading-relaxed">
+              A velocità normale consuma pochissimo (<span className="font-mono text-slate-200">~20–40 W</span>, meno di 1 kWh al giorno). Se però resta impostata alla <strong className="text-slate-200">velocità massima</strong> h24 (come dal 20 al 30 agosto), le ventole assorbono molta più corrente alzando i consumi anche a clima spento.
+            </p>
+          </div>
         </div>
       </div>
 

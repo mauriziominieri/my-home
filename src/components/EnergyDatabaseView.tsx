@@ -1330,10 +1330,6 @@ export function EnergyDatabaseView({
               </span>
               Raffrescamento ON
             </span>
-            <span className="inline-flex items-center gap-1.5 text-fuchsia-300 font-medium" title="20-30 Agosto: clima spento ma MVC/VMC dimenticata accesa al massimo">
-              <span className="relative w-3 h-3 rounded-xs bg-slate-800 border-2 border-dashed border-fuchsia-400" />
-              20–30 Ago VMC Max
-            </span>
             <span className="text-slate-700">|</span>
             <span className="inline-flex items-center gap-1.5 text-rose-300">
               <span className="relative w-3.5 h-3.5 rounded-xs bg-slate-800/80 border-2 border-dashed border-amber-400/80 overflow-hidden">
@@ -2597,9 +2593,12 @@ export function EnergyDatabaseView({
                   <td className="py-3 px-4 text-slate-400">
                     <div>Nessuna zona attiva</div>
                     {offDaySummary.vmcCount > 0 && (
-                      <div className="inline-flex items-center gap-1 text-[11px] text-fuchsia-300 mt-0.5">
+                      <div
+                        className="inline-flex items-center gap-1 text-[11px] text-fuchsia-300 mt-0.5 cursor-help"
+                        title="VMC = Ventilazione Meccanica Controllata (ricambio d'aria continuo con recupero di calore). Se lasciata alla velocità massima consuma molto di più anche a clima spento."
+                      >
                         <Wind className="w-3 h-3 shrink-0" />
-                        20–30 Ago ({offDaySummary.vmcCount}g): MVC/VMC al massimo ·{' '}
+                        20–30 Ago ({offDaySummary.vmcCount}g): VMC (ricambio aria) al massimo ·{' '}
                         <span className="font-mono font-semibold">
                           {offDaySummary.vmcAvgKwh!.toFixed(2)} kWh/g
                         </span>
