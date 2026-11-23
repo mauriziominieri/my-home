@@ -179,6 +179,7 @@ export default function App() {
 
   const [firestoreReadings, setFirestoreReadings] = useState<EnergyReading[]>([]);
   const [climateLogs, setClimateLogs] = useState<ClimateSession[]>([]);
+  const [publicOwnerUid, setPublicOwnerUid] = useState<string | null>(null);
   const [electricityBills, setElectricityBills] = useState<BillRecord[]>(SEED_ELECTRICITY_BILLS);
   const [waterBills, setWaterBills] = useState<WaterBillRecord[]>(SEED_WATER_BILLS);
   const [tariBills, setTariBills] = useState<TariBillRecord[]>([]);
@@ -225,6 +226,9 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = subscribeAuthWithGmailCleanup((currentUser) => {
       setUser(currentUser);
+      if (currentUser) {
+        setPublicOwnerUid(null);
+      }
       if (!currentUser) {
         setGmailToken(null);
         setPendingTrashMessages([]);
@@ -238,6 +242,35 @@ export default function App() {
   const activeUid = user?.uid ?? null;
   const canEdit = Boolean(user);
 
+  useEffect(() => {
+    if (!authReady || activeUid) return;
+
+    const ownerPath = 'appMeta/owner';
+    const unsubscribe = onSnapshot(
+      doc(db, ownerPath),
+      (snap) => {
+        const ownerUid = snap.exists() ? snap.data().ownerUid : null;
+        if (typeof ownerUid !== 'string' || ownerUid.length === 0) {
+          setPublicOwnerUid(null);
+          setFirestoreReadings([]);
+          setClimateLogs([]);
+          setReadingsLoading(false);
+          return;
+        }
+        setPublicOwnerUid(ownerUid);
+      },
+      (error) => {
+        setPublicOwnerUid(null);
+        setFirestoreReadings([]);
+        setClimateLogs([]);
+        setReadingsLoading(false);
+        handleFirestoreError(error, OperationType.GET, ownerPath);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [authReady, activeUid]);
+
   // Registra automaticamente l'ownerUid corrente su appMeta/owner per GitHub Actions -> Firestore
   useEffect(() => {
     if (!authReady || !user || user.email !== 'mauminieri@gmail.com') return;
@@ -248,23 +281,14 @@ export default function App() {
     ).catch(() => {});
   }, [authReady, user]);
 
-  // Subscribe to Firestore data when signed in as owner (uses local cache fallback when signed out)
+  // Subscribe to private Firestore data when signed in as owner.
   useEffect(() => {
     if (!authReady) return;
     if (!activeUid) {
-      try {
-        const cached = localStorage.getItem('myhome_readings_cache_last');
-        if (cached) {
-          const parsed = JSON.parse(cached) as EnergyReading[];
-          const currentTodayIso = getLocalTodayIso();
-          setFirestoreReadings(parsed.filter((r) => r?.date && r.date <= currentTodayIso));
-        } else {
-          setFirestoreReadings([]);
-        }
-      } catch {
-        setFirestoreReadings([]);
-      }
-      setReadingsLoading(false);
+      setFirestoreReadings([]);
+      setClimateLogs([]);
+      setHomeConfig({ ownerId: '', ...DEFAULT_HOME_CONFIG });
+      setReadingsLoading(true);
       return;
     }
 
@@ -874,6 +898,81 @@ export default function App() {
       unsubArticles();
     };
   }, [authReady, activeUid, user]);
+
+  useEffect(() => {
+    if (!authReady || activeUid || !publicOwnerUid) return;
+
+    setReadingsLoading(true);
+    const readingsPath = `users/${publicOwnerUid}/energyReadings`;
+    const readingsQuery = query(
+      collection(db, readingsPath),
+      where('ownerId', '==', publicOwnerUid)
+    );
+    const unsubReadings = onSnapshot(
+      readingsQuery,
+      (snap) => {
+        const currentTodayIso = getLocalTodayIso();
+        const list: EnergyReading[] = snap.docs
+          .map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              ownerId: String(data.ownerId || publicOwnerUid),
+              date: String(data.date || ''),
+              f1Kwh: Number(data.f1Kwh || 0),
+              f2Kwh: Number(data.f2Kwh || 0),
+              f3Kwh: Number(data.f3Kwh || 0),
+              totalKwh: Number(data.totalKwh || 0),
+              peakKw: Number(data.peakKw || 0),
+              estimatedCostEur: Number(data.estimatedCostEur || 0),
+              source: (data.source as ReadingSource) || 'e-distribuzione-api',
+              notes: data.notes ? String(data.notes) : undefined,
+            };
+          })
+          .filter((reading) => reading.date && reading.date <= currentTodayIso);
+        setFirestoreReadings(list);
+        setReadingsLoading(false);
+      },
+      (error) => {
+        setReadingsLoading(false);
+        handleFirestoreError(error, OperationType.LIST, readingsPath);
+      }
+    );
+
+    const climatePath = `users/${publicOwnerUid}/climateLogs`;
+    const climateQuery = query(
+      collection(db, climatePath),
+      where('ownerId', '==', publicOwnerUid)
+    );
+    const unsubClimate = onSnapshot(
+      climateQuery,
+      (snap) => {
+        const list: ClimateSession[] = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            ownerId: String(data.ownerId || publicOwnerUid),
+            date: String(data.date || ''),
+            mode: (data.mode as ClimateMode) || 'riscaldamento',
+            startTime: String(data.startTime || '09:00'),
+            endTime: String(data.endTime || '20:00'),
+            targetTemp: typeof data.targetTemp === 'number' ? data.targetTemp : 21,
+            rooms: Array.isArray(data.rooms) ? (data.rooms as RoomId[]) : [],
+            notes: data.notes ? String(data.notes) : undefined,
+          };
+        });
+        setClimateLogs(list);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, climatePath);
+      }
+    );
+
+    return () => {
+      unsubReadings();
+      unsubClimate();
+    };
+  }, [authReady, activeUid, publicOwnerUid]);
 
   const readings = useMemo(
     () => firestoreReadings.filter((r) => r.date && r.date <= todayIso),

@@ -14,6 +14,11 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isPublicDataOwner(userId) {
+      return exists(/databases/$(database)/documents/appMeta/owner)
+        && get(/databases/$(database)/documents/appMeta/owner).data.ownerUid == userId;
+    }
+
     function isPrimaryOwnerEmail() {
       return isSignedIn() && request.auth.token.email == 'mauminieri@gmail.com';
     }
@@ -96,7 +101,8 @@ service cloud.firestore {
     }
 
     match /appMeta/{metaId} {
-      allow get: if isSignedIn() && metaId in ['owner', 'octopusTariff'];
+      allow get: if metaId == 'owner'
+        || (isSignedIn() && metaId == 'octopusTariff');
       allow list: if false;
       allow create, update: if metaId == 'owner'
         && isPrimaryOwnerEmail()
@@ -106,8 +112,10 @@ service cloud.firestore {
     }
 
     match /users/{userId}/energyReadings/{readingId} {
-      allow get: if isOwner(userId) && isValidId(readingId);
-      allow list: if isOwner(userId) && existing().ownerId == userId;
+      allow get: if isValidId(readingId)
+        && (isOwner(userId) || isPublicDataOwner(userId));
+      allow list: if (isOwner(userId) || isPublicDataOwner(userId))
+        && existing().ownerId == userId;
       allow create: if isOwner(userId)
         && isValidId(readingId)
         && isValidEnergyReading(incoming(), userId)
@@ -166,8 +174,10 @@ service cloud.firestore {
     }
 
     match /users/{userId}/climateLogs/{logId} {
-      allow get: if isOwner(userId) && isValidId(logId);
-      allow list: if isOwner(userId) && existing().ownerId == userId;
+      allow get: if isValidId(logId)
+        && (isOwner(userId) || isPublicDataOwner(userId));
+      allow list: if (isOwner(userId) || isPublicDataOwner(userId))
+        && existing().ownerId == userId;
       allow create: if isOwner(userId)
         && isValidId(logId)
         && isValidClimateSession(incoming(), userId)
