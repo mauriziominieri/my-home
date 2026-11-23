@@ -222,9 +222,40 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["ownerId", "fileKey", "chunkIndex", "data", "createdAt"]
+    },
+    "AppMetaOwner": {
+      "title": "AppMetaOwner",
+      "description": "Puntatore al UID del proprietario autenticato sul progetto unificato gen-lang-client-0721850501.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "updatedAt"]
+    },
+    "AppMetaOctopusTariff": {
+      "title": "AppMetaOctopusTariff",
+      "description": "Esito dell'ultimo controllo automatico delle tariffe luce di mercato scritto da GitHub Actions via Admin SDK.",
+      "type": "object",
+      "properties": {
+        "checkedAt": { "type": "string", "maxLength": 40 },
+        "myLockedRate": { "type": "number" },
+        "bestMarketRate": { "type": "number" },
+        "bestSupplier": { "type": "string", "maxLength": 80 },
+        "alert": { "type": "boolean" }
+      },
+      "required": ["checkedAt"]
     }
   },
   "firestore": {
+    "/appMeta/owner": {
+      "schema": { "$ref": "#/entities/AppMetaOwner" },
+      "description": "UID del proprietario attivo per sincronizzazione automatica GitHub Actions -> Firestore"
+    },
+    "/appMeta/octopusTariff": {
+      "schema": { "$ref": "#/entities/AppMetaOctopusTariff" },
+      "description": "Ultimo confronto tariffe luce di mercato scritto da GitHub Actions"
+    },
     "/users/{userId}/energyReadings/{readingId}": {
       "schema": { "$ref": "#/entities/EnergyReading" },
       "description": "Letture consumi elettrici e-distribuzione dell'utente"

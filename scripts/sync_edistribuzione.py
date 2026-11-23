@@ -14,12 +14,8 @@ import json
 import os
 import re
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 POD_CODE = os.environ.get("POD_CODE", "IT001E11251419")
@@ -366,11 +362,11 @@ def parse_edison_pdf_bytes(pdf_bytes: bytes) -> Optional[Dict[str, Any]]:
 
 def extract_edison_bills_from_gmail(
     mail: Optional[imaplib.IMAP4_SSL],
-) -> Dict[bytes, List[Dict[str, Any]]]:
+) -> Dict[bytes, List[tuple[Dict[str, Any], bytes, str]]]:
     if not mail:
         return {}
     mail.select("INBOX")
-    bills_by_msg: Dict[bytes, List[Dict[str, Any]]] = {}
+    bills_by_msg: Dict[bytes, List[tuple[Dict[str, Any], bytes, str]]] = {}
     status, data = mail.search(
         None,
         '(OR FROM "fatturazione@edisonenergia.it" SUBJECT "Fattura Edison Energia")',
@@ -386,18 +382,19 @@ def extract_edison_bills_from_gmail(
         if not msg_data or not isinstance(msg_data[0], tuple):
             continue
         msg = email.message_from_bytes(msg_data[0][1])
-        msg_bills: List[Dict[str, Any]] = []
+        msg_bills: List[tuple[Dict[str, Any], bytes, str]] = []
         for part in msg.walk():
-            filename = (part.get_filename() or "").lower()
+            raw_name = part.get_filename() or "bolletta_edison.pdf"
+            filename = raw_name.lower()
             if not filename.endswith(".pdf"):
                 continue
             payload = part.get_payload(decode=True)
             if not payload:
                 continue
-            print(f"Elaborazione bolletta PDF Edison: {filename}")
+            print(f"Elaborazione bolletta PDF Edison: {raw_name}")
             parsed = parse_edison_pdf_bytes(payload)
             if parsed:
-                msg_bills.append(parsed)
+                msg_bills.append((parsed, payload, raw_name))
         if msg_bills:
             bills_by_msg[msg_id] = msg_bills
     return bills_by_msg
@@ -429,7 +426,6 @@ def parse_tari_pdf_bytes(
     )
     notice_number = notice_m.group(1).strip() if notice_m else ""
 
-    # Estrai date (emissione e scadenza)
     issue_m = re.search(
         r"(?:data\s+emissione|emesso\s+il|del)\s*[:.]?\s*(\d{2}/\d{2}/\d{4})",
         text,
@@ -444,7 +440,6 @@ def parse_tari_pdf_bytes(
     issue_date = issue_m.group(1) if issue_m else (all_dates[0] if all_dates else "—")
     due_date = due_m.group(1) if due_m else (all_dates[-1] if all_dates else issue_date)
 
-    # Estrai anno di riferimento TARI
     year_m = re.search(r"TARI\s+(20\d{2})", text + " " + msg_subject, re.IGNORECASE)
     if not year_m:
         year_m = re.search(r"Anno(?:\s+d['’]imposta)?\s*[:.]?\s*(20\d{2})", text, re.IGNORECASE)
@@ -455,7 +450,6 @@ def parse_tari_pdf_bytes(
     else:
         year = datetime.now(timezone.utc).year
 
-    # Estrai importo totale da pagare
     amount_patterns = [
         r"(?:TOTALE\s+DA\s+PAGARE|IMPORTO\s+DA\s+PAGARE|TOTALE\s+AVVISO|TOTALE\s+DOVUTO)\s*[:€\s]*([\d.,]+)",
         r"(?:Importo|Totale)\s*[:\s]*€?\s*([\d.,]+)\s*€",
@@ -474,11 +468,9 @@ def parse_tari_pdf_bytes(
         return None
 
     if not notice_number:
-        # Fallback deterministico su anno + scadenza/importo
         clean_due = due_date.replace("/", "")
         notice_number = f"TARI_{year}_{clean_due or int(total_paid * 100)}"
 
-    # Identifica rata / periodo
     rata_m = re.search(r"(Rata\s+\d+|Unica\s+Soluzione|Saldo|Acconto)", text, re.IGNORECASE)
     rata_label = rata_m.group(1).title() if rata_m else "Avviso di pagamento"
     period = f"TARI {year} – {rata_label}"
@@ -499,10 +491,10 @@ def parse_tari_pdf_bytes(
 
 def extract_tari_bills_from_gmail(
     mail: Optional[imaplib.IMAP4_SSL],
-) -> Dict[bytes, List[Dict[str, Any]]]:
+) -> Dict[bytes, List[tuple[Dict[str, Any], bytes, str]]]:
     if not mail:
         return {}
-    tari_by_msg: Dict[bytes, List[Dict[str, Any]]] = {}
+    tari_by_msg: Dict[bytes, List[tuple[Dict[str, Any], bytes, str]]] = {}
     search_criteria = '(OR FROM "tassa_rifiuti@acegasapsamga.it" SUBJECT "Avviso di pagamento TARI")'
 
     try:
@@ -522,19 +514,20 @@ def extract_tari_bills_from_gmail(
             msg = email.message_from_bytes(msg_data[0][1])
             subj = str(msg.get("Subject", ""))
             msg_date = str(msg.get("Date", ""))
-            msg_tari: List[Dict[str, Any]] = []
+            msg_tari: List[tuple[Dict[str, Any], bytes, str]] = []
             for part in msg.walk():
-                filename = (part.get_filename() or "").lower()
+                raw_name = part.get_filename() or "avviso_tari.pdf"
+                filename = raw_name.lower()
                 content_type = (part.get_content_type() or "").lower()
                 if not (filename.endswith(".pdf") or content_type == "application/pdf"):
                     continue
                 payload = part.get_payload(decode=True)
                 if not payload:
                     continue
-                print(f"Elaborazione PDF TARI: {filename or 'avviso.pdf'}")
+                print(f"Elaborazione PDF TARI: {raw_name}")
                 parsed = parse_tari_pdf_bytes(payload, subj, msg_date)
                 if parsed:
-                    msg_tari.append(parsed)
+                    msg_tari.append((parsed, payload, raw_name))
             if msg_tari:
                 tari_by_msg[msg_id] = msg_tari
     except Exception as exc:
@@ -543,217 +536,259 @@ def extract_tari_bills_from_gmail(
     return tari_by_msg
 
 
-def _load_firebase_config() -> Dict[str, str]:
-    return {
-        "projectId": os.environ.get("FIREBASE_PROJECT_ID", "spiritual-bearing-sq7xb"),
-        "databaseId": os.environ.get(
-            "FIRESTORE_DATABASE_ID",
-            "ai-studio-30a168e3-8158-474f-b9f2-f717d7220314",
-        ),
-        "apiKey": os.environ.get("FIREBASE_API_KEY", ""),
-        "ownerUid": os.environ.get("OWNER_UID", "rXdhFrSuqzaYf8SYVbmQulPqg7m1"),
-    }
-
-
-def _to_firestore_value(v: Any) -> Dict[str, Any]:
-    if isinstance(v, bool):
-        return {"booleanValue": v}
-    if isinstance(v, (int, float)):
-        return {"doubleValue": float(v)}
-    if v is None:
-        return {"nullValue": None}
-    return {"stringValue": str(v)}
-
-
-def firestore_commit_doc(
-    fb_cfg: Dict[str, str],
-    collection: str,
-    raw_doc_id: str,
-    fields_dict: Dict[str, Any],
-) -> bool:
-    doc_id = re.sub(r"[^a-zA-Z0-9_-]", "", raw_doc_id)[:128]
-    if not doc_id:
-        return False
-
-    project_id = fb_cfg["projectId"]
-    database_id = fb_cfg["databaseId"]
-    api_key = fb_cfg["apiKey"]
-    id_token = os.environ.get("FIREBASE_ID_TOKEN", "").strip()
-
-    commit_url = (
-        f"https://firestore.googleapis.com/v1/projects/{project_id}"
-        f"/databases/{database_id}/documents:commit"
-    )
-    if api_key and not id_token:
-        commit_url = f"{commit_url}?{urllib.parse.urlencode({'key': api_key})}"
-
-    doc_name = f"projects/{project_id}/databases/{database_id}/documents/{collection}/{doc_id}"
-    fs_fields = {k: _to_firestore_value(v) for k, v in fields_dict.items()}
-
-    body = {
-        "writes": [
-            {
-                "update": {
-                    "name": doc_name,
-                    "fields": fs_fields,
-                },
-                "updateTransforms": [
-                    {
-                        "fieldPath": "createdAt",
-                        "setToServerValue": "REQUEST_TIME",
-                    }
-                ],
-            }
-        ]
-    }
-    headers = {"Content-Type": "application/json"}
-    if id_token:
-        headers["Authorization"] = f"Bearer {id_token}"
-
-    req = urllib.request.Request(
-        commit_url,
-        data=json.dumps(body).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
+def parse_water_pdf_bytes(
+    pdf_bytes: bytes, msg_subject: str = "", msg_date: str = ""
+) -> Optional[Dict[str, Any]]:
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return resp.status in (200, 201)
-    except urllib.error.HTTPError as exc:
-        err_body = exc.read().decode("utf-8", errors="replace")
-        if exc.code in (401, 403):
-            print(
-                f"Scrittura Firestore bloccata ({exc.code}) su {collection}/{doc_id}: "
-                "autenticazione proprietario richiesta dalle Firestore Rules. "
-                "L'email NON verrà eliminata.",
-                file=sys.stderr,
-            )
-        else:
-            print(f"Errore HTTP Firestore {exc.code} su {collection}/{doc_id}: {err_body}")
-        return False
+        from pypdf import PdfReader
+    except ImportError:
+        return None
+
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        text = "\n".join((page.extract_text() or "") for page in reader.pages[:4])
+    except Exception:
+        return None
+
+    low = f"{msg_subject}\n{text}".lower()
+    if "tari" in low or "tassa rifiuti" in low:
+        return None
+    if not any(k in low for k in ("servizio idrico", "acquedotto", "fognatura", "depurazione", "mc")):
+        return None
+
+    inv_m = re.search(r"(?:Fattura|Bolletta|Documento)\s*(?:n\.?|numero|N°)?\s*[:#]?\s*([A-Z0-9/-]{5,30})", text, re.IGNORECASE)
+    if not inv_m:
+        return None
+    invoice_number = inv_m.group(1).strip()[:40]
+
+    dates = re.findall(r"\b(\d{2}/\d{2}/\d{4})\b", text)
+    issue_date = dates[0] if dates else datetime.now(timezone.utc).strftime("%d/%m/%Y")
+    year = int(issue_date.split("/")[-1]) if "/" in issue_date else datetime.now(timezone.utc).year
+
+    tot_m = re.search(r"(?:TOTALE\s+DA\s+PAGARE|TOTALE\s+FATTURA|TOTALE\s+BOLLETTA)\s*[:€\s]*([\d.,]+)", text, re.IGNORECASE)
+    total_paid = round(parse_it_float(tot_m.group(1).replace(".", "")), 2) if tot_m else 0.0
+    if total_paid <= 0:
+        return None
+
+    mc_m = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:mc|m3|m³)\b", text, re.IGNORECASE)
+    cubic_meters = round(parse_it_float(mc_m.group(1)), 1) if mc_m else 0.0
+
+    period_m = re.search(r"(?:Periodo(?:\s+di\s+fatturazione)?|Dal)\s*[:.]?\s*([^\n]{5,60})", text, re.IGNORECASE)
+    period = period_m.group(1).strip()[:80] if period_m else f"Periodo {issue_date}"
+
+    return {
+        "invoiceNumber": invoice_number,
+        "issueDate": issue_date[:20],
+        "year": year,
+        "period": period,
+        "cubicMeters": cubic_meters,
+        "fixedCostEur": 0.0,
+        "totalPaid": total_paid,
+        "note": f"Estratta automaticamente da Gmail ({msg_date[:16]})".strip() if msg_date else "Estratta automaticamente da Gmail",
+    }
+
+
+def extract_water_bills_from_gmail(
+    mail: Optional[imaplib.IMAP4_SSL],
+) -> Dict[bytes, List[tuple[Dict[str, Any], bytes, str]]]:
+    if not mail:
+        return {}
+    water_by_msg: Dict[bytes, List[tuple[Dict[str, Any], bytes, str]]] = {}
+    try:
+        status, _ = mail.select("INBOX")
+        if status != "OK":
+            return {}
+        status, data = mail.search(None, '(OR FROM "acegasapsamga.it" SUBJECT "servizio idrico")')
+        if status != "OK" or not data or not data[0]:
+            return {}
+        msg_ids = data[0].split()[-10:]
+        for msg_id in msg_ids:
+            _, msg_data = mail.fetch(msg_id, "(RFC822)")
+            if not msg_data or not isinstance(msg_data[0], tuple):
+                continue
+            msg = email.message_from_bytes(msg_data[0][1])
+            subj = str(msg.get("Subject", ""))
+            msg_date = str(msg.get("Date", ""))
+            if "tari" in subj.lower() or "rifiuti" in subj.lower():
+                continue
+            items: List[tuple[Dict[str, Any], bytes, str]] = []
+            for part in msg.walk():
+                raw_name = part.get_filename() or "bolletta_acqua.pdf"
+                if not (raw_name.lower().endswith(".pdf") or (part.get_content_type() or "").lower() == "application/pdf"):
+                    continue
+                payload = part.get_payload(decode=True)
+                if not payload:
+                    continue
+                parsed = parse_water_pdf_bytes(payload, subj, msg_date)
+                if parsed:
+                    items.append((parsed, payload, raw_name))
+            if items:
+                water_by_msg[msg_id] = items
     except Exception as exc:
-        print(f"Errore scrittura Firestore {collection}/{doc_id}: {exc}")
+        print(f"Nota lettura Acqua dalla INBOX: {exc}")
+    return water_by_msg
+
+
+def init_firestore_admin():
+    import firebase_admin
+    from firebase_admin import auth as fb_auth
+    from firebase_admin import credentials, firestore
+
+    sa_raw = os.environ.get("FIREBASE_SERVICE_ACCOUNT", "").strip()
+    if not sa_raw:
+        raise RuntimeError(
+            "Secret FIREBASE_SERVICE_ACCOUNT mancante su GitHub. "
+            "Scarica la chiave privata JSON da Firebase Console -> gen-lang-client-0721850501 -> Service account."
+        )
+    sa_dict = json.loads(sa_raw)
+    if not firebase_admin._apps:
+        cred = credentials.Certificate(sa_dict)
+        firebase_admin.initialize_app(cred, {"projectId": sa_dict.get("project_id", "gen-lang-client-0721850501")})
+
+    db_id = os.environ.get(
+        "FIRESTORE_DATABASE_ID",
+        "ai-studio-30a168e3-8158-474f-b9f2-f717d7220314",
+    ).strip()
+    db_client = firestore.client(database_id=db_id)
+
+    owner_uid = os.environ.get("OWNER_UID", "").strip()
+    if not owner_uid:
+        meta_snap = db_client.collection("appMeta").document("owner").get()
+        if meta_snap.exists:
+            owner_uid = str((meta_snap.to_dict() or {}).get("ownerUid", "")).strip()
+
+    if not owner_uid:
+        owner_email = os.environ.get("OWNER_EMAIL", "mauminieri@gmail.com").strip()
+        try:
+            user_rec = fb_auth.get_user_by_email(owner_email)
+            owner_uid = user_rec.uid
+            db_client.collection("appMeta").document("owner").set(
+                {"ownerUid": owner_uid, "updatedAt": firestore.SERVER_TIMESTAMP}
+            )
+            print(f"Risolto e salvato ownerUid automatico per {owner_email}: {owner_uid}")
+        except Exception as exc:
+            raise RuntimeError(
+                f"Impossibile determinare ownerUid su gen-lang-client-0721850501 "
+                f"(accedi almeno una volta in app con {owner_email}): {exc}"
+            ) from exc
+
+    return db_client, firestore, owner_uid
+
+
+def save_pdf_to_vault_firestore(
+    db_client: Any,
+    fb_firestore: Any,
+    owner_uid: str,
+    file_key: str,
+    file_name: str,
+    pdf_bytes: bytes,
+) -> bool:
+    import base64
+
+    MAX_BYTES = 6_000_000
+    CHUNK_CHAR_SIZE = 600_000
+    clean_key = re.sub(r"[^a-zA-Z0-9_-]", "_", file_key)[:80] or "file_unknown"
+    if not pdf_bytes or len(pdf_bytes) > MAX_BYTES:
+        print(f"PDF {clean_key} saltato ({len(pdf_bytes)} bytes > limite 6 MB).")
         return False
 
+    b64 = base64.b64encode(pdf_bytes).decode("ascii")
+    chunks = [b64[i : i + CHUNK_CHAR_SIZE] for i in range(0, len(b64), CHUNK_CHAR_SIZE)]
+    if not chunks or len(chunks) > 16:
+        return False
 
-def save_readings_json(new_readings: List[Dict[str, Any]], output_path: Path = Path("data/consumi.json")) -> bool:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    by_date: Dict[str, Dict[str, Any]] = {}
-    if output_path.exists():
-        try:
-            existing = json.loads(output_path.read_text(encoding="utf-8"))
-            for item in existing.get("readings", []):
-                d = str(item.get("date", ""))
-                if d:
-                    by_date[d] = item
-        except Exception as exc:
-            print(f"Nota lettura {output_path} esistente: {exc}")
+    user_ref = db_client.collection("users").document(owner_uid)
+    files_col = user_ref.collection("vaultFiles")
+    chunks_col = user_ref.collection("vaultFileChunks")
 
-    for r in new_readings:
-        d = str(r.get("date", ""))
-        if not re.match(r"^\d{4}-\d{2}-\d{2}$", d):
-            continue
-        by_date[d] = {
-            "date": d,
-            "f1Kwh": round(float(r.get("f1Kwh", 0.0)), 2),
-            "f2Kwh": round(float(r.get("f2Kwh", 0.0)), 2),
-            "f3Kwh": round(float(r.get("f3Kwh", 0.0)), 2),
-            "totalKwh": round(float(r.get("totalKwh", 0.0)), 2),
-            "peakKw": round(float(r.get("peakKw", 0.0)), 2),
-            "source": "e-distribuzione-api",
-        }
+    meta_snap = files_col.document(clean_key).get()
+    prev_chunks = int((meta_snap.to_dict() or {}).get("chunkCount", 0)) if meta_snap.exists else 0
 
-    sorted_readings = sorted(by_date.values(), key=lambda x: x["date"], reverse=True)
-    payload = {
-        "pod": POD_CODE,
-        "updatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "count": len(sorted_readings),
-        "readings": sorted_readings,
-    }
-    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"Scritto {output_path} ({len(sorted_readings)} giorni totali).")
-    return True
+    for start in range(0, len(chunks), 4):
+        batch = db_client.batch()
+        for offset, chunk_data in enumerate(chunks[start : start + 4]):
+            idx = start + offset
+            chunk_id = f"{clean_key}_chunk_{idx}"
+            batch.set(
+                chunks_col.document(chunk_id),
+                {
+                    "ownerId": owner_uid,
+                    "fileKey": clean_key,
+                    "chunkIndex": idx,
+                    "data": chunk_data,
+                    "createdAt": fb_firestore.SERVER_TIMESTAMP,
+                },
+            )
+        batch.commit()
 
-
-def save_bills_json(
-    new_elec: List[Dict[str, Any]],
-    new_tari: List[Dict[str, Any]],
-    output_path: Path = Path("data/bollette.json"),
-) -> bool:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    elec_by_inv: Dict[str, Dict[str, Any]] = {}
-    tari_by_notice: Dict[str, Dict[str, Any]] = {}
-    if output_path.exists():
-        try:
-            existing = json.loads(output_path.read_text(encoding="utf-8"))
-            for b in existing.get("electricityBills", []):
-                inv = str(b.get("invoiceNumber", "")).strip()
-                if inv:
-                    elec_by_inv[inv] = b
-            for t in existing.get("tariBills", []):
-                notice = str(t.get("noticeNumber", "")).strip()
-                if notice:
-                    tari_by_notice[notice] = t
-        except Exception as exc:
-            print(f"Nota lettura {output_path} esistente: {exc}")
-
-    for b in new_elec:
-        inv = str(b.get("invoiceNumber", "")).strip()
-        if inv:
-            elec_by_inv[inv] = b
-    for t in new_tari:
-        notice = str(t.get("noticeNumber", "")).strip()
-        if notice:
-            tari_by_notice[notice] = t
-
-    payload = {
-        "updatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "electricityBills": sorted(
-            elec_by_inv.values(),
-            key=lambda x: str(x.get("sortKey", "")),
-            reverse=True,
-        ),
-        "tariBills": sorted(
-            tari_by_notice.values(),
-            key=lambda x: (int(x.get("year", 0)), str(x.get("noticeNumber", ""))),
-            reverse=True,
-        ),
-    }
-    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(
-        f"Scritto {output_path} ({len(payload['electricityBills'])} luce, {len(payload['tariBills'])} TARI)."
+    final_batch = db_client.batch()
+    final_batch.set(
+        files_col.document(clean_key),
+        {
+            "ownerId": owner_uid,
+            "fileKey": clean_key,
+            "fileName": file_name.strip()[:140] or "bolletta.pdf",
+            "mimeType": "application/pdf",
+            "size": len(pdf_bytes),
+            "chunkCount": len(chunks),
+            "updatedAt": fb_firestore.SERVER_TIMESTAMP,
+        },
     )
+    for surplus in range(len(chunks), prev_chunks):
+        final_batch.delete(chunks_col.document(f"{clean_key}_chunk_{surplus}"))
+    final_batch.commit()
+    print(f"Archiviato PDF originale su Firestore Vault: {clean_key} ({len(pdf_bytes)} bytes, {len(chunks)} chunk)")
     return True
 
 
 def main() -> None:
-    fb_cfg = _load_firebase_config()
-    owner_id = fb_cfg["ownerUid"]
-    has_firebase_token = bool(os.environ.get("FIREBASE_ID_TOKEN", "").strip())
-    print(f"Controllo Gmail (solo INBOX) per curve di carico, bollette Edison e TARI (POD {POD_CODE})...")
+    db_client, fb_firestore, owner_id = init_firestore_admin()
+
+    # Legge la tariffa reale configurata dall'utente su Firestore
+    tariff = TARIFF_EUR_PER_KWH
+    try:
+        cfg_snap = (
+            db_client.collection("users")
+            .document(owner_id)
+            .collection("homeConfig")
+            .document("main")
+            .get()
+        )
+        if cfg_snap.exists:
+            raw_tariff = float((cfg_snap.to_dict() or {}).get("tariffEurPerKwh", tariff))
+            if 0.05 <= raw_tariff <= 2.0:
+                tariff = raw_tariff
+    except Exception:
+        pass
+
+    print(f"Controllo Gmail (solo INBOX) -> Firestore diretto (POD {POD_CODE}, uid {owner_id})...")
     readings_by_msg, mail = extract_csvs_from_gmail()
 
     try:
-        # 1. Estrai eventuali nuove bollette PDF Edison e TARI solo dalla INBOX (mai dal Cestino)
         bills_by_msg = extract_edison_bills_from_gmail(mail)
+        water_by_msg = extract_water_bills_from_gmail(mail)
         tari_by_msg = extract_tari_bills_from_gmail(mail)
 
         verified_msgs_to_delete: List[bytes] = []
+        user_ref = db_client.collection("users").document(owner_id)
 
-        # 2. Salva letture e-distribuzione in data/consumi.json (e su Firestore se FIREBASE_ID_TOKEN presente)
-        all_new_readings = [r for items in readings_by_msg.values() for r in items]
-        if all_new_readings and save_readings_json(all_new_readings):
-            if has_firebase_token:
-                for msg_id, msg_readings in readings_by_msg.items():
-                    all_ok = True
-                    for r in msg_readings:
-                        date_str = str(r.get("date", ""))
-                        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
-                            all_ok = False
-                            continue
-                        total_kwh = round(float(r.get("totalKwh", 0.0)), 2)
-                        doc_id = f"day_{date_str.replace('-', '')}"
-                        fields = {
+        # 1. Consumi e-distribuzione -> Firestore energyReadings
+        readings_col = user_ref.collection("energyReadings")
+        for msg_id, msg_readings in readings_by_msg.items():
+            valid_items = [
+                r for r in msg_readings if re.match(r"^\d{4}-\d{2}-\d{2}$", str(r.get("date", "")))
+            ]
+            if not valid_items:
+                continue
+            for i in range(0, len(valid_items), 350):
+                batch = db_client.batch()
+                for r in valid_items[i : i + 350]:
+                    date_str = str(r["date"])
+                    total_kwh = round(float(r.get("totalKwh", 0.0)), 2)
+                    doc_id = f"day_{date_str.replace('-', '')}"
+                    batch.set(
+                        readings_col.document(doc_id),
+                        {
                             "ownerId": owner_id,
                             "date": date_str,
                             "f1Kwh": round(float(r.get("f1Kwh", 0.0)), 2),
@@ -761,58 +796,120 @@ def main() -> None:
                             "f3Kwh": round(float(r.get("f3Kwh", 0.0)), 2),
                             "totalKwh": total_kwh,
                             "peakKw": round(float(r.get("peakKw", 0.0)), 2),
-                            "estimatedCostEur": round(total_kwh * TARIFF_EUR_PER_KWH, 2),
+                            "estimatedCostEur": round(total_kwh * tariff, 2),
                             "source": "e-distribuzione-api",
-                        }
-                        if not firestore_commit_doc(fb_cfg, f"users/{owner_id}/energyReadings", doc_id, fields):
-                            all_ok = False
-                            break
-                    if all_ok:
-                        verified_msgs_to_delete.append(msg_id)
-            else:
-                verified_msgs_to_delete.extend(readings_by_msg.keys())
+                            "createdAt": fb_firestore.SERVER_TIMESTAMP,
+                        },
+                    )
+                batch.commit()
+            print(f"Salvate {len(valid_items)} giornate consumi su Firestore.")
+            verified_msgs_to_delete.append(msg_id)
 
-        # 3. Salva bollette (Luce + TARI) in data/bollette.json (e su Firestore se FIREBASE_ID_TOKEN presente)
-        all_new_elec = [b for items in bills_by_msg.values() for b in items]
-        all_new_tari = [t for items in tari_by_msg.values() for t in items]
-        if (all_new_elec or all_new_tari) and save_bills_json(all_new_elec, all_new_tari):
-            if has_firebase_token:
-                for msg_id, msg_bills in bills_by_msg.items():
-                    all_ok = True
-                    for b in msg_bills:
-                        inv = str(b.get("invoiceNumber", "")).strip()
-                        if not inv:
-                            all_ok = False
-                            continue
-                        doc_id = f"edison_{re.sub(r'[^a-zA-Z0-9_-]', '', inv)}"
-                        if not firestore_commit_doc(fb_cfg, f"users/{owner_id}/electricityBills", doc_id, {"ownerId": owner_id, **b}):
-                            all_ok = False
-                            break
-                    if all_ok:
-                        verified_msgs_to_delete.append(msg_id)
+        # 2. Bollette Luce Edison -> Firestore electricityBills + Vault PDF
+        elec_col = user_ref.collection("electricityBills")
+        for msg_id, msg_bills in bills_by_msg.items():
+            all_ok = True
+            for b, pdf_bytes, file_name in msg_bills:
+                inv = str(b.get("invoiceNumber", "")).strip()
+                if not inv:
+                    all_ok = False
+                    continue
+                slug = re.sub(r"[^a-zA-Z0-9_-]", "", inv)
+                doc_id = f"edison_{slug}"
+                elec_col.document(doc_id).set(
+                    {
+                        "ownerId": owner_id,
+                        "invoiceNumber": inv[:40],
+                        "issueDate": str(b.get("issueDate", ""))[:20],
+                        "sortKey": str(b.get("sortKey", ""))[:16],
+                        "year": int(b.get("year", datetime.now(timezone.utc).year)),
+                        "period": str(b.get("period", ""))[:80],
+                        "supplier": str(b.get("supplier", "Edison Energia"))[:80],
+                        "offerName": str(b.get("offerName", "EDISON DYNAMIC LUCE"))[:100],
+                        "kwh": int(b.get("kwh", 0)),
+                        "punText": str(b.get("punText", "—"))[:60],
+                        "variableCostPerKwh": float(b.get("variableCostPerKwh", 0.0)),
+                        "canoneTv": float(b.get("canoneTv", 0.0)),
+                        "electricityOnly": float(b.get("electricityOnly", 0.0)),
+                        "totalPaid": float(b.get("totalPaid", 0.0)),
+                        "createdAt": fb_firestore.SERVER_TIMESTAMP,
+                    }
+                )
+                save_pdf_to_vault_firestore(
+                    db_client, fb_firestore, owner_id, f"bill_elec_{slug}", file_name, pdf_bytes
+                )
+            if all_ok:
+                verified_msgs_to_delete.append(msg_id)
 
-                for msg_id, msg_tari in tari_by_msg.items():
-                    all_ok = True
-                    for t in msg_tari:
-                        notice = str(t.get("noticeNumber", "")).strip()
-                        if not notice:
-                            all_ok = False
-                            continue
-                        doc_id = f"tari_{re.sub(r'[^a-zA-Z0-9_-]', '', notice)}"
-                        if not firestore_commit_doc(fb_cfg, f"users/{owner_id}/tariBills", doc_id, {"ownerId": owner_id, **t}):
-                            all_ok = False
-                            break
-                    if all_ok:
-                        verified_msgs_to_delete.append(msg_id)
-            else:
-                verified_msgs_to_delete.extend(bills_by_msg.keys())
-                verified_msgs_to_delete.extend(tari_by_msg.keys())
+        # 3. Bollette Acqua Acegas -> Firestore waterBills + Vault PDF
+        water_col = user_ref.collection("waterBills")
+        for msg_id, msg_items in water_by_msg.items():
+            all_ok = True
+            for w, pdf_bytes, file_name in msg_items:
+                inv = str(w.get("invoiceNumber", "")).strip()
+                if not inv:
+                    all_ok = False
+                    continue
+                slug = re.sub(r"[^a-zA-Z0-9_-]", "", inv)
+                doc_id = f"acegas_{slug}"
+                water_col.document(doc_id).set(
+                    {
+                        "ownerId": owner_id,
+                        "invoiceNumber": inv[:40],
+                        "issueDate": str(w.get("issueDate", ""))[:20],
+                        "year": int(w.get("year", datetime.now(timezone.utc).year)),
+                        "period": str(w.get("period", ""))[:80],
+                        "cubicMeters": float(w.get("cubicMeters", 0.0)),
+                        "fixedCostEur": float(w.get("fixedCostEur", 0.0)),
+                        "totalPaid": float(w.get("totalPaid", 0.0)),
+                        "note": str(w.get("note", ""))[:240],
+                        "createdAt": fb_firestore.SERVER_TIMESTAMP,
+                    }
+                )
+                save_pdf_to_vault_firestore(
+                    db_client, fb_firestore, owner_id, f"bill_water_{slug}", file_name, pdf_bytes
+                )
+            if all_ok:
+                verified_msgs_to_delete.append(msg_id)
 
-        # 4. Elimina dalla INBOX solo le email i cui dati sono stati salvati con successo
+        # 4. Avvisi TARI -> Firestore tariBills + Vault PDF
+        tari_col = user_ref.collection("tariBills")
+        for msg_id, msg_tari in tari_by_msg.items():
+            all_ok = True
+            for t, pdf_bytes, file_name in msg_tari:
+                notice = str(t.get("noticeNumber", "")).strip()
+                if not notice:
+                    all_ok = False
+                    continue
+                slug = re.sub(r"[^a-zA-Z0-9_-]", "", notice)
+                doc_id = f"tari_{slug}"
+                tari_col.document(doc_id).set(
+                    {
+                        "ownerId": owner_id,
+                        "noticeNumber": notice[:50],
+                        "issueDate": str(t.get("issueDate", "—"))[:20],
+                        "dueDate": str(t.get("dueDate", "—"))[:20],
+                        "year": int(t.get("year", datetime.now(timezone.utc).year)),
+                        "period": str(t.get("period", ""))[:80],
+                        "supplier": str(t.get("supplier", "AcegasApsAmga (TARI)"))[:80],
+                        "totalPaid": float(t.get("totalPaid", 0.0)),
+                        "paid": bool(t.get("paid", False)),
+                        "source": "gmail-pdf",
+                        "note": str(t.get("note", ""))[:240],
+                        "createdAt": fb_firestore.SERVER_TIMESTAMP,
+                    }
+                )
+                save_pdf_to_vault_firestore(
+                    db_client, fb_firestore, owner_id, f"bill_tari_{slug}", file_name, pdf_bytes
+                )
+            if all_ok:
+                verified_msgs_to_delete.append(msg_id)
+
+        # 5. Sposta nel Cestino solo le email salvate su Firestore
         if verified_msgs_to_delete:
             delete_processed_emails(mail, list(set(verified_msgs_to_delete)))
         else:
-            print("Nessuna nuova email da eliminare dalla INBOX.")
+            print("Nessuna nuova email da elaborare nella INBOX.")
             if mail:
                 try:
                     mail.logout()

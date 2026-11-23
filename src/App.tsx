@@ -106,6 +106,11 @@ import {
   getLocalTodayIso,
   SYSTEM_ROOM_CLIMATE_AUTO,
 } from './utils/climateAutopilot';
+import {
+  MIGRATION_DONE_DOC_ID,
+  migrateFromLegacyProject,
+  SYSTEM_ROOM_MIGRATION_META,
+} from './utils/legacyMigration';
 import { SEED_ELECTRICITY_BILLS, SEED_WATER_BILLS } from './data/billsSeed';
 import { SEED_HOME_ARTICLES } from './data/articlesSeed';
 import { SEED_GROCERY_ARTICLES } from './data/grocerySeed';
@@ -173,11 +178,6 @@ export default function App() {
   const [selectedYear, setSelectedYear] = useState<number>(CURRENT_YEAR);
 
   const [firestoreReadings, setFirestoreReadings] = useState<EnergyReading[]>([]);
-  const [githubReadings, setGithubReadings] = useState<EnergyReading[]>([]);
-  const [githubElecBills, setGithubElecBills] = useState<BillRecord[]>([]);
-  const [githubTariBills, setGithubTariBills] = useState<Omit<TariBillRecord, 'id'>[]>([]);
-  const [githubSyncing, setGithubSyncing] = useState(false);
-  const [firestoreReadingsFromServer, setFirestoreReadingsFromServer] = useState(false);
   const [climateLogs, setClimateLogs] = useState<ClimateSession[]>([]);
   const [electricityBills, setElectricityBills] = useState<BillRecord[]>(SEED_ELECTRICITY_BILLS);
   const [waterBills, setWaterBills] = useState<WaterBillRecord[]>(SEED_WATER_BILLS);
@@ -189,12 +189,13 @@ export default function App() {
   ]);
   const [readingsLoading, setReadingsLoading] = useState(true);
   const [firestoreFallbackNotice, setFirestoreFallbackNotice] = useState<string | null>(null);
+  const [migratingDb, setMigratingDb] = useState(false);
+  const [migrationProgress, setMigrationProgress] = useState<string | null>(null);
+  const [migrationDismissed, setMigrationDismissed] = useState(false);
   const syncedElecBillsRef = useRef(false);
   const syncedWaterBillsRef = useRef(false);
   const syncedArticlesRef = useRef(false);
   const syncedGrocerySeedRef = useRef(false);
-  const loadedGitHubJsonRef = useRef(false);
-  const backfillAttemptKeyRef = useRef<string | null>(null);
   const skippedTrashIdsRef = useRef<Set<string>>(new Set());
   const gmailSyncInFlightRef = useRef(false);
   const autopilotSyncInFlightRef = useRef(false);
@@ -234,16 +235,40 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  const PUBLIC_OWNER_UID = 'rXdhFrSuqzaYf8SYVbmQulPqg7m1';
-  const activeUid = user?.uid ?? PUBLIC_OWNER_UID;
+  const activeUid = user?.uid ?? null;
   const canEdit = Boolean(user);
 
-  // Subscribe to Firestore data (read-only for visitors, full edit when signed in)
+  // Registra automaticamente l'ownerUid corrente su appMeta/owner per GitHub Actions -> Firestore
+  useEffect(() => {
+    if (!authReady || !user || user.email !== 'mauminieri@gmail.com') return;
+    void setDoc(
+      doc(db, 'appMeta', 'owner'),
+      { ownerUid: user.uid, updatedAt: serverTimestamp() },
+      { merge: true }
+    ).catch(() => {});
+  }, [authReady, user]);
+
+  // Subscribe to Firestore data when signed in as owner (uses local cache fallback when signed out)
   useEffect(() => {
     if (!authReady) return;
+    if (!activeUid) {
+      try {
+        const cached = localStorage.getItem('myhome_readings_cache_last');
+        if (cached) {
+          const parsed = JSON.parse(cached) as EnergyReading[];
+          const currentTodayIso = getLocalTodayIso();
+          setFirestoreReadings(parsed.filter((r) => r?.date && r.date <= currentTodayIso));
+        } else {
+          setFirestoreReadings([]);
+        }
+      } catch {
+        setFirestoreReadings([]);
+      }
+      setReadingsLoading(false);
+      return;
+    }
 
     setReadingsLoading(true);
-    setFirestoreReadingsFromServer(false);
     const readingsPath = `users/${activeUid}/energyReadings`;
     const readingsQuery = query(
       collection(db, readingsPath),
@@ -274,10 +299,11 @@ export default function App() {
         setFirestoreReadings(filtered);
         if (!snap.metadata.fromCache) {
           setFirestoreFallbackNotice(null);
-          setFirestoreReadingsFromServer(true);
         }
         try {
-          localStorage.setItem(`myhome_readings_cache_${activeUid}`, JSON.stringify(filtered));
+          const serialized = JSON.stringify(filtered);
+          localStorage.setItem(`myhome_readings_cache_${activeUid}`, serialized);
+          localStorage.setItem('myhome_readings_cache_last', serialized);
         } catch {
           // ignore storage quota
         }
@@ -849,346 +875,35 @@ export default function App() {
     };
   }, [authReady, activeUid, user]);
 
-  const readings = useMemo(() => {
-    const byDate = new Map<string, EnergyReading>();
-    for (const r of githubReadings) {
-      if (r.date && r.date <= todayIso) byDate.set(r.date, r);
-    }
-    for (const r of firestoreReadings) {
-      if (r.date && r.date <= todayIso) byDate.set(r.date, r);
-    }
-    return Array.from(byDate.values());
-  }, [githubReadings, firestoreReadings, todayIso]);
-
-  const fetchJsonWithFallback = useCallback(async <T,>(filename: string, forceFresh = false): Promise<T | null> => {
-    const cacheBust = forceFresh ? Date.now() : Math.floor(Date.now() / 60_000);
-    const base = import.meta.env.BASE_URL || '/';
-    const normBase = base.endsWith('/') ? base : `${base}/`;
-    const urls = [
-      `https://raw.githubusercontent.com/mauriziominieri/my-home/data/data/${filename}?v=${cacheBust}`,
-      `${normBase}data/${filename}?v=${cacheBust}`,
-      `https://raw.githubusercontent.com/mauriziominieri/my-home/main/data/${filename}?v=${cacheBust}`,
-      `https://mauriziominieri.github.io/my-home/data/${filename}?v=${cacheBust}`,
-    ];
-    for (const url of urls) {
-      try {
-        const res = await fetch(url);
-        if (!res.ok) continue;
-        const text = (await res.text()).trim();
-        if (!text.startsWith('{') && !text.startsWith('[')) continue;
-        return JSON.parse(text) as T;
-      } catch {
-        // try next source
-      }
-    }
-    return null;
-  }, []);
-
-  const backfillGitHubDataToFirestore = useCallback(
-    async (
-      targetUser: User,
-      parsedReadings: EnergyReading[],
-      parsedElec: BillRecord[],
-      parsedTari: Omit<TariBillRecord, 'id'>[],
-      showNotice = false
-    ) => {
-      const firestoreDates = new Set(firestoreReadings.map((r) => r.date));
-      const missingReadings = parsedReadings.filter((r) => !firestoreDates.has(r.date));
-
-      const existingInvoices = new Set(electricityBills.map((b) => b.invoiceNumber));
-      const missingElec = parsedElec.filter(
-        (b) => b?.invoiceNumber && !existingInvoices.has(b.invoiceNumber)
-      );
-
-      const existingNotices = new Set(tariBills.map((t) => t.noticeNumber));
-      const missingTari = parsedTari.filter(
-        (t) => t?.noticeNumber && !existingNotices.has(t.noticeNumber)
-      );
-
-      if (missingReadings.length === 0 && missingElec.length === 0 && missingTari.length === 0) {
-        if (showNotice) {
-          setGmailNotice({
-            tone: 'info',
-            text: `data/consumi.json verificato (${parsedReadings.length} giorni): tutti i dati sono già sincronizzati su Firebase Firestore.`,
-          });
-        }
-        return;
-      }
-
-      let savedReadingsCount = 0;
-      let savedBillsCount = 0;
-      let writeErrorMsg: string | null = null;
-
-      if (missingReadings.length > 0) {
-        const basePath = `users/${targetUser.uid}/energyReadings`;
-        for (let i = 0; i < missingReadings.length; i += 400) {
-          const chunk = missingReadings.slice(i, i + 400);
-          const batch = writeBatch(db);
-          for (const item of chunk) {
-            const docId = `day_${item.date.replace(/-/g, '')}`;
-            batch.set(doc(db, basePath, docId), {
-              ownerId: targetUser.uid,
-              date: item.date.slice(0, 10),
-              f1Kwh: item.f1Kwh,
-              f2Kwh: item.f2Kwh,
-              f3Kwh: item.f3Kwh,
-              totalKwh: item.totalKwh,
-              peakKw: item.peakKw,
-              estimatedCostEur: item.estimatedCostEur,
-              source: 'e-distribuzione-api',
-              createdAt: serverTimestamp(),
-            });
-          }
-          try {
-            await batch.commit();
-            savedReadingsCount += chunk.length;
-          } catch (err) {
-            writeErrorMsg =
-              err instanceof Error ? err.message : 'Errore scrittura energyReadings su Firestore.';
-            console.warn('Backfill consumi.json -> Firestore failed:', err);
-          }
-        }
-      }
-
-      if (missingElec.length > 0) {
-        const elecPath = `users/${targetUser.uid}/electricityBills`;
-        const batch = writeBatch(db);
-        for (const b of missingElec) {
-          const docId = `edison_${b.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`;
-          batch.set(doc(db, elecPath, docId), {
-            ownerId: targetUser.uid,
-            invoiceNumber: b.invoiceNumber.slice(0, 40),
-            issueDate: b.issueDate.slice(0, 20),
-            sortKey: b.sortKey.slice(0, 16),
-            year: Number(b.year),
-            period: b.period.slice(0, 80),
-            supplier: b.supplier.slice(0, 80),
-            offerName: b.offerName.slice(0, 100),
-            kwh: Number(b.kwh),
-            punText: b.punText.slice(0, 60),
-            variableCostPerKwh: Number(b.variableCostPerKwh),
-            canoneTv: Number(b.canoneTv),
-            electricityOnly: Number(b.electricityOnly),
-            totalPaid: Number(b.totalPaid),
-            createdAt: serverTimestamp(),
-          });
-        }
-        try {
-          await batch.commit();
-          savedBillsCount += missingElec.length;
-        } catch (err) {
-          if (!writeErrorMsg) {
-            writeErrorMsg = err instanceof Error ? err.message : 'Errore scrittura bollette su Firestore.';
-          }
-          console.warn('Backfill bollette luce -> Firestore failed:', err);
-        }
-      }
-
-      if (missingTari.length > 0) {
-        const tariPath = `users/${targetUser.uid}/tariBills`;
-        const batch = writeBatch(db);
-        for (const t of missingTari) {
-          const docId = `tari_${t.noticeNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`;
-          batch.set(doc(db, tariPath, docId), {
-            ownerId: targetUser.uid,
-            noticeNumber: t.noticeNumber.slice(0, 50),
-            issueDate: (t.issueDate || t.dueDate || '—').slice(0, 20),
-            dueDate: (t.dueDate || t.issueDate || '—').slice(0, 20),
-            year: Number(t.year),
-            period: t.period.slice(0, 80),
-            supplier: t.supplier.slice(0, 80),
-            totalPaid: Number(t.totalPaid),
-            paid: Boolean(t.paid),
-            source: t.source === 'gmail-pdf' ? 'gmail-pdf' : 'manuale',
-            createdAt: serverTimestamp(),
-          });
-        }
-        try {
-          await batch.commit();
-          savedBillsCount += missingTari.length;
-        } catch (err) {
-          if (!writeErrorMsg) {
-            writeErrorMsg = err instanceof Error ? err.message : 'Errore scrittura TARI su Firestore.';
-          }
-          console.warn('Backfill TARI -> Firestore failed:', err);
-        }
-      }
-
-      if (writeErrorMsg) {
-        setGmailNotice({
-          tone: 'warn',
-          text: `Dati caricati in dashboard da data/consumi.json (${parsedReadings.length} giorni), ma il salvataggio su Firestore è fallito: ${writeErrorMsg}`,
-        });
-      } else if (showNotice || savedReadingsCount > 0 || savedBillsCount > 0) {
-        setGmailNotice({
-          tone: 'ok',
-          text: `Sincronizzati su Firebase Firestore ${savedReadingsCount} giorni da data/consumi.json${savedBillsCount > 0 ? ` e ${savedBillsCount} bollette` : ''}.`,
-        });
-      }
-    },
-    [firestoreReadings, electricityBills, tariBills]
+  const readings = useMemo(
+    () => firestoreReadings.filter((r) => r.date && r.date <= todayIso),
+    [firestoreReadings, todayIso]
   );
 
-  const loadGitHubJsonData = useCallback(
-    async (forceRefresh = false) => {
-      setGithubSyncing(true);
-      try {
-        const currentTodayIso = getLocalTodayIso();
-        const clamp = (val: number, min: number, max: number) =>
-          Number.isFinite(val) ? Math.min(max, Math.max(min, Math.round(val * 100) / 100)) : 0;
-
-        const [consumiJson, bolletteJson] = await Promise.all([
-          fetchJsonWithFallback<{
-            readings?: Array<{
-              date: string;
-              f1Kwh: number;
-              f2Kwh: number;
-              f3Kwh: number;
-              totalKwh: number;
-              peakKw: number;
-            }>;
-          }>('consumi.json', forceRefresh),
-          fetchJsonWithFallback<{
-            electricityBills?: BillRecord[];
-            tariBills?: Omit<TariBillRecord, 'id'>[];
-          }>('bollette.json', forceRefresh),
-        ]);
-
-        const parsedReadings: EnergyReading[] = [];
-        for (const r of consumiJson?.readings || []) {
-          const d = typeof r?.date === 'string' ? r.date.trim() : '';
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d > currentTodayIso) continue;
-          const f1 = clamp(Number(r.f1Kwh || 0), 0, 500);
-          const f2 = clamp(Number(r.f2Kwh || 0), 0, 500);
-          const f3 = clamp(Number(r.f3Kwh || 0), 0, 500);
-          const tot = clamp(Number(r.totalKwh || 0), 0, 1500);
-          const peak = clamp(Number(r.peakKw || 0), 0, 50);
-          const estCost = clamp(tot * homeConfig.tariffEurPerKwh, 0, 1000);
-          parsedReadings.push({
-            id: `day_${d.replace(/-/g, '')}`,
-            ownerId: activeUid,
-            date: d,
-            f1Kwh: f1,
-            f2Kwh: f2,
-            f3Kwh: f3,
-            totalKwh: tot,
-            peakKw: peak,
-            estimatedCostEur: estCost,
-            source: 'e-distribuzione-api',
-          });
-        }
-
-        const parsedElec = (bolletteJson?.electricityBills || []).filter((b) =>
-          Boolean(b?.invoiceNumber)
-        );
-        const parsedTari = (bolletteJson?.tariBills || []).filter((t) =>
-          Boolean(t?.noticeNumber)
-        );
-
-        if (parsedReadings.length > 0) {
-          setGithubReadings(parsedReadings);
-        }
-        if (parsedElec.length > 0) {
-          setGithubElecBills(parsedElec);
-          setElectricityBills((prev) => {
-            const seen = new Set(prev.map((b) => b.invoiceNumber));
-            const next = parsedElec.filter((b) => !seen.has(b.invoiceNumber));
-            return next.length > 0 ? [...prev, ...next] : prev;
-          });
-        }
-        if (parsedTari.length > 0) {
-          setGithubTariBills(parsedTari);
-          setTariBills((prev) => {
-            const seen = new Set(prev.map((t) => t.noticeNumber));
-            const next = parsedTari
-              .filter((t) => !seen.has(t.noticeNumber))
-              .map((t) => ({
-                ...t,
-                id: `tari_${t.noticeNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`,
-              }));
-            return next.length > 0 ? [...prev, ...next] : prev;
-          });
-        }
-
-        if (forceRefresh) {
-          backfillAttemptKeyRef.current = null;
-          if (!consumiJson && !bolletteJson) {
-            setGmailNotice({
-              tone: 'warn',
-              text: 'Impossibile raggiungere data/consumi.json su GitHub in questo momento.',
-            });
-          } else if (user && user.uid === activeUid) {
-            await backfillGitHubDataToFirestore(
-              user,
-              parsedReadings,
-              parsedElec,
-              parsedTari,
-              true
-            );
-          } else {
-            setGmailNotice({
-              tone: 'info',
-              text: `Caricati ${parsedReadings.length} giorni da data/consumi.json. Accedi con Google per salvarli su Firebase Firestore.`,
-            });
-          }
-        }
-      } finally {
-        setGithubSyncing(false);
-      }
-    },
-    [
-      activeUid,
-      backfillGitHubDataToFirestore,
-      fetchJsonWithFallback,
-      homeConfig.tariffEurPerKwh,
-      user,
-    ]
-  );
-
-  // Automatic initial load of data/consumi.json & data/bollette.json from GitHub
-  useEffect(() => {
-    if (!authReady || loadedGitHubJsonRef.current) return;
-    loadedGitHubJsonRef.current = true;
-    void loadGitHubJsonData(false);
-  }, [authReady, loadGitHubJsonData]);
-
-  // Automatic backfill of missing GitHub JSON rows into Firestore once signed in as owner
-  useEffect(() => {
-    if (!authReady || readingsLoading || !user || user.uid !== activeUid) return;
-    if (!firestoreReadingsFromServer && firestoreReadings.length > 0) return;
-    if (
-      githubReadings.length === 0 &&
-      githubElecBills.length === 0 &&
-      githubTariBills.length === 0
-    ) {
-      return;
+  async function handleRunLegacyMigration() {
+    if (!user || migratingDb) return;
+    setMigratingDb(true);
+    setAuthError(null);
+    setMigrationProgress('Avvio migrazione...');
+    try {
+      const res = await migrateFromLegacyProject(user.uid, (msg) =>
+        setMigrationProgress(msg)
+      );
+      setGmailNotice({
+        tone: 'ok',
+        text: `Migrazione completata su gen-lang-client-0721850501: importati ${res.totalDocs} documenti${res.githubExtraReadings > 0 ? ` (+${res.githubExtraReadings} giorni recenti)` : ''}${res.githubExtraBills > 0 ? ` (+${res.githubExtraBills} bollette recenti)` : ''}.`,
+      });
+    } catch (err) {
+      setAuthError(
+        err instanceof Error
+          ? `Migrazione non completata: ${err.message}`
+          : 'Migrazione dal vecchio database non completata.'
+      );
+    } finally {
+      setMigratingDb(false);
+      setMigrationProgress(null);
     }
-
-    const attemptKey = `${user.uid}:${githubReadings.length}:${firestoreReadings.length}:${githubElecBills.length}:${electricityBills.length}:${githubTariBills.length}:${tariBills.length}`;
-    if (backfillAttemptKeyRef.current === attemptKey) return;
-    backfillAttemptKeyRef.current = attemptKey;
-
-    void backfillGitHubDataToFirestore(
-      user,
-      githubReadings,
-      githubElecBills,
-      githubTariBills,
-      false
-    );
-  }, [
-    authReady,
-    readingsLoading,
-    user,
-    activeUid,
-    firestoreReadingsFromServer,
-    firestoreReadings.length,
-    githubReadings,
-    githubElecBills,
-    githubTariBills,
-    electricityBills.length,
-    tariBills.length,
-    backfillGitHubDataToFirestore,
-  ]);
+  }
 
   async function handleImportCsv(items: ParsedReadingInput[]) {
     if (!user || items.length === 0) return;
@@ -1896,6 +1611,11 @@ export default function App() {
     await handleUpdateArticle(id, homeDocumentToArticlePayload(docItem));
   }
 
+  const migrationCompleted = useMemo(
+    () => homeArticles.some((a) => a.id === MIGRATION_DONE_DOC_ID),
+    [homeArticles]
+  );
+
   const visibleHomeArticles = useMemo(
     () =>
       homeArticles.filter(
@@ -1904,7 +1624,8 @@ export default function App() {
           a.room !== SYSTEM_ROOM_GROCERY &&
           a.room !== SYSTEM_ROOM_GROCERY_META &&
           a.room !== SYSTEM_ROOM_DOCUMENTS &&
-          a.room !== SYSTEM_ROOM_CLIMATE_AUTO
+          a.room !== SYSTEM_ROOM_CLIMATE_AUTO &&
+          a.room !== SYSTEM_ROOM_MIGRATION_META
       ),
     [homeArticles]
   );
@@ -1944,7 +1665,7 @@ export default function App() {
   );
 
   const effectiveClimateLogs = useMemo(() => {
-    if (!climateAutopilot?.active) return climateLogs;
+    if (!climateAutopilot?.active || !activeUid) return climateLogs;
     const existingIds = new Set(climateLogs.map((l) => l.id));
     const dates = enumerateIsoDatesInclusive(climateAutopilot.startDate, todayIso);
     if (dates.length === 0) return climateLogs;
@@ -2450,6 +2171,46 @@ export default function App() {
 
         <VaultCloudNotice />
 
+        {user && !readingsLoading && !migrationCompleted && !migrationDismissed && (
+          <div className="px-5 py-2.5 bg-sky-500/10 border-b border-sky-500/30 text-xs text-sky-100 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-start sm:items-center gap-2 min-w-0">
+              <Database className="w-4 h-4 text-sky-300 shrink-0 mt-0.5 sm:mt-0" />
+              <div>
+                <span className="font-semibold text-sky-200">
+                  Nuovo DB unificato attivo (gen-lang-client-0721850501):
+                </span>{' '}
+                <span>
+                  {migrationProgress
+                    ? migrationProgress
+                    : 'importa con 1 click tutti i dati storici, bollette, spesa, auto, clima e PDF dal vecchio database (spiritual-bearing-sq7xb).'}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => void handleRunLegacyMigration()}
+                disabled={migratingDb}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold bg-sky-500 hover:bg-sky-400 text-slate-950 rounded-md transition-colors disabled:opacity-60"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${migratingDb ? 'animate-spin' : ''}`} />
+                <span>
+                  {migratingDb ? 'Migrazione in corso...' : 'Migra dati e PDF dal vecchio DB'}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMigrationDismissed(true)}
+                disabled={migratingDb}
+                className="p-1 text-sky-200/70 hover:text-sky-100"
+                aria-label="Nascondi banner migrazione"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {pendingTrashMessages.length > 0 && (
           <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
@@ -2544,8 +2305,6 @@ export default function App() {
               loading={readingsLoading}
               readOnly={!canEdit}
               isGmailConnected={Boolean(gmailToken)}
-              githubSyncing={githubSyncing}
-              onSyncGitHubJson={() => void loadGitHubJsonData(true)}
               onSignIn={handleSignIn}
               onConnectGmail={handleManualGmailSync}
               onActivateAutopilot={handleActivateClimateAutopilot}

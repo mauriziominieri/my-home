@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app';
+import { getApp, getApps, initializeApp } from 'firebase/app';
 import {
   getAuth,
   GoogleAuthProvider,
@@ -7,28 +7,16 @@ import {
   User,
 } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
-import oauthFirebaseConfig from '../firebase-applet-config.json';
+import firebaseConfig from '../firebase-applet-config.json';
 
-// Firestore & primary user auth live on the provisioned database project
-const FIRESTORE_CONFIG = {
-  projectId: 'spiritual-bearing-sq7xb',
-  appId: '1:165841387152:web:14395edafbcd3915f56215',
-  apiKey: ['AIzaSyA5GrqrmrV', 'ZxJHHpdPIQ9lOV4IaYkN4igE'].join(''),
-  authDomain: 'spiritual-bearing-sq7xb.firebaseapp.com',
-  firestoreDatabaseId: 'ai-studio-30a168e3-8158-474f-b9f2-f717d7220314',
-  storageBucket: 'spiritual-bearing-sq7xb.firebasestorage.app',
-  messagingSenderId: '165841387152',
-};
+// Primary unified Firebase project (Auth, Firestore, Gmail OAuth & Admin SDK)
+const app = getApps().some((a) => a.name === '[DEFAULT]')
+  ? getApp()
+  : initializeApp(firebaseConfig);
 
-const app = initializeApp(FIRESTORE_CONFIG);
-export const db = getFirestore(app, FIRESTORE_CONFIG.firestoreDatabaseId);
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
-
-// Dedicated secondary Firebase Auth app bound to firebase-applet-config.json
-// where Gmail Workspace OAuth scopes are configured.
-const gmailOAuthApp = initializeApp(oauthFirebaseConfig, 'gmail-oauth');
-const gmailAuth = getAuth(gmailOAuthApp);
 
 export const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
@@ -39,9 +27,33 @@ for (const scope of GMAIL_SCOPES) {
   gmailGoogleProvider.addScope(scope);
 }
 
-export const FIREBASE_PROJECT_ID = FIRESTORE_CONFIG.projectId;
-export const FIRESTORE_DATABASE_ID = FIRESTORE_CONFIG.firestoreDatabaseId;
-export const GMAIL_OAUTH_PROJECT_ID = oauthFirebaseConfig.projectId;
+export const FIREBASE_PROJECT_ID = firebaseConfig.projectId;
+export const FIRESTORE_DATABASE_ID = firebaseConfig.firestoreDatabaseId;
+export const GMAIL_OAUTH_PROJECT_ID = firebaseConfig.projectId;
+
+// Legacy project kept lazily ONLY for one-click migration from spiritual-bearing-sq7xb -> gen-lang-client-0721850501
+export const LEGACY_FIREBASE_PROJECT_ID = 'spiritual-bearing-sq7xb';
+export const LEGACY_OWNER_UID = 'rXdhFrSuqzaYf8SYVbmQulPqg7m1';
+
+const LEGACY_FIRESTORE_CONFIG = {
+  projectId: LEGACY_FIREBASE_PROJECT_ID,
+  appId: '1:165841387152:web:14395edafbcd3915f56215',
+  apiKey: ['AIzaSyA5GrqrmrV', 'ZxJHHpdPIQ9lOV4IaYkN4igE'].join(''),
+  authDomain: 'spiritual-bearing-sq7xb.firebaseapp.com',
+  firestoreDatabaseId: 'ai-studio-30a168e3-8158-474f-b9f2-f717d7220314',
+  storageBucket: 'spiritual-bearing-sq7xb.firebasestorage.app',
+  messagingSenderId: '165841387152',
+};
+
+export function getLegacyMigrationFirebase() {
+  const existing = getApps().find((a) => a.name === 'legacy-migration');
+  const legacyApp = existing || initializeApp(LEGACY_FIRESTORE_CONFIG, 'legacy-migration');
+  return {
+    legacyApp,
+    legacyAuth: getAuth(legacyApp),
+    legacyDb: getFirestore(legacyApp, LEGACY_FIRESTORE_CONFIG.firestoreDatabaseId),
+  };
+}
 
 // In-memory cache only for Gmail OAuth access token (never localStorage/sessionStorage)
 let cachedGmailAccessToken: string | null = null;
@@ -52,7 +64,6 @@ export function getGmailAccessToken(): string | null {
 
 export function clearGmailAccessToken(): void {
   cachedGmailAccessToken = null;
-  void gmailAuth.signOut().catch(() => {});
 }
 
 export function subscribeAuthWithGmailCleanup(
@@ -61,7 +72,6 @@ export function subscribeAuthWithGmailCleanup(
   return onAuthStateChanged(auth, (currentUser) => {
     if (!currentUser) {
       cachedGmailAccessToken = null;
-      void gmailAuth.signOut().catch(() => {});
     }
     callback(currentUser);
   });
@@ -73,7 +83,7 @@ export async function signInPrimaryOwner(): Promise<User> {
 }
 
 export async function connectGmailAccount(): Promise<string | null> {
-  const result = await signInWithPopup(gmailAuth, gmailGoogleProvider);
+  const result = await signInWithPopup(auth, gmailGoogleProvider);
   const credential = GoogleAuthProvider.credentialFromResult(result);
   const accessToken = credential?.accessToken ?? null;
   if (accessToken) {

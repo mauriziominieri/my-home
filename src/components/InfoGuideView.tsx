@@ -81,7 +81,7 @@ export function InfoGuideView() {
               Istruzioni &amp; Passaggio di Consegne per un&apos;altra AI
             </div>
             <p className="text-xs text-slate-300 leading-relaxed max-w-3xl">
-              Se finiscono i crediti o cambi assistente AI, scarica questo file <span className="font-mono text-sky-300">.md</span> e allegalo nella nuova chat: contiene architettura, doppia configurazione Firebase, schema Firestore/Rules, regole anti-spreco crediti e mappa completa dei file.
+              Se finiscono i crediti o cambi assistente AI, scarica questo file <span className="font-mono text-sky-300">.md</span> e allegalo nella nuova chat: contiene architettura unificata Firebase, schema Firestore/Rules, sync diretto da GitHub Actions, regole anti-spreco crediti e mappa completa dei file.
             </p>
           </div>
         </div>
@@ -483,18 +483,18 @@ export function InfoGuideView() {
                   <strong className="text-slate-200">Verifica picchi e guasti:</strong> nell&apos;app e-distribuzione puoi anche controllare in tempo reale eventuali interruzioni di corrente programmate o guasti nella tua zona.
                 </li>
                 <li>
-                  <strong className="text-slate-200">Database Firestore + Branch <span className="font-mono">data</span> su GitHub:</strong> tutti i consumi, le bollette, i documenti e gli articoli vivono su <strong className="text-slate-200">Firebase Firestore</strong>, mentre GitHub Actions salva <span className="font-mono text-slate-300">data/consumi.json</span> e <span className="font-mono text-slate-300">data/bollette.json</span> sul <strong className="text-slate-200">branch dedicato <span className="font-mono text-sky-300">data</span></strong> (separato da <span className="font-mono text-slate-300">main</span> ed escluso dall&apos;AI via <span className="font-mono text-slate-300">.aiignore</span> per consumare 0 crediti).
+                  <strong className="text-slate-200">Database Unico su Firebase Firestore:</strong> tutti i consumi, le bollette (Luce, Acqua, TARI), i PDF originali nel Vault, i documenti, le tariffe e gli articoli vivono direttamente sul tuo progetto Firebase (<span className="font-mono text-sky-300">gen-lang-client-0721850501</span>), senza file JSON intermedi né branch secondari su GitHub.
                 </li>
               </ul>
             </div>
           </div>
 
-          {/* Flusso Automatico Email -> Firestore + Differenza Bottoni */}
+          {/* Flusso Automatico Email -> Firestore + Sincronizzazione manuale */}
           <div className="bg-slate-950/70 border border-sky-500/25 rounded-lg p-4 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="font-semibold text-xs text-slate-100 flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
-                Flusso Completo: Email 24/7 ➔ Branch data ➔ Firestore ➔ Pulizia INBOX
+                Flusso Completo: Email 24/7 ➔ Firestore Diretto (Dati + PDF) ➔ Pulizia INBOX
               </div>
               <span className="px-2 py-0.5 text-[10px] font-mono bg-sky-500/15 text-sky-300 border border-sky-500/30 rounded">
                 ~10–30 min (coda GitHub) · Solo INBOX · 0 crediti AI
@@ -502,27 +502,27 @@ export function InfoGuideView() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-[11px]">
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
-                <div className="font-semibold text-sky-300">1. Controllo 24/7 (dipende da GitHub)</div>
+                <div className="font-semibold text-sky-300">1. Controllo 24/7 (GitHub Actions)</div>
                 <p className="text-slate-400 leading-relaxed">
-                  <strong className="text-slate-200">GitHub Actions</strong> schedula il controllo ogni <strong className="text-slate-200">10 minuti</strong> a PC spento sulla <strong className="text-slate-200">sola INBOX</strong>. Nota: sui server gratuiti GitHub il ritardo reale è spesso di <strong className="text-slate-200">10–30 min</strong> (e dopo 60 giorni senza commit umani su <span className="font-mono text-slate-300">main</span> il cron va riattivato su Actions).
+                  <strong className="text-slate-200">GitHub Actions</strong> schedula il controllo ogni <strong className="text-slate-200">10 minuti</strong> a PC spento sulla <strong className="text-slate-200">sola INBOX</strong>. Nota: sui server gratuiti GitHub il ritardo reale è spesso di <strong className="text-slate-200">10–30 min</strong> (e dopo 60 giorni senza commit su <span className="font-mono text-slate-300">main</span> il cron va riattivato nella scheda Actions).
                 </p>
               </div>
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
-                <div className="font-semibold text-amber-300">2. Analisi file ➔ Branch data</div>
+                <div className="font-semibold text-amber-300">2. Estrazione locale in Python</div>
                 <p className="text-slate-400 leading-relaxed">
-                  Se trova un nuovo allegato (<span className="text-slate-200">CSV/ZIP e-distribuzione</span>, <span className="text-slate-200">PDF Edison Luce</span> o <span className="text-slate-200">PDF TARI Acegas</span>), estrae i numeri in Python (0 crediti AI) e aggiorna <span className="font-mono text-slate-300">data/consumi.json</span> e <span className="font-mono text-slate-300">data/bollette.json</span> sul <strong className="text-slate-200">branch <span className="font-mono">data</span></strong> (senza mai toccare <span className="font-mono text-slate-300">main</span>).
+                  Se trova un nuovo allegato (<span className="text-slate-200">CSV/ZIP e-distribuzione</span>, <span className="text-slate-200">PDF Luce Edison</span>, <span className="text-slate-200">PDF Acqua Acegas</span> o <span className="text-slate-200">PDF TARI</span>), estrae tutti i numeri in locale a <strong className="text-slate-200">0 crediti AI</strong> usando la tariffa reale letta dalla tua configurazione.
                 </p>
               </div>
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
-                <div className="font-semibold text-emerald-300">3. Copia su Firebase Firestore</div>
+                <div className="font-semibold text-emerald-300">3. Scrittura diretta su Firestore + PDF</div>
                 <p className="text-slate-400 leading-relaxed">
-                  Appena apri il sito, la dashboard legge in diretta i nuovi giorni dal branch <span className="font-mono text-slate-300">data</span> su GitHub; quando accedi con Google, li salva automaticamente su <strong className="text-slate-200">Firebase Firestore</strong>. I file <strong className="text-slate-200">PDF originali</strong> delle bollette e dei documenti non vanno mai su GitHub: restano salvati privatamente solo sul tuo <strong className="text-slate-200">Firestore Vault</strong>.
+                  Usando il <strong className="text-slate-200">Service Account</strong> configurato nei secret GitHub (<span className="font-mono text-slate-300">FIREBASE_SERVICE_ACCOUNT</span>), salva subito sia i dati che i <strong className="text-slate-200">PDF originali</strong> nel tuo <strong className="text-slate-200">Firestore Vault</strong> privato, visibili istantaneamente appena accedi con Google.
                 </p>
               </div>
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
                 <div className="font-semibold text-rose-300">4. Pulizia INBOX</div>
                 <p className="text-slate-400 leading-relaxed">
-                  Solo dopo aver scritto i dati con successo, il bot sposta l&apos;email elaborata dalla INBOX nel <strong className="text-slate-200">Cestino</strong> così non viene mai letta due volte.
+                  Solo dopo aver salvato con successo i record e il PDF su Firestore, il bot sposta l&apos;email elaborata dalla INBOX nel <strong className="text-slate-200">Cestino</strong> così non viene mai letta due volte.
                 </p>
               </div>
             </div>
@@ -533,15 +533,15 @@ export function InfoGuideView() {
                   1) Bottone in alto: &quot;Collega Gmail&quot; / &quot;Sincronizza Gmail&quot;
                 </div>
                 <p className="text-slate-400 leading-relaxed">
-                  Unico bottone nella barra in alto (facoltativo). Serve quando vuoi: <strong className="text-slate-200">a)</strong> leggere la INBOX <strong className="text-slate-200">subito</strong> senza aspettare i tempi di coda di GitHub Actions; <strong className="text-slate-200">b)</strong> importare anche le bollette <strong className="text-slate-200">Acqua Acegas</strong> e salvare il <strong className="text-slate-200">file PDF originale</strong> su Firestore per scaricarlo ovunque (cosa che il bot GitHub non fa).
+                  Unico bottone manuale nella barra in alto (facoltativo). Serve solo se vuoi leggere la INBOX <strong className="text-slate-200">all&apos;istante</strong> dal browser senza attendere il passaggio automatico ogni ~10–30 minuti di GitHub Actions.
                 </p>
               </div>
               <div className="bg-slate-900/60 border border-sky-500/25 rounded-lg p-3 space-y-1">
                 <div className="font-semibold text-sky-300">
-                  2) In Consumi Annuali: &quot;Aggiorna consumi.json&quot;
+                  2) Migrazione 1-click dal vecchio DB
                 </div>
                 <p className="text-slate-400 leading-relaxed">
-                  Non tocca Gmail: rilegge <span className="font-mono text-slate-300">data/consumi.json</span> da GitHub e copia su Firestore eventuali nuovi giorni già scaricati dal bot in background (cosa che avviene già da sola all&apos;apertura del sito, utile solo per aggiornare senza ricaricare la pagina).
+                  Accedendo con Google su questo progetto unificato, l&apos;eventuale banner iniziale in alto permette di copiare in un colpo solo tutto lo storico (consumi, bollette, PDF, spesa, auto e log clima) dal vecchio database al nuovo.
                 </p>
               </div>
             </div>

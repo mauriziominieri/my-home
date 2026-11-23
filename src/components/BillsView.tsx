@@ -52,6 +52,8 @@ import {
   SortState,
   toggleSort,
 } from './SortableHeader';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db } from '../firebase';
 
 interface BillsViewProps {
   readings: EnergyReading[];
@@ -332,53 +334,44 @@ export function BillsView({
   useEffect(() => {
     let cancelled = false;
     const loadMonitor = async () => {
-      const urls = [
-        `https://raw.githubusercontent.com/mauriziominieri/my-home/data/data/octopus_tariff.json?v=${Math.floor(Date.now() / 300_000)}`,
-        './data/octopus_tariff.json',
-        'https://mauriziominieri.github.io/my-home/data/octopus_tariff.json',
-      ];
-      for (const url of urls) {
-        try {
-          const res = await fetch(url, { cache: 'no-store' });
-          if (!res.ok) continue;
-          const json = await res.json();
-          if (!cancelled && json && typeof json.myLockedRate === 'number') {
-            const fetchedList: SupplierMarketOffer[] = Array.isArray(json.competitors)
-              ? json.competitors
-              : [];
-            const fetchedBySupplier = new Map(
-              fetchedList.map((c) => [c.supplier, c])
-            );
-            const mergedCompetitors = TRACKED_SUPPLIERS_DEFAULT.map((def) => {
-              const live = fetchedBySupplier.get(def.supplier);
-              return live ? { ...def, ...live, url: def.url || live.url } : def;
-            });
-            for (const extra of fetchedList) {
-              if (!mergedCompetitors.some((c) => c.supplier === extra.supplier)) {
-                mergedCompetitors.push(extra);
-              }
+      if (!auth.currentUser) return;
+      try {
+        const snap = await getDoc(doc(db, 'appMeta', 'octopusTariff'));
+        if (cancelled || !snap.exists()) return;
+        const json = snap.data();
+        if (json && typeof json.myLockedRate === 'number') {
+          const fetchedList: SupplierMarketOffer[] = Array.isArray(json.competitors)
+            ? (json.competitors as SupplierMarketOffer[])
+            : [];
+          const fetchedBySupplier = new Map(fetchedList.map((c) => [c.supplier, c]));
+          const mergedCompetitors = TRACKED_SUPPLIERS_DEFAULT.map((def) => {
+            const live = fetchedBySupplier.get(def.supplier);
+            return live ? { ...def, ...live, url: def.url || live.url } : def;
+          });
+          for (const extra of fetchedList) {
+            if (!mergedCompetitors.some((c) => c.supplier === extra.supplier)) {
+              mergedCompetitors.push(extra);
             }
-            setMarketMonitor({
-              myLockedRate: json.myLockedRate,
-              myFixedEurMonth:
-                typeof json.myFixedEurMonth === 'number' ? json.myFixedEurMonth : 6.0,
-              currentRate: typeof json.currentRate === 'number' ? json.currentRate : null,
-              updatedAt: json.updatedAt ?? null,
-              competitors: mergedCompetitors,
-              bestCompetitor: json.bestCompetitor ?? null,
-            });
-            return;
           }
-        } catch {
-          // try next url
+          setMarketMonitor({
+            myLockedRate: json.myLockedRate,
+            myFixedEurMonth:
+              typeof json.myFixedEurMonth === 'number' ? json.myFixedEurMonth : 6.0,
+            currentRate: typeof json.currentRate === 'number' ? json.currentRate : null,
+            updatedAt: typeof json.updatedAt === 'string' ? json.updatedAt : null,
+            competitors: mergedCompetitors,
+            bestCompetitor: (json.bestCompetitor as SupplierMarketOffer | null) ?? null,
+          });
         }
+      } catch {
+        // ignore if appMeta/octopusTariff has not been written yet
       }
     };
-    loadMonitor();
+    void loadMonitor();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [readOnly]);
 
   const offerSummaries = useMemo<SupplierOfferSummary[]>(() => {
     const map = new Map<string, BillRecord[]>();

@@ -81,7 +81,8 @@ export async function extractPdfTextFromBytes(
   pdfBytes: Uint8Array,
   maxPages = 5
 ): Promise<string> {
-  const loadingTask = pdfjsLib.getDocument({ data: pdfBytes });
+  // Clone bytes because pdfjs transfers the underlying ArrayBuffer to its worker (detaching it).
+  const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice() });
   const pdf = await loadingTask.promise;
   const pageLimit = Math.min(maxPages, pdf.numPages);
   const pageTexts: string[] = [];

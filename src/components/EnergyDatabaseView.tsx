@@ -24,7 +24,6 @@ import {
   Pencil,
   Plus,
   Power,
-  RefreshCw,
   Snowflake,
   Trash2,
   Trophy,
@@ -100,8 +99,6 @@ interface EnergyDatabaseViewProps {
   loading: boolean;
   readOnly?: boolean;
   isGmailConnected?: boolean;
-  githubSyncing?: boolean;
-  onSyncGitHubJson?: () => void;
   onSignIn?: () => void;
   onConnectGmail?: () => void;
   onActivateAutopilot?: (input: ClimateAutopilotInput) => Promise<void>;
@@ -142,8 +139,6 @@ export function EnergyDatabaseView({
   loading,
   readOnly = false,
   isGmailConnected = false,
-  githubSyncing = false,
-  onSyncGitHubJson,
   onSignIn,
   onConnectGmail,
   onActivateAutopilot,
@@ -1247,19 +1242,6 @@ export function EnergyDatabaseView({
               <ZoomIn className="w-3.5 h-3.5" />
             </button>
           </div>
-
-          {onSyncGitHubJson && (
-            <button
-              type="button"
-              onClick={onSyncGitHubJson}
-              disabled={githubSyncing}
-              title="Scarica gli ultimi dati da data/consumi.json su GitHub e sincronizza i giorni mancanti su Firestore"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-sky-300 hover:text-sky-200 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${githubSyncing ? 'animate-spin' : ''}`} />
-              <span>{githubSyncing ? 'Aggiorno JSON...' : 'Aggiorna consumi.json'}</span>
-            </button>
-          )}
 
           <button
             type="button"

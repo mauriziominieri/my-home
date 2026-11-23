@@ -1,4 +1,4 @@
-name: Sync automatico e-distribuzione (da Gmail)
+name: Sync automatico e-distribuzione e bollette (da Gmail a Firestore)
 
 on:
   schedule:
@@ -6,44 +6,28 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository con storico
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Installa dipendenze PDF
-        run: pip install --quiet pypdf
+      - name: Installa dipendenze PDF e Firebase Admin SDK
+        run: pip install --quiet pypdf firebase-admin
 
-      - name: Ripristina stato precedente dal branch data
-        run: |
-          mkdir -p data
-          git fetch origin data:refs/remotes/origin/data 2>/dev/null || true
-          for f in data/consumi.json data/bollette.json data/octopus_tariff.json; do
-            if git cat-file -e "origin/data:$f" 2>/dev/null; then
-              git show "origin/data:$f" > "$f"
-            elif [ ! -f "$f" ]; then
-              last_commit=$(git log origin/main --diff-filter=AM -n 1 --format=%H -- "$f")
-              if [ -n "$last_commit" ]; then
-                git show "$last_commit:$f" > "$f"
-              fi
-            fi
-          done
-
-      - name: Estrai CSV e-distribuzione, Bollette Edison e TARI Acegas da Gmail
+      - name: Sincronizza Gmail INBOX direttamente su Firebase Firestore (consumi, bollette e PDF)
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           POD_CODE: "IT001E11251419"
         run: python scripts/sync_edistribuzione.py
 
@@ -52,36 +36,5 @@ jobs:
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: python scripts/check_octopus_tariff.py
-
-      - name: Salva aggiornamenti sul branch dedicato data
-        run: |
-          mkdir -p /tmp/out-data
-          for f in data/consumi.json data/bollette.json data/octopus_tariff.json; do
-            if [ -f "$f" ]; then
-              cp "$f" "/tmp/out-data/$(basename "$f")"
-            fi
-          done
-
-          git reset --hard HEAD
-          rm -rf data
-
-          if git show-ref --verify --quiet refs/remotes/origin/data; then
-            git checkout -B data origin/data
-          else
-            git checkout --orphan data
-            git rm -rf . >/dev/null 2>&1 || true
-            rm -rf data
-          fi
-
-          mkdir -p data
-          cp /tmp/out-data/*.json data/ 2>/dev/null || true
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/
-          if ! git diff --staged --quiet; then
-            git commit -m "Aggiornamento automatico Gmail e tariffe mercato"
-            git pull --rebase origin data 2>/dev/null || true
-            git push origin HEAD:data
-          fi

@@ -7,7 +7,6 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from email.message import EmailMessage
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 OCTOPUS_URL = "https://octopusenergy.it/offerta/tariffe"
@@ -16,7 +15,6 @@ MY_LOCKED_RATE = 0.1595  # Octopus Fissa 24M (OCTOFIX24v09)
 MY_FIXED_EUR_MONTH = 6.0  # 72 EUR/anno (6 EUR/mese)
 ANNUAL_KWH_BENCHMARK = 2300.0
 MIN_ANNUAL_SAVING_EUR = 5.0
-STATE_FILE = Path("data/octopus_tariff.json")
 
 SUPPLIER_TARGETS: List[Dict[str, Any]] = [
     {
@@ -289,7 +287,28 @@ def send_alert_email(best_offer: Dict[str, Any], my_annual: float) -> None:
     print(f"Email di avviso inviata a {gmail_user} per {best_offer['supplier']}.")
 
 
+def _get_firestore_client():
+    sa_raw = os.environ.get("FIREBASE_SERVICE_ACCOUNT", "").strip()
+    if not sa_raw:
+        return None
+    import firebase_admin
+    from firebase_admin import credentials, firestore
+
+    sa_dict = json.loads(sa_raw)
+    if not firebase_admin._apps:
+        cred = credentials.Certificate(sa_dict)
+        firebase_admin.initialize_app(
+            cred, {"projectId": sa_dict.get("project_id", "gen-lang-client-0721850501")}
+        )
+    db_id = os.environ.get(
+        "FIRESTORE_DATABASE_ID",
+        "ai-studio-30a168e3-8158-474f-b9f2-f717d7220314",
+    ).strip()
+    return firestore.client(database_id=db_id)
+
+
 def main() -> None:
+    db_client = _get_firestore_client()
     state: Dict[str, Any] = {
         "myLockedRate": MY_LOCKED_RATE,
         "myFixedEurMonth": MY_FIXED_EUR_MONTH,
@@ -300,11 +319,13 @@ def main() -> None:
         "bestCompetitor": None,
         "updatedAt": None,
     }
-    if STATE_FILE.exists():
+    if db_client is not None:
         try:
-            state.update(json.loads(STATE_FILE.read_text(encoding="utf-8")))
-        except Exception:
-            pass
+            snap = db_client.collection("appMeta").document("octopusTariff").get()
+            if snap.exists and isinstance(snap.to_dict(), dict):
+                state.update(snap.to_dict() or {})
+        except Exception as exc:
+            print(f"Nota lettura stato tariffe da Firestore: {exc}")
 
     competitors = [scrape_supplier(target) for target in SUPPLIER_TARGETS]
     octopus_offer = next((c for c in competitors if c["supplier"] == "Octopus Energy"), None)
@@ -340,8 +361,11 @@ def main() -> None:
     else:
         print("Nessun fornitore batte sensibilmente la tua Octopus Fissa 24M attuale.")
 
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    if db_client is not None:
+        db_client.collection("appMeta").document("octopusTariff").set(state)
+        print("Stato tariffe mercato salvato su Firestore (appMeta/octopusTariff).")
+    else:
+        print("FIREBASE_SERVICE_ACCOUNT non impostato: salto scrittura appMeta/octopusTariff.")
 
 
 if __name__ == "__main__":

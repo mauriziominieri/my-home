@@ -226,7 +226,7 @@ export async function scanGmailInbox(accessToken: string): Promise<GmailScanResu
         }
       } else if (isPdf) {
         try {
-          const pdfText = await extractPdfTextFromBytes(bytes, 4);
+          const pdfText = await extractPdfTextFromBytes(bytes.slice(), 4);
           const hay = `${from}\n${subject}\n${lowerName}\n${pdfText.slice(0, 3500)}`.toLowerCase();
           const safeFileName = att.filename || 'bolletta.pdf';
 

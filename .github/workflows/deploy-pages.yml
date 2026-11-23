@@ -3,8 +3,6 @@ name: Deploy su GitHub Pages (mauriziominieri.github.io/my-home)
 on:
   push:
     branches: ['main']
-  schedule:
-    - cron: '0 4 * * *' # Rebuild giornaliero automatico per includere gli aggiornamenti del branch data
   workflow_dispatch:
 
 permissions:
@@ -22,8 +20,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -37,23 +33,6 @@ jobs:
         env:
           GITHUB_PAGES: 'true'
         run: npm run build
-
-      - name: Copia dati JSON sincronizzati dal branch data
-        run: |
-          mkdir -p dist/data
-          git fetch origin data:refs/remotes/origin/data 2>/dev/null || true
-          for f in data/consumi.json data/bollette.json data/octopus_tariff.json; do
-            if git cat-file -e "origin/data:$f" 2>/dev/null; then
-              git show "origin/data:$f" > "dist/$f"
-            elif [ -f "$f" ]; then
-              cp "$f" "dist/$f"
-            else
-              last_commit=$(git log HEAD --diff-filter=AM -n 1 --format=%H -- "$f")
-              if [ -n "$last_commit" ]; then
-                git show "$last_commit:$f" > "dist/$f"
-              fi
-            fi
-          done
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

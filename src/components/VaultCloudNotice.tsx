@@ -4,7 +4,7 @@ import firestoreRulesRaw from '../../firestore.rules?raw';
 import { subscribeVaultCloudStatus, VaultCloudStatus } from '../utils/documentVault';
 
 const CONSOLE_RULES_URL =
-  'https://console.firebase.google.com/project/spiritual-bearing-sq7xb/firestore/databases/ai-studio-30a168e3-8158-474f-b9f2-f717d7220314/rules';
+  'https://console.firebase.google.com/project/gen-lang-client-0721850501/firestore/databases/ai-studio-30a168e3-8158-474f-b9f2-f717d7220314/rules';
 
 export function VaultCloudNotice() {
   const [status, setStatus] = useState<VaultCloudStatus>('idle');

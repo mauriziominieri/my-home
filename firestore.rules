@@ -14,8 +14,8 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    function isPublicReadTarget(userId) {
-      return userId == 'rXdhFrSuqzaYf8SYVbmQulPqg7m1';
+    function isPrimaryOwnerEmail() {
+      return isSignedIn() && request.auth.token.email == 'mauminieri@gmail.com';
     }
 
     function isValidId(id) {
@@ -85,9 +85,29 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidAppMetaOwner(data) {
+      return data.keys().hasAll(['ownerUid', 'updatedAt'])
+        && data.keys().hasOnly(['ownerUid', 'updatedAt'])
+        && data.ownerUid is string
+        && data.ownerUid.size() >= 1
+        && data.ownerUid.size() <= 128
+        && data.ownerUid == request.auth.uid
+        && data.updatedAt is timestamp;
+    }
+
+    match /appMeta/{metaId} {
+      allow get: if isSignedIn() && metaId in ['owner', 'octopusTariff'];
+      allow list: if false;
+      allow create, update: if metaId == 'owner'
+        && isPrimaryOwnerEmail()
+        && isValidAppMetaOwner(incoming())
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
     match /users/{userId}/energyReadings/{readingId} {
-      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(readingId);
-      allow list: if isOwner(userId) || isPublicReadTarget(userId);
+      allow get: if isOwner(userId) && isValidId(readingId);
+      allow list: if isOwner(userId) && existing().ownerId == userId;
       allow create: if isOwner(userId)
         && isValidId(readingId)
         && isValidEnergyReading(incoming(), userId)
@@ -104,8 +124,8 @@ service cloud.firestore {
     }
 
     match /users/{userId}/homeConfig/{configId} {
-      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(configId);
-      allow list: if isOwner(userId) || isPublicReadTarget(userId);
+      allow get: if isOwner(userId) && isValidId(configId);
+      allow list: if isOwner(userId) && existing().ownerId == userId;
       allow create: if isOwner(userId)
         && isValidId(configId)
         && isValidHomeConfig(incoming(), userId)
@@ -146,8 +166,8 @@ service cloud.firestore {
     }
 
     match /users/{userId}/climateLogs/{logId} {
-      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(logId);
-      allow list: if isOwner(userId) || isPublicReadTarget(userId);
+      allow get: if isOwner(userId) && isValidId(logId);
+      allow list: if isOwner(userId) && existing().ownerId == userId;
       allow create: if isOwner(userId)
         && isValidId(logId)
         && isValidClimateSession(incoming(), userId)
@@ -193,8 +213,8 @@ service cloud.firestore {
     }
 
     match /users/{userId}/electricityBills/{billId} {
-      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(billId);
-      allow list: if isOwner(userId) || isPublicReadTarget(userId);
+      allow get: if isOwner(userId) && isValidId(billId);
+      allow list: if isOwner(userId) && existing().ownerId == userId;
       allow create: if isOwner(userId)
         && isValidId(billId)
         && isValidElectricityBill(incoming(), userId)
@@ -234,8 +254,8 @@ service cloud.firestore {
     }
 
     match /users/{userId}/waterBills/{billId} {
-      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(billId);
-      allow list: if isOwner(userId) || isPublicReadTarget(userId);
+      allow get: if isOwner(userId) && isValidId(billId);
+      allow list: if isOwner(userId) && existing().ownerId == userId;
       allow create: if isOwner(userId)
         && isValidId(billId)
         && isValidWaterBill(incoming(), userId)
@@ -276,8 +296,8 @@ service cloud.firestore {
     }
 
     match /users/{userId}/tariBills/{billId} {
-      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(billId);
-      allow list: if isOwner(userId) || isPublicReadTarget(userId);
+      allow get: if isOwner(userId) && isValidId(billId);
+      allow list: if isOwner(userId) && existing().ownerId == userId;
       allow create: if isOwner(userId)
         && isValidId(billId)
         && isValidTariBill(incoming(), userId)
@@ -315,8 +335,8 @@ service cloud.firestore {
     }
 
     match /users/{userId}/gsePayments/{paymentId} {
-      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(paymentId);
-      allow list: if isOwner(userId) || isPublicReadTarget(userId);
+      allow get: if isOwner(userId) && isValidId(paymentId);
+      allow list: if isOwner(userId) && existing().ownerId == userId;
       allow create: if isOwner(userId)
         && isValidId(paymentId)
         && isValidGsePayment(incoming(), userId)
@@ -359,8 +379,8 @@ service cloud.firestore {
     }
 
     match /users/{userId}/homeArticles/{articleId} {
-      allow get: if (isOwner(userId) || isPublicReadTarget(userId)) && isValidId(articleId);
-      allow list: if isOwner(userId) || isPublicReadTarget(userId);
+      allow get: if isOwner(userId) && isValidId(articleId);
+      allow list: if isOwner(userId) && existing().ownerId == userId;
       allow create: if isOwner(userId)
         && isValidId(articleId)
         && isValidHomeArticle(incoming(), userId)

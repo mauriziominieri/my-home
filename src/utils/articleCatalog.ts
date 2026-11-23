@@ -55,7 +55,7 @@ export function unpackArticleNotes(rawNotes?: string): {
 
 /**
  * Packs user notes + optional manualUrl inside the 240-char Firestore `notes` field
- * so writes always comply with existing `spiritual-bearing-sq7xb` Firestore rules.
+ * so writes always comply with Firestore security rules.
  */
 export function packArticleNotes(userNotes: string, manualUrl?: string): string | undefined {
   const cleanNotes = userNotes.replace(MANUAL_MARKER_RE, ' ').trim();
