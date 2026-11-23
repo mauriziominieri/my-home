@@ -49,14 +49,15 @@
 1. **GitHub Actions 24/7 (`.github/workflows/sync-edistribuzione.yml`):**
    - Schedulato ogni 10 minuti (`cron: '*/10 * * * *'`, con tempi reali di **~10–30 minuti** in base alla coda dei runner gratuiti GitHub) o avviabile manualmente (`workflow_dispatch`) tramite `scripts/sync_edistribuzione.py`.
    - Usa IMAP Gmail (`secrets.GMAIL_USER` + `secrets.GMAIL_APP_PASSWORD`) leggendo **solo la INBOX** (ignorando il Cestino).
-   - Estrae CSV/ZIP di e-distribuzione ("Dettaglio curve di carico"), bollette PDF Edison e avvisi TARI Acegas, aggiorna `data/consumi.json` e `data/bollette.json` sul branch `main` e sposta nel Cestino solo le email elaborate con successo.
+   - Estrae CSV/ZIP di e-distribuzione ("Dettaglio curve di carico"), bollette PDF Edison e avvisi TARI Acegas, aggiorna `data/consumi.json` e `data/bollette.json` sul **branch dedicato `data`** (non su `main`, così gli export da AI Studio non causano mai conflitti/cancellazioni su `main`) e sposta nel Cestino solo le email elaborate con successo.
    - *Nota importante su GitHub Actions:* GitHub sospende automaticamente i workflow `schedule` dopo 60 giorni senza commit umani sul repository, e i push fatti con `GITHUB_TOKEN` **non** innescano altri workflow `on: push` (come `deploy-pages.yml`).
    - *Come riattivarlo se appare fermo su GitHub:* Tab **Actions → Sync automatico e-distribuzione (da Gmail) → Enable workflow / Run workflow**.
 2. **Lettura nell'App React (`src/App.tsx`):**
    - `fetchJsonWithFallback` carica `data/consumi.json` e `data/bollette.json` in quest'ordine:
-     1. `./data/<file>` (se presente nel bundle locale/deploy)
-     2. `https://raw.githubusercontent.com/mauriziominieri/my-home/main/data/<file>?v=...` *(sempre aggiornato in tempo reale appena il bot fa push su `main`, senza attendere GitHub Pages!)*
-     3. `https://mauriziominieri.github.io/my-home/data/<file>?v=...`
+     1. `https://raw.githubusercontent.com/mauriziominieri/my-home/data/data/<file>?v=...` *(sempre aggiornato in tempo reale appena il bot salva sul branch `data`, senza attendere GitHub Pages!)*
+     2. `./data/<file>` (se presente nel bundle locale/deploy)
+     3. `https://raw.githubusercontent.com/mauriziominieri/my-home/main/data/<file>?v=...` *(fallback legacy)*
+     4. `https://mauriziominieri.github.io/my-home/data/<file>?v=...`
    - `readings` è calcolato come **unione dinamica (`useMemo`)** tra `githubReadings` e `firestoreReadings`: i dati del JSON GitHub sono visibili subito anche da non loggati e non vengono mai sovrascritti da snapshot parziali.
    - Quando il proprietario è autenticato (`user.uid === activeUid`), l'app controlla i giorni di `githubReadings` assenti su Firestore e li salva automaticamente in batch da <= 400 rispettando tutti i limiti di `firestore.rules` (con pulsante manuale **"Aggiorna consumi.json"** nella pagina Consumi Annuali).
 3. **Sync Gmail dal Browser (`src/utils/gmailSync.ts`):**

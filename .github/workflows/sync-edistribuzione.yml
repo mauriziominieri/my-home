@@ -2,7 +2,7 @@ name: Sync automatico e-distribuzione (da Gmail)
 
 on:
   schedule:
-    - cron: '*/10 * * * *' # Ogni 10 minuti, 24/7 anche a browser chiuso (frequenza sicura per Gmail IMAP)
+    - cron: '*/10 * * * *' # Ogni 10 minuti, 24/7 anche a browser chiuso (tempi reali 10-30 min per coda GitHub)
   workflow_dispatch:
 
 permissions:
@@ -12,8 +12,10 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout repository con storico
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -22,6 +24,21 @@ jobs:
 
       - name: Installa dipendenze PDF
         run: pip install --quiet pypdf
+
+      - name: Ripristina stato precedente dal branch data
+        run: |
+          mkdir -p data
+          git fetch origin data:refs/remotes/origin/data 2>/dev/null || true
+          for f in data/consumi.json data/bollette.json data/octopus_tariff.json; do
+            if git cat-file -e "origin/data:$f" 2>/dev/null; then
+              git show "origin/data:$f" > "$f"
+            elif [ ! -f "$f" ]; then
+              last_commit=$(git log origin/main --diff-filter=AM -n 1 --format=%H -- "$f")
+              if [ -n "$last_commit" ]; then
+                git show "$last_commit:$f" > "$f"
+              fi
+            fi
+          done
 
       - name: Estrai CSV e-distribuzione, Bollette Edison e TARI Acegas da Gmail
         env:
@@ -37,18 +54,34 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         run: python scripts/check_octopus_tariff.py
 
-      - name: Salva aggiornamenti nel repository
+      - name: Salva aggiornamenti sul branch dedicato data
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          mkdir -p /tmp/out-data
           for f in data/consumi.json data/bollette.json data/octopus_tariff.json; do
             if [ -f "$f" ]; then
-              git add "$f"
+              cp "$f" "/tmp/out-data/$(basename "$f")"
             fi
           done
-          if ! git diff --staged --quiet; then
-            git commit -m "Aggiornamento automatico Gmail e tariffe mercato"
-            git pull --rebase --autostash origin main || true
-            git push
+
+          git reset --hard HEAD
+          rm -rf data
+
+          if git show-ref --verify --quiet refs/remotes/origin/data; then
+            git checkout -B data origin/data
+          else
+            git checkout --orphan data
+            git rm -rf . >/dev/null 2>&1 || true
+            rm -rf data
           fi
 
+          mkdir -p data
+          cp /tmp/out-data/*.json data/ 2>/dev/null || true
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if ! git diff --staged --quiet; then
+            git commit -m "Aggiornamento automatico Gmail e tariffe mercato"
+            git pull --rebase origin data 2>/dev/null || true
+            git push origin HEAD:data
+          fi

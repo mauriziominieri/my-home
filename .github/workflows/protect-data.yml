@@ -1,4 +1,4 @@
-name: Proteggi data/consumi.json e data/bollette.json
+name: Proteggi e migra data/*.json su branch data
 
 on:
   push:
@@ -6,12 +6,13 @@ on:
     paths:
       - 'data/consumi.json'
       - 'data/bollette.json'
+      - '.github/workflows/protect-data.yml'
 
 permissions:
   contents: write
 
 jobs:
-  restore-if-deleted:
+  sync-to-data-branch:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository con storico
@@ -19,25 +20,49 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Ripristina eventuali file data/*.json eliminati per errore
+      - name: Migra/ripristina data/*.json sul branch dedicato data
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin --prune
+          mkdir -p /tmp/seed-data
 
-          restored=0
-          for f in data/consumi.json data/bollette.json; do
-            if [ ! -f "$f" ]; then
-              last_commit=$(git log --diff-filter=AM -n 1 --format=%H -- "$f")
+          for f in data/consumi.json data/bollette.json data/octopus_tariff.json; do
+            if [ -f "$f" ]; then
+              cp "$f" "/tmp/seed-data/$(basename "$f")"
+            else
+              last_commit=$(git log origin/main --diff-filter=AM -n 1 --format=%H -- "$f")
               if [ -n "$last_commit" ]; then
-                echo "Ripristino $f dal commit $last_commit"
-                git checkout "$last_commit" -- "$f"
-                git add "$f"
-                restored=1
+                echo "Recupero $f da origin/main ($last_commit)"
+                git show "$last_commit:$f" > "/tmp/seed-data/$(basename "$f")"
               fi
             fi
           done
 
-          if [ "$restored" -eq 1 ] && ! git diff --staged --quiet; then
-            git commit -m "Ripristino automatico data/*.json dopo push export"
-            git push
+          git reset --hard HEAD
+          rm -rf data
+
+          if git show-ref --verify --quiet refs/remotes/origin/data; then
+            git checkout -B data origin/data
+          else
+            git checkout --orphan data
+            git rm -rf . >/dev/null 2>&1 || true
+            rm -rf data
+          fi
+
+          mkdir -p data
+          changed=0
+          for name in consumi.json bollette.json octopus_tariff.json; do
+            if [ ! -f "data/$name" ] && [ -f "/tmp/seed-data/$name" ]; then
+              cp "/tmp/seed-data/$name" "data/$name"
+              changed=1
+            fi
+          done
+
+          if [ "$changed" -eq 1 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add data/
+            if ! git diff --staged --quiet; then
+              git commit -m "Migra/protegge data/*.json su branch dedicato data"
+              git push origin HEAD:data
+            fi
           fi

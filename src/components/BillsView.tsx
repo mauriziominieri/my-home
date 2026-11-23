@@ -333,6 +333,7 @@ export function BillsView({
     let cancelled = false;
     const loadMonitor = async () => {
       const urls = [
+        `https://raw.githubusercontent.com/mauriziominieri/my-home/data/data/octopus_tariff.json?v=${Math.floor(Date.now() / 300_000)}`,
         './data/octopus_tariff.json',
         'https://mauriziominieri.github.io/my-home/data/octopus_tariff.json',
       ];

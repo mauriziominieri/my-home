@@ -863,6 +863,7 @@ export default function App() {
     const base = import.meta.env.BASE_URL || '/';
     const normBase = base.endsWith('/') ? base : `${base}/`;
     const urls = [
+      `https://raw.githubusercontent.com/mauriziominieri/my-home/data/data/${filename}?v=${cacheBust}`,
       `${normBase}data/${filename}?v=${cacheBust}`,
       `https://raw.githubusercontent.com/mauriziominieri/my-home/main/data/${filename}?v=${cacheBust}`,
       `https://mauriziominieri.github.io/my-home/data/${filename}?v=${cacheBust}`,
