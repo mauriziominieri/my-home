@@ -250,7 +250,8 @@ export default function App() {
         setPublicClimateAutopilot(null);
       }
       if (!currentUser) {
-        setHomeArticles([]);
+        // Non svuotiamo homeArticles: la spesa è pubblica e viene
+        // ricaricata dal listener pubblico (publicOwnerUid) anche senza login.
         setGmailToken(null);
         setPendingTrashMessages([]);
       }
@@ -310,6 +311,8 @@ export default function App() {
       setClimateLogs([]);
       setPublicClimateAutopilot(null);
       setHomeConfig({ ownerId: '', ...DEFAULT_HOME_CONFIG });
+      // homeArticles NON viene svuotato: la spesa è pubblica,
+      // viene gestita dal listener publicOwnerUid qui sotto.
       setReadingsLoading(true);
       return;
     }
