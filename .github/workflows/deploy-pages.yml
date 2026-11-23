@@ -34,7 +34,7 @@ jobs:
           GITHUB_PAGES: 'true'
         run: npm run build
 
-      - name: Copia dati consumi, bollette e tariffe se presenti
+      - name: Copia dati JSON sincronizzati se presenti
         run: |
           mkdir -p dist/data
           for f in data/consumi.json data/bollette.json data/octopus_tariff.json; do

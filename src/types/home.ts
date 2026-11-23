@@ -10,6 +10,9 @@ export type NavSection =
   | 'consumi'
   | 'bollette'
   | 'articoli'
+  | 'documenti'
+  | 'macchina'
+  | 'spesa'
   | 'info';
 
 export interface BillRecord {
@@ -194,3 +197,92 @@ export const DEFAULT_HOME_CONFIG: Omit<HomeSystemConfig, 'ownerId'> = {
   tariffEurPerKwh: 0.31,
   podCode: 'IT001E11251419',
 };
+
+export interface CarProfile {
+  id: string;
+  brand: string;
+  model: string;
+  plate: string;
+  year?: string;
+  fuelType?: string;
+  engine?: string;
+  vin?: string;
+  tireSize?: string;
+  currentKm?: number;
+  insuranceCompany?: string;
+  insuranceExpiry?: string;
+  bolloExpiry?: string;
+  revisioneExpiry?: string;
+  notes?: string;
+}
+
+export type CarEntryType =
+  | 'manutenzione'
+  | 'scadenza'
+  | 'gomme'
+  | 'rifornimento'
+  | 'spesa_auto';
+
+export interface CarLogEntry {
+  id: string;
+  entryType: CarEntryType;
+  title: string;
+  date: string;
+  dueDate?: string;
+  km?: number;
+  costEur?: number;
+  workshop?: string;
+  notes?: string;
+}
+
+export type SupermarketId = 'ins' | 'md' | 'conad';
+
+export interface GroceryProduct {
+  id: string;
+  name: string;
+  category: string;
+  unit: string;
+  priceIns: number | null;
+  priceMd: number | null;
+  priceConad: number | null;
+  inShoppingList: boolean;
+  notes?: string;
+}
+
+export type HomeDocumentCategory =
+  | 'Mutuo & Casa'
+  | 'Internet & Wi-Fi'
+  | 'Contratti & Utenze'
+  | 'Assicurazioni'
+  | 'Fiscale & Identità'
+  | 'Altro';
+
+export interface HomeDocumentRecord {
+  id: string;
+  title: string;
+  category: HomeDocumentCategory;
+  provider: string;
+  referenceCode?: string;
+  issueDate?: string;
+  expiryDate?: string;
+  cloudUrl?: string;
+  fileName?: string;
+  fileMime?: string;
+  fileSize?: number;
+  attachmentKey?: string;
+  pinned: boolean;
+  notes?: string;
+}
+
+export interface ClimateAutopilotConfig {
+  active: boolean;
+  mode: ClimateMode;
+  startTime: string;
+  endTime: string;
+  targetTemp: number;
+  rooms: RoomId[];
+  startDate: string; // YYYY-MM-DD
+  lastAppliedDate: string; // YYYY-MM-DD
+  notes?: string;
+}
+

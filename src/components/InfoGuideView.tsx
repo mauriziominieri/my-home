@@ -446,12 +446,51 @@ export function InfoGuideView() {
                   <strong className="text-slate-200">Richiesta curve di carico:</strong> dall&apos;app o dal portale e-distribuzione puoi richiedere il report CSV dei consumi quartorari/giornalieri via email.
                 </li>
                 <li>
-                  <strong className="text-slate-200">Importazione automatica:</strong> ogni 15 minuti lo script GitHub Actions controlla la tua Gmail, legge i CSV di e-distribuzione (anche se spostati nel cestino) e aggiorna automaticamente la pagina <strong className="text-slate-200">Consumi Annuali</strong>.
-                </li>
-                <li>
                   <strong className="text-slate-200">Verifica picchi e guasti:</strong> nell&apos;app e-distribuzione puoi anche controllare in tempo reale eventuali interruzioni di corrente programmate o guasti nella tua zona.
                 </li>
+                <li>
+                  <strong className="text-slate-200">Database unico Firestore:</strong> tutti i consumi, le bollette (luce, acqua, TARI), i bonifici GSE e gli articoli vengono letti e salvati direttamente su <strong className="text-slate-200">Firebase Firestore</strong>, senza file JSON locali pesanti o intermedi.
+                </li>
               </ul>
+            </div>
+          </div>
+
+          {/* Flusso Automatico Email -> Firestore */}
+          <div className="bg-slate-950/70 border border-sky-500/25 rounded-lg p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-semibold text-xs text-slate-100 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
+                Flusso Automatico Email ➔ Analisi ➔ Firebase Firestore ➔ Pulizia INBOX
+              </div>
+              <span className="px-2 py-0.5 text-[10px] font-mono bg-sky-500/15 text-sky-300 border border-sky-500/30 rounded">
+                Ogni 10 min · Solo INBOX
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-[11px]">
+              <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
+                <div className="font-semibold text-sky-300">1. Controllo 24/7 (10 min)</div>
+                <p className="text-slate-400 leading-relaxed">
+                  GitHub Actions controlla la <strong className="text-slate-200">sola INBOX</strong> ogni <strong className="text-slate-200">10 minuti</strong> anche a PC/browser spento (ignorando il Cestino), più sync istantaneo da <em>Sincronizza Gmail</em>.
+                </p>
+              </div>
+              <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
+                <div className="font-semibold text-amber-300">2. Analisi allegati</div>
+                <p className="text-slate-400 leading-relaxed">
+                  Estrae automaticamente dati da <span className="text-slate-200">CSV/ZIP e-distribuzione</span> e bollette PDF (<span className="text-slate-200">Edison Luce, TARI Acegas</span>) salvandoli in modo compatto per la dashboard.
+                </p>
+              </div>
+              <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
+                <div className="font-semibold text-emerald-300">3. Sync su Firestore</div>
+                <p className="text-slate-400 leading-relaxed">
+                  I nuovi dati vengono sincronizzati automaticamente su <strong className="text-slate-200">Firebase Firestore</strong> (<span className="font-mono text-slate-300">energyReadings</span>, <span className="font-mono text-slate-300">electricityBills</span>, <span className="font-mono text-slate-300">tariBills</span>) al primo accesso o via token.
+                </p>
+              </div>
+              <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
+                <div className="font-semibold text-rose-300">4. Pulizia INBOX</div>
+                <p className="text-slate-400 leading-relaxed">
+                  Solo dopo la conferma di avvenuto salvataggio, le email elaborate vengono spostate dalla INBOX nel <strong className="text-slate-200">Cestino</strong> per evitare doppie elaborazioni.
+                </p>
+              </div>
             </div>
           </div>
         </section>

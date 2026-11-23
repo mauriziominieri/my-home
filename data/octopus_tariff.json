@@ -34,21 +34,21 @@
     },
     {
       "supplier": "E.ON Energia",
-      "offerName": "LuceClick Verde",
-      "rateEurKwh": null,
-      "fixedEurMonth": 9.0,
-      "estAnnualEur": null,
-      "url": "https://www.eon-energia.com/luce/casa/eon-luceclick.html",
-      "status": "unavailable"
+      "offerName": "LuceClick 24M Verde",
+      "rateEurKwh": 0.1507,
+      "fixedEurMonth": 9.09,
+      "estAnnualEur": 455.69,
+      "url": "https://www.eon-energia.com/luce/casa/offerta-luce-prezzo-fisso-24-mesi.html",
+      "status": "ok"
     },
     {
       "supplier": "NeN",
-      "offerName": "Luce Special / Prezzo Bloccato",
-      "rateEurKwh": null,
-      "fixedEurMonth": 8.0,
-      "estAnnualEur": null,
+      "offerName": "Luce Due 24M (Dieci 10A: 0.129 \u20ac/kWh)",
+      "rateEurKwh": 0.179,
+      "fixedEurMonth": 9.0,
+      "estAnnualEur": 519.7,
       "url": "https://nen.it/offerte-e-prezzi/prezzo-bloccato",
-      "status": "unavailable"
+      "status": "ok"
     },
     {
       "supplier": "Sorgenia",
@@ -63,8 +63,8 @@
       "supplier": "Enel Energia",
       "offerName": "Enel Fix Web Luce",
       "rateEurKwh": 0.199,
-      "fixedEurMonth": 10.0,
-      "estAnnualEur": 577.7,
+      "fixedEurMonth": 12.0,
+      "estAnnualEur": 601.7,
       "url": "https://www.enel.it/it-it/offerte-luce/enel-fix-web-luce",
       "status": "ok"
     }
@@ -78,5 +78,5 @@
     "url": "https://www.engie.it/casa/offerte-luce-gas/energia-puntofisso-24mesi-singleele/",
     "status": "ok"
   },
-  "updatedAt": "2026-11-22T20:29:07Z"
+  "updatedAt": "2026-11-21T23:45:01Z"
 }

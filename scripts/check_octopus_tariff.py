@@ -3,6 +3,7 @@ import json
 import os
 import re
 import smtplib
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from email.message import EmailMessage
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 OCTOPUS_URL = "https://octopusenergy.it/offerta/tariffe"
+NEN_CATALOG_API = "https://prod.api.nen.it/subscriptions/catalog?action=S&utility=EE%3BGA&channel=Web&target=Domestico"
 MY_LOCKED_RATE = 0.1595  # Octopus Fissa 24M (OCTOFIX24v09)
 MY_FIXED_EUR_MONTH = 6.0  # 72 EUR/anno (6 EUR/mese)
 ANNUAL_KWH_BENCHMARK = 2300.0
@@ -37,15 +39,15 @@ SUPPLIER_TARGETS: List[Dict[str, Any]] = [
     },
     {
         "supplier": "E.ON Energia",
-        "offerName": "LuceClick Verde",
-        "url": "https://www.eon-energia.com/luce/casa/eon-luceclick.html",
-        "defaultFixedEurMonth": 9.0,
+        "offerName": "LuceClick 24M Verde",
+        "url": "https://www.eon-energia.com/luce/casa/offerta-luce-prezzo-fisso-24-mesi.html",
+        "defaultFixedEurMonth": 9.09,
     },
     {
         "supplier": "NeN",
-        "offerName": "Luce Special / Prezzo Bloccato",
+        "offerName": "Luce Due 24M (Prezzo Bloccato)",
         "url": "https://nen.it/offerte-e-prezzi/prezzo-bloccato",
-        "defaultFixedEurMonth": 8.0,
+        "defaultFixedEurMonth": 9.0,
     },
     {
         "supplier": "Sorgenia",
@@ -62,20 +64,31 @@ SUPPLIER_TARGETS: List[Dict[str, Any]] = [
 ]
 
 
-def fetch_html(url: str) -> str:
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "it-IT,it;q=0.9,en;q=0.5",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.read().decode("utf-8", errors="replace")
+def fetch_html(url: str, extra_headers: Optional[Dict[str, str]] = None) -> str:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "it-IT,it;q=0.9,en;q=0.5",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as err:
+        # Alcuni siti protetti da Cloudflare (es. E.ON) bloccano urllib con 403: usa Jina Reader come fallback
+        if err.code in (403, 429) and not url.startswith("https://r.jina.ai/"):
+            proxy_req = urllib.request.Request(
+                f"https://r.jina.ai/{url}",
+                headers={"User-Agent": headers["User-Agent"]},
+            )
+            with urllib.request.urlopen(proxy_req, timeout=25) as resp:
+                return resp.read().decode("utf-8", errors="replace")
+        raise
 
 
 def clean_visible_text(raw_html: str) -> str:
@@ -86,59 +99,127 @@ def clean_visible_text(raw_html: str) -> str:
     return re.sub(r"\s+", " ", text)
 
 
+def _extract_fixed_from_text(text: str) -> List[float]:
+    results: List[float] = []
+    for pat in (
+        r"(\d{1,2}(?:[.,]\d{1,2})?)\s*€\s*/\s*mese",
+        r"(\d{2,3}(?:[.,]\d{1,2})?)\s*€\s*/\s*(?:POD\s*/\s*)?anno",
+    ):
+        for m in re.findall(pat, text, re.IGNORECASE):
+            try:
+                val = float(m.replace(",", "."))
+                if "anno" in pat:
+                    if 36.0 <= val <= 240.0:
+                        val = round(val / 12.0, 2)
+                    else:
+                        continue
+                if 3.0 <= val <= 20.0:
+                    results.append(val)
+            except ValueError:
+                continue
+    return results
+
+
 def extract_rate_and_fixed(raw_html: str, default_fixed: float) -> tuple[Optional[float], float]:
     # Estrae prezzi €/kWh sia dal markup HTML sia dal testo pulito
     visible = clean_visible_text(raw_html)
 
     # Se la pagina mostra esplicitamente sia Monorario che F1/F2/F3 (es. ENGIE), preferisci il valore Monorario
     monorario_match = re.search(
-        r"Monorari[oa].{0,160}?(0[.,]\d{3,4})\s*(?:€|&euro;|EUR)\s*/\s*kWh",
+        r"Monorari[oa].{0,160}?(0[.,]\d{3,5})\s*(?:€|&euro;|EUR)\s*/\s*kWh",
         visible,
         re.IGNORECASE,
     )
     rate: Optional[float] = None
+    rate_span: Optional[tuple[int, int]] = None
     if monorario_match:
         try:
             mval = float(monorario_match.group(1).replace(",", "."))
             if 0.06 <= mval <= 0.40:
                 rate = mval
+                rate_span = monorario_match.span(1)
         except ValueError:
             rate = None
 
     if rate is None:
-        candidates: List[float] = []
-        for source_text in (raw_html, visible):
-            matches = re.findall(r"(0[.,]\d{3,4})\s*(?:€|&euro;|EUR)\s*/\s*kWh", source_text, re.IGNORECASE)
-            for raw in matches:
+        visible_candidates: List[tuple[float, tuple[int, int]]] = []
+        for m in re.finditer(r"(0[.,]\d{3,5})\s*(?:€|&euro;|EUR)\s*/\s*kWh", visible, re.IGNORECASE):
+            try:
+                val = float(m.group(1).replace(",", "."))
+                if 0.06 <= val <= 0.40:
+                    visible_candidates.append((val, m.span(1)))
+            except ValueError:
+                continue
+        if visible_candidates:
+            rate, rate_span = min(visible_candidates, key=lambda x: x[0])
+        else:
+            raw_candidates: List[float] = []
+            for raw in re.findall(r"(0[.,]\d{3,5})\s*(?:€|&euro;|EUR)\s*/\s*kWh", raw_html, re.IGNORECASE):
                 try:
                     val = float(raw.replace(",", "."))
                     if 0.06 <= val <= 0.40:
-                        candidates.append(val)
+                        raw_candidates.append(val)
                 except ValueError:
                     continue
-        rate = min(candidates) if candidates else None
+            rate = min(raw_candidates) if raw_candidates else None
 
     fixed_candidates: List[float] = []
-    for pat in (
-        r"(\d{1,2}(?:[.,]\d{1,2})?)\s*€\s*/\s*mese",
-        r"(?:commercializzazione|corrispettivo\s+annuo)[^0-9]{0,40}(\d{2,3}(?:[.,]\d{1,2})?)\s*€\s*/?\s*anno",
-    ):
-        for m in re.findall(pat, visible, re.IGNORECASE):
-            try:
-                val = float(m.replace(",", "."))
-                if "anno" in pat and val >= 36:
-                    val = round(val / 12.0, 2)
-                if 3.0 <= val <= 20.0:
-                    fixed_candidates.append(val)
-            except ValueError:
-                continue
+    if rate_span is not None:
+        local_window = visible[max(0, rate_span[0] - 250) : min(len(visible), rate_span[1] + 350)]
+        fixed_candidates = _extract_fixed_from_text(local_window)
+    if not fixed_candidates:
+        fixed_candidates = _extract_fixed_from_text(visible)
 
     fixed = min(fixed_candidates) if fixed_candidates else default_fixed
     return rate, round(fixed, 2)
 
 
+def scrape_nen(target: Dict[str, Any]) -> Dict[str, Any]:
+    raw_json = fetch_html(
+        NEN_CATALOG_API,
+        extra_headers={
+            "Accept": "application/json",
+            "Origin": "https://nen.it",
+            "Referer": "https://nen.it/",
+        },
+    )
+    catalog = json.loads(raw_json)
+    ee_fixed = [
+        item.get("baseOffer", {})
+        for item in catalog
+        if item.get("utility") == "EE" and item.get("baseOffer", {}).get("fixedPrice")
+    ]
+    # Confronto omogeneo: preferisci Luce Due 24M (senza penali), altrimenti Luce Dieci 120M
+    chosen = next((o for o in ee_fixed if o.get("duration") == 24), None) or (ee_fixed[0] if ee_fixed else None)
+    if not chosen:
+        raise ValueError("Nessuna offerta luce a prezzo fisso trovata nel catalogo NeN")
+
+    rate = round(float(str(chosen["fixedPrice"]).replace(",", ".")), 4)
+    pcv_year = float(str(chosen.get("pcv") or chosen.get("fixedAnnualCost") or "108").replace(",", "."))
+    fixed = round(pcv_year / 12.0, 2)
+    est_annual = round(rate * ANNUAL_KWH_BENCHMARK + fixed * 12.0, 2)
+
+    offer_ten = next((o for o in ee_fixed if o.get("duration") == 120), None)
+    offer_name = target["offerName"]
+    if offer_ten and offer_ten.get("fixedPrice"):
+        ten_rate = float(str(offer_ten["fixedPrice"]).replace(",", "."))
+        offer_name = f"Luce Due 24M (Dieci 10A: {ten_rate:.3f} €/kWh)"
+
+    return {
+        "supplier": target["supplier"],
+        "offerName": offer_name,
+        "rateEurKwh": rate,
+        "fixedEurMonth": fixed,
+        "estAnnualEur": est_annual,
+        "url": target["url"],
+        "status": "ok",
+    }
+
+
 def scrape_supplier(target: Dict[str, Any]) -> Dict[str, Any]:
     try:
+        if target["supplier"] == "NeN":
+            return scrape_nen(target)
         raw_html = fetch_html(target["url"])
         rate, fixed = extract_rate_and_fixed(raw_html, float(target["defaultFixedEurMonth"]))
         if rate is None:

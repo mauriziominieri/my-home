@@ -1,10 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import {
-  onAuthStateChanged,
-  signInWithPopup,
-  signOut,
-  User,
-} from 'firebase/auth';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { signOut, User } from 'firebase/auth';
 import {
   collection,
   deleteDoc,
@@ -18,34 +13,50 @@ import {
 } from 'firebase/firestore';
 import {
   BookOpen,
+  Car,
+  CheckCircle2,
   Database,
+  FolderOpen,
   Home,
   LayoutDashboard,
   LogOut,
+  Mail,
   Menu,
   Package,
   Receipt,
+  RefreshCw,
+  ShoppingCart,
   Thermometer,
+  Trash2,
   WifiOff,
   X,
 } from 'lucide-react';
 import {
   auth,
+  clearGmailAccessToken,
+  connectGmailAccount,
   db,
-  googleProvider,
+  getGmailAccessToken,
   handleFirestoreError,
   OperationType,
+  signInPrimaryOwner,
+  subscribeAuthWithGmailCleanup,
 } from './firebase';
 import {
   BillRecord,
+  CarLogEntry,
+  CarProfile,
+  ClimateAutopilotConfig,
   ClimateMode,
   ClimateSession,
   DEFAULT_HOME_CONFIG,
   EnergyReading,
+  GroceryProduct,
   GsePaymentRecord,
   GsePaymentType,
   HomeArticleCategory,
   HomeArticleRecord,
+  HomeDocumentRecord,
   HomeSystemConfig,
   NavSection,
   ReadingSource,
@@ -54,6 +65,43 @@ import {
   WaterBillRecord,
 } from './types/home';
 import { ParsedReadingInput } from './utils/edistribuzioneCsv';
+import {
+  GmailAuthExpiredError,
+  GmailProcessedMessage,
+  scanGmailInbox,
+  trashGmailMessages,
+} from './utils/gmailSync';
+import {
+  articleToCarLog,
+  articleToCarProfile,
+  articleToGroceryProduct,
+  CAR_PROFILE_ID,
+  carLogToArticlePayload,
+  carProfileToArticlePayload,
+  groceryProductToArticlePayload,
+  SYSTEM_ROOM_CAR,
+  SYSTEM_ROOM_GROCERY,
+} from './utils/carGroceryStore';
+import {
+  articleToHomeDocument,
+  deleteVaultFile,
+  getTariBillFileKey,
+  homeDocumentToArticlePayload,
+  notifyVaultUpdated,
+  saveVaultFile,
+  SYSTEM_ROOM_DOCUMENTS,
+} from './utils/documentVault';
+import {
+  addDaysIso,
+  articleToClimateAutopilot,
+  buildAutopilotSessionForDate,
+  CLIMATE_AUTOPILOT_DOC_ID,
+  climateAutopilotToArticlePayload,
+  enumerateIsoDatesInclusive,
+  getAutoClimateDocId,
+  getLocalTodayIso,
+  SYSTEM_ROOM_CLIMATE_AUTO,
+} from './utils/climateAutopilot';
 import { SEED_ELECTRICITY_BILLS, SEED_WATER_BILLS } from './data/billsSeed';
 import { SEED_HOME_ARTICLES } from './data/articlesSeed';
 import { OverviewView } from './components/OverviewView';
@@ -61,7 +109,12 @@ import { DomoticsView } from './components/DomoticsView';
 import { EnergyDatabaseView } from './components/EnergyDatabaseView';
 import { BillsView } from './components/BillsView';
 import { ArticlesView } from './components/ArticlesView';
+import { CarView } from './components/CarView';
+import { GroceryView } from './components/GroceryView';
+import { DocumentsView } from './components/DocumentsView';
+import { ClimateAutopilotInput } from './components/ClimateAutopilotCard';
 import { InfoGuideView } from './components/InfoGuideView';
+import { VaultCloudNotice } from './components/VaultCloudNotice';
 
 const NAV_ITEMS: { id: NavSection; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'panoramica', label: 'Panoramica', icon: LayoutDashboard },
@@ -69,6 +122,9 @@ const NAV_ITEMS: { id: NavSection; label: string; icon: typeof LayoutDashboard }
   { id: 'domotica', label: 'Clima & Domotica', icon: Thermometer },
   { id: 'bollette', label: 'Bollette', icon: Receipt },
   { id: 'articoli', label: 'Articoli', icon: Package },
+  { id: 'documenti', label: 'Documenti', icon: FolderOpen },
+  { id: 'macchina', label: 'Macchina', icon: Car },
+  { id: 'spesa', label: 'Spesa', icon: ShoppingCart },
   { id: 'info', label: 'Info Utili', icon: BookOpen },
 ];
 
@@ -110,7 +166,6 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [selectedYear, setSelectedYear] = useState<number>(CURRENT_YEAR);
-  const [syncIntervalHours, setSyncIntervalHours] = useState<number>(6);
 
   const [readings, setReadings] = useState<EnergyReading[]>([]);
   const [climateLogs, setClimateLogs] = useState<ClimateSession[]>([]);
@@ -123,17 +178,43 @@ export default function App() {
   const [firestoreFallbackNotice, setFirestoreFallbackNotice] = useState<string | null>(null);
   const syncedElecBillsRef = useRef(false);
   const syncedWaterBillsRef = useRef(false);
-  const syncedTariBillsRef = useRef(false);
   const syncedArticlesRef = useRef(false);
+  const syncedGitHubJsonRef = useRef<string | null>(null);
+  const skippedTrashIdsRef = useRef<Set<string>>(new Set());
+  const gmailSyncInFlightRef = useRef(false);
+  const autopilotSyncInFlightRef = useRef(false);
+  const lastAutopilotSyncKeyRef = useRef<string | null>(null);
+  const [todayIso, setTodayIso] = useState<string>(() => getLocalTodayIso());
+  const [gmailToken, setGmailToken] = useState<string | null>(() => getGmailAccessToken());
+  const [gmailSyncing, setGmailSyncing] = useState(false);
+  const [gmailNotice, setGmailNotice] = useState<{
+    tone: 'ok' | 'info' | 'warn';
+    text: string;
+  } | null>(null);
+  const [pendingTrashMessages, setPendingTrashMessages] = useState<GmailProcessedMessage[]>([]);
+  const [trashingEmails, setTrashingEmails] = useState(false);
   const [homeConfig, setHomeConfig] = useState<HomeSystemConfig>({
     ownerId: '',
     ...DEFAULT_HOME_CONFIG,
   });
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const timer = window.setInterval(() => {
+      const next = getLocalTodayIso();
+      setTodayIso((prev) => (prev === next ? prev : next));
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeAuthWithGmailCleanup((currentUser) => {
       setUser(currentUser);
+      if (!currentUser) {
+        setGmailToken(null);
+        setPendingTrashMessages([]);
+      }
       setAuthReady(true);
+      notifyVaultUpdated();
     });
     return () => unsubscribe();
   }, []);
@@ -187,9 +268,9 @@ export default function App() {
       },
       (error) => {
         if (isResilientFirestoreOutage(error)) {
-          console.warn('Firestore unavailable/quota for energyReadings; using local cache + data/consumi.json.');
+          console.warn('Firestore unavailable/quota for energyReadings; using local cache.');
           setFirestoreFallbackNotice(
-            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: attivi cache locale, file JSON leggeri su GitHub e dati predefiniti.'
+            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale.'
           );
           const todayIso = new Date().toISOString().slice(0, 10);
           const byDate = new Map<string, EnergyReading>();
@@ -204,42 +285,8 @@ export default function App() {
           } catch {
             // ignore
           }
-          void (async () => {
-            for (const url of [
-              './data/consumi.json',
-              'https://mauriziominieri.github.io/my-home/data/consumi.json',
-              'https://raw.githubusercontent.com/mauriziominieri/my-home/main/data/consumi.json',
-            ]) {
-              try {
-                const res = await fetch(url, { cache: 'no-store' });
-                if (!res.ok) continue;
-                const json = await res.json();
-                const items = Array.isArray(json?.readings) ? json.readings : [];
-                for (const item of items as Partial<EnergyReading>[]) {
-                  if (!item.date || String(item.date) > todayIso) continue;
-                  byDate.set(String(item.date), {
-                    id: String(item.date),
-                    ownerId: activeUid,
-                    date: String(item.date),
-                    f1Kwh: Number(item.f1Kwh || 0),
-                    f2Kwh: Number(item.f2Kwh || 0),
-                    f3Kwh: Number(item.f3Kwh || 0),
-                    totalKwh: Number(item.totalKwh || 0),
-                    peakKw: Number(item.peakKw || 0),
-                    estimatedCostEur: Number(
-                      (Number(item.totalKwh || 0) * DEFAULT_HOME_CONFIG.tariffEurPerKwh).toFixed(2)
-                    ),
-                    source: 'e-distribuzione-api' as ReadingSource,
-                  });
-                }
-                if (items.length > 0) break;
-              } catch {
-                // try next url
-              }
-            }
-            setReadings(Array.from(byDate.values()));
-            setReadingsLoading(false);
-          })();
+          setReadings(Array.from(byDate.values()));
+          setReadingsLoading(false);
           return;
         }
         handleFirestoreError(error, OperationType.LIST, readingsPath);
@@ -275,7 +322,7 @@ export default function App() {
         if (isResilientFirestoreOutage(error)) {
           console.warn('Firestore unavailable/quota for homeConfig; using local cache / defaults.');
           setFirestoreFallbackNotice(
-            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: attivi cache locale, file JSON leggeri su GitHub e dati predefiniti.'
+            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale e dei dati predefiniti.'
           );
           try {
             const cached = localStorage.getItem(`myhome_config_cache_${activeUid}`);
@@ -326,7 +373,7 @@ export default function App() {
         if (isResilientFirestoreOutage(error)) {
           console.warn('Firestore unavailable/quota for climateLogs; using local cache.');
           setFirestoreFallbackNotice(
-            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: attivi cache locale, file JSON leggeri su GitHub e dati predefiniti.'
+            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale e dei dati predefiniti.'
           );
           try {
             const cached = localStorage.getItem(`myhome_climate_cache_${activeUid}`);
@@ -377,75 +424,54 @@ export default function App() {
           }
         }
 
-        // One-time sync to Firebase when signed in as owner if any extracted bills are missing in Firestore
+        // One-time sync to Firebase when signed in as owner if seed bills are missing in Firestore
         if (user && user.uid === activeUid && !snap.metadata.fromCache && !syncedElecBillsRef.current) {
           syncedElecBillsRef.current = true;
           const existingInvoices = new Set(list.map((b) => b.invoiceNumber));
-          void (async () => {
-            const mergedMap = new Map<string, BillRecord>();
-            for (const b of SEED_ELECTRICITY_BILLS) {
-              mergedMap.set(b.invoiceNumber, b);
-            }
-            for (const url of [
-              './data/bollette.json',
-              'https://mauriziominieri.github.io/my-home/data/bollette.json',
-            ]) {
+          const missing = SEED_ELECTRICITY_BILLS.filter(
+            (b) => !existingInvoices.has(b.invoiceNumber)
+          );
+          if (missing.length > 0) {
+            void (async () => {
               try {
-                const res = await fetch(url, { cache: 'no-store' });
-                if (!res.ok) continue;
-                const json = await res.json();
-                if (Array.isArray(json?.bills)) {
-                  for (const b of json.bills as BillRecord[]) {
-                    if (b?.invoiceNumber) mergedMap.set(String(b.invoiceNumber), b);
-                  }
-                  break;
+                const batch = writeBatch(db);
+                for (const b of missing) {
+                  const docId = `edison_${b.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+                  const payload: Record<string, unknown> = {
+                    ownerId: user.uid,
+                    invoiceNumber: b.invoiceNumber.slice(0, 40),
+                    issueDate: b.issueDate.slice(0, 20),
+                    sortKey: b.sortKey.slice(0, 16),
+                    year: Number(b.year),
+                    period: b.period.slice(0, 80),
+                    supplier: b.supplier.slice(0, 80),
+                    offerName: b.offerName.slice(0, 100),
+                    kwh: Number(b.kwh),
+                    punText: b.punText.slice(0, 60),
+                    variableCostPerKwh: Number(b.variableCostPerKwh),
+                    canoneTv: Number(b.canoneTv),
+                    electricityOnly: Number(b.electricityOnly),
+                    totalPaid: Number(b.totalPaid),
+                    createdAt: serverTimestamp(),
+                  };
+                  if (b.note) payload.note = b.note.slice(0, 240);
+                  batch.set(doc(db, elecBillsPath, docId), payload);
                 }
-              } catch {
-                // try next
+                await batch.commit();
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                if (!msg.toLowerCase().includes('quota') && !msg.toLowerCase().includes('resource-exhausted')) {
+                  handleFirestoreError(err, OperationType.WRITE, elecBillsPath);
+                }
               }
-            }
-            const missing = Array.from(mergedMap.values()).filter(
-              (b) => !existingInvoices.has(b.invoiceNumber)
-            );
-            if (missing.length === 0) return;
-            try {
-              const batch = writeBatch(db);
-              for (const b of missing) {
-                const docId = `edison_${b.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`;
-                const payload: Record<string, unknown> = {
-                  ownerId: user.uid,
-                  invoiceNumber: b.invoiceNumber.slice(0, 40),
-                  issueDate: b.issueDate.slice(0, 20),
-                  sortKey: b.sortKey.slice(0, 16),
-                  year: Number(b.year),
-                  period: b.period.slice(0, 80),
-                  supplier: b.supplier.slice(0, 80),
-                  offerName: b.offerName.slice(0, 100),
-                  kwh: Number(b.kwh),
-                  punText: b.punText.slice(0, 60),
-                  variableCostPerKwh: Number(b.variableCostPerKwh),
-                  canoneTv: Number(b.canoneTv),
-                  electricityOnly: Number(b.electricityOnly),
-                  totalPaid: Number(b.totalPaid),
-                  createdAt: serverTimestamp(),
-                };
-                if (b.note) payload.note = b.note.slice(0, 240);
-                batch.set(doc(db, elecBillsPath, docId), payload);
-              }
-              await batch.commit();
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              if (!msg.toLowerCase().includes('quota') && !msg.toLowerCase().includes('resource-exhausted')) {
-                handleFirestoreError(err, OperationType.WRITE, elecBillsPath);
-              }
-            }
-          })();
+            })();
+          }
         }
       },
       (error) => {
         if (isResilientFirestoreOutage(error)) {
           setFirestoreFallbackNotice(
-            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: attivi cache locale, file JSON leggeri su GitHub e dati predefiniti.'
+            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale.'
           );
           try {
             const cached = localStorage.getItem(`myhome_elec_bills_cache_${activeUid}`);
@@ -530,7 +556,7 @@ export default function App() {
       (error) => {
         if (isResilientFirestoreOutage(error)) {
           setFirestoreFallbackNotice(
-            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: attivi cache locale, file JSON leggeri su GitHub e dati predefiniti.'
+            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale e dei dati predefiniti.'
           );
           try {
             const cached = localStorage.getItem(`myhome_water_bills_cache_${activeUid}`);
@@ -574,56 +600,11 @@ export default function App() {
         } catch {
           // ignore
         }
-
-        if (user && user.uid === activeUid && !snap.metadata.fromCache && !syncedTariBillsRef.current) {
-          syncedTariBillsRef.current = true;
-          const existingNotices = new Set(list.map((t) => t.noticeNumber));
-          void (async () => {
-            for (const url of [
-              './data/bollette.json',
-              'https://mauriziominieri.github.io/my-home/data/bollette.json',
-            ]) {
-              try {
-                const res = await fetch(url, { cache: 'no-store' });
-                if (!res.ok) continue;
-                const json = await res.json();
-                if (!Array.isArray(json?.tariBills)) break;
-                const missing = (json.tariBills as TariBillRecord[]).filter(
-                  (t) => t?.noticeNumber && !existingNotices.has(String(t.noticeNumber))
-                );
-                if (missing.length === 0) break;
-                const batch = writeBatch(db);
-                for (const t of missing) {
-                  const docId = `tari_${String(t.noticeNumber).replace(/[^a-zA-Z0-9_-]/g, '') || Date.now()}`;
-                  const payload: Record<string, unknown> = {
-                    ownerId: user.uid,
-                    noticeNumber: String(t.noticeNumber).slice(0, 50),
-                    issueDate: String(t.issueDate || '—').slice(0, 20),
-                    dueDate: String(t.dueDate || '—').slice(0, 20),
-                    year: Number(t.year || new Date().getFullYear()),
-                    period: String(t.period || `TARI ${t.year || ''}`).slice(0, 80),
-                    supplier: String(t.supplier || 'AcegasApsAmga').slice(0, 80),
-                    totalPaid: Number(t.totalPaid || 0),
-                    paid: Boolean(t.paid),
-                    source: t.source === 'gmail-pdf' ? 'gmail-pdf' : 'manuale',
-                    createdAt: serverTimestamp(),
-                  };
-                  if (t.note) payload.note = String(t.note).slice(0, 240);
-                  batch.set(doc(db, tariBillsPath, docId), payload);
-                }
-                await batch.commit();
-                break;
-              } catch {
-                // try next
-              }
-            }
-          })();
-        }
       },
       (error) => {
         if (isResilientFirestoreOutage(error)) {
           setFirestoreFallbackNotice(
-            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: attivi cache locale, file JSON leggeri su GitHub e dati predefiniti.'
+            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale.'
           );
           try {
             const cached = localStorage.getItem(`myhome_tari_bills_cache_${activeUid}`);
@@ -667,7 +648,7 @@ export default function App() {
       (error) => {
         if (isResilientFirestoreOutage(error)) {
           setFirestoreFallbackNotice(
-            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: attivi cache locale, file JSON leggeri su GitHub e dati predefiniti.'
+            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale e dei dati predefiniti.'
           );
           try {
             const cached = localStorage.getItem(`myhome_gse_payments_cache_${activeUid}`);
@@ -756,7 +737,7 @@ export default function App() {
       (error) => {
         if (isResilientFirestoreOutage(error)) {
           setFirestoreFallbackNotice(
-            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: attivi cache locale, file JSON leggeri su GitHub e dati predefiniti.'
+            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale e dei dati predefiniti.'
           );
           try {
             const cached = localStorage.getItem(`myhome_articles_cache_${activeUid}`);
@@ -781,6 +762,183 @@ export default function App() {
       unsubArticles();
     };
   }, [authReady, activeUid, user]);
+
+  // Background reconciliation from 24/7 GitHub Actions JSON (data/consumi.json & data/bollette.json) -> Firestore
+  useEffect(() => {
+    if (!authReady || readingsLoading) return;
+    const syncKey = `${activeUid}:${user ? user.uid : 'anon'}`;
+    if (syncedGitHubJsonRef.current === syncKey) return;
+    syncedGitHubJsonRef.current = syncKey;
+
+    const fetchJsonWithFallback = async <T,>(filename: string): Promise<T | null> => {
+      const localUrl = `${import.meta.env.BASE_URL}data/${filename}`;
+      const ghPagesUrl = `https://mauriziominieri.github.io/my-home/data/${filename}`;
+      for (const url of [localUrl, ghPagesUrl]) {
+        try {
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const ct = res.headers.get('content-type') || '';
+          if (!ct.includes('json') && !ct.includes('text/plain')) continue;
+          return (await res.json()) as T;
+        } catch {
+          // try next source
+        }
+      }
+      return null;
+    };
+
+    void (async () => {
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const [consumiJson, bolletteJson] = await Promise.all([
+        fetchJsonWithFallback<{
+          readings?: Array<{
+            date: string;
+            f1Kwh: number;
+            f2Kwh: number;
+            f3Kwh: number;
+            totalKwh: number;
+            peakKw: number;
+          }>;
+        }>('consumi.json'),
+        fetchJsonWithFallback<{
+          electricityBills?: BillRecord[];
+          tariBills?: Omit<TariBillRecord, 'id'>[];
+        }>('bollette.json'),
+      ]);
+
+      const existingDates = new Set(readings.map((r) => r.date));
+      const missingReadings = (consumiJson?.readings || []).filter(
+        (r) => r?.date && r.date <= todayIso && !existingDates.has(r.date)
+      );
+
+      if (missingReadings.length > 0) {
+        setReadings((prev) => {
+          const byDate = new Map(prev.map((r) => [r.date, r]));
+          for (const r of missingReadings) {
+            if (!byDate.has(r.date)) {
+              byDate.set(r.date, {
+                id: `day_${r.date.replace(/-/g, '')}`,
+                ownerId: activeUid,
+                date: r.date,
+                f1Kwh: Number(r.f1Kwh || 0),
+                f2Kwh: Number(r.f2Kwh || 0),
+                f3Kwh: Number(r.f3Kwh || 0),
+                totalKwh: Number(r.totalKwh || 0),
+                peakKw: Number(r.peakKw || 0),
+                estimatedCostEur:
+                  Math.round(Number(r.totalKwh || 0) * homeConfig.tariffEurPerKwh * 100) / 100,
+                source: 'e-distribuzione-api',
+              });
+            }
+          }
+          return Array.from(byDate.values());
+        });
+      }
+
+      const existingInvoices = new Set(electricityBills.map((b) => b.invoiceNumber));
+      const missingElec = (bolletteJson?.electricityBills || []).filter(
+        (b) => b?.invoiceNumber && !existingInvoices.has(b.invoiceNumber)
+      );
+      if (missingElec.length > 0) {
+        setElectricityBills((prev) => {
+          const seen = new Set(prev.map((b) => b.invoiceNumber));
+          return [...prev, ...missingElec.filter((b) => !seen.has(b.invoiceNumber))];
+        });
+      }
+
+      const existingNotices = new Set(tariBills.map((t) => t.noticeNumber));
+      const missingTari = (bolletteJson?.tariBills || []).filter(
+        (t) => t?.noticeNumber && !existingNotices.has(t.noticeNumber)
+      );
+      if (missingTari.length > 0) {
+        setTariBills((prev) => {
+          const seen = new Set(prev.map((t) => t.noticeNumber));
+          return [
+            ...prev,
+            ...missingTari
+              .filter((t) => !seen.has(t.noticeNumber))
+              .map((t) => ({
+                ...t,
+                id: `tari_${t.noticeNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`,
+              })),
+          ];
+        });
+      }
+
+      if (user && user.uid === activeUid) {
+        if (missingReadings.length > 0) {
+          const basePath = `users/${user.uid}/energyReadings`;
+          for (let i = 0; i < missingReadings.length; i += 400) {
+            const chunk = missingReadings.slice(i, i + 400);
+            const batch = writeBatch(db);
+            for (const item of chunk) {
+              const docId = `day_${item.date.replace(/-/g, '')}`;
+              batch.set(doc(db, basePath, docId), {
+                ownerId: user.uid,
+                date: item.date.slice(0, 20),
+                f1Kwh: Number(item.f1Kwh || 0),
+                f2Kwh: Number(item.f2Kwh || 0),
+                f3Kwh: Number(item.f3Kwh || 0),
+                totalKwh: Number(item.totalKwh || 0),
+                peakKw: Number(item.peakKw || 0),
+                estimatedCostEur:
+                  Math.round(Number(item.totalKwh || 0) * homeConfig.tariffEurPerKwh * 100) / 100,
+                source: 'e-distribuzione-api',
+                createdAt: serverTimestamp(),
+              });
+            }
+            await batch.commit().catch(() => {});
+          }
+        }
+        if (missingElec.length > 0) {
+          const elecPath = `users/${user.uid}/electricityBills`;
+          const batch = writeBatch(db);
+          for (const b of missingElec) {
+            const docId = `edison_${b.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+            batch.set(doc(db, elecPath, docId), {
+              ownerId: user.uid,
+              invoiceNumber: b.invoiceNumber.slice(0, 40),
+              issueDate: b.issueDate.slice(0, 20),
+              sortKey: b.sortKey.slice(0, 16),
+              year: Number(b.year),
+              period: b.period.slice(0, 80),
+              supplier: b.supplier.slice(0, 80),
+              offerName: b.offerName.slice(0, 100),
+              kwh: Number(b.kwh),
+              punText: b.punText.slice(0, 60),
+              variableCostPerKwh: Number(b.variableCostPerKwh),
+              canoneTv: Number(b.canoneTv),
+              electricityOnly: Number(b.electricityOnly),
+              totalPaid: Number(b.totalPaid),
+              createdAt: serverTimestamp(),
+            });
+          }
+          await batch.commit().catch(() => {});
+        }
+        if (missingTari.length > 0) {
+          const tariPath = `users/${user.uid}/tariBills`;
+          const batch = writeBatch(db);
+          for (const t of missingTari) {
+            const docId = `tari_${t.noticeNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+            batch.set(doc(db, tariPath, docId), {
+              ownerId: user.uid,
+              noticeNumber: t.noticeNumber.slice(0, 50),
+              issueDate: (t.issueDate || t.dueDate || '—').slice(0, 20),
+              dueDate: (t.dueDate || t.issueDate || '—').slice(0, 20),
+              year: Number(t.year),
+              period: t.period.slice(0, 80),
+              supplier: t.supplier.slice(0, 80),
+              totalPaid: Number(t.totalPaid),
+              paid: Boolean(t.paid),
+              source: t.source === 'gmail-pdf' ? 'gmail-pdf' : 'manuale',
+              createdAt: serverTimestamp(),
+            });
+          }
+          await batch.commit().catch(() => {});
+        }
+      }
+    })();
+  }, [authReady, readingsLoading, activeUid, user, readings, electricityBills, tariBills, homeConfig.tariffEurPerKwh]);
 
   async function handleImportCsv(items: ParsedReadingInput[]) {
     if (!user || items.length === 0) return;
@@ -835,62 +993,308 @@ export default function App() {
     }
   }
 
-  async function handleSyncFromGithubJson(jsonUrl: string): Promise<number> {
-    if (!user) return 0;
-    const resp = await fetch(jsonUrl, { cache: 'no-store' });
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status}: file non ancora trovato su GitHub.`);
-    }
-    const data = await resp.json();
-    const list: ParsedReadingInput[] = Array.isArray(data?.readings)
-      ? data.readings
-      : [];
-    if (list.length === 0) {
-      throw new Error('Il file data/consumi.json non contiene ancora letture.');
-    }
-    const basePath = `users/${user.uid}/energyReadings`;
-    try {
-      for (let i = 0; i < list.length; i += 400) {
-        const chunk = list.slice(i, i + 400);
-        const batch = writeBatch(db);
-        for (const item of chunk) {
-          if (!item.date || !/^\d{4}-\d{2}-\d{2}$/.test(item.date)) continue;
-          const docId = `day_${item.date.replace(/-/g, '')}`;
-          const totalKwh = Number(item.totalKwh || 0);
-          const estimatedCostEur =
-            Math.round(totalKwh * homeConfig.tariffEurPerKwh * 100) / 100;
-          batch.set(doc(db, basePath, docId), {
-            ownerId: user.uid,
-            date: item.date,
-            f1Kwh: Number(item.f1Kwh || 0),
-            f2Kwh: Number(item.f2Kwh || 0),
-            f3Kwh: Number(item.f3Kwh || 0),
-            totalKwh,
-            peakKw: Number(item.peakKw || 0),
-            estimatedCostEur,
-            source: 'e-distribuzione-api',
-            notes: `Sync GitHub POD ${homeConfig.podCode}`,
-            createdAt: serverTimestamp(),
-          });
-        }
-        await batch.commit();
-      }
-      return list.length;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, basePath);
-    }
-  }
+
 
   async function handleSignIn() {
     setAuthError(null);
     try {
-      await signInWithPopup(auth, googleProvider);
+      await signInPrimaryOwner();
     } catch (err) {
       setAuthError(
         err instanceof Error ? err.message : 'Accesso Google non completato.'
       );
     }
   }
+
+  const runGmailSyncWithToken = useCallback(
+    async (currentUser: User, token: string, isAuto = false) => {
+      if (gmailSyncInFlightRef.current) return;
+      gmailSyncInFlightRef.current = true;
+      setGmailSyncing(true);
+      if (!isAuto) setGmailNotice(null);
+
+      try {
+        const scan = await scanGmailInbox(token);
+
+        if (
+          scan.readings.length === 0 &&
+          scan.electricityBills.length === 0 &&
+          scan.waterBills.length === 0 &&
+          scan.tariBills.length === 0 &&
+          scan.pdfAttachments.length === 0
+        ) {
+          if (!isAuto) {
+            setGmailNotice({
+              tone: 'info',
+              text: 'INBOX Gmail controllata: nessuna nuova email di consumi o bollette da importare.',
+            });
+          }
+          return;
+        }
+
+        // Archive original PDF binaries on Firestore (chunked, 0 AI credits) + local cache
+        if (scan.pdfAttachments.length > 0) {
+          for (const pdfAtt of scan.pdfAttachments) {
+            const pdfBlob = new Blob([new Uint8Array(pdfAtt.bytes)], {
+              type: pdfAtt.mimeType || 'application/pdf',
+            });
+            await saveVaultFile(
+              pdfAtt.key,
+              pdfBlob,
+              pdfAtt.fileName,
+              pdfAtt.mimeType || 'application/pdf',
+              currentUser.uid
+            ).catch(() => {});
+          }
+        }
+
+        // 1. Save energy readings to Firestore in <=400-op batches
+        if (scan.readings.length > 0) {
+          const basePath = `users/${currentUser.uid}/energyReadings`;
+          for (let i = 0; i < scan.readings.length; i += 400) {
+            const chunk = scan.readings.slice(i, i + 400);
+            const batch = writeBatch(db);
+            for (const item of chunk) {
+              const docId = `day_${item.date.replace(/-/g, '')}`;
+              const estimatedCostEur =
+                Math.round(item.totalKwh * homeConfig.tariffEurPerKwh * 100) / 100;
+              const payload: Record<string, unknown> = {
+                ownerId: currentUser.uid,
+                date: item.date.slice(0, 20),
+                f1Kwh: item.f1Kwh,
+                f2Kwh: item.f2Kwh,
+                f3Kwh: item.f3Kwh,
+                totalKwh: item.totalKwh,
+                peakKw: item.peakKw,
+                estimatedCostEur,
+                source: 'e-distribuzione-api',
+                createdAt: serverTimestamp(),
+              };
+              if (item.notes) {
+                payload.notes = item.notes.slice(0, 240);
+              }
+              batch.set(doc(db, basePath, docId), payload);
+            }
+            await batch.commit();
+          }
+        }
+
+        // 2. Save electricity bills to Firestore
+        if (scan.electricityBills.length > 0) {
+          const elecPath = `users/${currentUser.uid}/electricityBills`;
+          const batch = writeBatch(db);
+          for (const b of scan.electricityBills) {
+            const cleanInv = b.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '');
+            const docId = `edison_${cleanInv || Date.now()}`;
+            const payload: Record<string, unknown> = {
+              ownerId: currentUser.uid,
+              invoiceNumber: b.invoiceNumber.slice(0, 40),
+              issueDate: b.issueDate.slice(0, 20),
+              sortKey: b.sortKey.slice(0, 16),
+              year: Number(b.year),
+              period: b.period.slice(0, 80),
+              supplier: b.supplier.slice(0, 80),
+              offerName: b.offerName.slice(0, 100),
+              kwh: Number(b.kwh),
+              punText: b.punText.slice(0, 60),
+              variableCostPerKwh: Number(b.variableCostPerKwh),
+              canoneTv: Number(b.canoneTv),
+              electricityOnly: Number(b.electricityOnly),
+              totalPaid: Number(b.totalPaid),
+              createdAt: serverTimestamp(),
+            };
+            if (b.note) payload.note = b.note.slice(0, 240);
+            batch.set(doc(db, elecPath, docId), payload);
+          }
+          await batch.commit();
+        }
+
+        // 3. Save water bills to Firestore
+        if (scan.waterBills.length > 0) {
+          const waterPath = `users/${currentUser.uid}/waterBills`;
+          const batch = writeBatch(db);
+          for (const w of scan.waterBills) {
+            const cleanInv = w.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '');
+            const docId = `acegas_${cleanInv || Date.now()}`;
+            const payload: Record<string, unknown> = {
+              ownerId: currentUser.uid,
+              invoiceNumber: w.invoiceNumber.slice(0, 40),
+              issueDate: w.issueDate.slice(0, 20),
+              year: Number(w.year),
+              period: w.period.slice(0, 80),
+              cubicMeters: Number(w.cubicMeters),
+              fixedCostEur: Number(w.fixedCostEur),
+              totalPaid: Number(w.totalPaid),
+              createdAt: serverTimestamp(),
+            };
+            if (w.note) payload.note = w.note.slice(0, 240);
+            batch.set(doc(db, waterPath, docId), payload);
+          }
+          await batch.commit();
+        }
+
+        // 4. Save TARI bills to Firestore
+        if (scan.tariBills.length > 0) {
+          const tariPath = `users/${currentUser.uid}/tariBills`;
+          const batch = writeBatch(db);
+          for (const t of scan.tariBills) {
+            const cleanNotice = t.noticeNumber.replace(/[^a-zA-Z0-9_-]/g, '');
+            const docId = `tari_${cleanNotice || Date.now()}`;
+            const payload: Record<string, unknown> = {
+              ownerId: currentUser.uid,
+              noticeNumber: t.noticeNumber.slice(0, 50),
+              issueDate: (t.issueDate || t.dueDate || '—').slice(0, 20),
+              dueDate: (t.dueDate || t.issueDate || '—').slice(0, 20),
+              year: Number(t.year),
+              period: t.period.slice(0, 80),
+              supplier: t.supplier.slice(0, 80),
+              totalPaid: Number(t.totalPaid),
+              paid: Boolean(t.paid),
+              source: 'gmail-pdf',
+              createdAt: serverTimestamp(),
+            };
+            if (t.note) payload.note = t.note.slice(0, 240);
+            batch.set(doc(db, tariPath, docId), payload);
+          }
+          await batch.commit();
+        }
+
+        const savedParts: string[] = [];
+        if (scan.readings.length > 0) savedParts.push(`${scan.readings.length} giorni consumi`);
+        if (scan.electricityBills.length > 0) {
+          savedParts.push(`${scan.electricityBills.length} bollette luce`);
+        }
+        if (scan.waterBills.length > 0) {
+          savedParts.push(`${scan.waterBills.length} bollette acqua`);
+        }
+        if (scan.tariBills.length > 0) savedParts.push(`${scan.tariBills.length} avvisi TARI`);
+        if (scan.pdfAttachments.length > 0) {
+          savedParts.push(`${scan.pdfAttachments.length} PDF archiviati`);
+        }
+
+        setGmailNotice({
+          tone: 'ok',
+          text: `Dati salvati: ${savedParts.join(', ')}.`,
+        });
+
+        const toPrompt = scan.processedMessages.filter(
+          (m) => !skippedTrashIdsRef.current.has(m.id)
+        );
+        if (toPrompt.length > 0) {
+          setPendingTrashMessages(toPrompt);
+        }
+      } catch (err) {
+        if (err instanceof GmailAuthExpiredError) {
+          clearGmailAccessToken();
+          setGmailToken(null);
+          setGmailNotice({
+            tone: 'warn',
+            text: 'Sessione Gmail scaduta: clicca "Sincronizza Gmail" per ricollegare la casella.',
+          });
+        } else {
+          setGmailNotice({
+            tone: 'warn',
+            text:
+              err instanceof Error
+                ? `Errore sincronizzazione Gmail: ${err.message}`
+                : 'Errore durante la sincronizzazione Gmail.',
+          });
+        }
+      } finally {
+        gmailSyncInFlightRef.current = false;
+        setGmailSyncing(false);
+      }
+    },
+    [homeConfig.tariffEurPerKwh]
+  );
+
+  async function handleManualGmailSync() {
+    setAuthError(null);
+    let activeUser = user;
+    if (!activeUser) {
+      try {
+        activeUser = await signInPrimaryOwner();
+      } catch (err) {
+        setAuthError(
+          err instanceof Error ? err.message : 'Accesso Google non completato.'
+        );
+        return;
+      }
+    }
+
+    let token = gmailToken || getGmailAccessToken();
+    if (!token) {
+      try {
+        token = await connectGmailAccount();
+        if (token) setGmailToken(token);
+      } catch (err) {
+        setAuthError(
+          err instanceof Error ? err.message : 'Autorizzazione Gmail non completata.'
+        );
+        return;
+      }
+    }
+
+    if (!activeUser || !token) {
+      setGmailNotice({
+        tone: 'warn',
+        text: 'Accesso Gmail non ottenuto: riprova a collegare la casella.',
+      });
+      return;
+    }
+
+    await runGmailSyncWithToken(activeUser, token, false);
+  }
+
+  async function handleConfirmTrashMessages() {
+    const token = gmailToken || getGmailAccessToken();
+    if (!token || pendingTrashMessages.length === 0) {
+      setPendingTrashMessages([]);
+      return;
+    }
+    setTrashingEmails(true);
+    try {
+      const count = await trashGmailMessages(
+        token,
+        pendingTrashMessages.map((m) => m.id)
+      );
+      setPendingTrashMessages([]);
+      setGmailNotice({
+        tone: 'ok',
+        text: `Spostate ${count} email nel Cestino di Gmail dopo il salvataggio su Firestore.`,
+      });
+    } catch (err) {
+      if (err instanceof GmailAuthExpiredError) {
+        clearGmailAccessToken();
+        setGmailToken(null);
+      }
+      setGmailNotice({
+        tone: 'warn',
+        text:
+          err instanceof Error
+            ? `Impossibile spostare nel Cestino: ${err.message}`
+            : 'Errore spostamento email nel Cestino.',
+      });
+    } finally {
+      setTrashingEmails(false);
+    }
+  }
+
+  function handleKeepMessagesInInbox() {
+    for (const m of pendingTrashMessages) {
+      skippedTrashIdsRef.current.add(m.id);
+    }
+    setPendingTrashMessages([]);
+  }
+
+  // Periodic automatic Gmail INBOX scan every 10 minutes while user & Gmail token are active
+  useEffect(() => {
+    if (!user || !gmailToken) return;
+    const intervalId = window.setInterval(() => {
+      void runGmailSyncWithToken(user, gmailToken, true);
+    }, 10 * 60 * 1000);
+    return () => window.clearInterval(intervalId);
+  }, [user, gmailToken, runGmailSyncWithToken]);
 
   async function handleAddClimateLog(
     session: Omit<ClimateSession, 'id' | 'ownerId'>
@@ -1094,9 +1498,13 @@ export default function App() {
 
   async function handleDeleteTariBill(id: string) {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
+    const target = tariBills.find((t) => t.id === id);
     const path = `users/${user.uid}/tariBills/${id}`;
     try {
       await deleteDoc(doc(db, path));
+      if (target) {
+        await deleteVaultFile(getTariBillFileKey(target.noticeNumber), user.uid);
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
     }
@@ -1142,10 +1550,14 @@ export default function App() {
     }
   }
 
-  async function handleAddArticle(article: Omit<HomeArticleRecord, 'id'>) {
+  async function handleAddArticle(
+    article: Omit<HomeArticleRecord, 'id'>,
+    customPrefix = 'art'
+  ) {
     if (!user) return;
     const basePath = `users/${user.uid}/homeArticles`;
-    const docId = `art_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const safePrefix = customPrefix.replace(/[^a-zA-Z0-9_-]/g, '') || 'art';
+    const docId = `${safePrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const payload: Record<string, unknown> = {
       ownerId: user.uid,
       name: article.name.slice(0, 80),
@@ -1177,6 +1589,275 @@ export default function App() {
       handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
     }
   }
+
+  async function handleSaveCarProfile(profile: Omit<CarProfile, 'id'>) {
+    if (!user) return;
+    await handleUpdateArticle(CAR_PROFILE_ID, carProfileToArticlePayload(profile));
+  }
+
+  async function handleAddCarLog(entry: Omit<CarLogEntry, 'id'>) {
+    await handleAddArticle(carLogToArticlePayload(entry), 'car_log');
+  }
+
+  async function handleUpdateCarLog(id: string, entry: Omit<CarLogEntry, 'id'>) {
+    await handleUpdateArticle(id, carLogToArticlePayload(entry));
+  }
+
+  async function handleAddGroceryProduct(product: Omit<GroceryProduct, 'id'>) {
+    await handleAddArticle(groceryProductToArticlePayload(product), 'spesa');
+  }
+
+  async function handleUpdateGroceryProduct(id: string, product: Omit<GroceryProduct, 'id'>) {
+    await handleUpdateArticle(id, groceryProductToArticlePayload(product));
+  }
+
+  async function handleAddDocument(docItem: Omit<HomeDocumentRecord, 'id'>) {
+    await handleAddArticle(homeDocumentToArticlePayload(docItem), 'doc');
+  }
+
+  async function handleUpdateDocument(id: string, docItem: Omit<HomeDocumentRecord, 'id'>) {
+    await handleUpdateArticle(id, homeDocumentToArticlePayload(docItem));
+  }
+
+  const visibleHomeArticles = useMemo(
+    () =>
+      homeArticles.filter(
+        (a) =>
+          a.room !== SYSTEM_ROOM_CAR &&
+          a.room !== SYSTEM_ROOM_GROCERY &&
+          a.room !== SYSTEM_ROOM_DOCUMENTS &&
+          a.room !== SYSTEM_ROOM_CLIMATE_AUTO
+      ),
+    [homeArticles]
+  );
+
+  const carProfile = useMemo(
+    () => articleToCarProfile(homeArticles.find((a) => a.id === CAR_PROFILE_ID)),
+    [homeArticles]
+  );
+
+  const carLogs = useMemo(
+    () =>
+      homeArticles
+        .filter((a) => a.room === SYSTEM_ROOM_CAR && a.id !== CAR_PROFILE_ID)
+        .map(articleToCarLog),
+    [homeArticles]
+  );
+
+  const groceryProducts = useMemo(
+    () =>
+      homeArticles
+        .filter((a) => a.room === SYSTEM_ROOM_GROCERY)
+        .map(articleToGroceryProduct),
+    [homeArticles]
+  );
+
+  const homeDocuments = useMemo(
+    () =>
+      homeArticles
+        .filter((a) => a.room === SYSTEM_ROOM_DOCUMENTS)
+        .map(articleToHomeDocument),
+    [homeArticles]
+  );
+
+  const climateAutopilot = useMemo<ClimateAutopilotConfig | null>(
+    () => articleToClimateAutopilot(homeArticles.find((a) => a.id === CLIMATE_AUTOPILOT_DOC_ID)),
+    [homeArticles]
+  );
+
+  const effectiveClimateLogs = useMemo(() => {
+    if (!climateAutopilot?.active) return climateLogs;
+    const existingIds = new Set(climateLogs.map((l) => l.id));
+    const dates = enumerateIsoDatesInclusive(climateAutopilot.startDate, todayIso);
+    if (dates.length === 0) return climateLogs;
+    const missing = dates
+      .filter((d) => !existingIds.has(getAutoClimateDocId(d)))
+      .map((d) => buildAutopilotSessionForDate(d, climateAutopilot, activeUid));
+    if (missing.length === 0) return climateLogs;
+    return [...climateLogs, ...missing];
+  }, [climateLogs, climateAutopilot, todayIso, activeUid]);
+
+  async function handleActivateClimateAutopilot(input: ClimateAutopilotInput) {
+    if (!user) return;
+    const datesToApply =
+      input.startDate <= todayIso ? enumerateIsoDatesInclusive(input.startDate, todayIso) : [];
+    const lastAppliedDate =
+      datesToApply.length > 0 ? datesToApply[datesToApply.length - 1] : addDaysIso(input.startDate, -1);
+
+    const nextCfg: ClimateAutopilotConfig = {
+      active: true,
+      mode: input.mode,
+      startTime: input.startTime,
+      endTime: input.endTime,
+      targetTemp: input.targetTemp,
+      rooms: input.rooms,
+      startDate: input.startDate,
+      lastAppliedDate,
+      notes: input.notes,
+    };
+
+    const batch = writeBatch(db);
+    const logsPath = `users/${user.uid}/climateLogs`;
+    for (const dateIso of datesToApply) {
+      const session = buildAutopilotSessionForDate(dateIso, nextCfg, user.uid);
+      const logPayload: Record<string, unknown> = {
+        ownerId: user.uid,
+        date: session.date,
+        mode: session.mode,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        targetTemp: session.targetTemp,
+        rooms: session.rooms,
+        createdAt: serverTimestamp(),
+      };
+      if (session.notes) {
+        logPayload.notes = session.notes.slice(0, 240);
+      }
+      batch.set(doc(db, logsPath, session.id), logPayload);
+    }
+
+    const artPayload = climateAutopilotToArticlePayload(nextCfg);
+    const statePayload: Record<string, unknown> = {
+      ownerId: user.uid,
+      name: artPayload.name.slice(0, 80),
+      brand: artPayload.brand.slice(0, 60),
+      model: artPayload.model.slice(0, 80),
+      category: artPayload.category,
+      room: artPayload.room.slice(0, 60),
+      familyWarranty: Boolean(artPayload.familyWarranty),
+      createdAt: serverTimestamp(),
+    };
+    if (artPayload.purchaseDate) statePayload.purchaseDate = artPayload.purchaseDate.slice(0, 20);
+    if (artPayload.warrantyEnd) statePayload.warrantyEnd = artPayload.warrantyEnd.slice(0, 20);
+    if (artPayload.serialNumber) statePayload.serialNumber = artPayload.serialNumber.slice(0, 80);
+    if (artPayload.specs) statePayload.specs = artPayload.specs.slice(0, 240);
+    if (artPayload.notes) statePayload.notes = artPayload.notes.slice(0, 240);
+
+    const statePath = `users/${user.uid}/homeArticles/${CLIMATE_AUTOPILOT_DOC_ID}`;
+    batch.set(doc(db, statePath), statePayload);
+
+    try {
+      lastAutopilotSyncKeyRef.current = `${user.uid}:${todayIso}:${nextCfg.startDate}:${nextCfg.mode}:${nextCfg.startTime}:${nextCfg.endTime}:${nextCfg.targetTemp}`;
+      await batch.commit();
+    } catch (error) {
+      if (!isResilientFirestoreOutage(error)) {
+        handleFirestoreError(error, OperationType.WRITE, statePath);
+      }
+    }
+  }
+
+  async function handleTurnOffClimateAutopilot(removeTodayAutoSession: boolean) {
+    if (!user || !climateAutopilot) return;
+    const nextCfg: ClimateAutopilotConfig = {
+      ...climateAutopilot,
+      active: false,
+    };
+    const batch = writeBatch(db);
+    const artPayload = climateAutopilotToArticlePayload(nextCfg);
+    const statePayload: Record<string, unknown> = {
+      ownerId: user.uid,
+      name: artPayload.name.slice(0, 80),
+      brand: artPayload.brand.slice(0, 60),
+      model: artPayload.model.slice(0, 80),
+      category: artPayload.category,
+      room: artPayload.room.slice(0, 60),
+      familyWarranty: false,
+      createdAt: serverTimestamp(),
+    };
+    if (artPayload.purchaseDate) statePayload.purchaseDate = artPayload.purchaseDate.slice(0, 20);
+    if (artPayload.warrantyEnd) statePayload.warrantyEnd = artPayload.warrantyEnd.slice(0, 20);
+    if (artPayload.serialNumber) statePayload.serialNumber = artPayload.serialNumber.slice(0, 80);
+    if (artPayload.specs) statePayload.specs = artPayload.specs.slice(0, 240);
+    if (artPayload.notes) statePayload.notes = artPayload.notes.slice(0, 240);
+
+    const statePath = `users/${user.uid}/homeArticles/${CLIMATE_AUTOPILOT_DOC_ID}`;
+    batch.set(doc(db, statePath), statePayload);
+
+    if (removeTodayAutoSession) {
+      const todayDocId = getAutoClimateDocId(todayIso);
+      batch.delete(doc(db, `users/${user.uid}/climateLogs/${todayDocId}`));
+    }
+
+    try {
+      await batch.commit();
+    } catch (error) {
+      if (!isResilientFirestoreOutage(error)) {
+        handleFirestoreError(error, OperationType.WRITE, statePath);
+      }
+    }
+  }
+
+  // Automatic daily propagation of the active climate combination across subsequent days
+  useEffect(() => {
+    if (!user || !climateAutopilot || !climateAutopilot.active) return;
+    if (climateAutopilot.startDate > todayIso) return;
+    if (autopilotSyncInFlightRef.current) return;
+
+    const existingIds = new Set(climateLogs.map((l) => l.id));
+    const dates = enumerateIsoDatesInclusive(climateAutopilot.startDate, todayIso);
+    const missingDates = dates.filter((d) => !existingIds.has(getAutoClimateDocId(d)));
+    const needsStateAdvance = climateAutopilot.lastAppliedDate < todayIso;
+
+    if (missingDates.length === 0 && !needsStateAdvance) return;
+
+    const syncKey = `${user.uid}:${todayIso}:${climateAutopilot.startDate}:${missingDates.length}:${climateAutopilot.mode}:${climateAutopilot.startTime}:${climateAutopilot.endTime}:${climateAutopilot.targetTemp}`;
+    if (lastAutopilotSyncKeyRef.current === syncKey) return;
+    lastAutopilotSyncKeyRef.current = syncKey;
+    autopilotSyncInFlightRef.current = true;
+
+    const updatedCfg: ClimateAutopilotConfig = {
+      ...climateAutopilot,
+      lastAppliedDate: todayIso,
+    };
+
+    const batch = writeBatch(db);
+    const logsPath = `users/${user.uid}/climateLogs`;
+    for (const dateIso of missingDates) {
+      const session = buildAutopilotSessionForDate(dateIso, updatedCfg, user.uid);
+      const logPayload: Record<string, unknown> = {
+        ownerId: user.uid,
+        date: session.date,
+        mode: session.mode,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        targetTemp: session.targetTemp,
+        rooms: session.rooms,
+        createdAt: serverTimestamp(),
+      };
+      if (session.notes) {
+        logPayload.notes = session.notes.slice(0, 240);
+      }
+      batch.set(doc(db, logsPath, session.id), logPayload);
+    }
+
+    const artPayload = climateAutopilotToArticlePayload(updatedCfg);
+    const statePayload: Record<string, unknown> = {
+      ownerId: user.uid,
+      name: artPayload.name.slice(0, 80),
+      brand: artPayload.brand.slice(0, 60),
+      model: artPayload.model.slice(0, 80),
+      category: artPayload.category,
+      room: artPayload.room.slice(0, 60),
+      familyWarranty: true,
+      createdAt: serverTimestamp(),
+    };
+    if (artPayload.purchaseDate) statePayload.purchaseDate = artPayload.purchaseDate.slice(0, 20);
+    if (artPayload.warrantyEnd) statePayload.warrantyEnd = artPayload.warrantyEnd.slice(0, 20);
+    if (artPayload.serialNumber) statePayload.serialNumber = artPayload.serialNumber.slice(0, 80);
+    if (artPayload.specs) statePayload.specs = artPayload.specs.slice(0, 240);
+    if (artPayload.notes) statePayload.notes = artPayload.notes.slice(0, 240);
+
+    batch.set(doc(db, `users/${user.uid}/homeArticles/${CLIMATE_AUTOPILOT_DOC_ID}`), statePayload);
+
+    batch
+      .commit()
+      .catch((err) => {
+        console.warn('Autopilot daily propagation warning:', err);
+      })
+      .finally(() => {
+        autopilotSyncInFlightRef.current = false;
+      });
+  }, [user, climateAutopilot, climateLogs, todayIso]);
 
   async function handleUpdateArticle(id: string, article: Omit<HomeArticleRecord, 'id'>) {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
@@ -1380,20 +2061,67 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="hidden sm:block text-xs font-mono text-slate-400 whitespace-nowrap">
-              POD <span className="text-sky-400">{homeConfig.podCode}</span> · 6 kW
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="hidden sm:block text-xs font-mono text-slate-400 whitespace-nowrap">
+                POD <span className="text-sky-400">{homeConfig.podCode}</span> · 6 kW
+              </div>
+              {canEdit ? (
+                <button
+                  type="button"
+                  onClick={handleManualGmailSync}
+                  disabled={gmailSyncing}
+                  title={
+                    gmailToken
+                      ? 'Controlla ora la INBOX di Gmail (auto ogni 10 min)'
+                      : 'Collega e sincronizza ora la INBOX di Gmail'
+                  }
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-100 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60"
+                >
+                  {gmailSyncing ? (
+                    <RefreshCw className="w-3.5 h-3.5 text-sky-400 animate-spin" />
+                  ) : (
+                    <Mail className="w-3.5 h-3.5 text-sky-400" />
+                  )}
+                  <span>
+                    {gmailSyncing
+                      ? 'Controllo Gmail...'
+                      : gmailToken
+                        ? 'Sincronizza Gmail'
+                        : 'Collega Gmail'}
+                  </span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSignIn}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-slate-900 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg shadow-xs transition-colors whitespace-nowrap"
+                >
+                  <svg
+                    className="w-3.5 h-3.5 shrink-0"
+                    viewBox="0 0 48 48"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      fill="#EA4335"
+                      d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+                    />
+                    <path
+                      fill="#4285F4"
+                      d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+                    />
+                  </svg>
+                  <span>Sign in with Google</span>
+                </button>
+              )}
             </div>
-            {!canEdit && (
-              <button
-                type="button"
-                onClick={handleSignIn}
-                className="px-3 py-1.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap"
-              >
-                Accedi per modificare
-              </button>
-            )}
-          </div>
         </header>
 
         {authError && (
@@ -1402,10 +2130,106 @@ export default function App() {
           </div>
         )}
 
+        {gmailNotice && (
+          <div
+            className={`px-5 py-2 border-b text-xs flex items-center justify-between gap-2 ${
+              gmailNotice.tone === 'ok'
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
+                : gmailNotice.tone === 'warn'
+                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-200'
+                  : 'bg-sky-500/10 border-sky-500/30 text-sky-200'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              <span>{gmailNotice.text}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setGmailNotice(null)}
+              className="text-slate-400 hover:text-slate-100 p-0.5"
+              aria-label="Chiudi avviso"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         {firestoreFallbackNotice && (
           <div className="px-5 py-2 bg-amber-500/10 border-b border-amber-500/30 text-xs text-amber-200 flex items-center gap-2">
             <WifiOff className="w-3.5 h-3.5 text-amber-300 shrink-0" />
             <span>{firestoreFallbackNotice}</span>
+          </div>
+        )}
+
+        <VaultCloudNotice />
+
+        {pendingTrashMessages.length > 0 && (
+          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-lg bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-300 shrink-0">
+                    <Trash2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-100">
+                      Spostare {pendingTrashMessages.length}{' '}
+                      {pendingTrashMessages.length === 1 ? 'email' : 'email'} nel Cestino di Gmail?
+                    </h2>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      I dati estratti sono già stati salvati su Firebase Firestore.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleKeepMessagesInInbox}
+                  disabled={trashingEmails}
+                  className="p-1 text-slate-400 hover:text-slate-100 rounded"
+                  aria-label="Annulla"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
+                {pendingTrashMessages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5 text-xs space-y-0.5"
+                  >
+                    <div className="font-medium text-slate-100 truncate">{msg.subject}</div>
+                    <div className="text-[11px] text-emerald-300">{msg.summary}</div>
+                    <div className="text-[10px] text-slate-500 truncate">{msg.from}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleKeepMessagesInInbox}
+                  disabled={trashingEmails}
+                  className="px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+                >
+                  Mantieni in INBOX
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmTrashMessages}
+                  disabled={trashingEmails}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded-lg transition-colors disabled:opacity-60"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>
+                    {trashingEmails
+                      ? 'Spostamento...'
+                      : `Sposta nel Cestino (${pendingTrashMessages.length})`}
+                  </span>
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1425,13 +2249,19 @@ export default function App() {
           {activeNav === 'consumi' && (
             <EnergyDatabaseView
               readings={readings}
-              climateLogs={climateLogs}
+              climateLogs={effectiveClimateLogs}
+              climateAutopilot={climateAutopilot}
               homeConfig={homeConfig}
               selectedYear={selectedYear}
               onSelectYear={setSelectedYear}
               availableYears={AVAILABLE_YEARS}
               loading={readingsLoading}
               readOnly={!canEdit}
+              isGmailConnected={Boolean(gmailToken)}
+              onSignIn={handleSignIn}
+              onConnectGmail={handleManualGmailSync}
+              onActivateAutopilot={handleActivateClimateAutopilot}
+              onTurnOffAutopilot={handleTurnOffClimateAutopilot}
               onAddClimateLog={handleAddClimateLog}
               onUpdateClimateLog={handleUpdateClimateLog}
               onDeleteClimateLog={handleDeleteClimateLog}
@@ -1443,9 +2273,13 @@ export default function App() {
             <DomoticsView
               config={homeConfig}
               readings={readings}
-              climateLogs={climateLogs}
+              climateLogs={effectiveClimateLogs}
+              climateAutopilot={climateAutopilot}
               readOnly={!canEdit}
+              onSignIn={handleSignIn}
               onUpdateConfig={handleUpdateConfig}
+              onActivateAutopilot={handleActivateClimateAutopilot}
+              onTurnOffAutopilot={handleTurnOffClimateAutopilot}
               onAddClimateLog={handleAddClimateLog}
               onUpdateClimateLog={handleUpdateClimateLog}
               onDeleteClimateLog={handleDeleteClimateLog}
@@ -1460,6 +2294,9 @@ export default function App() {
               tariBills={tariBills}
               gsePayments={gsePayments}
               readOnly={!canEdit}
+              isGmailConnected={Boolean(gmailToken)}
+              onSignIn={handleSignIn}
+              onConnectGmail={handleManualGmailSync}
               onAddElectricityBill={handleAddElectricityBill}
               onAddWaterBill={handleAddWaterBill}
               onAddTariBill={handleAddTariBill}
@@ -1472,11 +2309,52 @@ export default function App() {
 
           {activeNav === 'articoli' && (
             <ArticlesView
-              articles={homeArticles}
+              articles={visibleHomeArticles}
               readOnly={!canEdit}
-              onAddArticle={handleAddArticle}
+              onSignIn={handleSignIn}
+              onAddArticle={(art) => handleAddArticle(art)}
               onUpdateArticle={handleUpdateArticle}
               onDeleteArticle={handleDeleteArticle}
+            />
+          )}
+
+          {activeNav === 'documenti' && (
+            <DocumentsView
+              documents={homeDocuments}
+              electricityBills={electricityBills}
+              waterBills={waterBills}
+              tariBills={tariBills}
+              readOnly={!canEdit}
+              isGmailConnected={Boolean(gmailToken)}
+              onSignIn={handleSignIn}
+              onConnectGmail={handleManualGmailSync}
+              onAddDocument={handleAddDocument}
+              onUpdateDocument={handleUpdateDocument}
+              onDeleteDocument={handleDeleteArticle}
+            />
+          )}
+
+          {activeNav === 'macchina' && (
+            <CarView
+              profile={carProfile}
+              logs={carLogs}
+              readOnly={!canEdit}
+              onSignIn={handleSignIn}
+              onSaveProfile={handleSaveCarProfile}
+              onAddLog={handleAddCarLog}
+              onUpdateLog={handleUpdateCarLog}
+              onDeleteLog={handleDeleteArticle}
+            />
+          )}
+
+          {activeNav === 'spesa' && (
+            <GroceryView
+              products={groceryProducts}
+              readOnly={!canEdit}
+              onSignIn={handleSignIn}
+              onAddProduct={handleAddGroceryProduct}
+              onUpdateProduct={handleUpdateGroceryProduct}
+              onDeleteProduct={handleDeleteArticle}
             />
           )}
 

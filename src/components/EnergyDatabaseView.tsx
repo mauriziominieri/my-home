@@ -32,6 +32,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import {
+  ClimateAutopilotConfig,
   ClimateMode,
   ClimateSession,
   EnergyReading,
@@ -40,6 +41,10 @@ import {
   NavSection,
   RoomId,
 } from '../types/home';
+import {
+  ClimateAutopilotCard,
+  ClimateAutopilotInput,
+} from './ClimateAutopilotCard';
 import {
   formatReadingDate,
   getDaysInMonth,
@@ -61,6 +66,7 @@ import {
   SortState,
   toggleSort,
 } from './SortableHeader';
+import { AccessUnlockBanner } from './AccessUnlockBanner';
 
 const ROOM_LABELS: Record<RoomId, string> = {
   salone: 'Salone',
@@ -85,12 +91,18 @@ const ZOOM_CLASS_MAP: Record<ZoomStep, string> = {
 interface EnergyDatabaseViewProps {
   readings: EnergyReading[];
   climateLogs: ClimateSession[];
+  climateAutopilot?: ClimateAutopilotConfig | null;
   homeConfig?: HomeSystemConfig;
   selectedYear: number;
   onSelectYear: (year: number) => void;
   availableYears: number[];
   loading: boolean;
   readOnly?: boolean;
+  isGmailConnected?: boolean;
+  onSignIn?: () => void;
+  onConnectGmail?: () => void;
+  onActivateAutopilot?: (input: ClimateAutopilotInput) => Promise<void>;
+  onTurnOffAutopilot?: (removeTodayAutoSession: boolean) => Promise<void>;
   onAddClimateLog: (
     session: Omit<ClimateSession, 'id' | 'ownerId'>
   ) => Promise<void>;
@@ -119,12 +131,18 @@ function getDefaultModeForIso(iso: string): ClimateMode {
 export function EnergyDatabaseView({
   readings,
   climateLogs,
+  climateAutopilot = null,
   homeConfig,
   selectedYear,
   onSelectYear,
   availableYears,
   loading,
   readOnly = false,
+  isGmailConnected = false,
+  onSignIn,
+  onConnectGmail,
+  onActivateAutopilot,
+  onTurnOffAutopilot,
   onAddClimateLog,
   onUpdateClimateLog,
   onDeleteClimateLog,
@@ -1253,6 +1271,30 @@ export function EnergyDatabaseView({
         </div>
       </div>
 
+      <AccessUnlockBanner
+        isSignedIn={!readOnly}
+        isGmailConnected={isGmailConnected}
+        onSignIn={onSignIn}
+        onConnectGmail={onConnectGmail}
+        pageName="Consumi Annuali"
+        unlockedFeatures={[
+          'Attiva/spegni l’Autopilot Clima giornaliero (copia automatica su tutti i giorni successivi)',
+          'Registra, modifica o elimina accensioni e fasce orarie su qualsiasi giorno',
+        ]}
+        gmailFeatures={[
+          'Importazione automatica CSV/report consumi e-distribuzione ed Edison/Acegas/TARI dalla INBOX Gmail',
+        ]}
+      />
+
+      {onActivateAutopilot && onTurnOffAutopilot && (
+        <ClimateAutopilotCard
+          autopilot={climateAutopilot}
+          readOnly={readOnly}
+          onActivateAutopilot={onActivateAutopilot}
+          onTurnOffAutopilot={onTurnOffAutopilot}
+        />
+      )}
+
       <div className={`space-y-6 ${ZOOM_CLASS_MAP[zoomStep]}`}>
       {/* Annual 12 Months x 31 Days Matrix */}
       <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
@@ -1329,6 +1371,13 @@ export function EnergyDatabaseView({
                 <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-cyan-400" />
               </span>
               Raffrescamento ON
+            </span>
+            <span
+              className="inline-flex items-center gap-1.5 text-fuchsia-300 font-medium"
+              title="VMC Max: climatizzazione spenta ma Ventilazione Meccanica Controllata (ricambio d'aria) accesa al massimo"
+            >
+              <span className="relative w-3 h-3 rounded-xs bg-slate-800 border-2 border-dashed border-fuchsia-400" />
+              VMC Max
             </span>
             <span className="text-slate-700">|</span>
             <span className="inline-flex items-center gap-1.5 text-rose-300">

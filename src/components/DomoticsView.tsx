@@ -15,6 +15,7 @@ import {
 import {
   AristonMode,
   AristonProfile,
+  ClimateAutopilotConfig,
   ClimateMode,
   ClimateSession,
   EnergyReading,
@@ -23,6 +24,10 @@ import {
   NeaSmartFanSpeed,
   RoomId,
 } from '../types/home';
+import {
+  ClimateAutopilotCard,
+  ClimateAutopilotInput,
+} from './ClimateAutopilotCard';
 import { formatReadingDate } from '../utils/edistribuzioneCsv';
 import {
   formatDurationCompact,
@@ -35,13 +40,18 @@ import {
   SortState,
   toggleSort,
 } from './SortableHeader';
+import { AccessUnlockBanner } from './AccessUnlockBanner';
 
 interface DomoticsViewProps {
   config: HomeSystemConfig;
   readings: EnergyReading[];
   climateLogs: ClimateSession[];
+  climateAutopilot?: ClimateAutopilotConfig | null;
   readOnly?: boolean;
+  onSignIn?: () => void;
   onUpdateConfig: (patch: Partial<HomeSystemConfig>) => Promise<void>;
+  onActivateAutopilot?: (input: ClimateAutopilotInput) => Promise<void>;
+  onTurnOffAutopilot?: (removeTodayAutoSession: boolean) => Promise<void>;
   onAddClimateLog: (
     session: Omit<ClimateSession, 'id' | 'ownerId'>
   ) => Promise<void>;
@@ -85,8 +95,12 @@ export function DomoticsView({
   config,
   readings,
   climateLogs,
+  climateAutopilot = null,
   readOnly = false,
+  onSignIn,
   onUpdateConfig,
+  onActivateAutopilot,
+  onTurnOffAutopilot,
   onAddClimateLog,
   onUpdateClimateLog,
   onDeleteClimateLog,
@@ -284,6 +298,26 @@ export function DomoticsView({
           </div>
         )}
       </div>
+
+      <AccessUnlockBanner
+        isSignedIn={!readOnly}
+        onSignIn={onSignIn}
+        pageName="Clima & Domotica"
+        unlockedFeatures={[
+          'Modifica impostazioni Ariston, deumidificatore NeaSmart e tariffa kWh',
+          'Imposta o spegni l’Autopilot Clima giornaliero con copia automatica',
+          'Registra, modifica o elimina sessioni clima per le 6 stanze',
+        ]}
+      />
+
+      {onActivateAutopilot && onTurnOffAutopilot && (
+        <ClimateAutopilotCard
+          autopilot={climateAutopilot}
+          readOnly={readOnly}
+          onActivateAutopilot={onActivateAutopilot}
+          onTurnOffAutopilot={onTurnOffAutopilot}
+        />
+      )}
 
       {/* NeaSmart 6-Room Session Logger */}
       <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">

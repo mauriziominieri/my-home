@@ -1,18 +1,39 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bell,
   CheckCircle2,
+  Download,
   Droplets,
   ExternalLink,
+  FileCheck2,
+  FileUp,
   HelpCircle,
   Mail,
   PenLine,
   Plus,
   Receipt,
+  Share2,
   Sun,
   Trash2,
   Zap,
 } from 'lucide-react';
+import { BillImportModal } from './BillImportModal';
+import { ShareSheetModal } from './ShareSheetModal';
+import { AccessUnlockBanner } from './AccessUnlockBanner';
+import {
+  buildElectricityBillSharePayload,
+  buildTariBillSharePayload,
+  buildWaterBillSharePayload,
+  downloadShareableItem,
+  getElectricityBillFileKey,
+  getTariBillFileKey,
+  getWaterBillFileKey,
+  listVaultFileMetadata,
+  saveVaultFile,
+  ShareableItemPayload,
+  VAULT_UPDATED_EVENT,
+  VaultFileMeta,
+} from '../utils/documentVault';
 import {
   BillRecord,
   EnergyReading,
@@ -39,6 +60,9 @@ interface BillsViewProps {
   tariBills?: TariBillRecord[];
   gsePayments?: GsePaymentRecord[];
   readOnly?: boolean;
+  isGmailConnected?: boolean;
+  onSignIn?: () => void;
+  onConnectGmail?: () => void;
   onAddElectricityBill?: (bill: BillRecord) => Promise<void>;
   onAddWaterBill?: (bill: Omit<WaterBillRecord, 'id'>) => Promise<void>;
   onAddTariBill?: (bill: Omit<TariBillRecord, 'id'>) => Promise<void>;
@@ -68,6 +92,9 @@ export function BillsView({
   tariBills: propTariBills = [],
   gsePayments: propGsePayments = [],
   readOnly = false,
+  isGmailConnected = false,
+  onSignIn,
+  onConnectGmail,
   onAddElectricityBill,
   onAddWaterBill,
   onAddTariBill,
@@ -77,22 +104,12 @@ export function BillsView({
   onDeleteGsePayment,
 }: BillsViewProps) {
   const [utilityTab, setUtilityTab] = useState<'luce' | 'acqua' | 'tari' | 'gse'>('luce');
-  const [fetchedBills, setFetchedBills] = useState<BillRecord[] | null>(null);
-  const [fetchedTariBills, setFetchedTariBills] = useState<TariBillRecord[]>([]);
 
   const bills = useMemo(() => {
-    const base =
-      propElectricityBills && propElectricityBills.length > 0
-        ? propElectricityBills
-        : SEED_ELECTRICITY_BILLS;
-    if (!fetchedBills || fetchedBills.length === 0) return base;
-    const map = new Map<string, BillRecord>();
-    for (const b of base) map.set(b.invoiceNumber, b);
-    for (const b of fetchedBills) {
-      if (!map.has(b.invoiceNumber)) map.set(b.invoiceNumber, b);
-    }
-    return Array.from(map.values());
-  }, [propElectricityBills, fetchedBills]);
+    return propElectricityBills && propElectricityBills.length > 0
+      ? propElectricityBills
+      : SEED_ELECTRICITY_BILLS;
+  }, [propElectricityBills]);
 
   const waterBills = useMemo(() => {
     const list =
@@ -101,13 +118,10 @@ export function BillsView({
   }, [propWaterBills]);
 
   const tariBills = useMemo(() => {
-    const map = new Map<string, TariBillRecord>();
-    for (const t of propTariBills) map.set(t.noticeNumber, t);
-    for (const t of fetchedTariBills) {
-      if (!map.has(t.noticeNumber)) map.set(t.noticeNumber, t);
-    }
-    return Array.from(map.values()).sort((a, b) => b.year - a.year || a.noticeNumber.localeCompare(b.noticeNumber));
-  }, [propTariBills, fetchedTariBills]);
+    return [...propTariBills].sort(
+      (a, b) => b.year - a.year || a.noticeNumber.localeCompare(b.noticeNumber)
+    );
+  }, [propTariBills]);
 
   const gsePayments = useMemo(
     () => [...propGsePayments].sort((a, b) => b.paymentDate.localeCompare(a.paymentDate)),
@@ -177,21 +191,21 @@ export function BillsView({
     },
     {
       supplier: 'E.ON Energia',
-      offerName: 'LuceClick Verde',
-      rateEurKwh: null,
-      fixedEurMonth: 9.0,
-      estAnnualEur: null,
-      url: 'https://www.eon-energia.com/luce/casa/eon-luceclick.html',
-      status: 'unavailable',
+      offerName: 'LuceClick 24M Verde',
+      rateEurKwh: 0.1507,
+      fixedEurMonth: 9.09,
+      estAnnualEur: 455.69,
+      url: 'https://www.eon-energia.com/luce/casa/offerta-luce-prezzo-fisso-24-mesi.html',
+      status: 'ok',
     },
     {
       supplier: 'NeN',
-      offerName: 'Luce Special / Prezzo Bloccato',
-      rateEurKwh: null,
-      fixedEurMonth: 8.0,
-      estAnnualEur: null,
+      offerName: 'Luce Due 24M (Dieci 10A: 0.129 €/kWh)',
+      rateEurKwh: 0.179,
+      fixedEurMonth: 9.0,
+      estAnnualEur: 519.7,
       url: 'https://nen.it/offerte-e-prezzi/prezzo-bloccato',
-      status: 'unavailable',
+      status: 'ok',
     },
     {
       supplier: 'Sorgenia',
@@ -206,8 +220,8 @@ export function BillsView({
       supplier: 'Enel Energia',
       offerName: 'Enel Fix Web Luce',
       rateEurKwh: 0.199,
-      fixedEurMonth: 10.0,
-      estAnnualEur: 577.7,
+      fixedEurMonth: 12.0,
+      estAnnualEur: 601.7,
       url: 'https://www.enel.it/it-it/offerte-luce/enel-fix-web-luce',
       status: 'ok',
     },
@@ -224,12 +238,51 @@ export function BillsView({
     myLockedRate: 0.1595,
     myFixedEurMonth: 6.0,
     currentRate: 0.1727,
-    updatedAt: '2026-11-21T13:06:34Z',
+    updatedAt: '2026-11-21T23:45:01Z',
     competitors: TRACKED_SUPPLIERS_DEFAULT,
     bestCompetitor: TRACKED_SUPPLIERS_DEFAULT[1],
   });
 
   // Form states per caricamenti manuali
+  const [importModalKind, setImportModalKind] = useState<'auto' | 'luce' | 'acqua' | 'tari' | null>(null);
+  const [shareBillItem, setShareBillItem] = useState<ShareableItemPayload | null>(null);
+  const [vaultMeta, setVaultMeta] = useState<Record<string, VaultFileMeta>>({});
+  const attachFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [attachingFileKey, setAttachingFileKey] = useState<string | null>(null);
+
+  const [attachNotice, setAttachNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    const refresh = () => {
+      void listVaultFileMetadata().then(setVaultMeta);
+    };
+    refresh();
+    window.addEventListener(VAULT_UPDATED_EVENT, refresh);
+    return () => window.removeEventListener(VAULT_UPDATED_EVENT, refresh);
+  }, [importModalKind, bills.length, waterBills.length, tariBills.length]);
+
+  async function handleAttachPdfToBill(files: FileList | null) {
+    if (!files || files.length === 0 || !attachingFileKey) return;
+    const f = files[0];
+    setAttachNotice(null);
+    try {
+      const saved = await saveVaultFile(attachingFileKey, f, f.name, f.type);
+      setAttachNotice(
+        saved.cloudSynced
+          ? `PDF "${f.name}" salvato su Firestore: scaricabile da tutti i tuoi dispositivi.`
+          : saved.cloudTooLarge
+            ? `PDF "${f.name}" (> 6 MB) salvato solo in locale su questo browser.`
+            : `PDF "${f.name}" salvato in locale (verifica regole Firestore per vederlo su altri dispositivi).`
+      );
+      const updated = await listVaultFileMetadata();
+      setVaultMeta(updated);
+    } catch (err) {
+      setAttachNotice(err instanceof Error ? err.message : 'Errore nel salvataggio del file PDF.');
+    } finally {
+      setAttachingFileKey(null);
+      if (attachFileInputRef.current) attachFileInputRef.current.value = '';
+    }
+  }
   const [showElecForm, setShowElecForm] = useState(false);
   const [elecSaving, setElecSaving] = useState(false);
   const [eInvoice, setEInvoice] = useState('');
@@ -321,38 +374,6 @@ export function BillsView({
       }
     };
     loadMonitor();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadBills = async () => {
-      const urls = [
-        './data/bollette.json',
-        'https://mauriziominieri.github.io/my-home/data/bollette.json',
-      ];
-      for (const url of urls) {
-        try {
-          const res = await fetch(url, { cache: 'no-store' });
-          if (!res.ok) continue;
-          const json = await res.json();
-          if (!cancelled && json) {
-            if (Array.isArray(json.bills) && json.bills.length > 0) {
-              setFetchedBills(json.bills);
-            }
-            if (Array.isArray(json.tariBills) && json.tariBills.length > 0) {
-              setFetchedTariBills(json.tariBills);
-            }
-            return;
-          }
-        } catch {
-          // try next url
-        }
-      }
-    };
-    loadBills();
     return () => {
       cancelled = true;
     };
@@ -717,57 +738,106 @@ export function BillsView({
           </p>
         </div>
 
-        <div className="inline-flex flex-wrap bg-slate-900 border border-slate-800 rounded-lg p-0.5 self-start sm:self-auto gap-0.5">
-          <button
-            type="button"
-            onClick={() => setUtilityTab('luce')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              utilityTab === 'luce'
-                ? 'bg-sky-500/20 text-sky-300'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Zap className="w-3.5 h-3.5" />
-            Elettricità
-          </button>
-          <button
-            type="button"
-            onClick={() => setUtilityTab('acqua')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              utilityTab === 'acqua'
-                ? 'bg-cyan-500/20 text-cyan-300'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Droplets className="w-3.5 h-3.5" />
-            Acqua
-          </button>
-          <button
-            type="button"
-            onClick={() => setUtilityTab('tari')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              utilityTab === 'tari'
-                ? 'bg-amber-500/20 text-amber-300'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Receipt className="w-3.5 h-3.5" />
-            TARI
-          </button>
-          <button
-            type="button"
-            onClick={() => setUtilityTab('gse')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              utilityTab === 'gse'
-                ? 'bg-emerald-500/20 text-emerald-300'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Sun className="w-3.5 h-3.5" />
-            Fotovoltaico / GSE
-          </button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {!readOnly && (onAddElectricityBill || onAddWaterBill || onAddTariBill) && (
+            <button
+              type="button"
+              onClick={() =>
+                setImportModalKind(
+                  utilityTab === 'luce' || utilityTab === 'acqua' || utilityTab === 'tari'
+                    ? utilityTab
+                    : 'auto'
+                )
+              }
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors"
+            >
+              <FileUp className="w-3.5 h-3.5" />
+              Importa bollette (PDF / CSV)
+            </button>
+          )}
+
+          <div className="inline-flex flex-wrap bg-slate-900 border border-slate-800 rounded-lg p-0.5 gap-0.5">
+            <button
+              type="button"
+              onClick={() => setUtilityTab('luce')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                utilityTab === 'luce'
+                  ? 'bg-sky-500/20 text-sky-300'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5" />
+              Elettricità
+            </button>
+            <button
+              type="button"
+              onClick={() => setUtilityTab('acqua')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                utilityTab === 'acqua'
+                  ? 'bg-cyan-500/20 text-cyan-300'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Droplets className="w-3.5 h-3.5" />
+              Acqua
+            </button>
+            <button
+              type="button"
+              onClick={() => setUtilityTab('tari')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                utilityTab === 'tari'
+                  ? 'bg-amber-500/20 text-amber-300'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Receipt className="w-3.5 h-3.5" />
+              TARI
+            </button>
+            <button
+              type="button"
+              onClick={() => setUtilityTab('gse')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                utilityTab === 'gse'
+                  ? 'bg-emerald-500/20 text-emerald-300'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Sun className="w-3.5 h-3.5" />
+              Fotovoltaico / GSE
+            </button>
+          </div>
         </div>
       </div>
+
+      <AccessUnlockBanner
+        isSignedIn={!readOnly}
+        isGmailConnected={isGmailConnected}
+        onSignIn={onSignIn}
+        onConnectGmail={onConnectGmail}
+        pageName="Bollette"
+        unlockedFeatures={[
+          'Importa bollette da PDF/CSV/JSON',
+          'Allega i PDF originali su Firestore (scaricabili da ogni dispositivo)',
+          'Registra bollette Luce, Acqua, TARI e bonifici GSE',
+          'Segna lo stato pagato/da pagare degli avvisi TARI',
+        ]}
+        gmailFeatures={[
+          'Scansione automatica INBOX Gmail per nuove bollette Luce/Acqua/TARI e salvataggio PDF su Firestore',
+        ]}
+      />
+
+      {attachNotice && (
+        <div className="bg-sky-500/10 border border-sky-500/30 rounded-xl px-4 py-2.5 text-xs text-sky-200 flex items-center justify-between gap-2">
+          <span>{attachNotice}</span>
+          <button
+            type="button"
+            onClick={() => setAttachNotice(null)}
+            className="text-slate-400 hover:text-slate-100"
+          >
+            Chiudi
+          </button>
+        </div>
+      )}
 
       {/* TAB ACQUA */}
       {utilityTab === 'acqua' && (
@@ -1022,30 +1092,92 @@ export function BillsView({
                     >
                       Totale Pagato
                     </SortableTh>
+                    <th className="px-3 py-2.5 font-medium text-right">File / Invia</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/70">
-                  {sortedWaterBills.map((w) => (
-                    <tr key={w.id} className="hover:bg-slate-800/30">
-                      <td className="px-4 py-2.5 font-medium text-slate-100">
-                        <div>{w.period}</div>
-                        {w.note && <div className="text-[10px] text-slate-400">{w.note}</div>}
-                      </td>
-                      <td className="px-3 py-2.5 font-mono text-slate-400">
-                        <div>#{w.invoiceNumber}</div>
-                        <div className="text-[10px]">{w.issueDate}</div>
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-mono text-cyan-300">
-                        {w.cubicMeters.toFixed(1).replace('.', ',')} m³
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-mono text-slate-300">
-                        {w.fixedCostEur.toFixed(2).replace('.', ',')} €
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono font-semibold text-slate-100">
-                        {w.totalPaid.toFixed(2).replace('.', ',')} €
-                      </td>
-                    </tr>
-                  ))}
+                  {sortedWaterBills.map((w) => {
+                    const fileKey = getWaterBillFileKey(w.invoiceNumber);
+                    const hasPdf = Boolean(vaultMeta[fileKey]);
+                    const sharePayload = buildWaterBillSharePayload(w);
+                    return (
+                      <tr key={w.id} className="hover:bg-slate-800/30">
+                        <td className="px-4 py-2.5 font-medium text-slate-100">
+                          <div>{w.period}</div>
+                          {w.note && <div className="text-[10px] text-slate-400">{w.note}</div>}
+                        </td>
+                        <td className="px-3 py-2.5 font-mono text-slate-400">
+                          <div>#{w.invoiceNumber}</div>
+                          <div className="text-[10px]">{w.issueDate}</div>
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono text-cyan-300">
+                          {w.cubicMeters.toFixed(1).replace('.', ',')} m³
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono text-slate-300">
+                          {w.fixedCostEur.toFixed(2).replace('.', ',')} €
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono font-semibold text-slate-100">
+                          {w.totalPaid.toFixed(2).replace('.', ',')} €
+                        </td>
+                        <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1">
+                            {hasPdf && (
+                              <span
+                                title={`PDF pronto (${
+                                  vaultMeta[fileKey]?.origin === 'firestore'
+                                    ? 'su Firestore multi-dispositivo'
+                                    : vaultMeta[fileKey]?.origin === 'bundled'
+                                      ? 'incluso nell’app'
+                                      : 'solo locale'
+                                }): ${vaultMeta[fileKey]?.fileName}`}
+                                className="px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded"
+                              >
+                                {vaultMeta[fileKey]?.origin === 'firestore' ? 'PDF Cloud' : 'PDF'}
+                              </span>
+                            )}
+                            {!readOnly && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAttachingFileKey(fileKey);
+                                  attachFileInputRef.current?.click();
+                                }}
+                                title={hasPdf ? 'Sostituisci PDF allegato' : 'Allega PDF originale'}
+                                className={`p-1 rounded ${
+                                  hasPdf
+                                    ? 'text-emerald-400 hover:bg-emerald-500/15'
+                                    : 'text-slate-400 hover:text-sky-300'
+                                }`}
+                              >
+                                {hasPdf ? (
+                                  <FileCheck2 className="w-3.5 h-3.5" />
+                                ) : (
+                                  <FileUp className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void downloadShareableItem(sharePayload)}
+                              title={hasPdf ? 'Scarica PDF bolletta' : 'Scarica scheda bolletta'}
+                              className="p-1 text-slate-300 hover:text-sky-300 rounded"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setShareBillItem(sharePayload)}
+                              title="Condividi bolletta"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-sky-300 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded"
+                            >
+                              <Share2 className="w-3 h-3" />
+                              Invia
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1084,11 +1216,10 @@ export function BillsView({
               AcegasApsAmga / TARI — Avvisi di Pagamento
             </h2>
             <p className="text-xs text-slate-400 leading-relaxed">
-              <strong className="text-slate-200">Strategia automatica Gmail:</strong> ogni 15 minuti lo script GitHub Actions cerca nella tua casella Gmail le email da{' '}
+              <strong className="text-slate-200">Strategia automatica Gmail:</strong> ogni 10 minuti lo script GitHub Actions cerca nella sola INBOX Gmail le email da{' '}
               <span className="font-mono text-amber-300">tassa_rifiuti@acegasapsamga.it</span>{' '}
               con oggetto contenente{' '}
-              <span className="font-mono text-slate-200">&quot;Avviso di pagamento TARI&quot;</span>, estrae importo, scadenza e numero documento dal PDF allegato (senza eliminare l&apos;email) e salva tutto in{' '}
-              <span className="font-mono text-slate-300">data/bollette.json</span> + Firebase.
+              <span className="font-mono text-slate-200">&quot;Avviso di pagamento TARI&quot;</span>, estrae importo, scadenza e numero documento dal PDF allegato, salva su Firebase Firestore e sposta poi l&apos;email nel Cestino.
             </p>
           </div>
 
@@ -1271,7 +1402,7 @@ export function BillsView({
                     >
                       Importo
                     </SortableTh>
-                    {!readOnly && <th className="px-3 py-2.5 font-medium text-right">Azioni</th>}
+                    <th className="px-3 py-2.5 font-medium text-right">Azioni</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/70">
@@ -1284,56 +1415,111 @@ export function BillsView({
                       </td>
                     </tr>
                   ) : (
-                    sortedTariBills.map((t) => (
-                      <tr key={t.id} className="hover:bg-slate-800/30">
-                        <td className="px-4 py-2.5 font-medium text-slate-100">
-                          <div>{t.period}</div>
-                          {t.note && <div className="text-[10px] text-slate-400">{t.note}</div>}
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-slate-400">
-                          <div>#{t.noticeNumber}</div>
-                          <div className="text-[10px]">{t.issueDate}</div>
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-amber-300">{t.dueDate}</td>
-                        <td className="px-3 py-2.5">
-                          <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300">
-                            {t.source === 'gmail-pdf' ? 'Auto Gmail PDF' : 'Manuale'}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <button
-                            type="button"
-                            disabled={readOnly || !onToggleTariPaid}
-                            onClick={() => onToggleTariPaid && void onToggleTariPaid(t)}
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${
-                              t.paid
-                                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                                : 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
-                            }`}
-                          >
-                            <CheckCircle2 className="w-3 h-3" />
-                            {t.paid ? 'Pagato' : 'Da pagare'}
-                          </button>
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-mono font-semibold text-slate-100">
-                          {t.totalPaid.toFixed(2).replace('.', ',')} €
-                        </td>
-                        {!readOnly && (
-                          <td className="px-3 py-2.5 text-right">
-                            {onDeleteTariBill && (
+                    sortedTariBills.map((t) => {
+                      const fileKey = getTariBillFileKey(t.noticeNumber);
+                      const hasPdf = Boolean(vaultMeta[fileKey]);
+                      const sharePayload = buildTariBillSharePayload(t);
+                      return (
+                        <tr key={t.id} className="hover:bg-slate-800/30">
+                          <td className="px-4 py-2.5 font-medium text-slate-100">
+                            <div>{t.period}</div>
+                            {t.note && <div className="text-[10px] text-slate-400">{t.note}</div>}
+                          </td>
+                          <td className="px-3 py-2.5 font-mono text-slate-400">
+                            <div>#{t.noticeNumber}</div>
+                            <div className="text-[10px]">{t.issueDate}</div>
+                          </td>
+                          <td className="px-3 py-2.5 font-mono text-amber-300">{t.dueDate}</td>
+                          <td className="px-3 py-2.5">
+                            <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300">
+                              {t.source === 'gmail-pdf' ? 'Auto Gmail PDF' : 'Manuale'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <button
+                              type="button"
+                              disabled={readOnly || !onToggleTariPaid}
+                              onClick={() => onToggleTariPaid && void onToggleTariPaid(t)}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${
+                                t.paid
+                                  ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                  : 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                              }`}
+                            >
+                              <CheckCircle2 className="w-3 h-3" />
+                              {t.paid ? 'Pagato' : 'Da pagare'}
+                            </button>
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-mono font-semibold text-slate-100">
+                            {t.totalPaid.toFixed(2).replace('.', ',')} €
+                          </td>
+                          <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center gap-1">
+                              {hasPdf && (
+                                <span
+                                  title={`PDF pronto (${
+                                    vaultMeta[fileKey]?.origin === 'firestore'
+                                      ? 'su Firestore multi-dispositivo'
+                                      : 'solo locale'
+                                  }): ${vaultMeta[fileKey]?.fileName}`}
+                                  className="px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded"
+                                >
+                                  {vaultMeta[fileKey]?.origin === 'firestore' ? 'PDF Cloud' : 'PDF'}
+                                </span>
+                              )}
+                              {!readOnly && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAttachingFileKey(fileKey);
+                                    attachFileInputRef.current?.click();
+                                  }}
+                                  title={hasPdf ? 'Sostituisci PDF allegato' : 'Allega PDF originale'}
+                                  className={`p-1 rounded ${
+                                    hasPdf
+                                      ? 'text-emerald-400 hover:bg-emerald-500/15'
+                                      : 'text-slate-400 hover:text-sky-300'
+                                  }`}
+                                >
+                                  {hasPdf ? (
+                                    <FileCheck2 className="w-3.5 h-3.5" />
+                                  ) : (
+                                    <FileUp className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              )}
                               <button
                                 type="button"
-                                onClick={() => void onDeleteTariBill(t.id)}
-                                className="p-1 text-slate-500 hover:text-rose-400"
-                                aria-label="Elimina avviso TARI"
+                                onClick={() => void downloadShareableItem(sharePayload)}
+                                title={hasPdf ? 'Scarica PDF TARI' : 'Scarica avviso TARI'}
+                                className="p-1 text-slate-300 hover:text-sky-300 rounded"
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
+                                <Download className="w-3.5 h-3.5" />
                               </button>
-                            )}
+                              <button
+                                type="button"
+                                onClick={() => setShareBillItem(sharePayload)}
+                                title="Condividi avviso TARI"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-sky-300 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded"
+                              >
+                                <Share2 className="w-3 h-3" />
+                                Invia
+                              </button>
+                              {!readOnly && onDeleteTariBill && (
+                                <button
+                                  type="button"
+                                  onClick={() => void onDeleteTariBill(t.id)}
+                                  className="p-1 text-slate-500 hover:text-rose-400"
+                                  aria-label="Elimina avviso TARI"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </td>
-                        )}
-                      </tr>
-                    ))
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -1642,7 +1828,7 @@ export function BillsView({
                 Sync automatico Gmail
               </span>
               <span>
-                Estrazione PDF automatica da <span className="font-mono text-sky-300">fatturazione@edisonenergia.it</span> ogni 15 min + salvataggio su Firebase (le email non vengono eliminate).
+                Estrazione PDF automatica da <span className="font-mono text-sky-300">fatturazione@edisonenergia.it</span> ogni 10 min + salvataggio su Firebase (le email elaborate vengono poi spostate nel Cestino).
               </span>
             </div>
 
@@ -1949,7 +2135,7 @@ export function BillsView({
                     <div className="flex items-center gap-1.5">
                       <Bell className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                       <span>
-                        Monitor automatico ogni <strong className="text-slate-100">15 min</strong> (Solo Luce ·{' '}
+                        Monitor automatico ogni <strong className="text-slate-100">10 min</strong> (Solo Luce ·{' '}
                         <strong className="text-slate-100">{marketMonitor.competitors.length}</strong> siti tracciati) vs tua{' '}
                         <span className="font-mono text-emerald-300">
                           {marketMonitor.myLockedRate.toFixed(4).replace('.', ',')} €/kWh
@@ -2208,38 +2394,100 @@ export function BillsView({
                     >
                       Totale
                     </SortableTh>
+                    <th className="px-3 py-2.5 font-medium text-right">File / Invia</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/70">
-                  {sortedElecBills.map((b) => (
-                    <tr key={b.invoiceNumber} className="hover:bg-slate-800/30">
-                      <td className="px-4 py-2.5 font-medium text-slate-100">
-                        <div>{b.period}</div>
-                        {b.note && <div className="text-[10px] text-emerald-400">{b.note}</div>}
-                      </td>
-                      <td className="px-3 py-2.5 text-slate-300">
-                        <div>{b.supplier}</div>
-                        <div className="text-[10px] text-slate-500">{b.offerName}</div>
-                      </td>
-                      <td className="px-3 py-2.5 font-mono text-slate-400">
-                        <div>#{b.invoiceNumber}</div>
-                        <div className="text-[10px]">{b.issueDate}</div>
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-mono text-slate-200">{b.kwh}</td>
-                      <td className="px-3 py-2.5 text-right font-mono text-slate-300">
-                        {b.punText}
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-mono text-sky-300">
-                        {b.electricityOnly.toFixed(2).replace('.', ',')} €
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-mono text-amber-300">
-                        {b.canoneTv.toFixed(2).replace('.', ',')} €
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono font-semibold text-slate-100">
-                        {b.totalPaid.toFixed(2).replace('.', ',')} €
-                      </td>
-                    </tr>
-                  ))}
+                  {sortedElecBills.map((b) => {
+                    const fileKey = getElectricityBillFileKey(b.invoiceNumber);
+                    const hasPdf = Boolean(vaultMeta[fileKey]);
+                    const sharePayload = buildElectricityBillSharePayload(b);
+                    return (
+                      <tr key={b.invoiceNumber} className="hover:bg-slate-800/30">
+                        <td className="px-4 py-2.5 font-medium text-slate-100">
+                          <div>{b.period}</div>
+                          {b.note && <div className="text-[10px] text-emerald-400">{b.note}</div>}
+                        </td>
+                        <td className="px-3 py-2.5 text-slate-300">
+                          <div>{b.supplier}</div>
+                          <div className="text-[10px] text-slate-500">{b.offerName}</div>
+                        </td>
+                        <td className="px-3 py-2.5 font-mono text-slate-400">
+                          <div>#{b.invoiceNumber}</div>
+                          <div className="text-[10px]">{b.issueDate}</div>
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono text-slate-200">{b.kwh}</td>
+                        <td className="px-3 py-2.5 text-right font-mono text-slate-300">
+                          {b.punText}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono text-sky-300">
+                          {b.electricityOnly.toFixed(2).replace('.', ',')} €
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono text-amber-300">
+                          {b.canoneTv.toFixed(2).replace('.', ',')} €
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono font-semibold text-slate-100">
+                          {b.totalPaid.toFixed(2).replace('.', ',')} €
+                        </td>
+                        <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1">
+                            {hasPdf && (
+                              <span
+                                title={`PDF pronto (${
+                                  vaultMeta[fileKey]?.origin === 'firestore'
+                                    ? 'su Firestore multi-dispositivo'
+                                    : vaultMeta[fileKey]?.origin === 'bundled'
+                                      ? 'incluso nell’app'
+                                      : 'solo locale'
+                                }): ${vaultMeta[fileKey]?.fileName}`}
+                                className="px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded"
+                              >
+                                {vaultMeta[fileKey]?.origin === 'firestore' ? 'PDF Cloud' : 'PDF'}
+                              </span>
+                            )}
+                            {!readOnly && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAttachingFileKey(fileKey);
+                                  attachFileInputRef.current?.click();
+                                }}
+                                title={hasPdf ? 'Sostituisci PDF allegato' : 'Allega PDF originale'}
+                                className={`p-1 rounded ${
+                                  hasPdf
+                                    ? 'text-emerald-400 hover:bg-emerald-500/15'
+                                    : 'text-slate-400 hover:text-sky-300'
+                                }`}
+                              >
+                                {hasPdf ? (
+                                  <FileCheck2 className="w-3.5 h-3.5" />
+                                ) : (
+                                  <FileUp className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void downloadShareableItem(sharePayload)}
+                              title={hasPdf ? 'Scarica PDF bolletta' : 'Scarica scheda bolletta'}
+                              className="p-1 text-slate-300 hover:text-sky-300 rounded"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setShareBillItem(sharePayload)}
+                              title="Condividi bolletta"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-sky-300 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded"
+                            >
+                              <Share2 className="w-3 h-3" />
+                              Invia
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -2273,6 +2521,31 @@ export function BillsView({
             </div>
           </div>
         </div>
+      )}
+
+      <input
+        ref={attachFileInputRef}
+        type="file"
+        accept=".pdf,.png,.jpg,.jpeg,.txt"
+        onChange={(e) => void handleAttachPdfToBill(e.target.files)}
+        className="hidden"
+      />
+
+      {shareBillItem && (
+        <ShareSheetModal
+          item={shareBillItem}
+          onClose={() => setShareBillItem(null)}
+        />
+      )}
+
+      {importModalKind && (
+        <BillImportModal
+          defaultKind={importModalKind === 'auto' ? undefined : importModalKind}
+          onClose={() => setImportModalKind(null)}
+          onSaveElectricityBill={onAddElectricityBill}
+          onSaveWaterBill={onAddWaterBill}
+          onSaveTariBill={onAddTariBill}
+        />
       )}
     </div>
   );

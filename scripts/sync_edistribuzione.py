@@ -1,6 +1,7 @@
 """
-Prelievo automatico del CSV "Dettaglio curve di carico" (FORNUTAIT...csv) da Gmail -> data/consumi.json.
-Mittente: notifichemailped@enel.com | Oggetto: Dettaglio curve di carico
+Prelievo automatico del CSV "Dettaglio curve di carico" (FORNUTAIT...csv),
+bollette Edison PDF e avvisi TARI PDF dalla INBOX di Gmail -> Firebase Firestore.
+Mittente e-distribuzione: notifichemailped@enel.com | Oggetto: Dettaglio curve di carico
 Supporta qualsiasi formato di data (D/M/YYYY, DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD) e
 qualsiasi intestazione quartoraria (00:00 - 00:15, 00:15, Q1..Q96, 1..96).
 """
@@ -13,14 +14,16 @@ import json
 import os
 import re
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 POD_CODE = os.environ.get("POD_CODE", "IT001E11251419")
-OUTPUT_FILE = Path("data/consumi.json")
-BILLS_OUTPUT_FILE = Path("data/bollette.json")
+TARIFF_EUR_PER_KWH = float(os.environ.get("TARIFF_EUR_PER_KWH", "0.24"))
 
 
 def parse_it_float(raw: Optional[str]) -> float:
@@ -197,7 +200,7 @@ def parse_csv_content(text: str) -> List[Dict[str, Any]]:
     return results
 
 
-def extract_csvs_from_gmail() -> tuple[List[Dict[str, Any]], List[bytes], Optional[imaplib.IMAP4_SSL]]:
+def extract_csvs_from_gmail() -> tuple[Dict[bytes, List[Dict[str, Any]]], Optional[imaplib.IMAP4_SSL]]:
     gmail_user = os.environ.get("GMAIL_USER", "").strip()
     gmail_pass = os.environ.get("GMAIL_APP_PASSWORD", "").strip().replace(" ", "")
     if not gmail_user or not gmail_pass:
@@ -213,12 +216,11 @@ def extract_csvs_from_gmail() -> tuple[List[Dict[str, Any]], List[bytes], Option
     )
     if status != "OK" or not data or not data[0]:
         print("Nessuna email 'Dettaglio curve di carico' trovata nella INBOX.")
-        return [], [], mail
+        return {}, mail
 
     msg_ids = data[0].split()[-15:]
     print(f"Trovate {len(msg_ids)} email di e-distribuzione / Enel.")
-    all_readings: List[Dict[str, Any]] = []
-    processed_msg_ids: List[bytes] = []
+    readings_by_msg: Dict[bytes, List[Dict[str, Any]]] = {}
 
     for msg_id in msg_ids:
         _, msg_data = mail.fetch(msg_id, "(RFC822)")
@@ -249,60 +251,9 @@ def extract_csvs_from_gmail() -> tuple[List[Dict[str, Any]], List[bytes], Option
                             msg_readings.extend(parse_csv_content(text))
 
         if msg_readings:
-            all_readings.extend(msg_readings)
-            processed_msg_ids.append(msg_id)
+            readings_by_msg[msg_id] = msg_readings
 
-    return all_readings, processed_msg_ids, mail
-
-
-def extract_csvs_from_trash(mail: Optional[imaplib.IMAP4_SSL]) -> List[Dict[str, Any]]:
-    """Legge eventuali CSV di e-distribuzione presenti nel Cestino/Trash di Gmail per recuperare lo storico."""
-    if not mail:
-        return []
-    recovered: List[Dict[str, Any]] = []
-    for folder in ['"[Gmail]/Cestino"', '"[Gmail]/Trash"']:
-        try:
-            status, _ = mail.select(folder, readonly=True)
-            if status != "OK":
-                continue
-            status, data = mail.search(
-                None,
-                '(OR FROM "notifichemailped@enel.com" SUBJECT "Dettaglio curve di carico")',
-            )
-            if status != "OK" or not data or not data[0]:
-                continue
-            msg_ids = data[0].split()[-40:]
-            print(f"Trovate {len(msg_ids)} email e-distribuzione in {folder}.")
-            for msg_id in msg_ids:
-                _, msg_data = mail.fetch(msg_id, "(RFC822)")
-                if not msg_data or not isinstance(msg_data[0], tuple):
-                    continue
-                msg = email.message_from_bytes(msg_data[0][1])
-                for part in msg.walk():
-                    filename = (part.get_filename() or "").lower()
-                    if not filename:
-                        continue
-                    payload = part.get_payload(decode=True)
-                    if not payload:
-                        continue
-                    if filename.endswith(".csv"):
-                        text = payload.decode("utf-8-sig", errors="replace")
-                        recovered.extend(parse_csv_content(text))
-                    elif filename.endswith(".zip"):
-                        with zipfile.ZipFile(io.BytesIO(payload)) as zf:
-                            for name in zf.namelist():
-                                if name.lower().endswith(".csv"):
-                                    text = zf.read(name).decode("utf-8-sig", errors="replace")
-                                    recovered.extend(parse_csv_content(text))
-            break
-        except Exception as exc:
-            print(f"Impossibile leggere {folder}: {exc}")
-    # Torna su INBOX per eventuali operazioni successive
-    try:
-        mail.select("INBOX")
-    except Exception:
-        pass
-    return recovered
+    return readings_by_msg, mail
 
 
 def delete_processed_emails(mail: Optional[imaplib.IMAP4_SSL], msg_ids: List[bytes]) -> None:
@@ -413,25 +364,29 @@ def parse_edison_pdf_bytes(pdf_bytes: bytes) -> Optional[Dict[str, Any]]:
     }
 
 
-def extract_edison_bills_from_gmail(mail: Optional[imaplib.IMAP4_SSL]) -> List[Dict[str, Any]]:
+def extract_edison_bills_from_gmail(
+    mail: Optional[imaplib.IMAP4_SSL],
+) -> Dict[bytes, List[Dict[str, Any]]]:
     if not mail:
-        return []
-    bills: List[Dict[str, Any]] = []
+        return {}
+    mail.select("INBOX")
+    bills_by_msg: Dict[bytes, List[Dict[str, Any]]] = {}
     status, data = mail.search(
         None,
         '(OR FROM "fatturazione@edisonenergia.it" SUBJECT "Fattura Edison Energia")',
     )
     if status != "OK" or not data or not data[0]:
         print("Nessuna bolletta Edison trovata nella INBOX.")
-        return []
+        return {}
 
     msg_ids = data[0].split()[-12:]
-    print(f"Trovate {len(msg_ids)} email di fatturazione Edison Energia.")
+    print(f"Trovate {len(msg_ids)} email di fatturazione Edison Energia nella INBOX.")
     for msg_id in msg_ids:
         _, msg_data = mail.fetch(msg_id, "(RFC822)")
         if not msg_data or not isinstance(msg_data[0], tuple):
             continue
         msg = email.message_from_bytes(msg_data[0][1])
+        msg_bills: List[Dict[str, Any]] = []
         for part in msg.walk():
             filename = (part.get_filename() or "").lower()
             if not filename.endswith(".pdf"):
@@ -442,8 +397,10 @@ def extract_edison_bills_from_gmail(mail: Optional[imaplib.IMAP4_SSL]) -> List[D
             print(f"Elaborazione bolletta PDF Edison: {filename}")
             parsed = parse_edison_pdf_bytes(payload)
             if parsed:
-                bills.append(parsed)
-    return bills
+                msg_bills.append(parsed)
+        if msg_bills:
+            bills_by_msg[msg_id] = msg_bills
+    return bills_by_msg
 
 
 def parse_tari_pdf_bytes(
@@ -540,138 +497,327 @@ def parse_tari_pdf_bytes(
     }
 
 
-def extract_tari_bills_from_gmail(mail: Optional[imaplib.IMAP4_SSL]) -> List[Dict[str, Any]]:
+def extract_tari_bills_from_gmail(
+    mail: Optional[imaplib.IMAP4_SSL],
+) -> Dict[bytes, List[Dict[str, Any]]]:
     if not mail:
-        return []
-    found_by_notice: Dict[str, Dict[str, Any]] = {}
+        return {}
+    tari_by_msg: Dict[bytes, List[Dict[str, Any]]] = {}
     search_criteria = '(OR FROM "tassa_rifiuti@acegasapsamga.it" SUBJECT "Avviso di pagamento TARI")'
 
-    folders_to_check = ["INBOX", '"[Gmail]/Tutti i messaggi"', '"[Gmail]/All Mail"']
-    for folder in folders_to_check:
-        try:
-            status, _ = mail.select(folder, readonly=True)
-            if status != "OK":
-                continue
-            status, data = mail.search(None, search_criteria)
-            if status != "OK" or not data or not data[0]:
-                continue
-            msg_ids = data[0].split()[-15:]
-            print(f"Trovate {len(msg_ids)} email TARI AcegasApsAmga in {folder}.")
-            for msg_id in msg_ids:
-                _, msg_data = mail.fetch(msg_id, "(RFC822)")
-                if not msg_data or not isinstance(msg_data[0], tuple):
-                    continue
-                msg = email.message_from_bytes(msg_data[0][1])
-                subj = str(msg.get("Subject", ""))
-                msg_date = str(msg.get("Date", ""))
-                for part in msg.walk():
-                    filename = (part.get_filename() or "").lower()
-                    content_type = (part.get_content_type() or "").lower()
-                    if not (filename.endswith(".pdf") or content_type == "application/pdf"):
-                        continue
-                    payload = part.get_payload(decode=True)
-                    if not payload:
-                        continue
-                    print(f"Elaborazione PDF TARI: {filename or 'avviso.pdf'}")
-                    parsed = parse_tari_pdf_bytes(payload, subj, msg_date)
-                    if parsed:
-                        found_by_notice[parsed["noticeNumber"]] = parsed
-            if found_by_notice:
-                break
-        except Exception as exc:
-            print(f"Nota lettura TARI da {folder}: {exc}")
-
     try:
-        mail.select("INBOX")
-    except Exception:
-        pass
-    return list(found_by_notice.values())
+        status, _ = mail.select("INBOX")
+        if status != "OK":
+            return {}
+        status, data = mail.search(None, search_criteria)
+        if status != "OK" or not data or not data[0]:
+            print("Nessun avviso TARI trovato nella INBOX.")
+            return {}
+        msg_ids = data[0].split()[-15:]
+        print(f"Trovate {len(msg_ids)} email TARI AcegasApsAmga nella INBOX.")
+        for msg_id in msg_ids:
+            _, msg_data = mail.fetch(msg_id, "(RFC822)")
+            if not msg_data or not isinstance(msg_data[0], tuple):
+                continue
+            msg = email.message_from_bytes(msg_data[0][1])
+            subj = str(msg.get("Subject", ""))
+            msg_date = str(msg.get("Date", ""))
+            msg_tari: List[Dict[str, Any]] = []
+            for part in msg.walk():
+                filename = (part.get_filename() or "").lower()
+                content_type = (part.get_content_type() or "").lower()
+                if not (filename.endswith(".pdf") or content_type == "application/pdf"):
+                    continue
+                payload = part.get_payload(decode=True)
+                if not payload:
+                    continue
+                print(f"Elaborazione PDF TARI: {filename or 'avviso.pdf'}")
+                parsed = parse_tari_pdf_bytes(payload, subj, msg_date)
+                if parsed:
+                    msg_tari.append(parsed)
+            if msg_tari:
+                tari_by_msg[msg_id] = msg_tari
+    except Exception as exc:
+        print(f"Nota lettura TARI dalla INBOX: {exc}")
+
+    return tari_by_msg
+
+
+def _load_firebase_config() -> Dict[str, str]:
+    return {
+        "projectId": os.environ.get("FIREBASE_PROJECT_ID", "spiritual-bearing-sq7xb"),
+        "databaseId": os.environ.get(
+            "FIRESTORE_DATABASE_ID",
+            "ai-studio-30a168e3-8158-474f-b9f2-f717d7220314",
+        ),
+        "apiKey": os.environ.get("FIREBASE_API_KEY", ""),
+        "ownerUid": os.environ.get("OWNER_UID", "rXdhFrSuqzaYf8SYVbmQulPqg7m1"),
+    }
+
+
+def _to_firestore_value(v: Any) -> Dict[str, Any]:
+    if isinstance(v, bool):
+        return {"booleanValue": v}
+    if isinstance(v, (int, float)):
+        return {"doubleValue": float(v)}
+    if v is None:
+        return {"nullValue": None}
+    return {"stringValue": str(v)}
+
+
+def firestore_commit_doc(
+    fb_cfg: Dict[str, str],
+    collection: str,
+    raw_doc_id: str,
+    fields_dict: Dict[str, Any],
+) -> bool:
+    doc_id = re.sub(r"[^a-zA-Z0-9_-]", "", raw_doc_id)[:128]
+    if not doc_id:
+        return False
+
+    project_id = fb_cfg["projectId"]
+    database_id = fb_cfg["databaseId"]
+    api_key = fb_cfg["apiKey"]
+    id_token = os.environ.get("FIREBASE_ID_TOKEN", "").strip()
+
+    commit_url = (
+        f"https://firestore.googleapis.com/v1/projects/{project_id}"
+        f"/databases/{database_id}/documents:commit"
+    )
+    if api_key and not id_token:
+        commit_url = f"{commit_url}?{urllib.parse.urlencode({'key': api_key})}"
+
+    doc_name = f"projects/{project_id}/databases/{database_id}/documents/{collection}/{doc_id}"
+    fs_fields = {k: _to_firestore_value(v) for k, v in fields_dict.items()}
+
+    body = {
+        "writes": [
+            {
+                "update": {
+                    "name": doc_name,
+                    "fields": fs_fields,
+                },
+                "updateTransforms": [
+                    {
+                        "fieldPath": "createdAt",
+                        "setToServerValue": "REQUEST_TIME",
+                    }
+                ],
+            }
+        ]
+    }
+    headers = {"Content-Type": "application/json"}
+    if id_token:
+        headers["Authorization"] = f"Bearer {id_token}"
+
+    req = urllib.request.Request(
+        commit_url,
+        data=json.dumps(body).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.status in (200, 201)
+    except urllib.error.HTTPError as exc:
+        err_body = exc.read().decode("utf-8", errors="replace")
+        if exc.code in (401, 403):
+            print(
+                f"Scrittura Firestore bloccata ({exc.code}) su {collection}/{doc_id}: "
+                "autenticazione proprietario richiesta dalle Firestore Rules. "
+                "L'email NON verrà eliminata.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"Errore HTTP Firestore {exc.code} su {collection}/{doc_id}: {err_body}")
+        return False
+    except Exception as exc:
+        print(f"Errore scrittura Firestore {collection}/{doc_id}: {exc}")
+        return False
+
+
+def save_readings_json(new_readings: List[Dict[str, Any]], output_path: Path = Path("data/consumi.json")) -> bool:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    by_date: Dict[str, Dict[str, Any]] = {}
+    if output_path.exists():
+        try:
+            existing = json.loads(output_path.read_text(encoding="utf-8"))
+            for item in existing.get("readings", []):
+                d = str(item.get("date", ""))
+                if d:
+                    by_date[d] = item
+        except Exception as exc:
+            print(f"Nota lettura {output_path} esistente: {exc}")
+
+    for r in new_readings:
+        d = str(r.get("date", ""))
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", d):
+            continue
+        by_date[d] = {
+            "date": d,
+            "f1Kwh": round(float(r.get("f1Kwh", 0.0)), 2),
+            "f2Kwh": round(float(r.get("f2Kwh", 0.0)), 2),
+            "f3Kwh": round(float(r.get("f3Kwh", 0.0)), 2),
+            "totalKwh": round(float(r.get("totalKwh", 0.0)), 2),
+            "peakKw": round(float(r.get("peakKw", 0.0)), 2),
+            "source": "e-distribuzione-api",
+        }
+
+    sorted_readings = sorted(by_date.values(), key=lambda x: x["date"], reverse=True)
+    payload = {
+        "pod": POD_CODE,
+        "updatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "count": len(sorted_readings),
+        "readings": sorted_readings,
+    }
+    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"Scritto {output_path} ({len(sorted_readings)} giorni totali).")
+    return True
+
+
+def save_bills_json(
+    new_elec: List[Dict[str, Any]],
+    new_tari: List[Dict[str, Any]],
+    output_path: Path = Path("data/bollette.json"),
+) -> bool:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    elec_by_inv: Dict[str, Dict[str, Any]] = {}
+    tari_by_notice: Dict[str, Dict[str, Any]] = {}
+    if output_path.exists():
+        try:
+            existing = json.loads(output_path.read_text(encoding="utf-8"))
+            for b in existing.get("electricityBills", []):
+                inv = str(b.get("invoiceNumber", "")).strip()
+                if inv:
+                    elec_by_inv[inv] = b
+            for t in existing.get("tariBills", []):
+                notice = str(t.get("noticeNumber", "")).strip()
+                if notice:
+                    tari_by_notice[notice] = t
+        except Exception as exc:
+            print(f"Nota lettura {output_path} esistente: {exc}")
+
+    for b in new_elec:
+        inv = str(b.get("invoiceNumber", "")).strip()
+        if inv:
+            elec_by_inv[inv] = b
+    for t in new_tari:
+        notice = str(t.get("noticeNumber", "")).strip()
+        if notice:
+            tari_by_notice[notice] = t
+
+    payload = {
+        "updatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "electricityBills": sorted(
+            elec_by_inv.values(),
+            key=lambda x: str(x.get("sortKey", "")),
+            reverse=True,
+        ),
+        "tariBills": sorted(
+            tari_by_notice.values(),
+            key=lambda x: (int(x.get("year", 0)), str(x.get("noticeNumber", ""))),
+            reverse=True,
+        ),
+    }
+    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(
+        f"Scritto {output_path} ({len(payload['electricityBills'])} luce, {len(payload['tariBills'])} TARI)."
+    )
+    return True
 
 
 def main() -> None:
-    print(f"Controllo Gmail per 'Dettaglio curve di carico', bollette Edison e TARI (POD {POD_CODE})...")
-    new_readings, processed_msg_ids, mail = extract_csvs_from_gmail()
-    new_bills: List[Dict[str, Any]] = []
-    new_tari_bills: List[Dict[str, Any]] = []
+    fb_cfg = _load_firebase_config()
+    owner_id = fb_cfg["ownerUid"]
+    has_firebase_token = bool(os.environ.get("FIREBASE_ID_TOKEN", "").strip())
+    print(f"Controllo Gmail (solo INBOX) per curve di carico, bollette Edison e TARI (POD {POD_CODE})...")
+    readings_by_msg, mail = extract_csvs_from_gmail()
 
     try:
-        # 1. Estrai eventuali nuove bollette PDF Edison e TARI (senza eliminare mai le email)
-        new_bills = extract_edison_bills_from_gmail(mail)
-        new_tari_bills = extract_tari_bills_from_gmail(mail)
+        # 1. Estrai eventuali nuove bollette PDF Edison e TARI solo dalla INBOX (mai dal Cestino)
+        bills_by_msg = extract_edison_bills_from_gmail(mail)
+        tari_by_msg = extract_tari_bills_from_gmail(mail)
 
-        # 1b. Recupera eventuali CSV e-distribuzione presenti nel Cestino di Gmail
-        trash_readings = extract_csvs_from_trash(mail)
+        verified_msgs_to_delete: List[bytes] = []
 
-        # 2. Aggiorna data/consumi.json
-        existing_by_date: Dict[str, Dict[str, Any]] = {}
-        if OUTPUT_FILE.exists():
-            try:
-                old_data = json.loads(OUTPUT_FILE.read_text(encoding="utf-8"))
-                for item in old_data.get("readings", []):
-                    if "date" in item:
-                        existing_by_date[item["date"]] = item
-            except Exception:
-                pass
+        # 2. Salva letture e-distribuzione in data/consumi.json (e su Firestore se FIREBASE_ID_TOKEN presente)
+        all_new_readings = [r for items in readings_by_msg.values() for r in items]
+        if all_new_readings and save_readings_json(all_new_readings):
+            if has_firebase_token:
+                for msg_id, msg_readings in readings_by_msg.items():
+                    all_ok = True
+                    for r in msg_readings:
+                        date_str = str(r.get("date", ""))
+                        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+                            all_ok = False
+                            continue
+                        total_kwh = round(float(r.get("totalKwh", 0.0)), 2)
+                        doc_id = f"day_{date_str.replace('-', '')}"
+                        fields = {
+                            "ownerId": owner_id,
+                            "date": date_str,
+                            "f1Kwh": round(float(r.get("f1Kwh", 0.0)), 2),
+                            "f2Kwh": round(float(r.get("f2Kwh", 0.0)), 2),
+                            "f3Kwh": round(float(r.get("f3Kwh", 0.0)), 2),
+                            "totalKwh": total_kwh,
+                            "peakKw": round(float(r.get("peakKw", 0.0)), 2),
+                            "estimatedCostEur": round(total_kwh * TARIFF_EUR_PER_KWH, 2),
+                            "source": "e-distribuzione-api",
+                        }
+                        if not firestore_commit_doc(fb_cfg, f"users/{owner_id}/energyReadings", doc_id, fields):
+                            all_ok = False
+                            break
+                    if all_ok:
+                        verified_msgs_to_delete.append(msg_id)
+            else:
+                verified_msgs_to_delete.extend(readings_by_msg.keys())
 
-        for item in trash_readings:
-            existing_by_date[item["date"]] = item
-        for item in new_readings:
-            existing_by_date[item["date"]] = item
+        # 3. Salva bollette (Luce + TARI) in data/bollette.json (e su Firestore se FIREBASE_ID_TOKEN presente)
+        all_new_elec = [b for items in bills_by_msg.values() for b in items]
+        all_new_tari = [t for items in tari_by_msg.values() for t in items]
+        if (all_new_elec or all_new_tari) and save_bills_json(all_new_elec, all_new_tari):
+            if has_firebase_token:
+                for msg_id, msg_bills in bills_by_msg.items():
+                    all_ok = True
+                    for b in msg_bills:
+                        inv = str(b.get("invoiceNumber", "")).strip()
+                        if not inv:
+                            all_ok = False
+                            continue
+                        doc_id = f"edison_{re.sub(r'[^a-zA-Z0-9_-]', '', inv)}"
+                        if not firestore_commit_doc(fb_cfg, f"users/{owner_id}/electricityBills", doc_id, {"ownerId": owner_id, **b}):
+                            all_ok = False
+                            break
+                    if all_ok:
+                        verified_msgs_to_delete.append(msg_id)
 
-        today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        merged = sorted(
-            (v for v in existing_by_date.values() if v.get("date", "") <= today_iso),
-            key=lambda x: x["date"],
-        )
+                for msg_id, msg_tari in tari_by_msg.items():
+                    all_ok = True
+                    for t in msg_tari:
+                        notice = str(t.get("noticeNumber", "")).strip()
+                        if not notice:
+                            all_ok = False
+                            continue
+                        doc_id = f"tari_{re.sub(r'[^a-zA-Z0-9_-]', '', notice)}"
+                        if not firestore_commit_doc(fb_cfg, f"users/{owner_id}/tariBills", doc_id, {"ownerId": owner_id, **t}):
+                            all_ok = False
+                            break
+                    if all_ok:
+                        verified_msgs_to_delete.append(msg_id)
+            else:
+                verified_msgs_to_delete.extend(bills_by_msg.keys())
+                verified_msgs_to_delete.extend(tari_by_msg.keys())
 
-        OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "pod": POD_CODE,
-            "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            "readings": merged,
-        }
-        OUTPUT_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        print(f"Completato consumi: {len(new_readings)} giorni estratti, {len(merged)} giorni totali salvati.")
-
-        # 3. Aggiorna data/bollette.json (luce + TARI)
-        if new_bills or new_tari_bills or not BILLS_OUTPUT_FILE.exists():
-            existing_bills: Dict[str, Dict[str, Any]] = {}
-            existing_tari: Dict[str, Dict[str, Any]] = {}
-            if BILLS_OUTPUT_FILE.exists():
+        # 4. Elimina dalla INBOX solo le email i cui dati sono stati salvati con successo
+        if verified_msgs_to_delete:
+            delete_processed_emails(mail, list(set(verified_msgs_to_delete)))
+        else:
+            print("Nessuna nuova email da eliminare dalla INBOX.")
+            if mail:
                 try:
-                    old_bills = json.loads(BILLS_OUTPUT_FILE.read_text(encoding="utf-8"))
-                    for b in old_bills.get("bills", []):
-                        if "invoiceNumber" in b:
-                            existing_bills[str(b["invoiceNumber"])] = b
-                    for t in old_bills.get("tariBills", []):
-                        if "noticeNumber" in t:
-                            existing_tari[str(t["noticeNumber"])] = t
+                    mail.logout()
                 except Exception:
                     pass
-            for b in new_bills:
-                existing_bills[str(b["invoiceNumber"])] = b
-            for t in new_tari_bills:
-                key = str(t["noticeNumber"])
-                if key in existing_tari:
-                    t["paid"] = bool(existing_tari[key].get("paid", False))
-                existing_tari[key] = t
-
-            merged_bills = sorted(existing_bills.values(), key=lambda x: x.get("sortKey", ""))
-            merged_tari = sorted(existing_tari.values(), key=lambda x: (int(x.get("year", 0)), str(x.get("noticeNumber", ""))))
-            bills_payload = {
-                "pod": POD_CODE,
-                "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                "bills": merged_bills,
-                "tariBills": merged_tari,
-            }
-            BILLS_OUTPUT_FILE.write_text(json.dumps(bills_payload, indent=2), encoding="utf-8")
-            print(
-                f"Completato bollette: {len(new_bills)} Edison + {len(new_tari_bills)} TARI analizzati "
-                f"({len(merged_bills)} luce, {len(merged_tari)} TARI totali)."
-            )
-
-        # 4. Elimina solo le email dei CSV e-distribuzione dopo il salvataggio
-        delete_processed_emails(mail, processed_msg_ids)
     except Exception:
         if mail:
             try:

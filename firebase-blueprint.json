@@ -194,6 +194,34 @@
       "required": [
         "ownerId", "name", "brand", "model", "category", "room", "familyWarranty", "createdAt"
       ]
+    },
+    "VaultFile": {
+      "title": "VaultFile",
+      "description": "Metadati di un PDF o documento archiviato su Firestore per sincronizzazione multi-dispositivo.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "fileKey": { "type": "string", "maxLength": 80, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "fileName": { "type": "string", "maxLength": 140 },
+        "mimeType": { "type": "string", "maxLength": 80 },
+        "size": { "type": "number" },
+        "chunkCount": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "fileKey", "fileName", "mimeType", "size", "chunkCount", "updatedAt"]
+    },
+    "VaultFileChunk": {
+      "title": "VaultFileChunk",
+      "description": "Frammento Base64 (< 700 KB) di un file PDF/documento salvato su Firestore.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "fileKey": { "type": "string", "maxLength": 80, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "chunkIndex": { "type": "number" },
+        "data": { "type": "string", "maxLength": 700000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "fileKey", "chunkIndex", "data", "createdAt"]
     }
   },
   "firestore": {
@@ -228,6 +256,14 @@
     "/users/{userId}/homeArticles/{articleId}": {
       "schema": { "$ref": "#/entities/HomeArticle" },
       "description": "Dispositivi ed elettrodomestici di casa con stato garanzie"
+    },
+    "/users/{userId}/vaultFiles/{fileId}": {
+      "schema": { "$ref": "#/entities/VaultFile" },
+      "description": "Metadati file PDF bollette e documenti salvati su Firestore"
+    },
+    "/users/{userId}/vaultFileChunks/{chunkId}": {
+      "schema": { "$ref": "#/entities/VaultFileChunk" },
+      "description": "Frammenti Base64 dei PDF e documenti salvati su Firestore"
     }
   }
 }
