@@ -82,7 +82,6 @@ import {
   CAR_PROFILE_ID,
   carLogToArticlePayload,
   carProfileToArticlePayload,
-  GROCERY_SEED_MARKER_ID,
   groceryProductToArticlePayload,
   SYSTEM_ROOM_CAR,
   SYSTEM_ROOM_GROCERY,
@@ -90,10 +89,16 @@ import {
 } from './utils/carGroceryStore';
 import {
   articleToHomeDocument,
+  deleteVaultFiles,
   deleteVaultFile,
   getElectricityBillFileKey,
+  getVaultFile,
   getTariBillFileKey,
+  getWaterBillFileKey,
+  isOctopusContractRecord,
+  listVaultFileMetadata,
   homeDocumentToArticlePayload,
+  MAX_CLOUD_FILE_BYTES,
   notifyVaultUpdated,
   saveVaultFile,
   SYSTEM_ROOM_DOCUMENTS,
@@ -114,9 +119,6 @@ import {
   migrateFromLegacyProject,
   SYSTEM_ROOM_MIGRATION_META,
 } from './utils/legacyMigration';
-import { SEED_ELECTRICITY_BILLS, SEED_WATER_BILLS } from './data/billsSeed';
-import { SEED_HOME_ARTICLES } from './data/articlesSeed';
-import { SEED_GROCERY_ARTICLES } from './data/grocerySeed';
 import { OverviewView } from './components/OverviewView';
 import { DomoticsView } from './components/DomoticsView';
 import { EnergyDatabaseView } from './components/EnergyDatabaseView';
@@ -170,6 +172,24 @@ const AVAILABLE_YEARS = Array.from(
   { length: Math.max(1, CURRENT_YEAR - MIN_HOME_YEAR + 1) },
   (_, idx) => CURRENT_YEAR - idx
 );
+const LEGACY_DEMO_ARTICLE_IDS = new Set([
+  'art_tcl_75q7c',
+  'art_avs_a300',
+  'art_huawei_sun2000',
+  'art_electrolux_forno',
+  'art_electrolux_frigo',
+  'art_piano_induzione',
+  'art_lavastoviglie',
+  'art_microonde',
+]);
+
+function isLegacyDemoArticleId(id: string): boolean {
+  return (
+    LEGACY_DEMO_ARTICLE_IDS.has(id) ||
+    id === 'grocery_seed_v1_done' ||
+    /^spesa_[a-z][a-z0-9_]*$/.test(id)
+  );
+}
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -185,23 +205,17 @@ export default function App() {
   const [publicOwnerUid, setPublicOwnerUid] = useState<string | null>(null);
   const [publicClimateAutopilot, setPublicClimateAutopilot] =
     useState<ClimateAutopilotConfig | null>(null);
-  const [electricityBills, setElectricityBills] = useState<BillRecord[]>(SEED_ELECTRICITY_BILLS);
-  const [waterBills, setWaterBills] = useState<WaterBillRecord[]>(SEED_WATER_BILLS);
+  const [electricityBills, setElectricityBills] = useState<BillRecord[]>([]);
+  const [waterBills, setWaterBills] = useState<WaterBillRecord[]>([]);
   const [tariBills, setTariBills] = useState<TariBillRecord[]>([]);
   const [gsePayments, setGsePayments] = useState<GsePaymentRecord[]>([]);
-  const [homeArticles, setHomeArticles] = useState<HomeArticleRecord[]>([
-    ...SEED_HOME_ARTICLES,
-    ...SEED_GROCERY_ARTICLES,
-  ]);
+  const [homeArticles, setHomeArticles] = useState<HomeArticleRecord[]>([]);
   const [readingsLoading, setReadingsLoading] = useState(true);
   const [firestoreFallbackNotice, setFirestoreFallbackNotice] = useState<string | null>(null);
   const [migratingDb, setMigratingDb] = useState(false);
   const [migrationProgress, setMigrationProgress] = useState<string | null>(null);
   const [migrationDismissed, setMigrationDismissed] = useState(false);
-  const syncedElecBillsRef = useRef(false);
-  const syncedWaterBillsRef = useRef(false);
-  const syncedArticlesRef = useRef(false);
-  const syncedGrocerySeedRef = useRef(false);
+  const clearingBillArchiveRef = useRef(false);
   const skippedTrashIdsRef = useRef<Set<string>>(new Set());
   const gmailSyncInFlightRef = useRef(false);
   const autopilotSyncInFlightRef = useRef(false);
@@ -236,6 +250,7 @@ export default function App() {
         setPublicClimateAutopilot(null);
       }
       if (!currentUser) {
+        setHomeArticles([]);
         setGmailToken(null);
         setPendingTrashMessages([]);
       }
@@ -486,61 +501,17 @@ export default function App() {
             electricityOnly: Number(data.electricityOnly || 0),
             totalPaid: Number(data.totalPaid || 0),
             note: data.note ? String(data.note) : undefined,
+            pdfFileKey: data.pdfFileKey ? String(data.pdfFileKey) : undefined,
           };
         });
 
-        if (list.length > 0) {
-          setElectricityBills(list);
-          try {
-            localStorage.setItem(`myhome_elec_bills_cache_${activeUid}`, JSON.stringify(list));
-          } catch {
-            // ignore
-          }
+        setElectricityBills(list);
+        try {
+          localStorage.setItem(`myhome_elec_bills_cache_${activeUid}`, JSON.stringify(list));
+        } catch {
+          // ignore
         }
 
-        // One-time sync to Firebase when signed in as owner if seed bills are missing in Firestore
-        if (user && user.uid === activeUid && !snap.metadata.fromCache && !syncedElecBillsRef.current) {
-          syncedElecBillsRef.current = true;
-          const existingInvoices = new Set(list.map((b) => b.invoiceNumber));
-          const missing = SEED_ELECTRICITY_BILLS.filter(
-            (b) => !existingInvoices.has(b.invoiceNumber)
-          );
-          if (missing.length > 0) {
-            void (async () => {
-              try {
-                const batch = writeBatch(db);
-                for (const b of missing) {
-                  const docId = `edison_${b.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`;
-                  const payload: Record<string, unknown> = {
-                    ownerId: user.uid,
-                    invoiceNumber: b.invoiceNumber.slice(0, 40),
-                    issueDate: b.issueDate.slice(0, 20),
-                    sortKey: b.sortKey.slice(0, 16),
-                    year: Number(b.year),
-                    period: b.period.slice(0, 80),
-                    supplier: b.supplier.slice(0, 80),
-                    offerName: b.offerName.slice(0, 100),
-                    kwh: Number(b.kwh),
-                    punText: b.punText.slice(0, 60),
-                    variableCostPerKwh: Number(b.variableCostPerKwh),
-                    canoneTv: Number(b.canoneTv),
-                    electricityOnly: Number(b.electricityOnly),
-                    totalPaid: Number(b.totalPaid),
-                    createdAt: serverTimestamp(),
-                  };
-                  if (b.note) payload.note = b.note.slice(0, 240);
-                  batch.set(doc(db, elecBillsPath, docId), payload);
-                }
-                await batch.commit();
-              } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                if (!msg.toLowerCase().includes('quota') && !msg.toLowerCase().includes('resource-exhausted')) {
-                  handleFirestoreError(err, OperationType.WRITE, elecBillsPath);
-                }
-              }
-            })();
-          }
-        }
       },
       (error) => {
         if (isResilientFirestoreOutage(error)) {
@@ -579,53 +550,17 @@ export default function App() {
             fixedCostEur: Number(data.fixedCostEur || 0),
             totalPaid: Number(data.totalPaid || 0),
             note: data.note ? String(data.note) : undefined,
+            pdfFileKey: data.pdfFileKey ? String(data.pdfFileKey) : undefined,
           };
         });
 
-        if (list.length > 0) {
-          setWaterBills(list);
-          try {
-            localStorage.setItem(`myhome_water_bills_cache_${activeUid}`, JSON.stringify(list));
-          } catch {
-            // ignore
-          }
+        setWaterBills(list);
+        try {
+          localStorage.setItem(`myhome_water_bills_cache_${activeUid}`, JSON.stringify(list));
+        } catch {
+          // ignore
         }
 
-        if (user && user.uid === activeUid && !snap.metadata.fromCache && !syncedWaterBillsRef.current) {
-          syncedWaterBillsRef.current = true;
-          const existingInvoices = new Set(list.map((b) => b.invoiceNumber));
-          const missing = SEED_WATER_BILLS.filter(
-            (b) => !existingInvoices.has(b.invoiceNumber)
-          );
-          if (missing.length > 0) {
-            void (async () => {
-              try {
-                const batch = writeBatch(db);
-                for (const w of missing) {
-                  const docId = `acegas_${w.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`;
-                  const payload: Record<string, unknown> = {
-                    ownerId: user.uid,
-                    invoiceNumber: w.invoiceNumber.slice(0, 40),
-                    issueDate: w.issueDate.slice(0, 20),
-                    year: Number(w.year),
-                    period: w.period.slice(0, 80),
-                    cubicMeters: Number(w.cubicMeters),
-                    fixedCostEur: Number(w.fixedCostEur),
-                    totalPaid: Number(w.totalPaid),
-                    createdAt: serverTimestamp(),
-                  };
-                  if (w.note) payload.note = w.note.slice(0, 240);
-                  batch.set(doc(db, waterBillsPath, docId), payload);
-                }
-                await batch.commit();
-              } catch (err) {
-                if (!isResilientFirestoreOutage(err)) {
-                  handleFirestoreError(err, OperationType.WRITE, waterBillsPath);
-                }
-              }
-            })();
-          }
-        }
       },
       (error) => {
         if (isResilientFirestoreOutage(error)) {
@@ -666,6 +601,7 @@ export default function App() {
             paid: Boolean(data.paid),
             source: data.source === 'gmail-pdf' ? 'gmail-pdf' : 'manuale',
             note: data.note ? String(data.note) : undefined,
+            pdfFileKey: data.pdfFileKey ? String(data.pdfFileKey) : undefined,
           };
         });
         setTariBills(list);
@@ -710,6 +646,9 @@ export default function App() {
               typeof data.kwhInjected === 'number' ? Number(data.kwhInjected) : undefined,
             reference: data.reference ? String(data.reference) : undefined,
             note: data.note ? String(data.note) : undefined,
+            attachmentFileKey: data.attachmentFileKey
+              ? String(data.attachmentFileKey)
+              : undefined,
           };
         });
         setGsePayments(list);
@@ -744,7 +683,10 @@ export default function App() {
     const unsubArticles = onSnapshot(
       articlesQuery,
       (snap) => {
-        const list: HomeArticleRecord[] = snap.docs.map((d) => {
+        const legacyDemoDocs = snap.docs.filter((d) => isLegacyDemoArticleId(d.id));
+        const list: HomeArticleRecord[] = snap.docs
+          .filter((d) => !isLegacyDemoArticleId(d.id))
+          .map((d) => {
           const data = d.data();
           return {
             id: d.id,
@@ -759,132 +701,47 @@ export default function App() {
             serialNumber: data.serialNumber ? String(data.serialNumber) : undefined,
             specs: data.specs ? String(data.specs) : undefined,
             notes: data.notes ? String(data.notes) : undefined,
+            manualFileKey: data.manualFileKey ? String(data.manualFileKey) : undefined,
+            manualFileName: data.manualFileName ? String(data.manualFileName) : undefined,
+            manualExtractText: data.manualExtractText
+              ? String(data.manualExtractText)
+              : undefined,
           };
         });
 
-        const normalizeGroceryKey = (name: string) =>
-          name
-            .toLowerCase()
-            .split('/')[0]
-            .split('(')[0]
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .replace(/[^a-z0-9]+/g, ' ')
-            .trim();
-
-        const hasGrocerySeedMarker = list.some((a) => a.id === GROCERY_SEED_MARKER_ID);
-        const existingIds = new Set(list.map((a) => a.id));
-        const missingGrocerySeed: HomeArticleRecord[] = [];
-        const enrichedById = new Map<string, HomeArticleRecord>();
-
-        if (!hasGrocerySeedMarker) {
-          const existingGroceryByKey = new Map<string, HomeArticleRecord>();
-          for (const art of list) {
-            if (art.room === SYSTEM_ROOM_GROCERY) {
-              const key = normalizeGroceryKey(art.name);
-              if (key && !existingGroceryByKey.has(key)) {
-                existingGroceryByKey.set(key, art);
-              }
-            }
-          }
-
-          for (const seedArt of SEED_GROCERY_ARTICLES) {
-            if (existingIds.has(seedArt.id)) continue;
-            const key = normalizeGroceryKey(seedArt.name);
-            const matchedExisting = existingGroceryByKey.get(key);
-            if (matchedExisting) {
-              // Se l'articolo già presente su Firestore non ha alcun prezzo inserito,
-              // lo arricchiamo con i prezzi del listino senza creare duplicati.
-              if (!/\d/.test(matchedExisting.specs || '')) {
-                enrichedById.set(matchedExisting.id, {
-                  ...matchedExisting,
-                  brand: seedArt.brand,
-                  model: matchedExisting.model && matchedExisting.model !== 'pz' ? matchedExisting.model : seedArt.model,
-                  specs: seedArt.specs,
-                  notes: matchedExisting.notes || seedArt.notes,
-                });
-              }
-            } else {
-              missingGrocerySeed.push(seedArt);
-            }
-          }
+        setHomeArticles(list);
+        try {
+          localStorage.setItem(`myhome_articles_cache_${activeUid}`, JSON.stringify(list));
+        } catch {
+          // ignore
         }
-
-        if (list.length > 0) {
-          const mergedList = [
-            ...list.map((item) => enrichedById.get(item.id) || item),
-            ...missingGrocerySeed,
-          ];
-          setHomeArticles(mergedList);
-          try {
-            localStorage.setItem(`myhome_articles_cache_${activeUid}`, JSON.stringify(mergedList));
-          } catch {
-            // ignore
-          }
-        }
-
-        if (user && user.uid === activeUid && !snap.metadata.fromCache) {
-          const toSync: HomeArticleRecord[] = [];
-          if (!syncedArticlesRef.current) {
-            syncedArticlesRef.current = true;
-            toSync.push(...SEED_HOME_ARTICLES.filter((a) => !existingIds.has(a.id)));
-          }
-          if (!hasGrocerySeedMarker && !syncedGrocerySeedRef.current) {
-            syncedGrocerySeedRef.current = true;
-            toSync.push(...Array.from(enrichedById.values()), ...missingGrocerySeed, {
-              id: GROCERY_SEED_MARKER_ID,
-              name: 'Catalogo Spesa v1',
-              brand: 'seed',
-              model: 'v1',
-              category: 'altro',
-              room: SYSTEM_ROOM_GROCERY_META,
-              familyWarranty: false,
-            });
-          }
-          if (toSync.length > 0) {
-            void (async () => {
-              try {
-                for (let i = 0; i < toSync.length; i += 400) {
-                  const chunk = toSync.slice(i, i + 400);
-                  const batch = writeBatch(db);
-                  for (const art of chunk) {
-                    const docId = art.id.replace(/[^a-zA-Z0-9_-]/g, '');
-                    const payload: Record<string, unknown> = {
-                      ownerId: user.uid,
-                      name: art.name.slice(0, 80),
-                      brand: art.brand.slice(0, 60),
-                      model: art.model.slice(0, 80),
-                      category: art.category,
-                      room: art.room.slice(0, 60),
-                      familyWarranty: Boolean(art.familyWarranty),
-                      createdAt: serverTimestamp(),
-                    };
-                    if (art.purchaseDate) payload.purchaseDate = art.purchaseDate.slice(0, 20);
-                    if (art.warrantyEnd) payload.warrantyEnd = art.warrantyEnd.slice(0, 20);
-                    if (art.serialNumber) payload.serialNumber = art.serialNumber.slice(0, 80);
-                    if (art.specs) payload.specs = art.specs.slice(0, 240);
-                    if (art.notes) payload.notes = art.notes.slice(0, 240);
-                    batch.set(doc(db, articlesPath, docId), payload);
-                  }
-                  await batch.commit();
-                }
-              } catch (err) {
-                if (!isResilientFirestoreOutage(err)) {
-                  handleFirestoreError(err, OperationType.WRITE, articlesPath);
-                }
+        if (user?.uid === activeUid && !snap.metadata.fromCache && legacyDemoDocs.length > 0) {
+          void (async () => {
+            try {
+              for (let start = 0; start < legacyDemoDocs.length; start += 400) {
+                const batch = writeBatch(db);
+                legacyDemoDocs
+                  .slice(start, start + 400)
+                  .forEach((articleDoc) => batch.delete(articleDoc.ref));
+                await batch.commit();
               }
-            })();
-          }
+            } catch (error) {
+              handleFirestoreError(error, OperationType.DELETE, articlesPath);
+            }
+          })();
         }
       },
       (error) => {
         if (isResilientFirestoreOutage(error)) {
           setFirestoreFallbackNotice(
-            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale e dei dati predefiniti.'
+            'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale.'
           );
           try {
             const cached = localStorage.getItem(`myhome_articles_cache_${activeUid}`);
-            if (cached) setHomeArticles(JSON.parse(cached) as HomeArticleRecord[]);
+            if (cached) {
+              const articles = JSON.parse(cached) as HomeArticleRecord[];
+              setHomeArticles(articles.filter((article) => !isLegacyDemoArticleId(article.id)));
+            }
           } catch {
             // ignore
           }
@@ -1008,10 +865,110 @@ export default function App() {
       }
     );
 
+    const publicElectricityBillsPath = `users/${publicOwnerUid}/electricityBills`;
+    const publicElectricityBillsQuery = query(
+      collection(db, publicElectricityBillsPath),
+      where('ownerId', '==', publicOwnerUid),
+      where('pdfFileKey', '>', '')
+    );
+    const unsubPublicElectricityBills = onSnapshot(
+      publicElectricityBillsQuery,
+      (snap) => {
+        setElectricityBills(
+          snap.docs.map((d) => {
+            const data = d.data();
+            return {
+              invoiceNumber: String(data.invoiceNumber || ''),
+              issueDate: String(data.issueDate || ''),
+              sortKey: String(data.sortKey || ''),
+              year: Number(data.year || 2025),
+              period: String(data.period || ''),
+              supplier: String(data.supplier || ''),
+              offerName: String(data.offerName || ''),
+              kwh: Number(data.kwh || 0),
+              punText: String(data.punText || ''),
+              variableCostPerKwh: Number(data.variableCostPerKwh || 0),
+              canoneTv: Number(data.canoneTv || 0),
+              electricityOnly: Number(data.electricityOnly || 0),
+              totalPaid: Number(data.totalPaid || 0),
+              note: data.note ? String(data.note) : undefined,
+              pdfFileKey: String(data.pdfFileKey),
+            };
+          })
+        );
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, publicElectricityBillsPath)
+    );
+
+    const publicWaterBillsPath = `users/${publicOwnerUid}/waterBills`;
+    const publicWaterBillsQuery = query(
+      collection(db, publicWaterBillsPath),
+      where('ownerId', '==', publicOwnerUid),
+      where('pdfFileKey', '>', '')
+    );
+    const unsubPublicWaterBills = onSnapshot(
+      publicWaterBillsQuery,
+      (snap) => {
+        setWaterBills(
+          snap.docs.map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              invoiceNumber: String(data.invoiceNumber || ''),
+              issueDate: String(data.issueDate || ''),
+              year: Number(data.year || 2025),
+              period: String(data.period || ''),
+              cubicMeters: Number(data.cubicMeters || 0),
+              fixedCostEur: Number(data.fixedCostEur || 0),
+              totalPaid: Number(data.totalPaid || 0),
+              note: data.note ? String(data.note) : undefined,
+              pdfFileKey: String(data.pdfFileKey),
+            };
+          })
+        );
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, publicWaterBillsPath)
+    );
+
+    const publicTariBillsPath = `users/${publicOwnerUid}/tariBills`;
+    const publicTariBillsQuery = query(
+      collection(db, publicTariBillsPath),
+      where('ownerId', '==', publicOwnerUid),
+      where('pdfFileKey', '>', '')
+    );
+    const unsubPublicTariBills = onSnapshot(
+      publicTariBillsQuery,
+      (snap) => {
+        setTariBills(
+          snap.docs.map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              noticeNumber: String(data.noticeNumber || ''),
+              issueDate: String(data.issueDate || ''),
+              dueDate: String(data.dueDate || ''),
+              year: Number(data.year || new Date().getFullYear()),
+              period: String(data.period || ''),
+              supplier: String(data.supplier || 'AcegasApsAmga / TARI'),
+              totalPaid: Number(data.totalPaid || 0),
+              paid: Boolean(data.paid),
+              source: data.source === 'gmail-pdf' ? 'gmail-pdf' : 'manuale',
+              note: data.note ? String(data.note) : undefined,
+              pdfFileKey: String(data.pdfFileKey),
+            };
+          })
+        );
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, publicTariBillsPath)
+    );
+
     return () => {
       unsubReadings();
       unsubClimate();
       unsubAutopilot();
+      unsubPublicElectricityBills();
+      unsubPublicWaterBills();
+      unsubPublicTariBills();
     };
   }, [authReady, activeUid, publicOwnerUid]);
 
@@ -1168,19 +1125,44 @@ export default function App() {
           return;
         }
 
+        const availablePdfKeys = new Set(scan.pdfAttachments.map((attachment) => attachment.key));
+        const billPdfKeys = [
+          ...scan.electricityBills.map((bill) => getElectricityBillFileKey(bill.invoiceNumber)),
+          ...scan.waterBills.map((bill) => getWaterBillFileKey(bill.invoiceNumber)),
+          ...scan.tariBills.map((bill) => getTariBillFileKey(bill.noticeNumber)),
+        ];
+        if (billPdfKeys.some((key) => !availablePdfKeys.has(key))) {
+          throw new Error('Una o più bollette non hanno il PDF originale: non sono state importate.');
+        }
+
         // Archive original PDF binaries on Firestore (chunked, 0 AI credits) + local cache
         if (scan.pdfAttachments.length > 0) {
-          for (const pdfAtt of scan.pdfAttachments) {
-            const pdfBlob = new Blob([new Uint8Array(pdfAtt.bytes)], {
-              type: pdfAtt.mimeType || 'application/pdf',
-            });
-            await saveVaultFile(
-              pdfAtt.key,
-              pdfBlob,
-              pdfAtt.fileName,
-              pdfAtt.mimeType || 'application/pdf',
+          try {
+            for (const pdfAtt of scan.pdfAttachments) {
+              const pdfBlob = new Blob([new Uint8Array(pdfAtt.bytes)], {
+                type: pdfAtt.mimeType || 'application/pdf',
+              });
+              const saved = await saveVaultFile(
+                pdfAtt.key,
+                pdfBlob,
+                pdfAtt.fileName,
+                pdfAtt.mimeType || 'application/pdf',
+                currentUser.uid
+              );
+              if (!saved.cloudSynced) {
+                throw new Error(
+                  saved.cloudTooLarge
+                    ? `Il PDF "${pdfAtt.fileName}" supera il limite Firebase e la bolletta non è stata importata.`
+                    : `Il PDF "${pdfAtt.fileName}" non è stato salvato su Firebase; la bolletta non è stata importata.`
+                );
+              }
+            }
+          } catch (error) {
+            await deleteVaultFiles(
+              scan.pdfAttachments.map((attachment) => attachment.key),
               currentUser.uid
-            ).catch(() => {});
+            );
+            throw error;
           }
         }
 
@@ -1225,6 +1207,7 @@ export default function App() {
             const payload: Record<string, unknown> = {
               ownerId: currentUser.uid,
               invoiceNumber: b.invoiceNumber.slice(0, 40),
+              pdfFileKey: getElectricityBillFileKey(b.invoiceNumber),
               issueDate: b.issueDate.slice(0, 20),
               sortKey: b.sortKey.slice(0, 16),
               year: Number(b.year),
@@ -1255,6 +1238,7 @@ export default function App() {
             const payload: Record<string, unknown> = {
               ownerId: currentUser.uid,
               invoiceNumber: w.invoiceNumber.slice(0, 40),
+              pdfFileKey: getWaterBillFileKey(w.invoiceNumber),
               issueDate: w.issueDate.slice(0, 20),
               year: Number(w.year),
               period: w.period.slice(0, 80),
@@ -1279,6 +1263,7 @@ export default function App() {
             const payload: Record<string, unknown> = {
               ownerId: currentUser.uid,
               noticeNumber: t.noticeNumber.slice(0, 50),
+              pdfFileKey: getTariBillFileKey(t.noticeNumber),
               issueDate: (t.issueDate || t.dueDate || '—').slice(0, 20),
               dueDate: (t.dueDate || t.issueDate || '—').slice(0, 20),
               year: Number(t.year),
@@ -1511,14 +1496,44 @@ export default function App() {
     }
   }
 
-  async function handleAddElectricityBill(bill: BillRecord) {
-    if (!user) return;
+  async function saveBillPdfFile(fileKey: string, file: File, uid: string) {
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      throw new Error('Puoi archiviare una bolletta soltanto partendo dal suo PDF originale.');
+    }
+    const pdfHeader = new TextDecoder().decode(await file.slice(0, 1024).arrayBuffer());
+    if (!pdfHeader.includes('%PDF-')) {
+      throw new Error('Il file selezionato non contiene un’intestazione PDF valida.');
+    }
+
+    const saved = await saveVaultFile(
+      fileKey,
+      file,
+      file.name,
+      file.type || 'application/pdf',
+      uid
+    );
+    if (!saved.cloudSynced) {
+      await deleteVaultFiles([fileKey], uid);
+      throw new Error(
+        saved.cloudTooLarge
+          ? 'Il PDF supera il limite Firebase: la bolletta non è stata registrata.'
+          : 'Il PDF non è stato salvato su Firebase: la bolletta non è stata registrata.'
+      );
+    }
+  }
+
+  async function handleAddElectricityBill(bill: BillRecord, pdfFile?: File) {
+    if (!user) throw new Error('È necessario autenticarsi per importare bollette.');
+    if (!pdfFile) throw new Error('Per registrare una bolletta è necessario caricare il PDF originale.');
     const basePath = `users/${user.uid}/electricityBills`;
     const cleanInv = bill.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '');
     const docId = `manual_elec_${cleanInv || Date.now()}`;
+    const pdfFileKey = getElectricityBillFileKey(bill.invoiceNumber);
+    await saveBillPdfFile(pdfFileKey, pdfFile, user.uid);
     const payload: Record<string, unknown> = {
       ownerId: user.uid,
       invoiceNumber: bill.invoiceNumber.slice(0, 40),
+      pdfFileKey,
       issueDate: bill.issueDate.slice(0, 20),
       sortKey: bill.sortKey.slice(0, 16),
       year: Number(bill.year),
@@ -1539,7 +1554,9 @@ export default function App() {
     try {
       await setDoc(doc(db, basePath, docId), payload);
     } catch (error) {
+      await deleteVaultFiles([pdfFileKey], user.uid);
       handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
+      throw error;
     }
   }
 
@@ -1578,14 +1595,123 @@ export default function App() {
     }
   }
 
-  async function handleAddWaterBill(bill: Omit<WaterBillRecord, 'id'>) {
-    if (!user) return;
+  async function handleClearAllBills() {
+    if (!user) throw new Error('È necessario autenticarsi per eliminare le bollette.');
+    if (clearingBillArchiveRef.current) return;
+
+    clearingBillArchiveRef.current = true;
+    try {
+      const uid = user.uid;
+      const electricityPath = `users/${uid}/electricityBills`;
+      const waterPath = `users/${uid}/waterBills`;
+      const tariPath = `users/${uid}/tariBills`;
+      const gsePath = `users/${uid}/gsePayments`;
+      const vaultPath = `users/${uid}/vaultFiles`;
+      const vaultChunksPath = `users/${uid}/vaultFileChunks`;
+      const [
+        electricitySnap,
+        waterSnap,
+        tariSnap,
+        gseSnap,
+        vaultSnap,
+        vaultChunksSnap,
+        localVaultFiles,
+      ] = await Promise.all([
+        getDocs(query(collection(db, electricityPath), where('ownerId', '==', uid))),
+        getDocs(query(collection(db, waterPath), where('ownerId', '==', uid))),
+        getDocs(query(collection(db, tariPath), where('ownerId', '==', uid))),
+        getDocs(query(collection(db, gsePath), where('ownerId', '==', uid))),
+        getDocs(query(collection(db, vaultPath), where('ownerId', '==', uid))),
+        getDocs(query(collection(db, vaultChunksPath), where('ownerId', '==', uid))),
+        listVaultFileMetadata(uid),
+      ]);
+
+      const contractFileKeys = new Set<string>();
+      const electricityDocs = electricitySnap.docs.filter((billDoc) => {
+        const data = billDoc.data();
+        const record = {
+          supplier: String(data.supplier || ''),
+          year: Number(data.year || 0),
+          invoiceNumber: String(data.invoiceNumber || ''),
+          period: String(data.period || ''),
+          note: data.note ? String(data.note) : undefined,
+        };
+        if (!isOctopusContractRecord(record)) return true;
+        contractFileKeys.add(getElectricityBillFileKey(record.invoiceNumber));
+        return false;
+      });
+
+      const billFileKeys = new Set<string>([
+        ...electricityDocs.map((billDoc) =>
+          getElectricityBillFileKey(String(billDoc.data().invoiceNumber || ''))
+        ),
+        ...waterSnap.docs.map((billDoc) =>
+          getWaterBillFileKey(String(billDoc.data().invoiceNumber || ''))
+        ),
+        ...tariSnap.docs.map((billDoc) =>
+          getTariBillFileKey(String(billDoc.data().noticeNumber || ''))
+        ),
+      ]);
+      const billFilePrefixes = ['bill_elec_', 'bill_water_', 'bill_tari_', 'gse_payment_'];
+      const isBillFileKey = (key: string) =>
+        billFilePrefixes.some((prefix) => key.startsWith(prefix)) &&
+        !contractFileKeys.has(key);
+
+      vaultSnap.docs.forEach((fileDoc) => {
+        const key = String(fileDoc.data().fileKey || fileDoc.id);
+        if (isBillFileKey(key)) billFileKeys.add(key);
+      });
+      vaultChunksSnap.docs.forEach((chunkDoc) => {
+        const key = String(chunkDoc.data().fileKey || '');
+        if (isBillFileKey(key)) billFileKeys.add(key);
+      });
+      Object.keys(localVaultFiles).forEach((key) => {
+        if (isBillFileKey(key)) billFileKeys.add(key);
+      });
+
+      await deleteVaultFiles(Array.from(billFileKeys), uid);
+
+      const recordRefs = [
+        ...electricityDocs.map((billDoc) => billDoc.ref),
+        ...waterSnap.docs.map((billDoc) => billDoc.ref),
+        ...tariSnap.docs.map((billDoc) => billDoc.ref),
+        ...gseSnap.docs.map((paymentDoc) => paymentDoc.ref),
+      ];
+      for (let start = 0; start < recordRefs.length; start += 400) {
+        const batch = writeBatch(db);
+        recordRefs.slice(start, start + 400).forEach((billRef) => batch.delete(billRef));
+        await batch.commit();
+      }
+
+      setElectricityBills((current) => current.filter(isOctopusContractRecord));
+      setWaterBills([]);
+      setTariBills([]);
+      setGsePayments([]);
+      try {
+        localStorage.setItem(`myhome_elec_bills_cache_${uid}`, '[]');
+        localStorage.setItem(`myhome_water_bills_cache_${uid}`, '[]');
+        localStorage.setItem(`myhome_tari_bills_cache_${uid}`, '[]');
+        localStorage.setItem(`myhome_gse_payments_cache_${uid}`, '[]');
+      } catch {
+        // Firebase remains the source of truth if the local cache is unavailable.
+      }
+    } finally {
+      clearingBillArchiveRef.current = false;
+    }
+  }
+
+  async function handleAddWaterBill(bill: Omit<WaterBillRecord, 'id'>, pdfFile?: File) {
+    if (!user) throw new Error('È necessario autenticarsi per importare bollette.');
+    if (!pdfFile) throw new Error('Per registrare una bolletta è necessario caricare il PDF originale.');
     const basePath = `users/${user.uid}/waterBills`;
     const cleanInv = bill.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '');
     const docId = `manual_water_${cleanInv || Date.now()}`;
+    const pdfFileKey = getWaterBillFileKey(bill.invoiceNumber);
+    await saveBillPdfFile(pdfFileKey, pdfFile, user.uid);
     const payload: Record<string, unknown> = {
       ownerId: user.uid,
       invoiceNumber: bill.invoiceNumber.slice(0, 40),
+      pdfFileKey,
       issueDate: bill.issueDate.slice(0, 20),
       year: Number(bill.year),
       period: bill.period.slice(0, 80),
@@ -1600,18 +1726,24 @@ export default function App() {
     try {
       await setDoc(doc(db, basePath, docId), payload);
     } catch (error) {
+      await deleteVaultFiles([pdfFileKey], user.uid);
       handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
+      throw error;
     }
   }
 
-  async function handleAddTariBill(bill: Omit<TariBillRecord, 'id'>) {
-    if (!user) return;
+  async function handleAddTariBill(bill: Omit<TariBillRecord, 'id'>, pdfFile?: File) {
+    if (!user) throw new Error('È necessario autenticarsi per importare bollette.');
+    if (!pdfFile) throw new Error('Per registrare una bolletta è necessario caricare il PDF originale.');
     const basePath = `users/${user.uid}/tariBills`;
     const cleanNotice = bill.noticeNumber.replace(/[^a-zA-Z0-9_-]/g, '');
     const docId = `tari_${cleanNotice || Date.now()}`;
+    const pdfFileKey = getTariBillFileKey(bill.noticeNumber);
+    await saveBillPdfFile(pdfFileKey, pdfFile, user.uid);
     const payload: Record<string, unknown> = {
       ownerId: user.uid,
       noticeNumber: bill.noticeNumber.slice(0, 50),
+      pdfFileKey,
       issueDate: (bill.issueDate || bill.dueDate || '—').slice(0, 20),
       dueDate: (bill.dueDate || bill.issueDate || '—').slice(0, 20),
       year: Number(bill.year),
@@ -1628,7 +1760,9 @@ export default function App() {
     try {
       await setDoc(doc(db, basePath, docId), payload);
     } catch (error) {
+      await deleteVaultFiles([pdfFileKey], user.uid);
       handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
+      throw error;
     }
   }
 
@@ -1643,6 +1777,7 @@ export default function App() {
     const payload: Record<string, unknown> = {
       ownerId: user.uid,
       noticeNumber: bill.noticeNumber.slice(0, 50),
+      pdfFileKey: bill.pdfFileKey || getTariBillFileKey(bill.noticeNumber),
       issueDate: (bill.issueDate || bill.dueDate || '—').slice(0, 20),
       dueDate: (bill.dueDate || bill.issueDate || '—').slice(0, 20),
       year: Number(bill.year),
@@ -1700,31 +1835,93 @@ export default function App() {
     if (payment.note && payment.note.trim()) {
       payload.note = payment.note.trim().slice(0, 240);
     }
+    if (payment.attachmentFileKey) {
+      payload.attachmentFileKey = payment.attachmentFileKey;
+    }
     try {
       await setDoc(doc(db, basePath, docId), payload);
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
+      throw error;
+    }
+  }
+
+  async function handleUpdateGsePayment(
+    id: string,
+    payment: Omit<GsePaymentRecord, 'id'>
+  ) {
+    if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+      throw new Error('Non è stato possibile aggiornare il bonifico GSE.');
+    }
+    const path = `users/${user.uid}/gsePayments/${id}`;
+    const payload: Record<string, unknown> = {
+      ownerId: user.uid,
+      paymentDate: payment.paymentDate.slice(0, 20),
+      year: Number(payment.year),
+      paymentType: payment.paymentType,
+      period: payment.period.slice(0, 80),
+      amountEur: Number(payment.amountEur),
+      createdAt: serverTimestamp(),
+    };
+    if (typeof payment.kwhInjected === 'number' && !Number.isNaN(payment.kwhInjected)) {
+      payload.kwhInjected = Number(payment.kwhInjected);
+    }
+    if (payment.reference?.trim()) payload.reference = payment.reference.trim().slice(0, 80);
+    if (payment.note?.trim()) payload.note = payment.note.trim().slice(0, 240);
+    if (payment.attachmentFileKey) {
+      payload.attachmentFileKey = payment.attachmentFileKey;
+    }
+    try {
+      await setDoc(doc(db, path), payload);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+      throw error;
     }
   }
 
   async function handleDeleteGsePayment(id: string) {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
     const path = `users/${user.uid}/gsePayments/${id}`;
+    const payment = gsePayments.find((entry) => entry.id === id);
     try {
       await deleteDoc(doc(db, path));
+      if (payment?.attachmentFileKey) {
+        await deleteVaultFiles([payment.attachmentFileKey], user.uid);
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
+      throw error;
     }
+  }
+
+  async function saveArticleManual(
+    file: File,
+    articleId: string
+  ): Promise<{ key: string; fileName: string }> {
+    if (!user) throw new Error('Accedi per archiviare il manuale su Firebase.');
+    if (file.size > MAX_CLOUD_FILE_BYTES) {
+      throw new Error(`Il manuale supera il limite di ${Math.floor(MAX_CLOUD_FILE_BYTES / 1_000_000)} MB.`);
+    }
+
+    const key = `article_manual_${articleId}_${Date.now()}`;
+    const stored = await saveVaultFile(key, file, file.name, 'application/pdf', user.uid);
+    if (!stored.cloudSynced) {
+      await deleteVaultFile(key, user.uid);
+      throw new Error('Il manuale non è stato salvato su Firebase. Verifica la connessione e le regole del vault.');
+    }
+    return { key, fileName: stored.fileName };
   }
 
   async function handleAddArticle(
     article: Omit<HomeArticleRecord, 'id'>,
-    customPrefix = 'art'
+    customPrefix = 'art',
+    manualFile?: File
   ) {
     if (!user) return;
     const basePath = `users/${user.uid}/homeArticles`;
     const safePrefix = customPrefix.replace(/[^a-zA-Z0-9_-]/g, '') || 'art';
     const docId = `${safePrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const uploadedManual = manualFile ? await saveArticleManual(manualFile, docId) : undefined;
     const payload: Record<string, unknown> = {
       ownerId: user.uid,
       name: article.name.slice(0, 80),
@@ -1750,10 +1947,24 @@ export default function App() {
     if (article.notes && article.notes.trim()) {
       payload.notes = article.notes.trim().slice(0, 240);
     }
+    if (uploadedManual) {
+      payload.manualFileKey = uploadedManual.key;
+      payload.manualFileName = uploadedManual.fileName;
+    } else if (article.manualFileKey) {
+      payload.manualFileKey = article.manualFileKey;
+      if (article.manualFileName) payload.manualFileName = article.manualFileName;
+    }
+    if (article.manualExtractText?.trim()) {
+      payload.manualExtractText = article.manualExtractText.trim().slice(0, 12_000);
+    }
     try {
       await setDoc(doc(db, basePath, docId), payload);
     } catch (error) {
+      if (uploadedManual) {
+        await deleteVaultFile(uploadedManual.key, user.uid);
+      }
       handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
+      throw error;
     }
   }
 
@@ -2037,9 +2248,15 @@ export default function App() {
       });
   }, [user, climateAutopilot, climateLogs, todayIso]);
 
-  async function handleUpdateArticle(id: string, article: Omit<HomeArticleRecord, 'id'>) {
+  async function handleUpdateArticle(
+    id: string,
+    article: Omit<HomeArticleRecord, 'id'>,
+    manualFile?: File
+  ) {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
     const path = `users/${user.uid}/homeArticles/${id}`;
+    const existingManualKey = homeArticles.find((entry) => entry.id === id)?.manualFileKey;
+    const uploadedManual = manualFile ? await saveArticleManual(manualFile, id) : undefined;
     const payload: Record<string, unknown> = {
       ownerId: user.uid,
       name: article.name.slice(0, 80),
@@ -2065,21 +2282,59 @@ export default function App() {
     if (article.notes && article.notes.trim()) {
       payload.notes = article.notes.trim().slice(0, 240);
     }
+    if (uploadedManual) {
+      payload.manualFileKey = uploadedManual.key;
+      payload.manualFileName = uploadedManual.fileName;
+    } else if (article.manualFileKey) {
+      payload.manualFileKey = article.manualFileKey;
+      if (article.manualFileName) payload.manualFileName = article.manualFileName;
+    }
+    if (article.manualExtractText?.trim()) {
+      payload.manualExtractText = article.manualExtractText.trim().slice(0, 12_000);
+    }
     try {
       await setDoc(doc(db, path), payload);
     } catch (error) {
+      if (uploadedManual) {
+        await deleteVaultFile(uploadedManual.key, user.uid);
+      }
       handleFirestoreError(error, OperationType.UPDATE, path);
+      throw error;
+    }
+    const newManualKey = uploadedManual?.key || article.manualFileKey;
+    if (existingManualKey && existingManualKey !== newManualKey) {
+      await deleteVaultFiles([existingManualKey], user.uid);
     }
   }
 
   async function handleDeleteArticle(id: string) {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
     const path = `users/${user.uid}/homeArticles/${id}`;
+    const article = homeArticles.find((entry) => entry.id === id);
     try {
       await deleteDoc(doc(db, path));
+      if (article?.manualFileKey) {
+        await deleteVaultFiles([article.manualFileKey], user.uid);
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
+      throw error;
     }
+  }
+
+  async function handleDownloadArticleManual(fileKey: string): Promise<void> {
+    if (!user) throw new Error('Accedi per scaricare il manuale archiviato.');
+    const stored = await getVaultFile(fileKey, user.uid);
+    if (!stored) throw new Error('Il manuale non è stato trovato nel vault Firebase.');
+
+    const downloadUrl = URL.createObjectURL(stored.blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = stored.fileName || 'manuale.pdf';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1_000);
   }
 
   if (!authReady) {
@@ -2525,12 +2780,14 @@ export default function App() {
               onConnectGmail={handleManualGmailSync}
               onAddElectricityBill={handleAddElectricityBill}
               onDeleteElectricityBill={handleDeleteElectricityBill}
+              onClearAllBills={handleClearAllBills}
               onAddWaterBill={handleAddWaterBill}
               onAddTariBill={handleAddTariBill}
               onToggleTariPaid={handleToggleTariPaid}
               onDeleteTariBill={handleDeleteTariBill}
               onAddGsePayment={handleAddGsePayment}
               onDeleteGsePayment={handleDeleteGsePayment}
+              onUpdateGsePayment={handleUpdateGsePayment}
             />
           )}
 
@@ -2539,9 +2796,10 @@ export default function App() {
               articles={visibleHomeArticles}
               readOnly={!canEdit}
               onSignIn={handleSignIn}
-              onAddArticle={(art) => handleAddArticle(art)}
+              onAddArticle={(art, manualFile) => handleAddArticle(art, 'art', manualFile)}
               onUpdateArticle={handleUpdateArticle}
               onDeleteArticle={handleDeleteArticle}
+              onDownloadManual={handleDownloadArticleManual}
             />
           )}
 

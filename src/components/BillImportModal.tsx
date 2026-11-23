@@ -17,20 +17,14 @@ import {
   parseBillText,
   parseImportedBillFiles,
 } from '../utils/billImporter';
-import {
-  getElectricityBillFileKey,
-  getTariBillFileKey,
-  getWaterBillFileKey,
-  MAX_CLOUD_FILE_BYTES,
-  saveVaultFile,
-} from '../utils/documentVault';
+import { MAX_CLOUD_FILE_BYTES } from '../utils/documentVault';
 
 interface BillImportModalProps {
   defaultKind?: 'luce' | 'acqua' | 'tari';
   onClose: () => void;
-  onSaveElectricityBill?: (bill: BillRecord) => Promise<void>;
-  onSaveWaterBill?: (bill: Omit<WaterBillRecord, 'id'>) => Promise<void>;
-  onSaveTariBill?: (bill: Omit<TariBillRecord, 'id'>) => Promise<void>;
+  onSaveElectricityBill?: (bill: BillRecord, pdfFile: File) => Promise<void>;
+  onSaveWaterBill?: (bill: Omit<WaterBillRecord, 'id'>, pdfFile: File) => Promise<void>;
+  onSaveTariBill?: (bill: Omit<TariBillRecord, 'id'>, pdfFile: File) => Promise<void>;
 }
 
 export function BillImportModal({
@@ -80,6 +74,11 @@ export function BillImportModal({
 
   async function handleFilesSelected(files: FileList | null) {
     if (!files || files.length === 0) return;
+    if (Array.from(files).some((file) => !isPdfFile(file))) {
+      setErrorMsg('Sono accettati solo PDF originali di bollette reali.');
+      return;
+    }
+
     setParsing(true);
     setErrorMsg(null);
     setSavedCount(0);
@@ -190,36 +189,15 @@ export function BillImportModal({
   }
 
   async function saveDraft(draft: ImportedBillDraft) {
+    if (!draft.sourceFile || !isPdfFile(draft.sourceFile)) {
+      throw new Error('Per registrare una bolletta è necessario allegare il PDF originale.');
+    }
     if (draft.kind === 'luce' && onSaveElectricityBill) {
-      await onSaveElectricityBill(draft.data);
-      if (draft.sourceFile && isPdfFile(draft.sourceFile)) {
-        await saveVaultFile(
-          getElectricityBillFileKey(draft.data.invoiceNumber),
-          draft.sourceFile,
-          draft.sourceFile.name,
-          draft.sourceFile.type
-        );
-      }
+      await onSaveElectricityBill(draft.data, draft.sourceFile);
     } else if (draft.kind === 'acqua' && onSaveWaterBill) {
-      await onSaveWaterBill(draft.data);
-      if (draft.sourceFile && isPdfFile(draft.sourceFile)) {
-        await saveVaultFile(
-          getWaterBillFileKey(draft.data.invoiceNumber),
-          draft.sourceFile,
-          draft.sourceFile.name,
-          draft.sourceFile.type
-        );
-      }
+      await onSaveWaterBill(draft.data, draft.sourceFile);
     } else if (draft.kind === 'tari' && onSaveTariBill) {
-      await onSaveTariBill(draft.data);
-      if (draft.sourceFile && isPdfFile(draft.sourceFile)) {
-        await saveVaultFile(
-          getTariBillFileKey(draft.data.noticeNumber),
-          draft.sourceFile,
-          draft.sourceFile.name,
-          draft.sourceFile.type
-        );
-      }
+      await onSaveTariBill(draft.data, draft.sourceFile);
     } else {
       throw new Error('Salvataggio non disponibile per questo tipo di bolletta (effettua prima il login).');
     }
@@ -270,10 +248,10 @@ export function BillImportModal({
           <div>
             <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
               <FileUp className="w-5 h-5 text-sky-400" />
-              Importa le tue Bollette (PDF / CSV / JSON)
+              Importa bollette da PDF
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Rilevo automaticamente utenza e periodo. Le bollette complete vengono archiviate subito; se manca un dato puoi correggere la bozza prima di salvarla. Il PDF originale resta privato su Firestore.
+              I dati vengono estratti solo dal PDF originale. Se manca un dato puoi correggere la bozza; il PDF deve poter essere archiviato su Firebase prima di registrare la bolletta.
             </p>
           </div>
           <button
@@ -325,7 +303,7 @@ export function BillImportModal({
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".pdf,.csv,.txt,.json,application/pdf,text/csv,application/json"
+                accept=".pdf,application/pdf"
                 onChange={(e) => void handleFilesSelected(e.target.files)}
                 className="hidden"
               />
@@ -343,7 +321,7 @@ export function BillImportModal({
                 ) : (
                   <>
                     <FileUp className="w-4 h-4" />
-                    Scegli file (.pdf, .csv, .json)
+                    Scegli PDF
                   </>
                 )}
               </button>
@@ -367,7 +345,7 @@ export function BillImportModal({
           {drafts.length === 0 ? (
             <div className="text-center py-8 text-xs text-slate-500 space-y-1">
               <p>Nessun file ancora in coda.</p>
-              <p>Puoi caricare PDF Edison, Octopus Energy, Enel, AcegasApsAmga Acqua, TARI oppure CSV/JSON.</p>
+              <p>Carica il PDF originale di una bolletta Luce, Acqua o TARI.</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -408,11 +386,9 @@ export function BillImportModal({
                                 : 'bg-slate-800 text-slate-300 border-slate-700'
                           }`}
                         >
-                          {isPdfFile(draft.sourceFile)
-                            ? draft.sourceFile.size > MAX_CLOUD_FILE_BYTES
-                              ? 'PDF > 6 MB (solo locale)'
-                              : 'PDF originale incluso al salvataggio'
-                            : 'File CSV/JSON usato per importazione'}
+                          {draft.sourceFile.size > MAX_CLOUD_FILE_BYTES
+                            ? 'PDF oltre il limite Firebase'
+                            : 'PDF originale richiesto'}
                         </span>
                       )}
                       <span

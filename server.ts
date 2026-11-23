@@ -56,6 +56,7 @@ interface RawSearchItem {
   category?: string;
   suggestedRoom?: string;
   specs?: string;
+  productUrl?: string;
   manualUrl?: string;
   manualSummary?: string;
 }
@@ -230,52 +231,6 @@ function inferRoomFromText(text: string, cat: string): string {
   return 'Salone';
 }
 
-async function lookupWikidataEntities(query: string): Promise<SearchResultDto[]> {
-  try {
-    const url = `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(
-      query
-    )}&language=it&uselang=it&limit=4&format=json`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(3500) });
-    if (!res.ok) return [];
-    const data = (await res.json()) as {
-      search?: { id: string; label?: string; description?: string; concepturi?: string }[];
-    };
-    const items = data.search || [];
-    return items.slice(0, 4).map((item, idx) => {
-      const label = (item.label || query).trim();
-      const desc = (item.description || '').trim();
-      const parts = label.split(/\s+/);
-      const brand = parts[0] || 'Da completare';
-      const model = parts.slice(1).join(' ') || label;
-      const category = inferCategoryFromText(`${label} ${desc}`);
-      const manualUrl = buildManufacturerSupportUrl(brand, model);
-      return {
-        id: `wd_${item.id}_${idx}`,
-        name: label.slice(0, 80),
-        brand: brand.slice(0, 60),
-        model: model.slice(0, 80),
-        category,
-        suggestedRoom: inferRoomFromText(`${label} ${desc}`, category),
-        specs: (desc || `${label} · scheda web`).slice(0, 240),
-        manualUrl,
-        manualSummary: desc
-          ? `${label}: ${desc}. Consulta il portale supporto o il manuale PDF ufficiale.`
-          : `Scheda tecnica trovata online per ${label}.`,
-        sourceUrls: [
-          {
-            title: `Wikidata: ${label}`,
-            url: item.concepturi || `https://www.wikidata.org/wiki/${item.id}`,
-          },
-          { title: 'Supporto & Manuali Produttore', url: manualUrl },
-        ],
-        providerLabel: 'Ricerca Web / Produttore',
-      };
-    });
-  } catch {
-    return [];
-  }
-}
-
 async function lookupWikipediaSummaryIt(query: string): Promise<{
   title: string;
   extract: string;
@@ -314,44 +269,6 @@ async function lookupWikipediaSummaryIt(query: string): Promise<{
   } catch {
     return null;
   }
-}
-
-function buildFallbackSearchPayload(
-  rawQuery: string,
-  wikiItems: SearchResultDto[]
-): { results: SearchResultDto[]; provider: string } {
-  const tokens = rawQuery.trim().split(/\s+/).filter(Boolean);
-  const guessedBrandRaw = tokens.length >= 2 ? tokens[0] : 'Da completare';
-  const guessedBrand = guessedBrandRaw.charAt(0).toUpperCase() + guessedBrandRaw.slice(1);
-  const guessedModel = tokens.length >= 2 ? tokens.slice(1).join(' ') : rawQuery;
-  const category = inferCategoryFromText(rawQuery);
-  const manualUrl = buildManufacturerSupportUrl(guessedBrand, guessedModel);
-  const pdfSearchUrl = `https://www.google.com/search?q=${encodeURIComponent(
-    `${guessedBrand} ${guessedModel} manuale istruzioni filetype:pdf`
-  )}`;
-
-  const directEntry: SearchResultDto = {
-    id: `web_${Date.now()}`,
-    name: rawQuery.slice(0, 80),
-    brand: guessedBrand.slice(0, 60),
-    model: guessedModel.slice(0, 80),
-    category,
-    suggestedRoom: inferRoomFromText(rawQuery, category),
-    specs: `Articolo ricercato online (${guessedBrand} ${guessedModel}) con link al portale manuali ufficiale.`,
-    manualUrl,
-    manualSummary: `Scheda predisposta per "${rawQuery}" con ricerca diretta sul portale supporto ${guessedBrand} e manuale PDF.`,
-    sourceUrls: [
-      { title: `Supporto ufficiale ${guessedBrand}`, url: manualUrl },
-      { title: 'Ricerca manuale PDF italiano', url: pdfSearchUrl },
-    ],
-    providerLabel: 'Ricerca Web / Portale Produttore',
-  };
-
-  const results = [directEntry, ...wikiItems].slice(0, 5);
-  return {
-    results,
-    provider: 'Ricerca Web Gratuita (Produttore + Wikidata)',
-  };
 }
 
 function buildFallbackManualPayload(
@@ -471,16 +388,20 @@ async function startServer() {
     if (ai) {
       try {
         const prompt = [
-          `Cerca online prodotti, elettrodomestici o dispositivi reali corrispondenti a: "${rawQuery}".`,
+          `Usa Google Search per trovare prodotti reali in vendita in Italia che corrispondono a: "${rawQuery}".`,
+          'Comportati come un catalogo di prodotti: restituisci da 3 a 5 modelli distinti e specifici, come una ricerca in un negozio online.',
+          'Per strumenti musicali come chitarre, includi modelli reali e distinti della marca richiesta (es. serie e codice esatto), non la pagina generica della marca.',
+          'Usa esclusivamente modelli e URL di prodotto supportati dalle fonti Google Search citate. Non inventare nomi, codici, prezzi o caratteristiche; ometti i prodotti senza una fonte verificabile.',
           'Restituisci SOLO un array JSON valido (massimo 5 elementi) senza testo extra, con questi campi per ciascun risultato:',
-          '- name: nome chiaro in italiano (max 70 caratteri, es. "Lavastoviglie da incasso 60cm")',
-          '- brand: marca ufficiale (es. "Bosch", "Samsung", "Electrolux", "TCL")',
-          '- model: codice modello esatto (es. "SMV4ECX14E")',
+          '- name: nome prodotto in italiano con tipo e modello esatto (max 80 caratteri)',
+          '- brand: marca ufficiale',
+          '- model: codice o nome modello esatto, non la query dell’utente',
           '- category: uno solo tra ["elettrodomestici", "elettronica", "sicurezza", "fotovoltaico", "clima", "altro"]',
           '- suggestedRoom: stanza tipica tra ["Cucina", "Salone", "Stanza Maurizio", "Stanza Roberta", "Matrimoniale", "Bagno 1", "Bagno 2", "Locale Tecnico / Esterno", "Casa / Ingresso"]',
-          '- specs: sintesi specifiche tecniche reali in italiano (max 210 caratteri)',
-          '- manualUrl: URL diretto o pagina supporto ufficiale del manuale/scheda del produttore',
-          '- manualSummary: sintesi pratica di utilizzo e manutenzione dal manuale (2-3 frasi in italiano)',
+          '- specs: breve sintesi delle caratteristiche che compaiono nella fonte (max 210 caratteri)',
+          '- productUrl: URL esatto della pagina del prodotto in una fonte Google Search citata, preferibilmente rivenditore con pagina modello specifica',
+          '- manualUrl: URL del manuale/supporto ufficiale, solo se trovato; altrimenti stringa vuota',
+          '- manualSummary: breve descrizione basata sulla pagina prodotto, senza istruzioni o dati non verificati',
         ].join('\n');
 
         const response = await ai.models.generateContent({
@@ -502,37 +423,61 @@ async function startServer() {
           .slice(0, 6);
 
         const parsed = extractJsonFromText<RawSearchItem[]>(response.text || '');
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const results: SearchResultDto[] = parsed.slice(0, 5).map((item, idx) => {
-            const cat = VALID_CATEGORIES.has(String(item.category || '').toLowerCase())
-              ? String(item.category).toLowerCase()
-              : 'altro';
-            const brand = String(item.brand || 'Da completare').trim().slice(0, 60);
-            const model = String(item.model || rawQuery).trim().slice(0, 80);
-            const fallbackManualUrl = buildManufacturerSupportUrl(brand, model);
-            const candidateUrl =
-              typeof item.manualUrl === 'string' && item.manualUrl.startsWith('http')
-                ? item.manualUrl
-                : sourceUrls[0]?.url || fallbackManualUrl;
+        const normalizeUrl = (value: string) => value.replace(/\/+$/, '').toLowerCase();
+        const verifiedSources = new Map(
+          sourceUrls.map((source) => [normalizeUrl(source.url), source])
+        );
+        const results: SearchResultDto[] = Array.isArray(parsed)
+          ? parsed
+              .slice(0, 10)
+              .flatMap((item, idx) => {
+                const brand = String(item.brand || '').trim().slice(0, 60);
+                const model = String(item.model || '').trim().slice(0, 80);
+                const name = String(item.name || `${brand} ${model}`).trim().slice(0, 80);
+                const productSource =
+                  typeof item.productUrl === 'string'
+                    ? verifiedSources.get(normalizeUrl(item.productUrl))
+                    : undefined;
+                if (!brand || !model || !productSource) return [];
 
-            return {
-              id: `web_${Date.now()}_${idx}`,
-              name: String(item.name || `${brand} ${model}`).trim().slice(0, 80),
-              brand,
-              model,
-              category: cat,
-              suggestedRoom: String(item.suggestedRoom || 'Cucina').trim().slice(0, 60),
-              specs: String(item.specs || '').trim().slice(0, 240),
-              manualUrl: candidateUrl,
-              manualSummary: String(item.manualSummary || '').trim(),
-              sourceUrls,
-              providerLabel: 'Google Search Online',
-            };
-          });
+                const category = VALID_CATEGORIES.has(String(item.category || '').toLowerCase())
+                  ? String(item.category).toLowerCase()
+                  : 'altro';
+                const manualUrl =
+                  typeof item.manualUrl === 'string' && item.manualUrl.startsWith('https://')
+                    ? item.manualUrl
+                    : buildManufacturerSupportUrl(brand, model);
 
+                return [{
+                  id: `web_${Date.now()}_${idx}`,
+                  name,
+                  brand,
+                  model,
+                  category,
+                  suggestedRoom: String(
+                    item.suggestedRoom || inferRoomFromText(`${name} ${brand} ${model}`, category)
+                  ).trim().slice(0, 60),
+                  specs: String(item.specs || '').trim().slice(0, 240),
+                  manualUrl,
+                  manualSummary: String(item.manualSummary || '').trim().slice(0, 240),
+                  sourceUrls: [productSource],
+                  providerLabel: 'Google Search · prodotto verificato',
+                }];
+              })
+          : [];
+
+        const uniqueResults = results.filter(
+          (item, index, all) =>
+            all.findIndex(
+              (candidate) =>
+                candidate.brand.toLowerCase() === item.brand.toLowerCase() &&
+                candidate.model.toLowerCase() === item.model.toLowerCase()
+            ) === index
+        );
+        if (uniqueResults.length > 0) {
           const payload = {
-            results,
-            provider: 'Ricerca Web Live (Google Search)',
+            results: uniqueResults.slice(0, 5),
+            provider: 'Ricerca prodotti live · Google Search',
           };
           searchCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, data: payload });
           res.json(payload);
@@ -545,11 +490,12 @@ async function startServer() {
       }
     }
 
-    // Free zero-quota fallback (never fails, never hits billing/quota limits)
-    const wikiItems = await lookupWikidataEntities(rawQuery);
-    const fallbackPayload = buildFallbackSearchPayload(rawQuery, wikiItems);
-    searchCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, data: fallbackPayload });
-    res.json(fallbackPayload);
+    const emptyResult = {
+      results: [],
+      provider: 'Nessun prodotto verificabile trovato; prova con marca e categoria o usa Google Shopping.',
+    };
+    searchCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, data: emptyResult });
+    res.json(emptyResult);
   });
 
   app.post('/api/articles/manual', async (req, res) => {

@@ -38,6 +38,15 @@ export interface OnlineArticleSearchResult {
   providerLabel: string;
 }
 
+export interface ExtractedArticleManualDetails {
+  name: string;
+  brand: string;
+  model: string;
+  category: HomeArticleCategory;
+  room: string;
+  specs: string;
+}
+
 const MANUAL_MARKER_RE = /\s*\[Manuale:\s*(https?:\/\/[^\s\]]+)\]\s*/i;
 const CUSTOM_GUIDES_STORAGE_KEY = 'myhome_article_manuals_v1';
 
@@ -527,21 +536,6 @@ function getCachedManualStore(): Record<string, Partial<ArticleManualGuide>> {
   }
 }
 
-export function saveCachedManualGuide(
-  brand: string,
-  model: string,
-  patch: Partial<ArticleManualGuide>
-): void {
-  const key = `${brand.trim().toLowerCase()}|${model.trim().toLowerCase()}`;
-  try {
-    const store = getCachedManualStore();
-    store[key] = { ...(store[key] || {}), ...patch };
-    localStorage.setItem(CUSTOM_GUIDES_STORAGE_KEY, JSON.stringify(store));
-  } catch {
-    // ignore storage quota errors
-  }
-}
-
 export function getArticleManualGuide(article: HomeArticleRecord): ArticleManualGuide {
   const { manualUrl: unpackedUrl, userNotes } = unpackArticleNotes(article.notes);
   const supportSearchUrl = buildManufacturerManualSearchUrl(article.brand, article.model);
@@ -708,188 +702,101 @@ function inferRoomFromText(text: string, cat: HomeArticleCategory): string {
   return 'Salone';
 }
 
-async function searchWikidataFallback(query: string): Promise<OnlineArticleSearchResult[]> {
-  const url = `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(
-    query
-  )}&language=it&uselang=it&limit=4&format=json&origin=*`;
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return [];
-    const data = (await res.json()) as {
-      search?: { id: string; label?: string; description?: string; concepturi?: string }[];
-    };
-    const items = data.search || [];
-    return items.slice(0, 3).map((item, idx) => {
-      const label = (item.label || query).trim();
-      const desc = (item.description || '').trim();
-      const words = label.split(/\s+/);
-      const brand = words[0] || 'Da completare';
-      const model = words.slice(1).join(' ') || label;
-      const cat = inferCategoryFromText(`${label} ${desc}`);
-      const manualUrl = buildManufacturerManualSearchUrl(brand, model);
-      return {
-        id: `wd_${item.id}_${idx}`,
-        name: label.slice(0, 80),
-        brand: brand.slice(0, 60),
-        model: model.slice(0, 80),
-        category: cat,
-        suggestedRoom: inferRoomFromText(`${label} ${desc}`, cat),
-        specs: (desc || `${label} · scheda trovata online su Wikidata`).slice(0, 240),
-        manualUrl,
-        manualSummary: desc
-          ? `${label}: ${desc}. Consulta il manuale ufficiale o avvia la ricerca PDF diretta.`
-          : `Scheda base trovata online per ${label}.`,
-        sourceUrls: [
-          {
-            title: `Wikidata: ${label}`,
-            url: item.concepturi || `https://www.wikidata.org/wiki/${item.id}`,
-          },
-          { title: 'Cerca Manuale PDF', url: manualUrl },
-        ],
-        providerLabel: 'Ricerca Web / Catalogo',
-      };
-    });
-  } catch {
-    return [];
-  }
+export function extractArticleManualDetails(
+  text: string,
+  fileName: string
+): ExtractedArticleManualDetails {
+  const fileLabel = fileName.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').trim();
+  const cleanedFileLabel = fileLabel
+    .replace(/^(?:manuale|manual|scheda tecnica|scheda|istruzioni|datasheet)\s*/i, '')
+    .trim();
+  const source = `${fileLabel}\n${text}`.slice(0, 20_000);
+  const brands = [
+    'AEG', 'Ariston', 'AVS', 'Beko', 'Bosch', 'Candy', 'Daikin', 'DeLonghi',
+    'Dyson', 'Electrolux', 'Fender', 'Gibson', 'Haier', 'Hisense', 'Ibanez',
+    'Indesit', 'LG', 'Miele', 'Panasonic', 'Samsung', 'Siemens', 'Sony',
+    'TCL', 'Whirlpool', 'Yamaha',
+  ];
+  const brand =
+    brands.find((candidate) =>
+      new RegExp(`(^|[^a-z0-9])${candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i').test(source)
+    ) || '';
+  const modelMatch = source.match(
+    /(?:model(?:lo)?(?:\s*(?:number|n\.?))?|type|codice\s+modello|model\s+code)\s*[:#-]?\s*([a-z0-9][a-z0-9._/-]{2,})/i
+  );
+  const filenameTokens = fileLabel.split(/\s+/).filter(Boolean);
+  const modelFromFile = filenameTokens.find(
+    (token) =>
+      token.toLowerCase() !== brand.toLowerCase() &&
+      token.length >= 4 &&
+      /[a-z]/i.test(token) &&
+      /\d/.test(token)
+  );
+  const model = (modelMatch?.[1] || modelFromFile || '').replace(/[.,;:]$/, '').slice(0, 80);
+  const category = inferCategoryFromText(`${fileLabel} ${text.slice(0, 4000)}`);
+  const room = inferRoomFromText(`${fileLabel} ${text.slice(0, 1000)}`, category);
+  const productType =
+    /(frigorifero|frigo)/i.test(source) ? 'Frigorifero'
+    : /(piano\s+(?:a\s+)?induzione|induction hob)/i.test(source) ? 'Piano a induzione'
+      : /lavastoviglie/i.test(source) ? 'Lavastoviglie'
+        : /lavatrice/i.test(source) ? 'Lavatrice'
+          : /chitarra/i.test(source) ? 'Chitarra'
+            : '';
+  const specLines = Array.from(
+    new Set(
+      text
+        .split(/\r?\n/)
+        .map((line) => line.replace(/\s+/g, ' ').trim())
+        .filter(
+          (line) =>
+            line.length >= 8 &&
+            line.length <= 180 &&
+            /(specifiche|potenza|capacità|dimension|consumo|classe energetica|efficienza|frequenza|voltaggio|tensione|pressione|temperatura|rumore|dB|kwh|kw\b|w\b|volt|litri|kg\b|mm\b|cm\b|pollici|giri\/min|rpm)/i.test(
+              line
+            )
+        )
+    )
+  );
+  const specs = (specLines.length > 0 ? specLines.join(' · ') : '').slice(0, 240);
+  const genericFileLabel = /^(?:manuale?|scheda(?: tecnica)?|istruzioni|datasheet|documento)$/i.test(
+    fileLabel
+  );
+  const name =
+    (genericFileLabel
+      ? [productType, brand, model].filter(Boolean).join(' ')
+      : cleanedFileLabel || [productType, brand, model].filter(Boolean).join(' ')).slice(0, 80);
+
+  return { name, brand, model, category, room, specs };
 }
 
 export async function searchArticlesOnline(query: string): Promise<{
   results: OnlineArticleSearchResult[];
   provider: string;
+  unavailable?: boolean;
 }> {
   const trimmed = query.trim();
-  if (!trimmed) return { results: [], provider: 'none' };
+  if (!trimmed) return { results: [], provider: '' };
 
-  // 1. Try server-side Google Search grounded Gemini search (works in AI Studio / Cloud Run)
   try {
-    const res = await fetch('/api/articles/search', {
+    const response = await fetch('/api/articles/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query: trimmed }),
     });
-    if (res.ok) {
-      const json = (await res.json()) as {
-        results?: OnlineArticleSearchResult[];
-        provider?: string;
-      };
-      if (Array.isArray(json.results) && json.results.length > 0) {
-        return {
-          results: json.results,
-          provider: json.provider || 'Ricerca Online (Google Search)',
-        };
-      }
+    if (!response.ok) {
+      return { results: [], provider: 'Ricerca integrata non disponibile', unavailable: true };
     }
+
+    const payload = (await response.json()) as {
+      results?: OnlineArticleSearchResult[];
+      provider?: string;
+    };
+    return {
+      results: Array.isArray(payload.results) ? payload.results : [],
+      provider: payload.provider || 'Ricerca prodotti',
+    };
   } catch {
-    // Static deploy (e.g. GitHub Pages) or backend unavailable -> fallback gracefully
-  }
-
-  // 2. Curated + Wikidata CORS fallback (always works offline or on static GitHub Pages)
-  const tokens = trimmed.toLowerCase().split(/\s+/).filter(Boolean);
-  const curatedMatches: OnlineArticleSearchResult[] = [];
-
-  for (const item of CURATED_DEVICES) {
-    if (!item.catalogCandidate) continue;
-    const hay = `${item.catalogCandidate.name} ${item.catalogCandidate.brand} ${item.catalogCandidate.model} ${item.catalogCandidate.specs}`.toLowerCase();
-    if (tokens.some((t) => hay.includes(t))) {
-      curatedMatches.push({
-        id: `cur_${item.catalogCandidate.brand}_${item.catalogCandidate.model}`.replace(/[^a-z0-9_]/gi, '_'),
-        ...item.catalogCandidate,
-        providerLabel: 'Catalogo Tecnico + Manuale',
-      });
-    }
-  }
-
-  for (const item of SUPPLEMENTAL_SEARCH_CATALOG) {
-    const hay = `${item.name} ${item.brand} ${item.model} ${item.specs} ${item.suggestedRoom}`.toLowerCase();
-    if (tokens.every((t) => hay.includes(t)) || tokens.some((t) => t.length >= 3 && hay.includes(t))) {
-      curatedMatches.push({
-        id: `sup_${item.brand}_${item.model}`.replace(/[^a-z0-9_]/gi, '_'),
-        ...item,
-        providerLabel: 'Catalogo Tecnico + Manuale',
-      });
-    }
-  }
-
-  const wikidataMatches = await searchWikidataFallback(trimmed);
-
-  // Also synthesize a clean smart card from the exact user query so any arbitrary model can be added in 1 click
-  const parts = trimmed.split(/\s+/);
-  const guessedBrand = parts.length >= 2 ? parts[0] : 'Da completare';
-  const guessedModel = parts.length >= 2 ? parts.slice(1).join(' ') : trimmed;
-  const guessedCat = inferCategoryFromText(trimmed);
-  const directManualUrl = buildManufacturerManualSearchUrl(guessedBrand, guessedModel);
-
-  const syntheticEntry: OnlineArticleSearchResult = {
-    id: `custom_web_${Date.now()}`,
-    name: trimmed.slice(0, 80),
-    brand: (guessedBrand.charAt(0).toUpperCase() + guessedBrand.slice(1)).slice(0, 60),
-    model: guessedModel.slice(0, 80),
-    category: guessedCat,
-    suggestedRoom: inferRoomFromText(trimmed, guessedCat),
-    specs: `Articolo aggiunto da ricerca online (${trimmed})`,
-    manualUrl: directManualUrl,
-    manualSummary: `Scheda generata per "${trimmed}" con link diretto di ricerca manuale ufficiale PDF.`,
-    sourceUrls: [{ title: 'Cerca manuale ufficiale PDF', url: directManualUrl }],
-    providerLabel: 'Scheda Rapida + Ricerca Manuale',
-  };
-
-  const merged = [...curatedMatches, ...wikidataMatches];
-  const deduped: OnlineArticleSearchResult[] = [];
-  const seen = new Set<string>();
-  for (const r of merged) {
-    const k = `${r.brand.toLowerCase()}|${r.model.toLowerCase()}`;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    deduped.push(r);
-  }
-  if (
-    deduped.length === 0 ||
-    !deduped.some(
-      (r) => `${r.brand} ${r.model}`.toLowerCase() === `${guessedBrand} ${guessedModel}`.toLowerCase()
-    )
-  ) {
-    deduped.push(syntheticEntry);
-  }
-
-  return {
-    results: deduped.slice(0, 8),
-    provider: curatedMatches.length > 0 || wikidataMatches.length > 0 ? 'Ricerca Catalogo & Web' : 'Ricerca Web',
-  };
-}
-
-export async function fetchOnlineManualDetails(
-  article: HomeArticleRecord
-): Promise<Partial<ArticleManualGuide> | null> {
-  const fullKey = `${article.brand} ${article.model} ${article.name}`.toLowerCase();
-  const hasCuratedGuide = CURATED_DEVICES.some((d) => d.match(fullKey));
-
-  try {
-    const res = await fetch('/api/articles/manual', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: article.name,
-        brand: article.brand,
-        model: article.model,
-        category: article.category,
-      }),
-    });
-    if (!res.ok) return null;
-    const json = (await res.json()) as Partial<ArticleManualGuide>;
-    if (json && (json.summary || json.manualUrl)) {
-      if (json.sourceType === 'online' || !hasCuratedGuide) {
-        saveCachedManualGuide(article.brand, article.model, json);
-      } else if (json.sourceUrls?.length) {
-        saveCachedManualGuide(article.brand, article.model, {
-          sourceUrls: json.sourceUrls,
-        });
-      }
-      return json;
-    }
-    return null;
-  } catch {
-    return null;
+    return { results: [], provider: 'Ricerca integrata non disponibile', unavailable: true };
   }
 }
 

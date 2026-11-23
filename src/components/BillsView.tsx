@@ -8,7 +8,9 @@ import {
   FileUp,
   HelpCircle,
   Mail,
+  Paperclip,
   PenLine,
+  Pencil,
   Plus,
   Receipt,
   Share2,
@@ -24,9 +26,11 @@ import {
   buildTariBillSharePayload,
   buildWaterBillSharePayload,
   downloadShareableItem,
+  deleteVaultFiles,
   getElectricityBillFileKey,
   getTariBillFileKey,
   getWaterBillFileKey,
+  isOctopusContractRecord,
   listVaultFileMetadata,
   saveVaultFile,
   ShareableItemPayload,
@@ -37,12 +41,10 @@ import {
   BillRecord,
   EnergyReading,
   GsePaymentRecord,
-  GsePaymentType,
   SupplierMarketOffer,
   TariBillRecord,
   WaterBillRecord,
 } from '../types/home';
-import { SEED_ELECTRICITY_BILLS, SEED_WATER_BILLS } from '../data/billsSeed';
 import {
   compareSortValues,
   parseFirstPunNumber,
@@ -64,14 +66,16 @@ interface BillsViewProps {
   isGmailConnected?: boolean;
   onSignIn?: () => void;
   onConnectGmail?: () => void;
-  onAddElectricityBill?: (bill: BillRecord) => Promise<void>;
+  onAddElectricityBill?: (bill: BillRecord, pdfFile?: File) => Promise<void>;
   onDeleteElectricityBill?: (bill: BillRecord) => Promise<void>;
-  onAddWaterBill?: (bill: Omit<WaterBillRecord, 'id'>) => Promise<void>;
-  onAddTariBill?: (bill: Omit<TariBillRecord, 'id'>) => Promise<void>;
+  onClearAllBills?: () => Promise<void>;
+  onAddWaterBill?: (bill: Omit<WaterBillRecord, 'id'>, pdfFile?: File) => Promise<void>;
+  onAddTariBill?: (bill: Omit<TariBillRecord, 'id'>, pdfFile?: File) => Promise<void>;
   onToggleTariPaid?: (bill: TariBillRecord) => Promise<void>;
   onDeleteTariBill?: (id: string) => Promise<void>;
   onAddGsePayment?: (payment: Omit<GsePaymentRecord, 'id'>) => Promise<void>;
   onDeleteGsePayment?: (id: string) => Promise<void>;
+  onUpdateGsePayment?: (id: string, payment: Omit<GsePaymentRecord, 'id'>) => Promise<void>;
 }
 
 interface SupplierOfferSummary {
@@ -99,32 +103,65 @@ export function BillsView({
   onConnectGmail,
   onAddElectricityBill,
   onDeleteElectricityBill,
+  onClearAllBills,
   onAddWaterBill,
   onAddTariBill,
   onToggleTariPaid,
   onDeleteTariBill,
   onAddGsePayment,
   onDeleteGsePayment,
+  onUpdateGsePayment,
 }: BillsViewProps) {
   const [utilityTab, setUtilityTab] = useState<'luce' | 'acqua' | 'tari' | 'gse'>('luce');
+  const [vaultMeta, setVaultMeta] = useState<Record<string, VaultFileMeta>>({});
 
-  const bills = useMemo(() => {
-    return propElectricityBills && propElectricityBills.length > 0
-      ? propElectricityBills
-      : SEED_ELECTRICITY_BILLS;
+  const allElectricityRecords = useMemo(() => {
+    return propElectricityBills ?? [];
   }, [propElectricityBills]);
 
+  const octopusContractRecords = useMemo(
+    () => allElectricityRecords.filter(isOctopusContractRecord),
+    [allElectricityRecords]
+  );
+  const octopusContractToManage = useMemo(
+    () => propElectricityBills?.find(isOctopusContractRecord) ?? null,
+    [propElectricityBills]
+  );
+  const bills = useMemo(
+    () =>
+      allElectricityRecords.filter(
+        (bill) => {
+          const fileKey = bill.pdfFileKey || getElectricityBillFileKey(bill.invoiceNumber);
+          return (
+            !isOctopusContractRecord(bill) &&
+            (readOnly ? Boolean(bill.pdfFileKey) : Boolean(vaultMeta[fileKey]))
+          );
+        }
+      ),
+    [allElectricityRecords, readOnly, vaultMeta]
+  );
+
   const waterBills = useMemo(() => {
-    const list =
-      propWaterBills && propWaterBills.length > 0 ? propWaterBills : SEED_WATER_BILLS;
-    return [...list].sort((a, b) => a.invoiceNumber.localeCompare(b.invoiceNumber));
-  }, [propWaterBills]);
+    return [...(propWaterBills ?? [])]
+      .filter((bill) =>
+        readOnly
+          ? Boolean(bill.pdfFileKey)
+          : Boolean(
+              vaultMeta[bill.pdfFileKey || getWaterBillFileKey(bill.invoiceNumber)]
+            )
+      )
+      .sort((a, b) => a.invoiceNumber.localeCompare(b.invoiceNumber));
+  }, [propWaterBills, readOnly, vaultMeta]);
 
   const tariBills = useMemo(() => {
-    return [...propTariBills].sort(
-      (a, b) => b.year - a.year || a.noticeNumber.localeCompare(b.noticeNumber)
-    );
-  }, [propTariBills]);
+    return [...propTariBills]
+      .filter((bill) =>
+        readOnly
+          ? Boolean(bill.pdfFileKey)
+          : Boolean(vaultMeta[bill.pdfFileKey || getTariBillFileKey(bill.noticeNumber)])
+      )
+      .sort((a, b) => b.year - a.year || a.noticeNumber.localeCompare(b.noticeNumber));
+  }, [propTariBills, readOnly, vaultMeta]);
 
   const gsePayments = useMemo(
     () => [...propGsePayments].sort((a, b) => b.paymentDate.localeCompare(a.paymentDate)),
@@ -132,6 +169,7 @@ export function BillsView({
   );
 
   const [selectedBillYear, setSelectedBillYear] = useState<string>('all');
+  const [selectedBillSupplier, setSelectedBillSupplier] = useState<string>('all');
   const [selectedWaterYear, setSelectedWaterYear] = useState<string>('all');
 
   type ElecSortKey =
@@ -144,7 +182,7 @@ export function BillsView({
     | 'total';
   type WaterSortKey = 'period' | 'invoice' | 'mc' | 'fixed' | 'total';
   type TariSortKey = 'period' | 'notice' | 'due' | 'source' | 'paid' | 'total';
-  type GseSortKey = 'date' | 'type' | 'period' | 'reference' | 'kwh' | 'amount';
+  type GseSortKey = 'date' | 'amount';
 
   const [elecSort, setElecSort] = useState<SortState<ElecSortKey>>({
     key: 'period',
@@ -163,72 +201,6 @@ export function BillsView({
     dir: 'desc',
   });
 
-  const TRACKED_SUPPLIERS_DEFAULT: SupplierMarketOffer[] = [
-    {
-      supplier: 'Octopus Energy',
-      offerName: 'Octopus Fissa 12M / 24M',
-      rateEurKwh: 0.1727,
-      fixedEurMonth: 6.0,
-      estAnnualEur: 469.21,
-      url: 'https://octopusenergy.it/offerta/tariffe',
-      status: 'ok',
-    },
-    {
-      supplier: 'ENGIE',
-      offerName: 'Energia PuntoFisso 24M Solo Luce',
-      rateEurKwh: 0.158,
-      fixedEurMonth: 7.0,
-      estAnnualEur: 447.4,
-      url: 'https://www.engie.it/casa/offerte-luce-gas/energia-puntofisso-24mesi-singleele/',
-      status: 'ok',
-    },
-    {
-      supplier: 'Eni Plenitude',
-      offerName: 'Fixa Time Luce',
-      rateEurKwh: 0.2339,
-      fixedEurMonth: 8.0,
-      estAnnualEur: 633.97,
-      url: 'https://eniplenitude.com/offerta/casa/gas-e-luce/fixa-time',
-      status: 'ok',
-    },
-    {
-      supplier: 'E.ON Energia',
-      offerName: 'LuceClick 24M Verde',
-      rateEurKwh: 0.1507,
-      fixedEurMonth: 9.09,
-      estAnnualEur: 455.69,
-      url: 'https://www.eon-energia.com/luce/casa/offerta-luce-prezzo-fisso-24-mesi.html',
-      status: 'ok',
-    },
-    {
-      supplier: 'NeN',
-      offerName: 'Luce Due 24M (Dieci 10A: 0.129 €/kWh)',
-      rateEurKwh: 0.179,
-      fixedEurMonth: 9.0,
-      estAnnualEur: 519.7,
-      url: 'https://nen.it/offerte-e-prezzi/prezzo-bloccato',
-      status: 'ok',
-    },
-    {
-      supplier: 'Sorgenia',
-      offerName: 'Next Energy Luce Casa',
-      rateEurKwh: 0.17,
-      fixedEurMonth: 9.5,
-      estAnnualEur: 505.0,
-      url: 'https://www.sorgenia.it/offerte-luce-casa',
-      status: 'ok',
-    },
-    {
-      supplier: 'Enel Energia',
-      offerName: 'Enel Fix Web Luce',
-      rateEurKwh: 0.199,
-      fixedEurMonth: 12.0,
-      estAnnualEur: 601.7,
-      url: 'https://www.enel.it/it-it/offerte-luce/enel-fix-web-luce',
-      status: 'ok',
-    },
-  ];
-
   const [marketMonitor, setMarketMonitor] = useState<{
     myLockedRate: number;
     myFixedEurMonth: number;
@@ -239,21 +211,22 @@ export function BillsView({
   }>({
     myLockedRate: 0.1595,
     myFixedEurMonth: 6.0,
-    currentRate: 0.1727,
-    updatedAt: '2026-11-21T23:45:01Z',
-    competitors: TRACKED_SUPPLIERS_DEFAULT,
-    bestCompetitor: TRACKED_SUPPLIERS_DEFAULT[1],
+    currentRate: null,
+    updatedAt: null,
+    competitors: [],
+    bestCompetitor: null,
   });
 
-  // Form states per caricamenti manuali
   const [importModalKind, setImportModalKind] = useState<'auto' | 'luce' | 'acqua' | 'tari' | null>(null);
   const [shareBillItem, setShareBillItem] = useState<ShareableItemPayload | null>(null);
   const [deleteBillFromShare, setDeleteBillFromShare] = useState<BillRecord | null>(null);
-  const [vaultMeta, setVaultMeta] = useState<Record<string, VaultFileMeta>>({});
   const attachFileInputRef = useRef<HTMLInputElement | null>(null);
   const [attachingFileKey, setAttachingFileKey] = useState<string | null>(null);
+  const gseAttachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const [attachingGsePaymentId, setAttachingGsePaymentId] = useState<string | null>(null);
 
   const [attachNotice, setAttachNotice] = useState<string | null>(null);
+  const [clearingAllBills, setClearingAllBills] = useState(false);
 
   useEffect(() => {
     const refresh = () => {
@@ -286,51 +259,113 @@ export function BillsView({
       if (attachFileInputRef.current) attachFileInputRef.current.value = '';
     }
   }
-  const [showElecForm, setShowElecForm] = useState(false);
-  const [elecSaving, setElecSaving] = useState(false);
-  const [eInvoice, setEInvoice] = useState('');
-  const [eDate, setEDate] = useState('');
-  const [ePeriod, setEPeriod] = useState('');
-  const [eSupplier, setESupplier] = useState('Octopus Energy');
-  const [eOffer, setEOffer] = useState('Octopus Fissa 24M');
-  const [eKwh, setEKwh] = useState('');
-  const [eTotal, setETotal] = useState('');
-  const [eCanone, setECanone] = useState('0');
-  const [eNote, setENote] = useState('');
 
-  const [showWaterForm, setShowWaterForm] = useState(false);
-  const [waterSaving, setWaterSaving] = useState(false);
-  const [wInvoice, setWInvoice] = useState('');
-  const [wDate, setWDate] = useState('');
-  const [wYear, setWYear] = useState(String(new Date().getFullYear()));
-  const [wPeriod, setWPeriod] = useState('');
-  const [wMc, setWMc] = useState('');
-  const [wFixed, setWFixed] = useState('');
-  const [wTotal, setWTotal] = useState('');
-  const [wNote, setWNote] = useState('');
+  async function handleAttachGseFile(files: FileList | null) {
+    if (!files?.length || !attachingGsePaymentId || !onUpdateGsePayment) return;
+    const file = files[0];
+    if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+      setAttachNotice('Allega uno screenshot o un PDF del bonifico.');
+      return;
+    }
 
-  const [showTariForm, setShowTariForm] = useState(false);
-  const [tariSaving, setTariSaving] = useState(false);
-  const [tNotice, setTNotice] = useState('');
-  const [tIssueDate, setTIssueDate] = useState('');
-  const [tDueDate, setTDueDate] = useState('');
-  const [tYear, setTYear] = useState(String(new Date().getFullYear()));
-  const [tPeriod, setTPeriod] = useState(`TARI ${new Date().getFullYear()} - Rata Unica`);
-  const [tSupplier, setTSupplier] = useState('AcegasApsAmga / Comune di Padova');
-  const [tTotal, setTTotal] = useState('');
-  const [tPaid, setTPaid] = useState(false);
-  const [tNote, setTNote] = useState('');
+    const payment = gsePayments.find((entry) => entry.id === attachingGsePaymentId);
+    if (!payment) {
+      setAttachNotice('Il bonifico selezionato non è più presente nell’archivio.');
+      return;
+    }
+
+    const previousFileKey = payment.attachmentFileKey;
+    const nextFileKey = `gse_payment_${payment.id}_${Date.now()}`;
+    let recordUpdated = false;
+    setAttachNotice(null);
+    try {
+      const saved = await saveVaultFile(nextFileKey, file, file.name, file.type);
+      if (!saved.cloudSynced) {
+        throw new Error(
+          saved.cloudTooLarge
+            ? 'L’allegato supera il limite Firebase e non è stato collegato al bonifico.'
+            : 'L’allegato non è stato salvato su Firebase e non è stato collegato al bonifico.'
+        );
+      }
+
+      await onUpdateGsePayment(payment.id, {
+        ...payment,
+        attachmentFileKey: nextFileKey,
+      });
+      recordUpdated = true;
+      if (previousFileKey && previousFileKey !== nextFileKey) {
+        await deleteVaultFiles([previousFileKey]);
+      }
+      setVaultMeta(await listVaultFileMetadata());
+      setAttachNotice(`Allegato "${file.name}" salvato con il bonifico GSE.`);
+    } catch (error) {
+      let message =
+        error instanceof Error ? error.message : 'Errore durante il salvataggio dell’allegato GSE.';
+      if (!recordUpdated) {
+        try {
+          await deleteVaultFiles([nextFileKey]);
+        } catch (cleanupError) {
+          const cleanupMessage =
+            cleanupError instanceof Error ? cleanupError.message : 'errore non specificato';
+          message += ` Inoltre non è stato possibile rimuovere il file temporaneo: ${cleanupMessage}`;
+        }
+      }
+      setAttachNotice(message);
+    } finally {
+      setAttachingGsePaymentId(null);
+      if (gseAttachmentInputRef.current) gseAttachmentInputRef.current.value = '';
+    }
+  }
+
+  async function handleDeleteOctopusContract() {
+    if (!octopusContractToManage || !onDeleteElectricityBill) return;
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm('Rimuovere dall’archivio il contratto Octopus e il relativo PDF?')
+    ) {
+      return;
+    }
+
+    try {
+      await onDeleteElectricityBill(octopusContractToManage);
+      setAttachNotice('Contratto Octopus rimosso dall’archivio.');
+    } catch (err) {
+      setAttachNotice(
+        err instanceof Error ? err.message : 'Errore durante la rimozione del contratto Octopus.'
+      );
+    }
+  }
+
+  async function handleClearAllBills() {
+    if (!onClearAllBills || clearingAllBills) return;
+    const confirmed =
+      typeof window !== 'undefined' &&
+      window.confirm(
+        'Eliminare tutte le bollette Luce, Acqua, TARI e i bonifici GSE da Firebase, inclusi i PDF delle bollette? L’operazione è irreversibile. Il contratto Octopus verrà mantenuto.'
+      );
+    if (!confirmed) return;
+
+    setClearingAllBills(true);
+    setAttachNotice(null);
+    try {
+      await onClearAllBills();
+      setAttachNotice(
+        'Archivio svuotato: bollette, PDF e bonifici GSE sono stati eliminati da Firebase.'
+      );
+    } catch (error) {
+      setAttachNotice(
+        error instanceof Error ? error.message : 'Errore durante l’eliminazione delle bollette.'
+      );
+    } finally {
+      setClearingAllBills(false);
+    }
+  }
 
   const [showGseForm, setShowGseForm] = useState(false);
   const [gseSaving, setGseSaving] = useState(false);
   const [gDate, setGDate] = useState('');
-  const [gYear, setGYear] = useState(String(new Date().getFullYear()));
-  const [gType, setGType] = useState<GsePaymentType>('acconto');
-  const [gPeriod, setGPeriod] = useState('');
   const [gAmount, setGAmount] = useState('');
-  const [gKwh, setGKwh] = useState('');
-  const [gRef, setGRef] = useState('');
-  const [gNote, setGNote] = useState('');
+  const [editingGsePayment, setEditingGsePayment] = useState<GsePaymentRecord | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -344,23 +379,13 @@ export function BillsView({
           const fetchedList: SupplierMarketOffer[] = Array.isArray(json.competitors)
             ? (json.competitors as SupplierMarketOffer[])
             : [];
-          const fetchedBySupplier = new Map(fetchedList.map((c) => [c.supplier, c]));
-          const mergedCompetitors = TRACKED_SUPPLIERS_DEFAULT.map((def) => {
-            const live = fetchedBySupplier.get(def.supplier);
-            return live ? { ...def, ...live, url: def.url || live.url } : def;
-          });
-          for (const extra of fetchedList) {
-            if (!mergedCompetitors.some((c) => c.supplier === extra.supplier)) {
-              mergedCompetitors.push(extra);
-            }
-          }
           setMarketMonitor({
             myLockedRate: json.myLockedRate,
             myFixedEurMonth:
               typeof json.myFixedEurMonth === 'number' ? json.myFixedEurMonth : 6.0,
             currentRate: typeof json.currentRate === 'number' ? json.currentRate : null,
             updatedAt: typeof json.updatedAt === 'string' ? json.updatedAt : null,
-            competitors: mergedCompetitors,
+            competitors: fetchedList,
             bestCompetitor: (json.bestCompetitor as SupplierMarketOffer | null) ?? null,
           });
         }
@@ -411,7 +436,7 @@ export function BillsView({
   const octopusEstimate = useMemo(() => {
     const ref = offerSummaries[0];
     if (!ref || ref.totalKwh <= 0) {
-      return { allInPerKwh: 0.285, monthlyEur: null as number | null };
+      return { allInPerKwh: null as number | null, monthlyEur: null as number | null };
     }
     const monthsCovered = Math.max(1, ref.billCount * 2);
     const avgMonthlyKwh = ref.totalKwh / monthsCovered;
@@ -432,13 +457,19 @@ export function BillsView({
     [bills]
   );
 
+  const billSuppliers = useMemo(
+    () => Array.from(new Set(bills.map((bill) => bill.supplier))).sort((a, b) => a.localeCompare(b)),
+    [bills]
+  );
+
   const filteredBills = useMemo(() => {
-    const list =
-      selectedBillYear === 'all'
-        ? bills
-        : bills.filter((b) => String(b.year) === selectedBillYear);
+    const list = bills.filter(
+      (bill) =>
+        (selectedBillYear === 'all' || String(bill.year) === selectedBillYear) &&
+        (selectedBillSupplier === 'all' || bill.supplier === selectedBillSupplier)
+    );
     return [...list].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
-  }, [bills, selectedBillYear]);
+  }, [bills, selectedBillYear, selectedBillSupplier]);
 
   const billsTotals = useMemo(() => {
     const kwh = filteredBills.reduce((s, b) => s + b.kwh, 0);
@@ -480,12 +511,6 @@ export function BillsView({
     const unpaidCount = tariBills.filter((b) => !b.paid).length;
     return { total, unpaidCount };
   }, [tariBills]);
-
-  const gseTotals = useMemo(() => {
-    const totalEur = gsePayments.reduce((s, p) => s + p.amountEur, 0);
-    const totalKwh = gsePayments.reduce((s, p) => s + (p.kwhInjected ?? 0), 0);
-    return { totalEur, totalKwh };
-  }, [gsePayments]);
 
   const sortedElecBills = useMemo(() => {
     return [...filteredBills].sort((a, b) => {
@@ -573,18 +598,6 @@ export function BillsView({
             parseItDateToIso(b.paymentDate) ?? b.paymentDate,
             gseSort.dir
           );
-        case 'type':
-          return compareSortValues(a.paymentType, b.paymentType, gseSort.dir);
-        case 'period':
-          return compareSortValues(a.period, b.period, gseSort.dir);
-        case 'reference':
-          return compareSortValues(
-            a.reference || null,
-            b.reference || null,
-            gseSort.dir
-          );
-        case 'kwh':
-          return compareSortValues(a.kwhInjected ?? null, b.kwhInjected ?? null, gseSort.dir);
         case 'amount':
           return compareSortValues(a.amountEur, b.amountEur, gseSort.dir);
       }
@@ -594,126 +607,66 @@ export function BillsView({
   const myAnnualBenchmarkEur =
     marketMonitor.myLockedRate * 2300 + marketMonitor.myFixedEurMonth * 12;
 
-  async function handleSubmitElec(e: React.FormEvent) {
-    e.preventDefault();
-    if (!onAddElectricityBill || !eInvoice.trim() || !eDate.trim() || !ePeriod.trim()) return;
-    setElecSaving(true);
-    try {
-      const kwhNum = Number(eKwh.replace(',', '.')) || 0;
-      const totNum = Number(eTotal.replace(',', '.')) || 0;
-      const tvNum = Number(eCanone.replace(',', '.')) || 0;
-      const elecOnly = Math.max(0, Math.round((totNum - tvNum) * 100) / 100);
-      const dm = eDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-      const yearNum = dm ? Number(dm[3]) : new Date().getFullYear();
-      const sortKey = dm ? `${dm[3]}-${dm[2]}` : `${yearNum}-01`;
-      await onAddElectricityBill({
-        invoiceNumber: eInvoice.trim().slice(0, 40),
-        issueDate: eDate.trim().slice(0, 20),
-        sortKey,
-        year: yearNum,
-        period: ePeriod.trim().slice(0, 80),
-        supplier: eSupplier.trim().slice(0, 80),
-        offerName: eOffer.trim().slice(0, 100),
-        kwh: Math.round(kwhNum),
-        punText: 'Fissa',
-        variableCostPerKwh: kwhNum > 0 ? Math.round((elecOnly / kwhNum) * 1000) / 1000 : 0.16,
-        canoneTv: tvNum,
-        electricityOnly: elecOnly,
-        totalPaid: totNum,
-        note: eNote.trim().slice(0, 240) || undefined,
-      });
-      setShowElecForm(false);
-      setEInvoice('');
-      setEDate('');
-      setEPeriod('');
-      setEKwh('');
-      setETotal('');
-      setENote('');
-    } finally {
-      setElecSaving(false);
-    }
-  }
-
-  async function handleSubmitWater(e: React.FormEvent) {
-    e.preventDefault();
-    if (!onAddWaterBill || !wInvoice.trim() || !wDate.trim() || !wPeriod.trim()) return;
-    setWaterSaving(true);
-    try {
-      await onAddWaterBill({
-        invoiceNumber: wInvoice.trim().slice(0, 40),
-        issueDate: wDate.trim().slice(0, 20),
-        year: Number(wYear) || new Date().getFullYear(),
-        period: wPeriod.trim().slice(0, 80),
-        cubicMeters: Number(wMc.replace(',', '.')) || 0,
-        fixedCostEur: Number(wFixed.replace(',', '.')) || 0,
-        totalPaid: Number(wTotal.replace(',', '.')) || 0,
-        note: wNote.trim().slice(0, 240) || undefined,
-      });
-      setShowWaterForm(false);
-      setWInvoice('');
-      setWDate('');
-      setWPeriod('');
-      setWMc('');
-      setWFixed('');
-      setWTotal('');
-      setWNote('');
-    } finally {
-      setWaterSaving(false);
-    }
-  }
-
-  async function handleSubmitTari(e: React.FormEvent) {
-    e.preventDefault();
-    if (!onAddTariBill || !tNotice.trim() || !tPeriod.trim()) return;
-    setTariSaving(true);
-    try {
-      await onAddTariBill({
-        noticeNumber: tNotice.trim().slice(0, 50),
-        issueDate: tIssueDate.trim().slice(0, 20) || '—',
-        dueDate: tDueDate.trim().slice(0, 20) || '—',
-        year: Number(tYear) || new Date().getFullYear(),
-        period: tPeriod.trim().slice(0, 80),
-        supplier: tSupplier.trim().slice(0, 80) || 'AcegasApsAmga / TARI',
-        totalPaid: Number(tTotal.replace(',', '.')) || 0,
-        paid: tPaid,
-        source: 'manuale',
-        note: tNote.trim().slice(0, 240) || undefined,
-      });
-      setShowTariForm(false);
-      setTNotice('');
-      setTIssueDate('');
-      setTDueDate('');
-      setTTotal('');
-      setTNote('');
-    } finally {
-      setTariSaving(false);
-    }
-  }
-
   async function handleSubmitGse(e: React.FormEvent) {
     e.preventDefault();
-    if (!onAddGsePayment || !gDate.trim() || !gPeriod.trim()) return;
+    if (
+      (editingGsePayment ? !onUpdateGsePayment : !onAddGsePayment) ||
+      !gDate ||
+      !gAmount.trim()
+    ) {
+      return;
+    }
+    const amountEur = Number(gAmount.replace(',', '.'));
+    if (!Number.isFinite(amountEur) || amountEur < 0) {
+      setAttachNotice('Inserisci un importo valido e non negativo.');
+      return;
+    }
     setGseSaving(true);
     try {
-      await onAddGsePayment({
-        paymentDate: gDate.trim().slice(0, 20),
-        year: Number(gYear) || new Date().getFullYear(),
-        paymentType: gType,
-        period: gPeriod.trim().slice(0, 80),
-        amountEur: Number(gAmount.replace(',', '.')) || 0,
-        kwhInjected: gKwh ? Number(gKwh.replace(',', '.')) : undefined,
-        reference: gRef.trim().slice(0, 80) || undefined,
-        note: gNote.trim().slice(0, 240) || undefined,
-      });
+      const [year, month, day] = gDate.split('-');
+      const payment: Omit<GsePaymentRecord, 'id'> = {
+        paymentDate: `${day}/${month}/${year}`,
+        year: Number(year),
+        paymentType: editingGsePayment?.paymentType ?? 'altro',
+        period: editingGsePayment?.period || 'Bonifico GSE',
+        amountEur,
+        kwhInjected: editingGsePayment?.kwhInjected,
+        reference: editingGsePayment?.reference,
+        note: editingGsePayment?.note,
+        attachmentFileKey: editingGsePayment?.attachmentFileKey,
+      };
+      if (editingGsePayment) {
+        await onUpdateGsePayment?.(editingGsePayment.id, payment);
+      } else {
+        await onAddGsePayment?.(payment);
+      }
       setShowGseForm(false);
+      setEditingGsePayment(null);
       setGDate('');
-      setGPeriod('');
       setGAmount('');
-      setGKwh('');
-      setGRef('');
-      setGNote('');
+    } catch (error) {
+      setAttachNotice(error instanceof Error ? error.message : 'Errore nel salvataggio del bonifico GSE.');
     } finally {
       setGseSaving(false);
+    }
+  }
+
+  function openGsePaymentEditor(payment?: GsePaymentRecord) {
+    setEditingGsePayment(payment ?? null);
+    setGDate(payment ? parseItDateToIso(payment.paymentDate) ?? '' : '');
+    setGAmount(payment ? String(payment.amountEur) : '');
+    setShowGseForm(true);
+  }
+
+  async function handleDeleteGsePayment(id: string) {
+    if (!onDeleteGsePayment) return;
+    try {
+      await onDeleteGsePayment(id);
+      setAttachNotice('Bonifico GSE e relativo allegato eliminati.');
+    } catch (error) {
+      setAttachNotice(
+        error instanceof Error ? error.message : 'Errore durante l’eliminazione del bonifico GSE.'
+      );
     }
   }
 
@@ -740,6 +693,18 @@ export function BillsView({
             >
               <FileUp className="w-3.5 h-3.5" />
               Importa bolletta
+            </button>
+          )}
+          {!readOnly && onClearAllBills && (
+            <button
+              type="button"
+              onClick={() => void handleClearAllBills()}
+              disabled={clearingAllBills}
+              title="Elimina bollette Luce, Acqua, TARI, bonifici GSE e relativi PDF; mantiene il contratto Octopus"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-200 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              {clearingAllBills ? 'Eliminazione...' : 'Svuota archivio'}
             </button>
           )}
 
@@ -849,11 +814,11 @@ export function BillsView({
               {!readOnly && onAddWaterBill && (
                 <button
                   type="button"
-                  onClick={() => setShowWaterForm((v) => !v)}
+                  onClick={() => setImportModalKind('acqua')}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-lg transition-colors"
                 >
-                  <Plus className="w-3.5 h-3.5" />
-                  Registra bolletta acqua
+                  <FileUp className="w-3.5 h-3.5" />
+                  Importa PDF bolletta acqua
                 </button>
               )}
             </div>
@@ -871,98 +836,8 @@ export function BillsView({
             </div>
           </div>
 
-          {showWaterForm && !readOnly && (
-            <form
-              onSubmit={handleSubmitWater}
-              className="bg-slate-900 border border-cyan-500/40 rounded-xl p-4 space-y-3 text-xs"
-            >
-              <div className="font-semibold text-slate-100">
-                Aggiungi bolletta Acqua AcegasApsAmga (salvata su Firebase)
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <input
-                  type="text"
-                  required
-                  placeholder="N° Fattura (es. 712700123456)"
-                  value={wInvoice}
-                  onChange={(e) => setWInvoice(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Data emissione (es. 15/03/2027)"
-                  value={wDate}
-                  onChange={(e) => setWDate(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="number"
-                  required
-                  placeholder="Anno (es. 2027)"
-                  value={wYear}
-                  onChange={(e) => setWYear(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Periodo (es. Nov 26 – Mar 27)"
-                  value={wPeriod}
-                  onChange={(e) => setWPeriod(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Consumo m³ (es. 22)"
-                  value={wMc}
-                  onChange={(e) => setWMc(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Quota fissa € (es. 10.50)"
-                  value={wFixed}
-                  onChange={(e) => setWFixed(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Totale pagato € (es. 58.40)"
-                  value={wTotal}
-                  onChange={(e) => setWTotal(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  placeholder="Note (es. conguaglio reale)"
-                  value={wNote}
-                  onChange={(e) => setWNote(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
-                />
-              </div>
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowWaterForm(false)}
-                  className="px-3 py-1.5 text-slate-400 hover:text-slate-100"
-                >
-                  Annulla
-                </button>
-                <button
-                  type="submit"
-                  disabled={waterSaving}
-                  className="px-4 py-1.5 font-semibold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-lg"
-                >
-                  {waterSaving ? 'Salvataggio...' : 'Salva bolletta Acqua'}
-                </button>
-              </div>
-            </form>
-          )}
-
+          {filteredWaterBills.length > 0 ? (
+            <>
           {/* KPI Acqua */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3.5">
@@ -1133,6 +1008,13 @@ export function BillsView({
               </table>
             </div>
           </div>
+            </>
+          ) : (
+            <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-6 text-center text-sm text-slate-400">
+              Nessuna bolletta acqua con PDF presente per il periodo selezionato.
+              {!readOnly && ' Importa il PDF originale per aggiungerla allo storico.'}
+            </div>
+          )}
         </div>
       )}
 
@@ -1154,11 +1036,11 @@ export function BillsView({
               {!readOnly && onAddTariBill && (
                 <button
                   type="button"
-                  onClick={() => setShowTariForm((v) => !v)}
+                  onClick={() => setImportModalKind('tari')}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors"
                 >
-                  <Plus className="w-3.5 h-3.5" />
-                  Aggiungi avviso TARI
+                  <FileUp className="w-3.5 h-3.5" />
+                  Importa PDF TARI
                 </button>
               )}
             </div>
@@ -1174,104 +1056,8 @@ export function BillsView({
             </p>
           </div>
 
-          {showTariForm && !readOnly && (
-            <form
-              onSubmit={handleSubmitTari}
-              className="bg-slate-900 border border-amber-500/40 rounded-xl p-4 space-y-3 text-xs"
-            >
-              <div className="font-semibold text-slate-100">
-                Registra manualmente avviso TARI (salvato su Firebase)
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <input
-                  type="text"
-                  required
-                  placeholder="N° Avviso / Documento *"
-                  value={tNotice}
-                  onChange={(e) => setTNotice(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Periodo (es. TARI 2026 - Rata Unica)"
-                  value={tPeriod}
-                  onChange={(e) => setTPeriod(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
-                />
-                <input
-                  type="number"
-                  required
-                  placeholder="Anno (es. 2026)"
-                  value={tYear}
-                  onChange={(e) => setTYear(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Importo € (es. 285.00)"
-                  value={tTotal}
-                  onChange={(e) => setTTotal(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  placeholder="Data emissione (es. 10/05/2026)"
-                  value={tIssueDate}
-                  onChange={(e) => setTIssueDate(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  placeholder="Scadenza (es. 30/06/2026)"
-                  value={tDueDate}
-                  onChange={(e) => setTDueDate(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  placeholder="Ente / Fornitore"
-                  value={tSupplier}
-                  onChange={(e) => setTSupplier(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
-                />
-                <label className="flex items-center gap-2 px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={tPaid}
-                    onChange={(e) => setTPaid(e.target.checked)}
-                    className="h-4 w-4 rounded"
-                  />
-                  Già pagato
-                </label>
-                <input
-                  type="text"
-                  placeholder="Note opzionali (es. F24 / PagoPA)"
-                  value={tNote}
-                  onChange={(e) => setTNote(e.target.value)}
-                  className="sm:col-span-2 lg:col-span-4 px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
-                />
-              </div>
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowTariForm(false)}
-                  className="px-3 py-1.5 text-slate-400 hover:text-slate-100"
-                >
-                  Annulla
-                </button>
-                <button
-                  type="submit"
-                  disabled={tariSaving}
-                  className="px-4 py-1.5 font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg"
-                >
-                  {tariSaving ? 'Salvataggio...' : 'Salva avviso TARI'}
-                </button>
-              </div>
-            </form>
-          )}
-
+          {tariBills.length > 0 ? (
+            <>
           {/* KPI TARI */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3.5">
@@ -1444,6 +1230,13 @@ export function BillsView({
               </table>
             </div>
           </div>
+            </>
+          ) : (
+            <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-6 text-center text-sm text-slate-400">
+              Nessun avviso TARI con PDF presente nell&apos;archivio.
+              {!readOnly && ' Importa il PDF originale per aggiungerlo.'}
+            </div>
+          )}
         </div>
       )}
 
@@ -1465,7 +1258,7 @@ export function BillsView({
               {!readOnly && onAddGsePayment && (
                 <button
                   type="button"
-                  onClick={() => setShowGseForm((v) => !v)}
+                  onClick={() => openGsePaymentEditor()}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -1490,13 +1283,12 @@ export function BillsView({
               className="bg-slate-900 border border-emerald-500/40 rounded-xl p-4 space-y-3 text-xs"
             >
               <div className="font-semibold text-slate-100">
-                Registra nuovo bonifico GSE Scambio sul Posto (salvato su Firebase)
+                {editingGsePayment ? 'Modifica bonifico GSE' : 'Registra bonifico GSE'}
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <input
-                  type="text"
+                  type="date"
                   required
-                  placeholder="Data accredito (es. 18/06/2026)"
                   value={gDate}
                   onChange={(e) => setGDate(e.target.value)}
                   className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
@@ -1504,62 +1296,23 @@ export function BillsView({
                 <input
                   type="number"
                   required
-                  placeholder="Anno di competenza"
-                  value={gYear}
-                  onChange={(e) => setGYear(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <select
-                  value={gType}
-                  onChange={(e) => setGType(e.target.value as GsePaymentType)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark]"
-                >
-                  <option value="acconto">Acconto semestrale SSP</option>
-                  <option value="conguaglio">Conguaglio annuale SSP</option>
-                  <option value="altro">Altro accredito GSE</option>
-                </select>
-                <input
-                  type="text"
-                  required
-                  placeholder="Periodo (es. 1° Acconto 2026)"
-                  value={gPeriod}
-                  onChange={(e) => setGPeriod(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Importo bonifico € (es. 142.50)"
+                  min="0"
+                  step="0.01"
+                  placeholder="Importo (€)"
                   value={gAmount}
                   onChange={(e) => setGAmount(e.target.value)}
                   className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  placeholder="kWh immessi (opzionale)"
-                  value={gKwh}
-                  onChange={(e) => setGKwh(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  placeholder="Riferimento / CRO / Pratica SSP (opz.)"
-                  value={gRef}
-                  onChange={(e) => setGRef(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  placeholder="Note opzionali"
-                  value={gNote}
-                  onChange={(e) => setGNote(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
                 />
               </div>
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowGseForm(false)}
+                  onClick={() => {
+                    setShowGseForm(false);
+                    setEditingGsePayment(null);
+                    setGDate('');
+                    setGAmount('');
+                  }}
                   className="px-3 py-1.5 text-slate-400 hover:text-slate-100"
                 >
                   Annulla
@@ -1569,45 +1322,11 @@ export function BillsView({
                   disabled={gseSaving}
                   className="px-4 py-1.5 font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg"
                 >
-                  {gseSaving ? 'Salvataggio...' : 'Salva bonifico GSE'}
+                  {gseSaving ? 'Salvataggio...' : editingGsePayment ? 'Salva modifiche' : 'Salva bonifico'}
                 </button>
               </div>
             </form>
           )}
-
-          {/* KPI Fotovoltaico / GSE */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3.5">
-              <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                Totale Incassato GSE
-              </div>
-              <div className="text-lg font-bold font-mono text-emerald-300 mt-0.5">
-                +{gseTotals.totalEur.toFixed(2).replace('.', ',')} €
-              </div>
-            </div>
-            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3.5">
-              <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                Bonifici Registrati
-              </div>
-              <div className="text-lg font-bold font-mono text-slate-100 mt-0.5">
-                {gsePayments.length}
-              </div>
-            </div>
-            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3.5">
-              <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                kWh Immessi Segnati
-              </div>
-              <div className="text-lg font-bold font-mono text-amber-300 mt-0.5">
-                {gseTotals.totalKwh > 0 ? `${gseTotals.totalKwh} kWh` : '—'}
-              </div>
-            </div>
-            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3.5">
-              <div className="text-[10px] uppercase tracking-wider text-slate-400">Inverter</div>
-              <div className="text-sm font-bold font-mono text-sky-300 mt-1">
-                Huawei SUN2000-4KTL-L1
-              </div>
-            </div>
-          </div>
 
           <div className="bg-slate-900/70 border border-slate-800 rounded-xl overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-800">
@@ -1628,102 +1347,100 @@ export function BillsView({
                       Data Bonifico
                     </SortableTh>
                     <SortableTh
-                      sortKey="type"
-                      currentSort={gseSort}
-                      onSort={(k) => setGseSort((prev) => toggleSort(prev, k, 'asc'))}
-                      className="px-3 py-2.5 font-medium"
-                    >
-                      Tipo
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="period"
-                      currentSort={gseSort}
-                      onSort={(k) => setGseSort((prev) => toggleSort(prev, k, 'asc'))}
-                      className="px-3 py-2.5 font-medium"
-                    >
-                      Periodo
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="reference"
-                      currentSort={gseSort}
-                      onSort={(k) => setGseSort((prev) => toggleSort(prev, k, 'asc'))}
-                      className="px-3 py-2.5 font-medium"
-                    >
-                      Riferimento
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="kwh"
-                      currentSort={gseSort}
-                      onSort={(k) => setGseSort((prev) => toggleSort(prev, k, 'desc'))}
-                      align="right"
-                      className="px-3 py-2.5 font-medium text-right"
-                    >
-                      kWh Immessi
-                    </SortableTh>
-                    <SortableTh
                       sortKey="amount"
                       currentSort={gseSort}
                       onSort={(k) => setGseSort((prev) => toggleSort(prev, k, 'desc'))}
                       align="right"
                       className="px-4 py-2.5 font-medium text-right"
                     >
-                      Importo Ricevuto
+                      Importo
                     </SortableTh>
+                    <th className="px-3 py-2.5 font-medium text-right">Allegato</th>
                     {!readOnly && <th className="px-3 py-2.5 font-medium text-right">Azioni</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/70">
                   {sortedGsePayments.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
-                        Nessun bonifico GSE ancora registrato. Quando ricevi un acconto o conguaglio Scambio sul Posto in banca, premi{' '}
-                        <strong className="text-slate-300">Registra bonifico GSE</strong> qui sopra per salvarlo su Firebase.
+                      <td colSpan={readOnly ? 3 : 4} className="px-4 py-6 text-center text-slate-500">
+                        Nessun bonifico GSE registrato.
                       </td>
                     </tr>
                   ) : (
                     sortedGsePayments.map((p) => (
                       <tr key={p.id} className="hover:bg-slate-800/30">
                         <td className="px-4 py-2.5 font-mono text-slate-200">{p.paymentDate}</td>
-                        <td className="px-3 py-2.5">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[11px] font-medium ${
-                              p.paymentType === 'conguaglio'
-                                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                                : 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
-                            }`}
-                          >
-                            {p.paymentType === 'acconto'
-                              ? 'Acconto SSP'
-                              : p.paymentType === 'conguaglio'
-                                ? 'Conguaglio SSP'
-                                : 'Altro GSE'}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5 text-slate-200">
-                          <div>{p.period}</div>
-                          {p.note && <div className="text-[10px] text-slate-400">{p.note}</div>}
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-slate-400">
-                          {p.reference || '—'}
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-mono text-amber-300">
-                          {p.kwhInjected ? `${p.kwhInjected} kWh` : '—'}
-                        </td>
                         <td className="px-4 py-2.5 text-right font-mono font-semibold text-emerald-300">
-                          +{p.amountEur.toFixed(2).replace('.', ',')} €
+                          {p.amountEur.toFixed(2).replace('.', ',')} €
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          {p.attachmentFileKey && vaultMeta[p.attachmentFileKey] ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void downloadShareableItem({
+                                  title: `Bonifico GSE ${p.paymentDate}`,
+                                  subtitle: `${p.amountEur.toFixed(2)} €`,
+                                  shareText: `Bonifico GSE del ${p.paymentDate}: ${p.amountEur.toFixed(2)} €`,
+                                  htmlDocument: '',
+                                  fallbackFileName: `bonifico-gse-${p.id}.html`,
+                                  attachmentKey: p.attachmentFileKey,
+                                })
+                              }
+                              className="inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              Scarica
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-500">Nessun allegato</span>
+                          )}
                         </td>
                         {!readOnly && (
                           <td className="px-3 py-2.5 text-right">
-                            {onDeleteGsePayment && (
+                            <div className="inline-flex items-center justify-end gap-2">
                               <button
                                 type="button"
-                                onClick={() => void onDeleteGsePayment(p.id)}
-                                className="p-1 text-slate-500 hover:text-rose-400"
-                                aria-label="Elimina bonifico GSE"
+                                title={p.attachmentFileKey ? 'Sostituisci allegato' : 'Allega screenshot o PDF'}
+                                onClick={() => {
+                                  setAttachingGsePaymentId(p.id);
+                                  gseAttachmentInputRef.current?.click();
+                                }}
+                                className="inline-flex items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
+                                <Paperclip className="w-3.5 h-3.5" />
+                                {p.attachmentFileKey ? 'Sostituisci' : 'Allega file'}
                               </button>
-                            )}
+                              {onUpdateGsePayment && (
+                                <button
+                                  type="button"
+                                  title="Modifica bonifico"
+                                  onClick={() => openGsePaymentEditor(p)}
+                                  className="p-1 text-slate-400 hover:text-sky-300"
+                                  aria-label="Modifica bonifico GSE"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {onDeleteGsePayment && (
+                                <button
+                                  type="button"
+                                  title="Elimina bonifico"
+                                  onClick={() => {
+                                    if (
+                                      typeof window !== 'undefined' &&
+                                      window.confirm('Eliminare questo bonifico e il relativo allegato?')
+                                    ) {
+                                      void handleDeleteGsePayment(p.id);
+                                    }
+                                  }}
+                                  className="p-1 text-slate-500 hover:text-rose-400"
+                                  aria-label="Elimina bonifico GSE"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </td>
                         )}
                       </tr>
@@ -1754,272 +1471,72 @@ export function BillsView({
             {!readOnly && onAddElectricityBill && (
               <button
                 type="button"
-                onClick={() => setShowElecForm((v) => !v)}
+                onClick={() => setImportModalKind('luce')}
                 className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-sky-300 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded-lg transition-colors"
               >
-                <Plus className="w-3.5 h-3.5" />
-                Inserisci bolletta manuale
+                <FileUp className="w-3.5 h-3.5" />
+                Importa PDF bolletta
               </button>
             )}
           </div>
 
-          {showElecForm && !readOnly && (
-            <form
-              onSubmit={handleSubmitElec}
-              className="bg-slate-900 border border-sky-500/40 rounded-xl p-4 space-y-3 text-xs"
-            >
-              <div className="font-semibold text-slate-100">
-                Inserimento manuale bolletta luce (es. nuova fattura Octopus Energy)
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <input
-                  type="text"
-                  required
-                  placeholder="N° Fattura *"
-                  value={eInvoice}
-                  onChange={(e) => setEInvoice(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Data emissione (DD/MM/YYYY) *"
-                  value={eDate}
-                  onChange={(e) => setEDate(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Periodo (es. Gen 2027) *"
-                  value={ePeriod}
-                  onChange={(e) => setEPeriod(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Fornitore"
-                  value={eSupplier}
-                  onChange={(e) => setESupplier(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Offerta"
-                  value={eOffer}
-                  onChange={(e) => setEOffer(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="kWh fatturati *"
-                  value={eKwh}
-                  onChange={(e) => setEKwh(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Totale pagato € *"
-                  value={eTotal}
-                  onChange={(e) => setETotal(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  placeholder="Canone TV € (0 se assente)"
-                  value={eCanone}
-                  onChange={(e) => setECanone(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
-                />
-                <input
-                  type="text"
-                  placeholder="Note opzionali"
-                  value={eNote}
-                  onChange={(e) => setENote(e.target.value)}
-                  className="sm:col-span-2 lg:col-span-4 px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
-                />
-              </div>
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowElecForm(false)}
-                  className="px-3 py-1.5 text-slate-400 hover:text-slate-100"
-                >
-                  Annulla
-                </button>
-                <button
-                  type="submit"
-                  disabled={elecSaving}
-                  className="px-4 py-1.5 font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg"
-                >
-                  {elecSaving ? 'Salvataggio...' : 'Salva bolletta Luce'}
-                </button>
-              </div>
-            </form>
-          )}
-
-          {/* Riepilogo reale per Fornitore / Offerta */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            {offerSummaries.map((item) => {
-              const latestBill = [...bills]
-                .filter(
-                  (bill) =>
-                    bill.year === item.year &&
-                    bill.supplier === item.supplier &&
-                    bill.offerName === item.offerName
-                )
-                .sort((a, b) => b.sortKey.localeCompare(a.sortKey))[0];
-              const latestFileKey = latestBill
-                ? getElectricityBillFileKey(latestBill.invoiceNumber)
-                : null;
-              const hasOriginal = Boolean(latestFileKey && vaultMeta[latestFileKey]);
-              const summaryPayload = latestBill
-                ? buildElectricityBillSharePayload(latestBill)
-                : null;
-              return (
-                <div
-                  key={item.key}
-                  className="bg-slate-900/70 border border-slate-800 rounded-xl p-4 space-y-3 min-w-0"
-                >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-sky-500/15 text-sky-300 border border-sky-500/30 rounded-md">
-                        Anno {item.year}
-                      </span>
-                      <span className="text-[11px] text-slate-400">
-                        {item.billCount} {item.billCount === 1 ? 'bolletta reale' : 'bollette reali'}
-                      </span>
-                    </div>
-                    <h2 className="text-base font-bold text-slate-100 mt-1.5">
-                      {item.supplier} — {item.offerName}
-                    </h2>
-                    {item.supplier.toLowerCase().includes('edison') && (
-                      <p className="text-[11px] text-slate-400 mt-0.5">
-                        Mercato Libero · Variabile (PUN Index GME) · 6 kW
-                        {item.year === 2026 ? ' · Scadenza condizioni: 07/01/2027' : ''}
-                      </p>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    disabled={!summaryPayload}
-                    onClick={() => {
-                      if (!summaryPayload) return;
-                      void downloadShareableItem(
-                        readOnly ? { ...summaryPayload, attachmentKey: undefined } : summaryPayload
-                      );
-                    }}
-                    title={
-                      !readOnly && hasOriginal
-                        ? 'Scarica il PDF originale della bolletta più recente'
-                        : 'Scarica il riepilogo HTML della bolletta più recente'
-                    }
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 rounded-lg whitespace-nowrap shrink-0 transition-colors disabled:opacity-50"
-                  >
-                    <Download className="w-3 h-3" />
-                    {!readOnly && hasOriginal ? 'Scarica originale' : 'Scarica riepilogo'}
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Materia Prima (PUN)
-                    </div>
-                    <div className="text-sm font-bold font-mono text-emerald-300 mt-0.5">
-                      ~{item.avgVariablePerKwh.toFixed(3).replace('.', ',')} €/kWh
-                    </div>
-                    <div className="text-[10px] text-slate-500">variabile · segue il PUN</div>
-                  </div>
-                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Fisso Fornitore
-                    </div>
-                    <div className="text-sm font-bold font-mono text-sky-300 mt-0.5">
-                      {item.supplier.toLowerCase().includes('edison') ? '8,33 €/mese' : '—'}
-                    </div>
-                    <div className="text-[10px] text-slate-500">
-                      {item.supplier.toLowerCase().includes('edison')
-                        ? '100 €/anno (+28 €/a vs Octopus)'
-                        : 'commercializzazione'}
-                    </div>
-                  </div>
-                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Costo Reale / kWh
-                    </div>
-                    <div className="text-sm font-bold font-mono text-violet-300 mt-0.5">
-                      {item.avgRealPerKwh.toFixed(3).replace('.', ',')} €/kWh
-                    </div>
-                    <div className="text-[10px] text-slate-500">tutto incluso · no TV</div>
-                  </div>
-                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Speso Solo Luce
-                    </div>
-                    <div className="text-sm font-bold font-mono text-slate-100 mt-0.5">
-                      {item.totalElectricityOnly.toFixed(2).replace('.', ',')} €
-                    </div>
-                    <div className="text-[10px] text-slate-500">{item.totalKwh} kWh</div>
-                  </div>
-                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Media Mensile
-                    </div>
-                    <div className="text-sm font-bold font-mono text-amber-300 mt-0.5">
-                      {(item.totalElectricityOnly / Math.max(1, item.billCount * 2)).toFixed(0)}{' '}
-                      €/mese
-                    </div>
-                    <div className="text-[10px] text-slate-500">
-                      su {item.billCount} {item.billCount === 1 ? 'bolletta' : 'bollette'} bimestrali
-                    </div>
-                  </div>
-                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Scadenza / Vincoli
-                    </div>
-                    <div className="text-sm font-bold font-mono text-slate-200 mt-0.5">
-                      {item.year === 2026 ? '07/01/2027' : 'Concluso'}
-                    </div>
-                    <div className="text-[10px] text-slate-500">
-                      {item.year === 2026 ? '0 € penali recesso' : `anno ${item.year}`}
-                    </div>
-                  </div>
-                </div>
-
-                {item.supplier.toLowerCase().includes('edison') && (
-                  <p className="text-[11px] text-slate-400 leading-relaxed pt-2 border-t border-slate-800/80">
-                    Tariffa <strong className="text-slate-200">variabile</strong> legata al <strong className="text-slate-200">PUN</strong>, più dispacciamento (~0,015 €/kWh) e oneri/imposte di legge.
-                  </p>
-                )}
-                </div>
-              );
-            })}
-
-            {!offerSummaries.some((o) => o.supplier.toLowerCase().includes('octopus')) && (
+          {/* Contratto Octopus e riepilogo storico */}
+          <div className="space-y-4">
+            {(!offerSummaries.some((o) => o.supplier.toLowerCase().includes('octopus')) ||
+              octopusContractToManage) && (
               <div className="bg-slate-900/70 border border-emerald-500/30 rounded-xl p-4 space-y-3">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded-md">
-                        Prossima · 2027 (24 mesi)
+                        Contratto sottoscritto · avvio 2027
                       </span>
                       <span className="text-[11px] text-slate-400">
-                        Prezzo Fisso · Fatturazione Mensile
+                        {offerSummaries.some((o) => o.supplier.toLowerCase().includes('octopus'))
+                          ? 'Fornitura attiva · bollette disponibili nello storico'
+                          : 'Fornitura in attivazione · bollette dal 2027'}
                       </span>
                     </div>
                     <h2 className="text-base font-bold text-slate-100 mt-1.5">
-                      Octopus Energy — Octopus Fissa 24M
+                      Contratto Octopus Energy — Octopus Fissa 24M
                     </h2>
                     <p className="text-[11px] text-slate-400 mt-0.5">
-                      Cod. <span className="font-mono text-slate-300">OCTOFIX24v09</span> · 100% rinnovabile · DispBT gratuito · 0 € penali di recesso
+                      Cod. <span className="font-mono text-slate-300">OCTOFIX24v09</span> · 100% rinnovabile · DispBT gratuito · 0 € penali di recesso.{' '}
+                      {octopusContractRecords.length > 0
+                        ? 'Il documento Octopus archiviato è il contratto, non una bolletta.'
+                        : offerSummaries.some((o) => o.supplier.toLowerCase().includes('octopus'))
+                          ? 'Le bollette sono consultabili nello storico.'
+                          : 'Le bollette saranno registrate quando partirà la fornitura nel 2027.'}
                     </p>
                   </div>
+                  {octopusContractToManage && !readOnly && (
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      {vaultMeta[
+                        getElectricityBillFileKey(octopusContractToManage.invoiceNumber)
+                      ] && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void downloadShareableItem(
+                              buildElectricityBillSharePayload(octopusContractToManage)
+                            )
+                          }
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-200 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 rounded-lg"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          Scarica contratto PDF
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteOctopusContract()}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-rose-200 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Rimuovi contratto
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
@@ -2046,7 +1563,9 @@ export function BillsView({
                       Costo Reale / kWh
                     </div>
                     <div className="text-sm font-bold font-mono text-violet-300 mt-0.5">
-                      ~{octopusEstimate.allInPerKwh.toFixed(3).replace('.', ',')} €/kWh
+                      {octopusEstimate.allInPerKwh !== null
+                        ? `~${octopusEstimate.allInPerKwh.toFixed(3).replace('.', ',')} €/kWh`
+                        : '—'}
                     </div>
                     <div className="text-[10px] text-slate-500">stima tutto incluso · no TV</div>
                   </div>
@@ -2204,10 +1723,11 @@ export function BillsView({
           </div>
 
           {/* Storico Bollette Reali */}
-          <div
-            id="storico-bollette-luce"
-            className="bg-slate-900/70 border border-slate-800 rounded-xl overflow-hidden scroll-mt-16"
-          >
+          {filteredBills.length > 0 ? (
+            <div
+              id="storico-bollette-luce"
+              className="bg-slate-900/70 border border-slate-800 rounded-xl overflow-hidden scroll-mt-16"
+            >
             <div className="px-4 py-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="text-sm font-semibold text-slate-100">
@@ -2220,42 +1740,52 @@ export function BillsView({
                     </>
                   ) : (
                     <>
-                      Apri <strong className="text-sky-300">Condividi / scarica</strong> per inviare il riepilogo o scaricare il PDF originale. Se manca, puoi allegarlo da lì o collegare Gmail.
+                      Scarica l&apos;originale se presente, importalo se manca e usa <strong className="text-sky-300">Condividi</strong> per inviare il riepilogo.
                     </>
                   )}
                 </p>
               </div>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setSelectedBillYear('all')}
-                  className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
-                    selectedBillYear === 'all'
-                      ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
-                      : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Tutti
-                </button>
-                {billYears.map((y) => (
-                  <button
-                    key={y}
-                    type="button"
-                    onClick={() => setSelectedBillYear(y)}
-                    className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
-                      selectedBillYear === y
-                        ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
-                        : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-                    }`}
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                  Anno
+                  <select
+                    value={selectedBillYear}
+                    onChange={(event) => setSelectedBillYear(event.target.value)}
+                    className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-slate-200"
                   >
-                    {y}
-                  </button>
-                ))}
+                    <option value="all">Tutti</option>
+                    {billYears.map((year) => (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                  Fornitore
+                  <select
+                    value={selectedBillSupplier}
+                    onChange={(event) => setSelectedBillSupplier(event.target.value)}
+                    className="max-w-48 rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-slate-200"
+                  >
+                    <option value="all">Tutti</option>
+                    {billSuppliers.map((supplier) => (
+                      <option key={supplier} value={supplier}>
+                        {supplier}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
             </div>
 
             {/* KPI Bollette */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 border-b border-slate-800/80 bg-slate-950/30">
+              <div className="col-span-2 sm:col-span-4 text-[11px] text-slate-400">
+                Riepilogo filtrato · {selectedBillYear === 'all' ? 'tutti gli anni' : selectedBillYear}
+                {' · '}
+                {selectedBillSupplier === 'all' ? 'tutti i fornitori' : selectedBillSupplier}
+              </div>
               <div>
                 <div className="text-[10px] uppercase tracking-wider text-slate-400">
                   Totale Pagato
@@ -2355,6 +1885,13 @@ export function BillsView({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/70">
+                  {sortedElecBills.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-8 text-center text-sm text-slate-500">
+                        Nessuna bolletta corrisponde ai filtri selezionati.
+                      </td>
+                    </tr>
+                  )}
                   {sortedElecBills.map((b) => {
                     const fileKey = getElectricityBillFileKey(b.invoiceNumber);
                     const hasPdf = Boolean(vaultMeta[fileKey]);
@@ -2390,24 +1927,46 @@ export function BillsView({
                           {b.totalPaid.toFixed(2).replace('.', ',')} €
                         </td>
                         <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                          <div className="inline-flex items-center justify-end gap-1.5">
+                            {!readOnly && (
+                              hasPdf ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void downloadShareableItem(sharePayload)}
+                                  title={`Scarica il PDF originale (${vaultMeta[fileKey]?.fileName})`}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-emerald-200 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 rounded-md"
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                  Scarica
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAttachingFileKey(fileKey);
+                                    attachFileInputRef.current?.click();
+                                  }}
+                                  title="Importa il PDF originale di questa bolletta"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded-md"
+                                >
+                                  <FileUp className="w-3.5 h-3.5" />
+                                  Importa
+                                </button>
+                              )
+                            )}
                           <button
                             type="button"
                             onClick={() => {
                               setDeleteBillFromShare(canDeleteBill ? b : null);
                               setShareBillItem(sharePayload);
                             }}
-                            title={
-                              readOnly
-                                ? 'Condividi o scarica il riepilogo HTML; il PDF originale è riservato'
-                                : hasPdf
-                                  ? `Apri condivisione e PDF originale (${vaultMeta[fileKey]?.fileName})`
-                                  : 'Apri condivisione e scarica il riepilogo HTML'
-                            }
+                            title="Condividi il riepilogo della bolletta"
                             className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-sky-200 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded-md"
                           >
                             <Share2 className="w-3.5 h-3.5" />
-                            {readOnly ? 'Condividi / scarica HTML' : 'Condividi / scarica'}
+                            {readOnly ? 'Condividi riepilogo' : 'Condividi'}
                           </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -2416,6 +1975,12 @@ export function BillsView({
               </table>
             </div>
           </div>
+          ) : (
+            <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-6 text-center text-sm text-slate-400">
+              Nessuna bolletta luce con PDF presente per i filtri selezionati.
+              {!readOnly && ' Importa il PDF originale per aggiungerla allo storico.'}
+            </div>
+          )}
 
           {/* Guida semplice alla bolletta */}
           <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
@@ -2452,6 +2017,13 @@ export function BillsView({
         type="file"
         accept=".pdf,application/pdf"
         onChange={(e) => void handleAttachPdfToBill(e.target.files)}
+        className="hidden"
+      />
+      <input
+        ref={gseAttachmentInputRef}
+        type="file"
+        accept="image/*,.pdf,application/pdf"
+        onChange={(e) => void handleAttachGseFile(e.target.files)}
         className="hidden"
       />
 

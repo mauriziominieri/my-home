@@ -44,6 +44,7 @@ import {
   getElectricityBillFileKey,
   getTariBillFileKey,
   getWaterBillFileKey,
+  isOctopusContractRecord,
   listVaultFileMetadata,
   saveVaultFile,
   ShareableItemPayload,
@@ -329,10 +330,22 @@ export function DocumentsView({
     payload: ShareableItemPayload;
   }
 
+  const shareableElectricityBills = useMemo(
+    () =>
+      electricityBills.filter(
+        (bill) =>
+          !isOctopusContractRecord(bill) &&
+          (readOnly
+            ? Boolean(bill.pdfFileKey)
+            : Boolean(vaultMeta[bill.pdfFileKey || getElectricityBillFileKey(bill.invoiceNumber)]))
+      ),
+    [electricityBills, readOnly, vaultMeta]
+  );
+
   const allBillsForSharing = useMemo<UnifiedBillShareItem[]>(() => {
     const q = searchQuery.trim().toLowerCase();
     const list: UnifiedBillShareItem[] = [
-      ...electricityBills.map((b) => ({
+      ...shareableElectricityBills.map((b) => ({
         id: `elec_${b.invoiceNumber}`,
         kind: 'luce' as const,
         label: 'Luce',
@@ -344,7 +357,13 @@ export function DocumentsView({
         fileKey: getElectricityBillFileKey(b.invoiceNumber),
         payload: buildElectricityBillSharePayload(b),
       })),
-      ...waterBills.map((w) => ({
+      ...waterBills
+        .filter((bill) =>
+          readOnly
+            ? Boolean(bill.pdfFileKey)
+            : Boolean(vaultMeta[bill.pdfFileKey || getWaterBillFileKey(bill.invoiceNumber)])
+        )
+        .map((w) => ({
         id: `water_${w.id || w.invoiceNumber}`,
         kind: 'acqua' as const,
         label: 'Acqua',
@@ -355,8 +374,14 @@ export function DocumentsView({
         amount: w.totalPaid,
         fileKey: getWaterBillFileKey(w.invoiceNumber),
         payload: buildWaterBillSharePayload(w),
-      })),
-      ...tariBills.map((t) => ({
+        })),
+      ...tariBills
+        .filter((bill) =>
+          readOnly
+            ? Boolean(bill.pdfFileKey)
+            : Boolean(vaultMeta[bill.pdfFileKey || getTariBillFileKey(bill.noticeNumber)])
+        )
+        .map((t) => ({
         id: `tari_${t.id || t.noticeNumber}`,
         kind: 'tari' as const,
         label: 'TARI',
@@ -367,7 +392,7 @@ export function DocumentsView({
         amount: t.totalPaid,
         fileKey: getTariBillFileKey(t.noticeNumber),
         payload: buildTariBillSharePayload(t),
-      })),
+        })),
     ];
 
     return list
@@ -377,7 +402,7 @@ export function DocumentsView({
           .some((x) => x.toLowerCase().includes(q));
       })
       .sort((a, b) => b.id.localeCompare(a.id));
-  }, [electricityBills, waterBills, tariBills, searchQuery]);
+  }, [shareableElectricityBills, waterBills, tariBills, searchQuery, readOnly, vaultMeta]);
 
   const attachedDocsCount = useMemo(
     () =>
@@ -465,7 +490,7 @@ export function DocumentsView({
             Bollette Condivisibili
           </div>
           <div className="text-xl font-bold font-mono text-sky-300 mt-0.5">
-            {electricityBills.length + waterBills.length + tariBills.length}
+            {shareableElectricityBills.length + waterBills.length + tariBills.length}
           </div>
         </div>
       </div>
@@ -548,7 +573,7 @@ export function DocumentsView({
             }`}
           >
             <Receipt className="w-3.5 h-3.5" />
-            Bollette da Inviare ({electricityBills.length + waterBills.length + tariBills.length})
+            Bollette da Inviare ({shareableElectricityBills.length + waterBills.length + tariBills.length})
           </button>
         </div>
 

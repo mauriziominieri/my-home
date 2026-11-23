@@ -549,6 +549,47 @@ export async function deleteVaultFile(key: string, ownerUid?: string): Promise<v
   notifyVaultUpdated();
 }
 
+export async function deleteVaultFiles(keys: string[], ownerUid?: string): Promise<void> {
+  const cleanKeys = Array.from(new Set(keys.map(sanitizeVaultFileKey)));
+  if (cleanKeys.length === 0) return;
+
+  const uid = getAuthenticatedUid(ownerUid);
+  if (!uid) {
+    throw new Error('È necessario autenticarsi per eliminare i PDF archiviati.');
+  }
+
+  for (const key of cleanKeys) {
+    await deleteLocalCache(key);
+    cloudMetaCache.delete(key);
+  }
+
+  const keysPerBatch = 23;
+  try {
+    for (let start = 0; start < cleanKeys.length; start += keysPerBatch) {
+      const batch = writeBatch(db);
+      for (const key of cleanKeys.slice(start, start + keysPerBatch)) {
+        batch.delete(doc(db, `users/${uid}/vaultFiles`, key));
+        for (let index = 0; index < 16; index++) {
+          batch.delete(
+            doc(db, `users/${uid}/vaultFileChunks`, `${key}_chunk_${index}`)
+          );
+        }
+      }
+      await batch.commit();
+    }
+  } catch (error) {
+    if (isPermissionDeniedError(error)) {
+      setVaultCloudStatus('rules-required');
+    } else {
+      setVaultCloudStatus('error');
+    }
+    throw error;
+  }
+
+  setVaultCloudStatus('ok');
+  notifyVaultUpdated();
+}
+
 export async function listVaultFileMetadata(ownerUid?: string): Promise<Record<string, VaultFileMeta>> {
   const map: Record<string, VaultFileMeta> = {};
   for (const [key, asset] of Object.entries(STATIC_BILL_PDF_ASSETS)) {
@@ -942,6 +983,14 @@ export function buildElectricityBillSharePayload(bill: BillRecord): ShareableIte
     fallbackFileName: `bolletta-luce-${slug}.html`,
     attachmentKey: key,
   };
+}
+
+export function isOctopusContractRecord(
+  bill: Pick<BillRecord, 'supplier' | 'year' | 'invoiceNumber' | 'period' | 'note'>
+): boolean {
+  if (!bill.supplier.toLowerCase().includes('octopus')) return false;
+  const descriptor = `${bill.invoiceNumber} ${bill.period} ${bill.note || ''}`.toLowerCase();
+  return bill.year < 2027 || descriptor.includes('contratt') || descriptor.includes('contract');
 }
 
 export function buildWaterBillSharePayload(bill: WaterBillRecord): ShareableItemPayload {

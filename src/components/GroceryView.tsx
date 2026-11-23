@@ -243,6 +243,7 @@ export function GroceryView({
   }
 
   function openEditForm(item: GroceryProduct) {
+    setShowForm(false);
     setEditingId(item.id);
     setName(item.name);
     setCategory(item.category);
@@ -254,7 +255,6 @@ export function GroceryView({
     setPriceConad(item.priceConad !== null ? item.priceConad.toFixed(2).replace('.', ',') : '');
     setInShoppingList(item.inShoppingList);
     setNotes(item.notes || '');
-    setShowForm(true);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -872,6 +872,112 @@ export function GroceryView({
                 </tr>
               ) : (
                 filteredProducts.map((item) => {
+                  if (editingId === item.id && !readOnly) {
+                    return (
+                      <tr key={item.id} className="bg-slate-950/60">
+                        <td colSpan={8} className="p-3">
+                          <form
+                            onSubmit={handleSubmit}
+                            className="rounded-lg border border-sky-500/30 bg-slate-900 p-3 space-y-3"
+                          >
+                            <div className="text-xs font-semibold text-slate-100">
+                              Modifica {item.name}
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                              <input
+                                type="text"
+                                required
+                                maxLength={80}
+                                aria-label="Nome prodotto"
+                                value={name}
+                                onChange={(event) => handleNameChange(event.target.value)}
+                                className="min-w-0 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-md text-xs text-slate-100"
+                              />
+                              <select
+                                value={category}
+                                onChange={(event) => {
+                                  setCategory(event.target.value);
+                                  setCategoryManuallyPicked(true);
+                                  setCategoryAutoDetected(false);
+                                }}
+                                className="min-w-0 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-md text-xs text-slate-100"
+                              >
+                                {categoriesPresent.map((entry) => (
+                                  <option key={entry} value={entry}>
+                                    {entry}
+                                  </option>
+                                ))}
+                              </select>
+                              <input
+                                type="text"
+                                aria-label="Unità"
+                                value={unit}
+                                onChange={(event) => setUnit(event.target.value)}
+                                className="min-w-0 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-md text-xs text-slate-100"
+                              />
+                              <input
+                                type="text"
+                                aria-label="Prezzo IN'S"
+                                placeholder="IN'S (€)"
+                                value={priceIns}
+                                onChange={(event) => setPriceIns(event.target.value)}
+                                className="min-w-0 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-md text-xs text-slate-100"
+                              />
+                              <input
+                                type="text"
+                                aria-label="Prezzo MD"
+                                placeholder="MD (€)"
+                                value={priceMd}
+                                onChange={(event) => setPriceMd(event.target.value)}
+                                className="min-w-0 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-md text-xs text-slate-100"
+                              />
+                              <input
+                                type="text"
+                                aria-label="Prezzo CONAD"
+                                placeholder="CONAD (€)"
+                                value={priceConad}
+                                onChange={(event) => setPriceConad(event.target.value)}
+                                className="min-w-0 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-md text-xs text-slate-100"
+                              />
+                              <input
+                                type="text"
+                                aria-label="Note"
+                                placeholder="Note"
+                                value={notes}
+                                onChange={(event) => setNotes(event.target.value)}
+                                className="min-w-0 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-md text-xs text-slate-100"
+                              />
+                              <label className="flex items-center gap-2 px-2 text-xs text-slate-300">
+                                <input
+                                  type="checkbox"
+                                  checked={inShoppingList}
+                                  onChange={(event) => setInShoppingList(event.target.checked)}
+                                  className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-emerald-500"
+                                />
+                                Nella lista da comprare
+                              </label>
+                            </div>
+                            <div className="flex justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={resetForm}
+                                className="px-3 py-1.5 text-xs text-slate-300 hover:text-white"
+                              >
+                                Annulla
+                              </button>
+                              <button
+                                type="submit"
+                                disabled={saving}
+                                className="px-3 py-1.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-md disabled:opacity-50"
+                              >
+                                {saving ? 'Salvataggio...' : 'Salva'}
+                              </button>
+                            </div>
+                          </form>
+                        </td>
+                      </tr>
+                    );
+                  }
                   const best = getBestSupermarkets(item);
                   const renderPriceCell = (sid: SupermarketId, val: number | null) => {
                     const isBest = val !== null && best.bestIds.includes(sid);

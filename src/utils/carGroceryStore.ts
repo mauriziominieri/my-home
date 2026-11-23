@@ -9,7 +9,6 @@ import {
 export const SYSTEM_ROOM_CAR = '__macchina__';
 export const SYSTEM_ROOM_GROCERY = '__spesa__';
 export const SYSTEM_ROOM_GROCERY_META = '__spesa_meta__';
-export const GROCERY_SEED_MARKER_ID = 'grocery_seed_v1_done';
 export const CAR_PROFILE_ID = 'car_profile_ea218es';
 
 export const DEFAULT_PANDA_PROFILE: CarProfile = {

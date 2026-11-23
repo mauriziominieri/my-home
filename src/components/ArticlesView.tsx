@@ -11,11 +11,9 @@ import {
   Globe,
   Home,
   LayoutGrid,
-  Loader2,
   Package,
   Pencil,
   Plus,
-  RefreshCw,
   Search,
   ShieldCheck,
   Sparkles,
@@ -28,12 +26,11 @@ import {
   X,
 } from 'lucide-react';
 import { HomeArticleCategory, HomeArticleRecord } from '../types/home';
-import { FAMILY_WARRANTY_INFO } from '../data/articlesSeed';
 import {
   ARTICLE_ROOM_PRESETS,
   ArticleManualGuide,
   OnlineArticleSearchResult,
-  fetchOnlineManualDetails,
+  extractArticleManualDetails,
   formatAllArticlesMarkdown,
   formatArticlesHtmlDossier,
   formatSingleArticleMarkdown,
@@ -43,6 +40,8 @@ import {
   triggerTextDownload,
   unpackArticleNotes,
 } from '../utils/articleCatalog';
+import { extractPdfTextFromBytes } from '../utils/billImporter';
+import { MAX_CLOUD_FILE_BYTES } from '../utils/documentVault';
 
 import { AccessUnlockBanner } from './AccessUnlockBanner';
 
@@ -50,9 +49,14 @@ interface ArticlesViewProps {
   articles: HomeArticleRecord[];
   readOnly?: boolean;
   onSignIn?: () => void;
-  onAddArticle: (article: Omit<HomeArticleRecord, 'id'>) => Promise<void>;
-  onUpdateArticle: (id: string, article: Omit<HomeArticleRecord, 'id'>) => Promise<void>;
+  onAddArticle: (article: Omit<HomeArticleRecord, 'id'>, manualFile?: File) => Promise<void>;
+  onUpdateArticle: (
+    id: string,
+    article: Omit<HomeArticleRecord, 'id'>,
+    manualFile?: File
+  ) => Promise<void>;
   onDeleteArticle: (id: string) => Promise<void>;
+  onDownloadManual: (fileKey: string) => Promise<void>;
 }
 
 const CATEGORY_META: Record<
@@ -98,8 +102,9 @@ export function ArticlesView({
   onAddArticle,
   onUpdateArticle,
   onDeleteArticle,
+  onDownloadManual,
 }: ArticlesViewProps) {
-  const [selectedCategory, setSelectedCategory] = useState<'all' | 'family' | HomeArticleCategory>('all');
+  const [selectedCategory, setSelectedCategory] = useState<'all' | HomeArticleCategory>('all');
   const [selectedRoom, setSelectedRoom] = useState<string>('all');
   const [groupByRoom, setGroupByRoom] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -123,22 +128,28 @@ export function ArticlesView({
   const [specs, setSpecs] = useState('');
   const [manualUrlInput, setManualUrlInput] = useState('');
   const [notes, setNotes] = useState('');
+  const [manualFile, setManualFile] = useState<File | null>(null);
+  const [manualProcessing, setManualProcessing] = useState(false);
+  const [manualStatus, setManualStatus] = useState('');
+  const [manualExtractText, setManualExtractText] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [downloadingManualId, setDownloadingManualId] = useState<string | null>(null);
 
   // Online Search states
   const [showOnlineSearch, setShowOnlineSearch] = useState(false);
   const [onlineQuery, setOnlineQuery] = useState('');
+  const [onlineSearchDone, setOnlineSearchDone] = useState(false);
   const [onlineLoading, setOnlineLoading] = useState(false);
-  const [onlineProvider, setOnlineProvider] = useState('');
   const [onlineResults, setOnlineResults] = useState<OnlineArticleSearchResult[]>([]);
+  const [onlineProvider, setOnlineProvider] = useState('');
+  const [onlineUnavailable, setOnlineUnavailable] = useState(false);
+  const [onlineError, setOnlineError] = useState('');
   const [onlineTargetRooms, setOnlineTargetRooms] = useState<Record<string, string>>({});
   const [addingOnlineId, setAddingOnlineId] = useState<string | null>(null);
-  const [onlineAddedIds, setOnlineAddedIds] = useState<Record<string, boolean>>({});
+  const [onlineAddedIds, setOnlineAddedIds] = useState<string[]>([]);
 
   // Article Sheet & Manual modal states
   const [activeSheetArticle, setActiveSheetArticle] = useState<HomeArticleRecord | null>(null);
-  const [manualRefreshLoading, setManualRefreshLoading] = useState(false);
-  const [manualRefreshVersion, setManualRefreshVersion] = useState(0);
-  const [manualRefreshStatus, setManualRefreshStatus] = useState<string | null>(null);
   const [copiedSheet, setCopiedSheet] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
 
@@ -156,6 +167,11 @@ export function ArticlesView({
     setSpecs('');
     setManualUrlInput('');
     setNotes('');
+    setManualFile(null);
+    setManualProcessing(false);
+    setManualStatus('');
+    setManualExtractText('');
+    setActionError('');
   }
 
   function openNewForm(presetRoom?: string) {
@@ -178,15 +194,75 @@ export function ArticlesView({
     setSpecs(item.specs || '');
     setManualUrlInput(unpacked.manualUrl);
     setNotes(unpacked.userNotes);
+    setManualFile(null);
+    setManualProcessing(false);
+    setManualStatus(
+      item.manualFileName ? `Manuale archiviato: ${item.manualFileName}` : ''
+    );
+    setManualExtractText(item.manualExtractText || '');
+    setActionError('');
     setShowForm(true);
+  }
+
+  async function handleManualFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      setActionError('Carica un manuale o una scheda tecnica in formato PDF.');
+      return;
+    }
+    if (file.size > MAX_CLOUD_FILE_BYTES) {
+      setActionError(
+        `Il PDF supera il limite di ${Math.floor(MAX_CLOUD_FILE_BYTES / 1_000_000)} MB per il salvataggio su Firebase.`
+      );
+      return;
+    }
+
+    setActionError('');
+    setManualFile(file);
+    setManualProcessing(true);
+    setManualStatus('Lettura del PDF e compilazione della scheda...');
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const pdfText = (await extractPdfTextFromBytes(bytes, 10)).trim();
+      if (!pdfText) {
+        setManualExtractText('');
+        setManualStatus(
+          'PDF caricato, ma non contiene testo estraibile (probabile scansione). Completa i campi della scheda manualmente.'
+        );
+        return;
+      }
+
+      const details = extractArticleManualDetails(pdfText, file.name);
+      setName(details.name || '');
+      setBrand(details.brand);
+      setModel(details.model);
+      setCategory(details.category);
+      setRoom(details.room);
+      setSpecs(details.specs);
+      setManualExtractText(pdfText.slice(0, 12_000));
+      setManualStatus('Dati estratti dal PDF: controllali e completa quelli mancanti prima di salvare.');
+    } catch (error) {
+      setManualStatus('PDF selezionato, ma non è stato possibile estrarne il testo.');
+      setActionError(error instanceof Error ? error.message : 'Errore durante la lettura del PDF.');
+    } finally {
+      setManualProcessing(false);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !brand.trim() || !model.trim() || !room.trim()) return;
+    if (manualProcessing) return;
     setSaving(true);
+    setActionError('');
     try {
       const packedNotes = packArticleNotes(notes, manualUrlInput);
+      const existingArticle = editingId
+        ? articles.find((article) => article.id === editingId)
+        : undefined;
       const payload: Omit<HomeArticleRecord, 'id'> = {
         name: name.trim().slice(0, 80),
         brand: brand.trim().slice(0, 60),
@@ -195,20 +271,23 @@ export function ArticlesView({
         room: room.trim().slice(0, 60),
         familyWarranty,
         purchaseDate: purchaseDate.trim().slice(0, 20) || undefined,
-        warrantyEnd:
-          warrantyEnd.trim().slice(0, 20) ||
-          (familyWarranty ? FAMILY_WARRANTY_INFO.expiryDate : undefined),
+        warrantyEnd: warrantyEnd.trim().slice(0, 20) || undefined,
         serialNumber: serialNumber.trim().slice(0, 80) || undefined,
         specs: specs.trim().slice(0, 240) || undefined,
         notes: packedNotes,
+        manualFileKey: existingArticle?.manualFileKey,
+        manualFileName: existingArticle?.manualFileName,
+        manualExtractText: manualExtractText.trim().slice(0, 12_000) || undefined,
       };
       if (editingId) {
-        await onUpdateArticle(editingId, payload);
+        await onUpdateArticle(editingId, payload, manualFile || undefined);
       } else {
-        await onAddArticle(payload);
+        await onAddArticle(payload, manualFile || undefined);
       }
       setShowForm(false);
       resetForm();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Non è stato possibile salvare la scheda.');
     } finally {
       setSaving(false);
     }
@@ -217,12 +296,15 @@ export function ArticlesView({
   async function confirmDelete() {
     if (!pendingDelete) return;
     setDeleting(true);
+    setActionError('');
     try {
       await onDeleteArticle(pendingDelete.id);
       if (activeSheetArticle?.id === pendingDelete.id) {
         setActiveSheetArticle(null);
       }
       setPendingDelete(null);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Non è stato possibile eliminare l’articolo.');
     } finally {
       setDeleting(false);
     }
@@ -232,62 +314,72 @@ export function ArticlesView({
     e.preventDefault();
     if (!onlineQuery.trim()) return;
     setOnlineLoading(true);
+    setOnlineSearchDone(false);
+    setOnlineResults([]);
+    setOnlineError('');
+    setOnlineAddedIds([]);
+    setOnlineProvider('');
+    setOnlineUnavailable(false);
     try {
-      const { results, provider } = await searchArticlesOnline(onlineQuery);
-      setOnlineResults(results);
-      setOnlineProvider(provider);
-      const roomMap: Record<string, string> = {};
-      const preselected = selectedRoom !== 'all' ? selectedRoom : '';
-      for (const r of results) {
-        roomMap[r.id] = preselected || r.suggestedRoom || 'Cucina';
-      }
-      setOnlineTargetRooms(roomMap);
+      const response = await searchArticlesOnline(onlineQuery);
+      setOnlineResults(response.results);
+      setOnlineProvider(response.provider);
+      setOnlineUnavailable(Boolean(response.unavailable));
+      setOnlineTargetRooms(
+        Object.fromEntries(response.results.map((result) => [result.id, result.suggestedRoom]))
+      );
+    } catch (error) {
+      setOnlineUnavailable(true);
+      setOnlineError(
+        error instanceof Error ? error.message : 'La ricerca online non è riuscita.'
+      );
     } finally {
       setOnlineLoading(false);
+      setOnlineSearchDone(true);
     }
   }
 
-  async function handleAddOnlineResult(item: OnlineArticleSearchResult) {
-    const targetRoom = (onlineTargetRooms[item.id] || item.suggestedRoom || 'Cucina').trim();
-    setAddingOnlineId(item.id);
+  async function handleAddOnlineResult(result: OnlineArticleSearchResult) {
+    const targetRoom = onlineTargetRooms[result.id] || result.suggestedRoom;
+    setAddingOnlineId(result.id);
+    setOnlineError('');
     try {
-      const packedNotes = packArticleNotes(
-        item.manualSummary ? item.manualSummary.slice(0, 120) : '',
-        item.manualUrl
-      );
       await onAddArticle({
-        name: item.name.slice(0, 80),
-        brand: item.brand.slice(0, 60),
-        model: item.model.slice(0, 80),
-        category: item.category,
-        room: targetRoom.slice(0, 60),
+        name: result.name,
+        brand: result.brand,
+        model: result.model,
+        category: result.category,
+        room: targetRoom,
         familyWarranty: false,
-        specs: item.specs.slice(0, 240) || undefined,
-        notes: packedNotes,
+        specs: result.specs || undefined,
+        notes: packArticleNotes('', result.manualUrl),
       });
-      setOnlineAddedIds((prev) => ({ ...prev, [item.id]: true }));
+      setOnlineAddedIds((current) => [...current, result.id]);
+    } catch (error) {
+      setOnlineError(
+        error instanceof Error ? error.message : 'Non è stato possibile aggiungere l’articolo.'
+      );
     } finally {
       setAddingOnlineId(null);
     }
   }
 
-  async function handleRefreshOnlineManual(article: HomeArticleRecord) {
-    setManualRefreshLoading(true);
-    setManualRefreshStatus(null);
+  function openSearchResultAsNewArticle() {
+    const initialName = onlineQuery.trim().slice(0, 80);
+    openNewForm();
+    setName(initialName);
+  }
+
+  async function handleDownloadManual(article: HomeArticleRecord) {
+    if (!article.manualFileKey) return;
+    setDownloadingManualId(article.id);
+    setActionError('');
     try {
-      const fetched = await fetchOnlineManualDetails(article);
-      if (fetched) {
-        setManualRefreshVersion((v) => v + 1);
-        setManualRefreshStatus(
-          fetched.sourceType === 'online'
-            ? 'Scheda tecnica aggiornata dal web.'
-            : 'Link ufficiali e scheda verificati (senza consumo crediti).'
-        );
-      } else {
-        setManualRefreshStatus('Scheda locale verificata.');
-      }
+      await onDownloadManual(article.manualFileKey);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Non è stato possibile scaricare il manuale.');
     } finally {
-      setManualRefreshLoading(false);
+      setDownloadingManualId(null);
     }
   }
 
@@ -311,29 +403,13 @@ export function ArticlesView({
     return Array.from(counts.entries());
   }, [articles]);
 
-  const familyCovered = useMemo(
-    () => articles.filter((a) => a.familyWarranty),
-    [articles]
-  );
-
-  const daysUntilWarrantyEnd = useMemo(() => {
-    const now = new Date();
-    const target = new Date(`${FAMILY_WARRANTY_INFO.expiryIso}T23:59:59`);
-    return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-  }, []);
-
   const filteredArticles = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return articles.filter((a) => {
       if (selectedRoom !== 'all' && a.room.trim().toLowerCase() !== selectedRoom.toLowerCase()) {
         return false;
       }
-      if (selectedCategory === 'family' && !a.familyWarranty) return false;
-      if (
-        selectedCategory !== 'all' &&
-        selectedCategory !== 'family' &&
-        a.category !== selectedCategory
-      ) {
+      if (selectedCategory !== 'all' && a.category !== selectedCategory) {
         return false;
       }
       if (!q) return true;
@@ -363,9 +439,8 @@ export function ArticlesView({
 
   const activeGuide: ArticleManualGuide | null = useMemo(() => {
     if (!activeSheetArticle) return null;
-    void manualRefreshVersion;
     return getArticleManualGuide(activeSheetArticle);
-  }, [activeSheetArticle, manualRefreshVersion]);
+  }, [activeSheetArticle]);
 
   function handleExportScope(format: 'html' | 'md' | 'json') {
     const scopeName = selectedRoom === 'all' ? 'Tutte le stanze' : selectedRoom;
@@ -456,10 +531,10 @@ export function ArticlesView({
             {item.serialNumber && (
               <span className="font-mono text-slate-500">S/N {item.serialNumber}</span>
             )}
-            {(manualUrl || guide.sourceType !== 'generated') && (
+            {(item.manualFileKey || manualUrl || guide.sourceType !== 'generated') && (
               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-300 border border-sky-500/20 text-[10px]">
                 <BookOpen className="w-3 h-3" />
-                Manuale pronto
+                {item.manualFileKey ? 'PDF archiviato' : 'Manuale online'}
               </span>
             )}
           </div>
@@ -479,6 +554,17 @@ export function ArticlesView({
 
             {!readOnly && (
               <div className="flex items-center gap-1 ml-auto">
+                {item.manualFileKey && (
+                  <button
+                    type="button"
+                    disabled={downloadingManualId === item.id}
+                    onClick={() => void handleDownloadManual(item)}
+                    className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-emerald-300 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                  >
+                    <Download className="w-3 h-3" />
+                    {downloadingManualId === item.id ? 'Download...' : 'Scarica PDF'}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => openEditForm(item)}
@@ -505,6 +591,22 @@ export function ArticlesView({
 
   return (
     <div className="space-y-5">
+      {actionError && (
+        <div
+          role="alert"
+          className="flex items-start justify-between gap-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200"
+        >
+          <span>{actionError}</span>
+          <button
+            type="button"
+            onClick={() => setActionError('')}
+            aria-label="Chiudi messaggio di errore"
+            className="text-rose-300 hover:text-white"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
         <div>
@@ -616,7 +718,7 @@ export function ArticlesView({
                 Cerca Articoli &amp; Manuali Online
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Cerca marca o modello (es. &quot;Bosch lavastoviglie&quot;, &quot;Samsung lavatrice WW90&quot;, &quot;Dyson V15&quot;, &quot;Monitor LG 27&quot;), scegli la stanza di casa e aggiungilo con manuale su Firebase.
+                La ricerca AI parte solo quando la invii e usa la cache per le query recenti. L’estrazione dai PDF resta locale; se la ricerca integrata non è disponibile puoi aprire Google Shopping.
               </p>
             </div>
             <button
@@ -628,212 +730,128 @@ export function ArticlesView({
             </button>
           </div>
 
-          <form onSubmit={(e) => void handleOnlineSearch(e)} className="flex flex-col sm:flex-row gap-2">
+          <form onSubmit={handleOnlineSearch} className="flex flex-col sm:flex-row gap-2">
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={onlineQuery}
-                onChange={(e) => setOnlineQuery(e.target.value)}
-                placeholder="Es. Lavatrice Bosch Serie 6, LG OLED C4, Dyson Supersonic..."
+                maxLength={140}
+                onChange={(e) => {
+                  setOnlineQuery(e.target.value);
+                  setOnlineSearchDone(false);
+                  setOnlineResults([]);
+                  setOnlineError('');
+                }}
+                placeholder="Es. chitarra Ibanez, frigo Bosch, LG OLED C4..."
                 className="w-full pl-9 pr-3 py-2 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-violet-400"
               />
             </div>
             <button
               type="submit"
-              disabled={onlineLoading || !onlineQuery.trim()}
+              disabled={!onlineQuery.trim() || onlineLoading}
               className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold text-slate-950 bg-violet-400 hover:bg-violet-300 disabled:opacity-50 rounded-lg transition-colors"
             >
-              {onlineLoading ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  Ricerca online...
-                </>
-              ) : (
-                <>
-                  <Globe className="w-3.5 h-3.5" />
-                  Cerca prodotto
-                </>
-              )}
+              <Globe className="w-3.5 h-3.5" />
+              {onlineLoading ? 'Ricerca in corso...' : 'Cerca modelli'}
             </button>
           </form>
 
+          {onlineSearchDone && onlineProvider && (
+            <p className="text-[11px] text-slate-400">{onlineProvider}</p>
+          )}
+          {onlineError && (
+            <p role="alert" className="text-xs text-rose-300">{onlineError}</p>
+          )}
           {onlineResults.length > 0 && (
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between text-[11px] text-slate-400">
-                <span>
-                  Trovati <strong className="text-slate-200">{onlineResults.length}</strong> risultati
-                  {onlineProvider ? ` · ${onlineProvider}` : ''}
-                </span>
-                <span>Seleziona la stanza e clicca &quot;Aggiungi in casa&quot;</span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {onlineResults.map((res) => {
-                  const chosenRoom = onlineTargetRooms[res.id] || res.suggestedRoom || 'Cucina';
-                  const isAdded = Boolean(onlineAddedIds[res.id]);
-                  const isAdding = addingOnlineId === res.id;
-                  return (
-                    <div
-                      key={res.id}
-                      className="bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 space-y-2.5 text-xs"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="font-bold text-slate-100">{res.name}</div>
-                          <div className="font-mono text-violet-300 text-[11px]">
-                            {res.brand} · {res.model}
-                          </div>
-                        </div>
-                        <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px] text-slate-300">
-                          {CATEGORY_META[res.category]?.label || res.category}
-                        </span>
-                      </div>
-
-                      {res.specs && <p className="text-slate-400 text-[11px]">{res.specs}</p>}
-                      {res.manualSummary && (
-                        <p className="text-slate-500 text-[11px] leading-relaxed">
-                          {res.manualSummary}
-                        </p>
-                      )}
-
-                      <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                        <a
-                          href={res.manualUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          Manuale / Scheda
-                        </a>
-                        {res.sourceUrls.slice(0, 2).map((src) => (
-                          <a
-                            key={src.url}
-                            href={src.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-slate-400 hover:text-slate-200 underline"
-                          >
-                            {src.title.slice(0, 26)}
-                          </a>
-                        ))}
-                      </div>
-
-                      <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center gap-2">
-                        <select
-                          value={chosenRoom}
-                          onChange={(e) =>
-                            setOnlineTargetRooms((prev) => ({ ...prev, [res.id]: e.target.value }))
-                          }
-                          className="flex-1 min-w-[140px] px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 text-xs [color-scheme:dark]"
-                        >
-                          {allRooms.map((r) => (
-                            <option key={r} value={r}>
-                              Stanza: {r}
-                            </option>
-                          ))}
-                        </select>
-
-                        <button
-                          type="button"
-                          disabled={isAdding || isAdded}
-                          onClick={() => void handleAddOnlineResult(res)}
-                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                            isAdded
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                              : 'bg-sky-400 hover:bg-sky-300 text-slate-950'
-                          }`}
-                        >
-                          {isAdded ? (
-                            <>
-                              <Check className="w-3.5 h-3.5" />
-                              Aggiunto in {chosenRoom}
-                            </>
-                          ) : isAdding ? (
-                            'Salvataggio...'
-                          ) : (
-                            <>
-                              <Plus className="w-3.5 h-3.5" />
-                              Aggiungi in casa
-                            </>
-                          )}
-                        </button>
-                      </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {onlineResults.map((result) => {
+                const added = onlineAddedIds.includes(result.id);
+                return (
+                  <article
+                    key={result.id}
+                    className="rounded-lg border border-slate-700 bg-slate-950/70 p-3 space-y-2"
+                  >
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-100">{result.name}</h3>
+                      <p className="text-xs text-slate-400">{result.brand} · {result.model}</p>
                     </div>
-                  );
-                })}
+                    {result.specs && <p className="text-xs text-slate-300">{result.specs}</p>}
+                    {result.sourceUrls.map((source) => (
+                      <a
+                        key={source.url}
+                        href={source.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block truncate text-[11px] text-sky-300 hover:text-sky-200 underline"
+                      >
+                        Fonte: {source.title}
+                      </a>
+                    ))}
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <select
+                        value={onlineTargetRooms[result.id] || result.suggestedRoom}
+                        onChange={(event) =>
+                          setOnlineTargetRooms((current) => ({
+                            ...current,
+                            [result.id]: event.target.value,
+                          }))
+                        }
+                        className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-slate-100"
+                        aria-label={`Stanza per ${result.name}`}
+                      >
+                        {allRooms.map((roomOption) => (
+                          <option key={roomOption} value={roomOption}>{roomOption}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={added || addingOnlineId === result.id}
+                        onClick={() => void handleAddOnlineResult(result)}
+                        className="rounded-lg bg-sky-400 px-3 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-300 disabled:opacity-60"
+                      >
+                        {added ? 'Aggiunto' : addingOnlineId === result.id ? 'Salvataggio...' : 'Aggiungi alla casa'}
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+          {onlineSearchDone && (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-950/50 px-3 py-3 text-xs">
+              <p className="text-slate-300">
+                {onlineUnavailable
+                  ? 'La ricerca integrata non è configurata in questa versione del sito.'
+                  : onlineResults.length
+                    ? 'Scegli un modello e la stanza per aggiungerlo alla casa.'
+                    : 'Nessun modello verificabile trovato. Puoi provare su Google Shopping e creare la scheda manualmente.'}
+              </p>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <a
+                  href={`https://www.google.com/search?tbm=shop&q=${encodeURIComponent(onlineQuery.trim())}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-400 px-3 py-2 font-semibold text-slate-950 hover:bg-amber-300"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Apri Google Shopping
+                </a>
+                {(onlineUnavailable || onlineResults.length === 0) && (
+                  <button
+                    type="button"
+                    onClick={openSearchResultAsNewArticle}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-semibold text-slate-200 hover:bg-slate-800"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Crea scheda
+                  </button>
+                )}
               </div>
             </div>
           )}
         </section>
       )}
-
-      {/* Card Garanzia Family */}
-      <section className="bg-gradient-to-br from-emerald-950/50 via-slate-900 to-slate-900 border border-emerald-500/35 rounded-xl p-4 sm:p-5 space-y-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/20 text-emerald-300 border border-emerald-500/35 rounded-md">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                Assicurazione Attiva
-              </span>
-              <span className="text-xs font-mono text-emerald-300 font-semibold">
-                {FAMILY_WARRANTY_INFO.monthlyEur.toFixed(2).replace('.', ',')} €/mese
-              </span>
-              <span className="text-xs text-slate-400">
-                ({(FAMILY_WARRANTY_INFO.monthlyEur * 12).toFixed(2).replace('.', ',')} €/anno)
-              </span>
-            </div>
-            <h2 className="text-base font-bold text-slate-100">
-              {FAMILY_WARRANTY_INFO.planName} — Danni Accidentali (4 dispositivi)
-            </h2>
-            <p className="text-xs text-slate-300">
-              Copertura per danni accidentali valida fino alla fine della garanzia legale:{' '}
-              <span className="font-mono font-semibold text-emerald-300">
-                {FAMILY_WARRANTY_INFO.expiryDate}
-              </span>
-              {daysUntilWarrantyEnd > 0 ? (
-                <span className="text-slate-400"> ({daysUntilWarrantyEnd} giorni rimanenti)</span>
-              ) : (
-                <span className="text-rose-300"> (Scaduta)</span>
-              )}
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() =>
-              setSelectedCategory((prev) => (prev === 'family' ? 'all' : 'family'))
-            }
-            className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-              selectedCategory === 'family'
-                ? 'bg-emerald-500 text-slate-950 border-emerald-400'
-                : 'bg-slate-900/80 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/15'
-            }`}
-          >
-            {selectedCategory === 'family'
-              ? 'Mostra tutti gli articoli'
-              : `Filtra i ${familyCovered.length} assicurati`}
-          </button>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
-          {familyCovered.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setActiveSheetArticle(item)}
-              className="text-left bg-slate-950/75 hover:bg-slate-950 border border-emerald-500/25 hover:border-emerald-400/50 rounded-lg px-3 py-2 text-xs transition-colors"
-            >
-              <div className="font-semibold text-slate-100 truncate">{item.name}</div>
-              <div className="text-[11px] font-mono text-emerald-300 truncate">
-                {item.brand !== 'Da completare' ? `${item.brand} ${item.model}` : 'Modello da inserire'}
-              </div>
-            </button>
-          ))}
-        </div>
-      </section>
 
       {/* Form Aggiunta / Modifica Articolo */}
       {showForm && !readOnly && (
@@ -988,16 +1006,11 @@ export function ArticlesView({
                 id="familyWarrantyToggle"
                 type="checkbox"
                 checked={familyWarranty}
-                onChange={(e) => {
-                  setFamilyWarranty(e.target.checked);
-                  if (e.target.checked && !warrantyEnd) {
-                    setWarrantyEnd(FAMILY_WARRANTY_INFO.expiryDate);
-                  }
-                }}
+                onChange={(e) => setFamilyWarranty(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-emerald-500"
               />
               <label htmlFor="familyWarrantyToggle" className="text-slate-200 cursor-pointer">
-                Incluso in Garanzia Family (2,90 €/mese)
+                Coperto da garanzia aggiuntiva
               </label>
             </div>
 
@@ -1023,6 +1036,26 @@ export function ArticlesView({
                 placeholder="https://..."
                 className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100 focus:outline-none focus:border-sky-500"
               />
+            </div>
+
+            <div className="sm:col-span-2 lg:col-span-3 space-y-1">
+              <label className="block text-slate-400">Carica manuale o scheda tecnica PDF</label>
+              <input
+                type="file"
+                accept="application/pdf,.pdf"
+                onChange={(event) => void handleManualFileChange(event)}
+                disabled={manualProcessing || saving}
+                className="block w-full text-xs text-slate-300 file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-sky-500/15 file:text-sky-300 hover:file:bg-sky-500/25"
+              />
+              <p className="text-[10px] text-slate-500">
+                Il PDF viene archiviato nel vault Firebase (max {Math.floor(MAX_CLOUD_FILE_BYTES / 1_000_000)} MB). Se contiene testo selezionabile, la scheda viene compilata automaticamente e puoi correggerla prima di salvarla.
+              </p>
+              {manualFile && (
+                <p className="text-[11px] text-sky-300">Nuovo file: {manualFile.name}</p>
+              )}
+              {manualStatus && (
+                <p className="text-[11px] text-slate-400" role="status">{manualStatus}</p>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -1051,10 +1084,16 @@ export function ArticlesView({
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || manualProcessing}
               className="px-4 py-2 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 disabled:opacity-50 rounded-lg transition-colors"
             >
-              {saving ? 'Salvataggio...' : editingId ? 'Salva modifiche' : 'Salva articolo'}
+              {manualProcessing
+                ? 'Lettura PDF...'
+                : saving
+                  ? 'Salvataggio...'
+                  : editingId
+                    ? 'Salva modifiche'
+                    : 'Crea scheda articolo'}
             </button>
           </div>
         </form>
@@ -1259,7 +1298,6 @@ export function ArticlesView({
                 type="button"
                 onClick={() => {
                   setActiveSheetArticle(null);
-                  setManualRefreshStatus(null);
                   setCopiedSheet(false);
                 }}
                 aria-label="Chiudi scheda manuale"
@@ -1274,6 +1312,19 @@ export function ArticlesView({
               <div className="bg-slate-950/75 border border-slate-800 rounded-xl p-4 space-y-3">
                 <p className="text-slate-200 leading-relaxed">{activeGuide.summary}</p>
                 <div className="flex flex-wrap items-center gap-2">
+                  {activeSheetArticle.manualFileKey && (
+                    <button
+                      type="button"
+                      disabled={downloadingManualId === activeSheetArticle.id}
+                      onClick={() => void handleDownloadManual(activeSheetArticle)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 disabled:opacity-50 rounded-lg"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      {downloadingManualId === activeSheetArticle.id
+                        ? 'Download...'
+                        : `Scarica ${activeSheetArticle.manualFileName || 'manuale PDF'}`}
+                    </button>
+                  )}
                   <a
                     href={activeGuide.manualUrl}
                     target="_blank"
@@ -1292,20 +1343,11 @@ export function ArticlesView({
                     <Search className="w-3.5 h-3.5" />
                     Cerca manuale produttore
                   </a>
-                  <button
-                    type="button"
-                    disabled={manualRefreshLoading}
-                    onClick={() => void handleRefreshOnlineManual(activeSheetArticle)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-violet-300 bg-violet-500/15 hover:bg-violet-500/25 border border-violet-500/30 rounded-lg"
-                  >
-                    <RefreshCw
-                      className={`w-3.5 h-3.5 ${manualRefreshLoading ? 'animate-spin' : ''}`}
-                    />
-                    {manualRefreshLoading ? 'Ricerca online...' : 'Aggiorna manuale online'}
-                  </button>
                 </div>
-                {manualRefreshStatus && (
-                  <p className="text-[11px] text-emerald-300">{manualRefreshStatus}</p>
+                {actionError && (
+                  <p role="alert" className="text-[11px] text-rose-300">
+                    {actionError}
+                  </p>
                 )}
                 {activeGuide.sourceUrls && activeGuide.sourceUrls.length > 0 && (
                   <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-slate-400">
@@ -1324,6 +1366,17 @@ export function ArticlesView({
                   </div>
                 )}
               </div>
+
+              {activeSheetArticle.manualExtractText && (
+                <details className="bg-slate-950/60 border border-slate-800 rounded-xl p-4">
+                  <summary className="cursor-pointer font-semibold text-slate-200">
+                    Testo estratto dal manuale caricato
+                  </summary>
+                  <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-slate-400">
+                    {activeSheetArticle.manualExtractText}
+                  </pre>
+                </details>
+              )}
 
               {/* Technical Specs & Warranty */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1447,7 +1500,6 @@ export function ArticlesView({
                 type="button"
                 onClick={() => {
                   setActiveSheetArticle(null);
-                  setManualRefreshStatus(null);
                   setCopiedSheet(false);
                 }}
                 className="px-3.5 py-1.5 text-xs font-medium text-slate-300 hover:text-slate-100 bg-slate-800 rounded-lg"
@@ -1472,10 +1524,15 @@ export function ArticlesView({
                 </h3>
                 <p className="text-xs text-slate-300 leading-relaxed">
                   Verrà rimosso dall&apos;inventario su Firebase ({pendingDelete.brand}{' '}
-                  {pendingDelete.model}).
+                  {pendingDelete.model}) e il manuale archiviato, se presente.
                 </p>
               </div>
             </div>
+            {actionError && (
+              <p role="alert" className="text-xs text-rose-300">
+                {actionError}
+              </p>
+            )}
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
               <button
                 type="button"

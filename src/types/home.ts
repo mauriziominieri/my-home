@@ -30,6 +30,7 @@ export interface BillRecord {
   electricityOnly: number;
   totalPaid: number;
   note?: string;
+  pdfFileKey?: string;
 }
 
 export interface WaterBillRecord {
@@ -42,6 +43,7 @@ export interface WaterBillRecord {
   fixedCostEur: number;
   totalPaid: number;
   note?: string;
+  pdfFileKey?: string;
 }
 
 export interface TariBillRecord {
@@ -56,6 +58,7 @@ export interface TariBillRecord {
   paid: boolean;
   source: 'gmail-pdf' | 'manuale';
   note?: string;
+  pdfFileKey?: string;
 }
 
 export type GsePaymentType = 'acconto' | 'conguaglio' | 'altro';
@@ -70,6 +73,7 @@ export interface GsePaymentRecord {
   kwhInjected?: number;
   reference?: string;
   note?: string;
+  attachmentFileKey?: string;
 }
 
 export type HomeArticleCategory =
@@ -93,6 +97,9 @@ export interface HomeArticleRecord {
   serialNumber?: string;
   specs?: string;
   notes?: string;
+  manualFileKey?: string;
+  manualFileName?: string;
+  manualExtractText?: string;
 }
 
 export interface SupplierMarketOffer {
