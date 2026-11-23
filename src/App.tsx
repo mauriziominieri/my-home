@@ -180,6 +180,8 @@ export default function App() {
   const [firestoreReadings, setFirestoreReadings] = useState<EnergyReading[]>([]);
   const [climateLogs, setClimateLogs] = useState<ClimateSession[]>([]);
   const [publicOwnerUid, setPublicOwnerUid] = useState<string | null>(null);
+  const [publicClimateAutopilot, setPublicClimateAutopilot] =
+    useState<ClimateAutopilotConfig | null>(null);
   const [electricityBills, setElectricityBills] = useState<BillRecord[]>(SEED_ELECTRICITY_BILLS);
   const [waterBills, setWaterBills] = useState<WaterBillRecord[]>(SEED_WATER_BILLS);
   const [tariBills, setTariBills] = useState<TariBillRecord[]>([]);
@@ -228,6 +230,7 @@ export default function App() {
       setUser(currentUser);
       if (currentUser) {
         setPublicOwnerUid(null);
+        setPublicClimateAutopilot(null);
       }
       if (!currentUser) {
         setGmailToken(null);
@@ -287,6 +290,7 @@ export default function App() {
     if (!activeUid) {
       setFirestoreReadings([]);
       setClimateLogs([]);
+      setPublicClimateAutopilot(null);
       setHomeConfig({ ownerId: '', ...DEFAULT_HOME_CONFIG });
       setReadingsLoading(true);
       return;
@@ -968,9 +972,43 @@ export default function App() {
       }
     );
 
+    const autopilotPath =
+      `users/${publicOwnerUid}/homeArticles/${CLIMATE_AUTOPILOT_DOC_ID}`;
+    const unsubAutopilot = onSnapshot(
+      doc(db, autopilotPath),
+      (snap) => {
+        if (!snap.exists()) {
+          setPublicClimateAutopilot(null);
+          return;
+        }
+        const data = snap.data();
+        setPublicClimateAutopilot(
+          articleToClimateAutopilot({
+            id: snap.id,
+            name: String(data.name || ''),
+            brand: String(data.brand || ''),
+            model: String(data.model || ''),
+            category: (data.category as HomeArticleCategory) || 'clima',
+            room: String(data.room || SYSTEM_ROOM_CLIMATE_AUTO),
+            purchaseDate: data.purchaseDate ? String(data.purchaseDate) : undefined,
+            warrantyEnd: data.warrantyEnd ? String(data.warrantyEnd) : undefined,
+            familyWarranty: Boolean(data.familyWarranty),
+            serialNumber: data.serialNumber ? String(data.serialNumber) : undefined,
+            specs: data.specs ? String(data.specs) : undefined,
+            notes: data.notes ? String(data.notes) : undefined,
+          })
+        );
+      },
+      (error) => {
+        setPublicClimateAutopilot(null);
+        handleFirestoreError(error, OperationType.GET, autopilotPath);
+      }
+    );
+
     return () => {
       unsubReadings();
       unsubClimate();
+      unsubAutopilot();
     };
   }, [authReady, activeUid, publicOwnerUid]);
 
@@ -1759,21 +1797,25 @@ export default function App() {
   );
 
   const climateAutopilot = useMemo<ClimateAutopilotConfig | null>(
-    () => articleToClimateAutopilot(homeArticles.find((a) => a.id === CLIMATE_AUTOPILOT_DOC_ID)),
-    [homeArticles]
+    () =>
+      articleToClimateAutopilot(
+        homeArticles.find((a) => a.id === CLIMATE_AUTOPILOT_DOC_ID)
+      ) ?? (!activeUid ? publicClimateAutopilot : null),
+    [homeArticles, activeUid, publicClimateAutopilot]
   );
 
   const effectiveClimateLogs = useMemo(() => {
-    if (!climateAutopilot?.active || !activeUid) return climateLogs;
+    const logsOwnerUid = activeUid ?? publicOwnerUid;
+    if (!climateAutopilot?.active || !logsOwnerUid) return climateLogs;
     const existingIds = new Set(climateLogs.map((l) => l.id));
     const dates = enumerateIsoDatesInclusive(climateAutopilot.startDate, todayIso);
     if (dates.length === 0) return climateLogs;
     const missing = dates
       .filter((d) => !existingIds.has(getAutoClimateDocId(d)))
-      .map((d) => buildAutopilotSessionForDate(d, climateAutopilot, activeUid));
+      .map((d) => buildAutopilotSessionForDate(d, climateAutopilot, logsOwnerUid));
     if (missing.length === 0) return climateLogs;
     return [...climateLogs, ...missing];
-  }, [climateLogs, climateAutopilot, todayIso, activeUid]);
+  }, [climateLogs, climateAutopilot, todayIso, activeUid, publicOwnerUid]);
 
   async function handleActivateClimateAutopilot(input: ClimateAutopilotInput) {
     if (!user) return;

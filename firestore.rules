@@ -389,7 +389,9 @@ service cloud.firestore {
     }
 
     match /users/{userId}/homeArticles/{articleId} {
-      allow get: if isOwner(userId) && isValidId(articleId);
+      allow get: if isValidId(articleId)
+        && (isOwner(userId)
+          || (articleId == 'climate_autopilot_state' && isPublicDataOwner(userId)));
       allow list: if isOwner(userId) && existing().ownerId == userId;
       allow create: if isOwner(userId)
         && isValidId(articleId)
