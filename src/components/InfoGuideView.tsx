@@ -516,7 +516,7 @@ export function InfoGuideView() {
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
                 <div className="font-semibold text-emerald-300">3. Copia su Firebase Firestore</div>
                 <p className="text-slate-400 leading-relaxed">
-                  Appena apri il sito, la dashboard legge in diretta i nuovi giorni dal branch <span className="font-mono text-slate-300">data</span> su GitHub; quando accedi con Google, li salva automaticamente su <strong className="text-slate-200">Firebase Firestore</strong>.
+                  Appena apri il sito, la dashboard legge in diretta i nuovi giorni dal branch <span className="font-mono text-slate-300">data</span> su GitHub; quando accedi con Google, li salva automaticamente su <strong className="text-slate-200">Firebase Firestore</strong>. I file <strong className="text-slate-200">PDF originali</strong> delle bollette e dei documenti non vanno mai su GitHub: restano salvati privatamente solo sul tuo <strong className="text-slate-200">Firestore Vault</strong>.
                 </p>
               </div>
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">

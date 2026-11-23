@@ -1121,50 +1121,48 @@ export function BillsView({
                           {w.totalPaid.toFixed(2).replace('.', ',')} €
                         </td>
                         <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                          <div className="inline-flex items-center gap-1">
-                            {hasPdf && (
-                              <span
-                                title={`PDF pronto (${
-                                  vaultMeta[fileKey]?.origin === 'firestore'
-                                    ? 'su Firestore multi-dispositivo'
-                                    : vaultMeta[fileKey]?.origin === 'bundled'
-                                      ? 'incluso nell’app'
-                                      : 'solo locale'
-                                }): ${vaultMeta[fileKey]?.fileName}`}
-                                className="px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded"
-                              >
-                                {vaultMeta[fileKey]?.origin === 'firestore' ? 'PDF Cloud' : 'PDF'}
-                              </span>
-                            )}
-                            {!readOnly && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setAttachingFileKey(fileKey);
-                                  attachFileInputRef.current?.click();
-                                }}
-                                title={hasPdf ? 'Sostituisci PDF allegato' : 'Allega PDF originale'}
-                                className={`p-1 rounded ${
-                                  hasPdf
-                                    ? 'text-emerald-400 hover:bg-emerald-500/15'
-                                    : 'text-slate-400 hover:text-sky-300'
-                                }`}
-                              >
-                                {hasPdf ? (
-                                  <FileCheck2 className="w-3.5 h-3.5" />
-                                ) : (
-                                  <FileUp className="w-3.5 h-3.5" />
+                          <div className="inline-flex items-center gap-1.5">
+                            {hasPdf ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => void downloadShareableItem(sharePayload)}
+                                  title={`Scarica PDF originale (${vaultMeta[fileKey]?.fileName})`}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 rounded"
+                                >
+                                  <Download className="w-3 h-3" />
+                                  Scarica PDF
+                                </button>
+                                {!readOnly && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAttachingFileKey(fileKey);
+                                      attachFileInputRef.current?.click();
+                                    }}
+                                    title="Sostituisci PDF su Firebase"
+                                    className="p-1 text-emerald-400 hover:bg-emerald-500/15 rounded"
+                                  >
+                                    <FileCheck2 className="w-3.5 h-3.5" />
+                                  </button>
                                 )}
-                              </button>
+                              </>
+                            ) : (
+                              !readOnly && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAttachingFileKey(fileKey);
+                                    attachFileInputRef.current?.click();
+                                  }}
+                                  title="Carica il PDF originale su Firebase per scaricarlo ovunque"
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded"
+                                >
+                                  <FileUp className="w-3 h-3" />
+                                  Allega PDF
+                                </button>
+                              )
                             )}
-                            <button
-                              type="button"
-                              onClick={() => void downloadShareableItem(sharePayload)}
-                              title={hasPdf ? 'Scarica PDF bolletta' : 'Scarica scheda bolletta'}
-                              className="p-1 text-slate-300 hover:text-sky-300 rounded"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                            </button>
                             <button
                               type="button"
                               onClick={() => setShareBillItem(sharePayload)}
@@ -1455,48 +1453,48 @@ export function BillsView({
                             {t.totalPaid.toFixed(2).replace('.', ',')} €
                           </td>
                           <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                            <div className="inline-flex items-center gap-1">
-                              {hasPdf && (
-                                <span
-                                  title={`PDF pronto (${
-                                    vaultMeta[fileKey]?.origin === 'firestore'
-                                      ? 'su Firestore multi-dispositivo'
-                                      : 'solo locale'
-                                  }): ${vaultMeta[fileKey]?.fileName}`}
-                                  className="px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded"
-                                >
-                                  {vaultMeta[fileKey]?.origin === 'firestore' ? 'PDF Cloud' : 'PDF'}
-                                </span>
-                              )}
-                              {!readOnly && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setAttachingFileKey(fileKey);
-                                    attachFileInputRef.current?.click();
-                                  }}
-                                  title={hasPdf ? 'Sostituisci PDF allegato' : 'Allega PDF originale'}
-                                  className={`p-1 rounded ${
-                                    hasPdf
-                                      ? 'text-emerald-400 hover:bg-emerald-500/15'
-                                      : 'text-slate-400 hover:text-sky-300'
-                                  }`}
-                                >
-                                  {hasPdf ? (
-                                    <FileCheck2 className="w-3.5 h-3.5" />
-                                  ) : (
-                                    <FileUp className="w-3.5 h-3.5" />
+                            <div className="inline-flex items-center gap-1.5">
+                              {hasPdf ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => void downloadShareableItem(sharePayload)}
+                                    title={`Scarica PDF originale (${vaultMeta[fileKey]?.fileName})`}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 rounded"
+                                  >
+                                    <Download className="w-3 h-3" />
+                                    Scarica PDF
+                                  </button>
+                                  {!readOnly && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setAttachingFileKey(fileKey);
+                                        attachFileInputRef.current?.click();
+                                      }}
+                                      title="Sostituisci PDF su Firebase"
+                                      className="p-1 text-emerald-400 hover:bg-emerald-500/15 rounded"
+                                    >
+                                      <FileCheck2 className="w-3.5 h-3.5" />
+                                    </button>
                                   )}
-                                </button>
+                                </>
+                              ) : (
+                                !readOnly && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAttachingFileKey(fileKey);
+                                      attachFileInputRef.current?.click();
+                                    }}
+                                    title="Carica il PDF originale su Firebase per scaricarlo ovunque"
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded"
+                                  >
+                                    <FileUp className="w-3 h-3" />
+                                    Allega PDF
+                                  </button>
+                                )
                               )}
-                              <button
-                                type="button"
-                                onClick={() => void downloadShareableItem(sharePayload)}
-                                title={hasPdf ? 'Scarica PDF TARI' : 'Scarica avviso TARI'}
-                                className="p-1 text-slate-300 hover:text-sky-300 rounded"
-                              >
-                                <Download className="w-3.5 h-3.5" />
-                              </button>
                               <button
                                 type="button"
                                 onClick={() => setShareBillItem(sharePayload)}
@@ -1971,6 +1969,19 @@ export function BillsView({
                       </p>
                     )}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedBillYear(String(item.year));
+                      document
+                        .getElementById('storico-bollette-luce')
+                        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 rounded-lg whitespace-nowrap shrink-0 transition-colors"
+                  >
+                    <Download className="w-3 h-3" />
+                    Vedi bollette e PDF ↓
+                  </button>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
@@ -2250,14 +2261,19 @@ export function BillsView({
           </div>
 
           {/* Storico Bollette Reali */}
-          <div className="bg-slate-900/70 border border-slate-800 rounded-xl overflow-hidden">
+          <div
+            id="storico-bollette-luce"
+            className="bg-slate-900/70 border border-slate-800 rounded-xl overflow-hidden scroll-mt-16"
+          >
             <div className="px-4 py-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="text-sm font-semibold text-slate-100">
                   Storico Bollette Luce ({filteredBills.length})
                 </h3>
                 <p className="text-[11px] text-slate-400">
-                  Aggiornate automaticamente dai PDF ricevuti via email su Gmail.
+                  Per scaricare il PDF originale da ogni dispositivo, allegalo una volta con{' '}
+                  <strong className="text-amber-300">Allega PDF</strong> (o da{' '}
+                  <strong className="text-sky-300">Collega Gmail</strong> se la mail è in INBOX): resta salvato privatamente su Firebase.
                 </p>
               </div>
               <div className="flex items-center gap-1.5">
@@ -2431,50 +2447,48 @@ export function BillsView({
                           {b.totalPaid.toFixed(2).replace('.', ',')} €
                         </td>
                         <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                          <div className="inline-flex items-center gap-1">
-                            {hasPdf && (
-                              <span
-                                title={`PDF pronto (${
-                                  vaultMeta[fileKey]?.origin === 'firestore'
-                                    ? 'su Firestore multi-dispositivo'
-                                    : vaultMeta[fileKey]?.origin === 'bundled'
-                                      ? 'incluso nell’app'
-                                      : 'solo locale'
-                                }): ${vaultMeta[fileKey]?.fileName}`}
-                                className="px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded"
-                              >
-                                {vaultMeta[fileKey]?.origin === 'firestore' ? 'PDF Cloud' : 'PDF'}
-                              </span>
-                            )}
-                            {!readOnly && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setAttachingFileKey(fileKey);
-                                  attachFileInputRef.current?.click();
-                                }}
-                                title={hasPdf ? 'Sostituisci PDF allegato' : 'Allega PDF originale'}
-                                className={`p-1 rounded ${
-                                  hasPdf
-                                    ? 'text-emerald-400 hover:bg-emerald-500/15'
-                                    : 'text-slate-400 hover:text-sky-300'
-                                }`}
-                              >
-                                {hasPdf ? (
-                                  <FileCheck2 className="w-3.5 h-3.5" />
-                                ) : (
-                                  <FileUp className="w-3.5 h-3.5" />
+                          <div className="inline-flex items-center gap-1.5">
+                            {hasPdf ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => void downloadShareableItem(sharePayload)}
+                                  title={`Scarica PDF originale (${vaultMeta[fileKey]?.fileName})`}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 rounded"
+                                >
+                                  <Download className="w-3 h-3" />
+                                  Scarica PDF
+                                </button>
+                                {!readOnly && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAttachingFileKey(fileKey);
+                                      attachFileInputRef.current?.click();
+                                    }}
+                                    title="Sostituisci PDF su Firebase"
+                                    className="p-1 text-emerald-400 hover:bg-emerald-500/15 rounded"
+                                  >
+                                    <FileCheck2 className="w-3.5 h-3.5" />
+                                  </button>
                                 )}
-                              </button>
+                              </>
+                            ) : (
+                              !readOnly && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAttachingFileKey(fileKey);
+                                    attachFileInputRef.current?.click();
+                                  }}
+                                  title="Carica il PDF originale su Firebase per scaricarlo ovunque"
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded"
+                                >
+                                  <FileUp className="w-3 h-3" />
+                                  Allega PDF
+                                </button>
+                              )
                             )}
-                            <button
-                              type="button"
-                              onClick={() => void downloadShareableItem(sharePayload)}
-                              title={hasPdf ? 'Scarica PDF bolletta' : 'Scarica scheda bolletta'}
-                              className="p-1 text-slate-300 hover:text-sky-300 rounded"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                            </button>
                             <button
                               type="button"
                               onClick={() => setShareBillItem(sharePayload)}

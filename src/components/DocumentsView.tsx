@@ -865,15 +865,17 @@ export function DocumentsView({
                       </td>
                       <td className="px-4 py-2.5 text-right whitespace-nowrap">
                         <div className="inline-flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => void downloadShareableItem(b.payload)}
-                            title="Scarica bolletta"
-                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md"
-                          >
-                            <Download className="w-3 h-3 text-sky-400" />
-                            Scarica
-                          </button>
+                          {localFile && (
+                            <button
+                              type="button"
+                              onClick={() => void downloadShareableItem(b.payload)}
+                              title={`Scarica PDF (${localFile.fileName})`}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-300 rounded-md"
+                            >
+                              <Download className="w-3 h-3" />
+                              Scarica PDF
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => setShareItem(b.payload)}

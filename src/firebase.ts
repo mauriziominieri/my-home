@@ -41,6 +41,7 @@ for (const scope of GMAIL_SCOPES) {
 
 export const FIREBASE_PROJECT_ID = FIRESTORE_CONFIG.projectId;
 export const FIRESTORE_DATABASE_ID = FIRESTORE_CONFIG.firestoreDatabaseId;
+export const GMAIL_OAUTH_PROJECT_ID = oauthFirebaseConfig.projectId;
 
 // In-memory cache only for Gmail OAuth access token (never localStorage/sessionStorage)
 let cachedGmailAccessToken: string | null = null;

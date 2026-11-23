@@ -36,7 +36,9 @@ import {
   clearGmailAccessToken,
   connectGmailAccount,
   db,
+  FIREBASE_PROJECT_ID,
   getGmailAccessToken,
+  GMAIL_OAUTH_PROJECT_ID,
   handleFirestoreError,
   OperationType,
   signInPrimaryOwner,
@@ -1243,14 +1245,45 @@ export default function App() {
 
 
 
+  function formatFirebaseAuthError(err: unknown, mode: 'primary' | 'gmail'): string {
+    const code =
+      typeof err === 'object' && err !== null && 'code' in err
+        ? String((err as { code?: unknown }).code ?? '')
+        : '';
+    const message = err instanceof Error ? err.message : String(err ?? '');
+    const host =
+      typeof window !== 'undefined' && window.location?.hostname
+        ? window.location.hostname
+        : 'questo dominio';
+    const projectId = mode === 'gmail' ? GMAIL_OAUTH_PROJECT_ID : FIREBASE_PROJECT_ID;
+
+    if (code === 'auth/unauthorized-domain' || message.includes('auth/unauthorized-domain')) {
+      return `Dominio "${host}" non autorizzato su Firebase Authentication (progetto ${projectId}). Aggiungi "${host}" in Firebase Console -> ${projectId} -> Authentication -> Settings -> Authorized domains.`;
+    }
+    if (code === 'auth/popup-blocked' || message.includes('auth/popup-blocked')) {
+      return `Popup bloccato da Chrome per "${host}". Consenti i popup per questo sito e riprova.`;
+    }
+    if (
+      code === 'auth/popup-closed-by-user' ||
+      code === 'auth/cancelled-popup-request' ||
+      message.includes('popup-closed-by-user')
+    ) {
+      return mode === 'gmail'
+        ? 'Finestra di autorizzazione Gmail chiusa prima del completamento.'
+        : 'Finestra di accesso Google chiusa prima del completamento.';
+    }
+    if (message) return message;
+    return mode === 'gmail'
+      ? 'Autorizzazione Gmail non completata.'
+      : 'Accesso Google non completato.';
+  }
+
   async function handleSignIn() {
     setAuthError(null);
     try {
       await signInPrimaryOwner();
     } catch (err) {
-      setAuthError(
-        err instanceof Error ? err.message : 'Accesso Google non completato.'
-      );
+      setAuthError(formatFirebaseAuthError(err, 'primary'));
     }
   }
 
@@ -1463,9 +1496,7 @@ export default function App() {
       try {
         activeUser = await signInPrimaryOwner();
       } catch (err) {
-        setAuthError(
-          err instanceof Error ? err.message : 'Accesso Google non completato.'
-        );
+        setAuthError(formatFirebaseAuthError(err, 'primary'));
         return;
       }
     }
@@ -1476,9 +1507,7 @@ export default function App() {
         token = await connectGmailAccount();
         if (token) setGmailToken(token);
       } catch (err) {
-        setAuthError(
-          err instanceof Error ? err.message : 'Autorizzazione Gmail non completata.'
-        );
+        setAuthError(formatFirebaseAuthError(err, 'gmail'));
         return;
       }
     }
@@ -2374,8 +2403,16 @@ export default function App() {
         </header>
 
         {authError && (
-          <div className="px-5 py-2 bg-rose-500/10 border-b border-rose-500/30 text-xs text-rose-300">
-            {authError}
+          <div className="px-5 py-2 bg-rose-500/10 border-b border-rose-500/30 text-xs text-rose-200 flex items-center justify-between gap-2">
+            <span>{authError}</span>
+            <button
+              type="button"
+              onClick={() => setAuthError(null)}
+              className="text-rose-300/80 hover:text-rose-100 p-0.5 shrink-0"
+              aria-label="Chiudi errore autenticazione"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
         )}
 
