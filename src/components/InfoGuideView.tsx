@@ -483,7 +483,7 @@ export function InfoGuideView() {
                   <strong className="text-slate-200">Verifica picchi e guasti:</strong> nell&apos;app e-distribuzione puoi anche controllare in tempo reale eventuali interruzioni di corrente programmate o guasti nella tua zona.
                 </li>
                 <li>
-                  <strong className="text-slate-200">Database Firestore + JSON GitHub:</strong> tutti i consumi, le bollette, i documenti e gli articoli vivono su <strong className="text-slate-200">Firebase Firestore</strong>, mentre GitHub Actions aggiorna automaticamente <span className="font-mono text-slate-300">data/consumi.json</span> e <span className="font-mono text-slate-300">data/bollette.json</span> (esclusi dall&apos;AI via <span className="font-mono text-slate-300">.aiignore</span> per non consumare crediti).
+                  <strong className="text-slate-200">Database Firestore + Branch <span className="font-mono">data</span> su GitHub:</strong> tutti i consumi, le bollette, i documenti e gli articoli vivono su <strong className="text-slate-200">Firebase Firestore</strong>, mentre GitHub Actions salva <span className="font-mono text-slate-300">data/consumi.json</span> e <span className="font-mono text-slate-300">data/bollette.json</span> sul <strong className="text-slate-200">branch dedicato <span className="font-mono text-sky-300">data</span></strong> (separato da <span className="font-mono text-slate-300">main</span> ed escluso dall&apos;AI via <span className="font-mono text-slate-300">.aiignore</span> per consumare 0 crediti).
                 </li>
               </ul>
             </div>
@@ -494,29 +494,29 @@ export function InfoGuideView() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="font-semibold text-xs text-slate-100 flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
-                Flusso Completo: Email 24/7 ➔ data/consumi.json &amp; Firestore ➔ Pulizia INBOX
+                Flusso Completo: Email 24/7 ➔ Branch data ➔ Firestore ➔ Pulizia INBOX
               </div>
               <span className="px-2 py-0.5 text-[10px] font-mono bg-sky-500/15 text-sky-300 border border-sky-500/30 rounded">
-                ~10–30 min (coda GitHub) · Solo INBOX
+                ~10–30 min (coda GitHub) · Solo INBOX · 0 crediti AI
               </span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-[11px]">
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
                 <div className="font-semibold text-sky-300">1. Controllo 24/7 (dipende da GitHub)</div>
                 <p className="text-slate-400 leading-relaxed">
-                  <strong className="text-slate-200">GitHub Actions</strong> schedula il controllo ogni <strong className="text-slate-200">10 minuti</strong> a PC spento sulla <strong className="text-slate-200">sola INBOX</strong>. Nota: sui server gratuiti GitHub il ritardo reale è spesso di <strong className="text-slate-200">10–30 min</strong> (e dopo 60 giorni senza commit umani il cron va riattivato su Actions).
+                  <strong className="text-slate-200">GitHub Actions</strong> schedula il controllo ogni <strong className="text-slate-200">10 minuti</strong> a PC spento sulla <strong className="text-slate-200">sola INBOX</strong>. Nota: sui server gratuiti GitHub il ritardo reale è spesso di <strong className="text-slate-200">10–30 min</strong> (e dopo 60 giorni senza commit umani su <span className="font-mono text-slate-300">main</span> il cron va riattivato su Actions).
                 </p>
               </div>
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
-                <div className="font-semibold text-amber-300">2. Analisi file (0 crediti AI)</div>
+                <div className="font-semibold text-amber-300">2. Analisi file ➔ Branch data</div>
                 <p className="text-slate-400 leading-relaxed">
-                  Se trova un nuovo allegato (<span className="text-slate-200">CSV/ZIP e-distribuzione</span>, <span className="text-slate-200">PDF Edison Luce</span> o <span className="text-slate-200">PDF TARI Acegas</span>), estrae i numeri in Python e aggiorna <span className="font-mono text-slate-300">data/consumi.json</span> e <span className="font-mono text-slate-300">data/bollette.json</span> su GitHub.
+                  Se trova un nuovo allegato (<span className="text-slate-200">CSV/ZIP e-distribuzione</span>, <span className="text-slate-200">PDF Edison Luce</span> o <span className="text-slate-200">PDF TARI Acegas</span>), estrae i numeri in Python (0 crediti AI) e aggiorna <span className="font-mono text-slate-300">data/consumi.json</span> e <span className="font-mono text-slate-300">data/bollette.json</span> sul <strong className="text-slate-200">branch <span className="font-mono">data</span></strong> (senza mai toccare <span className="font-mono text-slate-300">main</span>).
                 </p>
               </div>
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
                 <div className="font-semibold text-emerald-300">3. Copia su Firebase Firestore</div>
                 <p className="text-slate-400 leading-relaxed">
-                  Appena apri il sito, la dashboard legge in diretta i nuovi giorni da GitHub (<span className="font-mono text-slate-300">main</span>); quando accedi con Google, li salva automaticamente anche su <strong className="text-slate-200">Firebase Firestore</strong>.
+                  Appena apri il sito, la dashboard legge in diretta i nuovi giorni dal branch <span className="font-mono text-slate-300">data</span> su GitHub; quando accedi con Google, li salva automaticamente su <strong className="text-slate-200">Firebase Firestore</strong>.
                 </p>
               </div>
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
