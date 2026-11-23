@@ -2,8 +2,10 @@ import { useState } from 'react';
 import {
   Activity,
   AlertCircle,
+  Bot,
   CheckCircle2,
   Clock,
+  Download,
   Droplets,
   Info,
   Lock,
@@ -17,6 +19,8 @@ import {
   Wind,
   Zap,
 } from 'lucide-react';
+import aiHandoffContent from '../../AI_HANDOFF.md?raw';
+import { triggerBlobDownload } from '../utils/documentVault';
 
 type GuideTab = 'all' | 'neasmart' | 'ariston' | 'edistribuzione';
 
@@ -64,6 +68,36 @@ export function InfoGuideView() {
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Passaggio di consegne per un'altra AI */}
+      <div className="bg-gradient-to-r from-sky-950/60 via-slate-900/90 to-emerald-950/40 border border-sky-500/30 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-lg bg-sky-500/15 border border-sky-400/30 flex items-center justify-center text-sky-300 shrink-0 mt-0.5">
+            <Bot className="w-5 h-5" />
+          </div>
+          <div className="space-y-1">
+            <div className="text-sm font-semibold text-slate-100">
+              Istruzioni &amp; Passaggio di Consegne per un&apos;altra AI
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed max-w-3xl">
+              Se finiscono i crediti o cambi assistente AI, scarica questo file <span className="font-mono text-sky-300">.md</span> e allegalo nella nuova chat: contiene architettura, doppia configurazione Firebase, schema Firestore/Rules, regole anti-spreco crediti e mappa completa dei file.
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            const blob = new Blob([aiHandoffContent], {
+              type: 'text/markdown;charset=utf-8',
+            });
+            triggerBlobDownload(blob, 'my-home-ai-handoff.md');
+          }}
+          className="inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap shrink-0"
+        >
+          <Download className="w-4 h-4" />
+          <span>Scarica Istruzioni AI (.md)</span>
+        </button>
       </div>
 
       {/* Come lavorano insieme le 3 app */}
@@ -449,7 +483,7 @@ export function InfoGuideView() {
                   <strong className="text-slate-200">Verifica picchi e guasti:</strong> nell&apos;app e-distribuzione puoi anche controllare in tempo reale eventuali interruzioni di corrente programmate o guasti nella tua zona.
                 </li>
                 <li>
-                  <strong className="text-slate-200">Database unico Firestore:</strong> tutti i consumi, le bollette (luce, acqua, TARI), i bonifici GSE e gli articoli vengono letti e salvati direttamente su <strong className="text-slate-200">Firebase Firestore</strong>, senza file JSON locali pesanti o intermedi.
+                  <strong className="text-slate-200">Database Firestore + JSON GitHub:</strong> tutti i consumi, le bollette, i documenti e gli articoli vivono su <strong className="text-slate-200">Firebase Firestore</strong>, mentre GitHub Actions aggiorna automaticamente <span className="font-mono text-slate-300">data/consumi.json</span> e <span className="font-mono text-slate-300">data/bollette.json</span> (esclusi dall&apos;AI via <span className="font-mono text-slate-300">.aiignore</span> per non consumare crediti).
                 </li>
               </ul>
             </div>
@@ -460,7 +494,7 @@ export function InfoGuideView() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="font-semibold text-xs text-slate-100 flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
-                Flusso Automatico Email ➔ Analisi ➔ Firebase Firestore ➔ Pulizia INBOX
+                Flusso Automatico Email ➔ Analisi ➔ data/consumi.json &amp; Firestore ➔ Pulizia INBOX
               </div>
               <span className="px-2 py-0.5 text-[10px] font-mono bg-sky-500/15 text-sky-300 border border-sky-500/30 rounded">
                 Ogni 10 min · Solo INBOX
@@ -476,13 +510,13 @@ export function InfoGuideView() {
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
                 <div className="font-semibold text-amber-300">2. Analisi allegati</div>
                 <p className="text-slate-400 leading-relaxed">
-                  Estrae automaticamente dati da <span className="text-slate-200">CSV/ZIP e-distribuzione</span> e bollette PDF (<span className="text-slate-200">Edison Luce, TARI Acegas</span>) salvandoli in modo compatto per la dashboard.
+                  Estrae automaticamente dati da <span className="text-slate-200">CSV/ZIP e-distribuzione</span> e bollette PDF (<span className="text-slate-200">Edison Luce, TARI Acegas</span>) aggiornando <span className="font-mono text-slate-300">data/consumi.json</span> e <span className="font-mono text-slate-300">data/bollette.json</span>.
                 </p>
               </div>
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
-                <div className="font-semibold text-emerald-300">3. Sync su Firestore</div>
+                <div className="font-semibold text-emerald-300">3. Sync su Dashboard &amp; Firestore</div>
                 <p className="text-slate-400 leading-relaxed">
-                  I nuovi dati vengono sincronizzati automaticamente su <strong className="text-slate-200">Firebase Firestore</strong> (<span className="font-mono text-slate-300">energyReadings</span>, <span className="font-mono text-slate-300">electricityBills</span>, <span className="font-mono text-slate-300">tariBills</span>) al primo accesso o via token.
+                  L&apos;app carica i nuovi giorni in diretta da GitHub (<span className="font-mono text-slate-300">main</span>) e li salva su <strong className="text-slate-200">Firebase Firestore</strong> appena accedi con Google (zero crediti AI).
                 </p>
               </div>
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">

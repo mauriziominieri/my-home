@@ -167,7 +167,12 @@ export default function App() {
 
   const [selectedYear, setSelectedYear] = useState<number>(CURRENT_YEAR);
 
-  const [readings, setReadings] = useState<EnergyReading[]>([]);
+  const [firestoreReadings, setFirestoreReadings] = useState<EnergyReading[]>([]);
+  const [githubReadings, setGithubReadings] = useState<EnergyReading[]>([]);
+  const [githubElecBills, setGithubElecBills] = useState<BillRecord[]>([]);
+  const [githubTariBills, setGithubTariBills] = useState<Omit<TariBillRecord, 'id'>[]>([]);
+  const [githubSyncing, setGithubSyncing] = useState(false);
+  const [firestoreReadingsFromServer, setFirestoreReadingsFromServer] = useState(false);
   const [climateLogs, setClimateLogs] = useState<ClimateSession[]>([]);
   const [electricityBills, setElectricityBills] = useState<BillRecord[]>(SEED_ELECTRICITY_BILLS);
   const [waterBills, setWaterBills] = useState<WaterBillRecord[]>(SEED_WATER_BILLS);
@@ -179,7 +184,8 @@ export default function App() {
   const syncedElecBillsRef = useRef(false);
   const syncedWaterBillsRef = useRef(false);
   const syncedArticlesRef = useRef(false);
-  const syncedGitHubJsonRef = useRef<string | null>(null);
+  const loadedGitHubJsonRef = useRef(false);
+  const backfillAttemptKeyRef = useRef<string | null>(null);
   const skippedTrashIdsRef = useRef<Set<string>>(new Set());
   const gmailSyncInFlightRef = useRef(false);
   const autopilotSyncInFlightRef = useRef(false);
@@ -228,6 +234,7 @@ export default function App() {
     if (!authReady) return;
 
     setReadingsLoading(true);
+    setFirestoreReadingsFromServer(false);
     const readingsPath = `users/${activeUid}/energyReadings`;
     const readingsQuery = query(
       collection(db, readingsPath),
@@ -253,11 +260,12 @@ export default function App() {
             notes: data.notes ? String(data.notes) : undefined,
           };
         });
-        const todayIso = new Date().toISOString().slice(0, 10);
-        const filtered = list.filter((r) => r.date && r.date <= todayIso);
-        setReadings(filtered);
+        const currentTodayIso = getLocalTodayIso();
+        const filtered = list.filter((r) => r.date && r.date <= currentTodayIso);
+        setFirestoreReadings(filtered);
         if (!snap.metadata.fromCache) {
           setFirestoreFallbackNotice(null);
+          setFirestoreReadingsFromServer(true);
         }
         try {
           localStorage.setItem(`myhome_readings_cache_${activeUid}`, JSON.stringify(filtered));
@@ -272,20 +280,20 @@ export default function App() {
           setFirestoreFallbackNotice(
             'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale.'
           );
-          const todayIso = new Date().toISOString().slice(0, 10);
+          const currentTodayIso = getLocalTodayIso();
           const byDate = new Map<string, EnergyReading>();
           try {
             const cached = localStorage.getItem(`myhome_readings_cache_${activeUid}`);
             if (cached) {
               const parsed = JSON.parse(cached) as EnergyReading[];
               for (const r of parsed) {
-                if (r?.date && r.date <= todayIso) byDate.set(r.date, r);
+                if (r?.date && r.date <= currentTodayIso) byDate.set(r.date, r);
               }
             }
           } catch {
             // ignore
           }
-          setReadings(Array.from(byDate.values()));
+          setFirestoreReadings(Array.from(byDate.values()));
           setReadingsLoading(false);
           return;
         }
@@ -763,182 +771,345 @@ export default function App() {
     };
   }, [authReady, activeUid, user]);
 
-  // Background reconciliation from 24/7 GitHub Actions JSON (data/consumi.json & data/bollette.json) -> Firestore
-  useEffect(() => {
-    if (!authReady || readingsLoading) return;
-    const syncKey = `${activeUid}:${user ? user.uid : 'anon'}`;
-    if (syncedGitHubJsonRef.current === syncKey) return;
-    syncedGitHubJsonRef.current = syncKey;
+  const readings = useMemo(() => {
+    const byDate = new Map<string, EnergyReading>();
+    for (const r of githubReadings) {
+      if (r.date && r.date <= todayIso) byDate.set(r.date, r);
+    }
+    for (const r of firestoreReadings) {
+      if (r.date && r.date <= todayIso) byDate.set(r.date, r);
+    }
+    return Array.from(byDate.values());
+  }, [githubReadings, firestoreReadings, todayIso]);
 
-    const fetchJsonWithFallback = async <T,>(filename: string): Promise<T | null> => {
-      const localUrl = `${import.meta.env.BASE_URL}data/${filename}`;
-      const ghPagesUrl = `https://mauriziominieri.github.io/my-home/data/${filename}`;
-      for (const url of [localUrl, ghPagesUrl]) {
-        try {
-          const res = await fetch(url, { cache: 'no-store' });
-          if (!res.ok) continue;
-          const ct = res.headers.get('content-type') || '';
-          if (!ct.includes('json') && !ct.includes('text/plain')) continue;
-          return (await res.json()) as T;
-        } catch {
-          // try next source
-        }
+  const fetchJsonWithFallback = useCallback(async <T,>(filename: string, forceFresh = false): Promise<T | null> => {
+    const cacheBust = forceFresh ? Date.now() : Math.floor(Date.now() / 60_000);
+    const base = import.meta.env.BASE_URL || '/';
+    const normBase = base.endsWith('/') ? base : `${base}/`;
+    const urls = [
+      `${normBase}data/${filename}?v=${cacheBust}`,
+      `https://raw.githubusercontent.com/mauriziominieri/my-home/main/data/${filename}?v=${cacheBust}`,
+      `https://mauriziominieri.github.io/my-home/data/${filename}?v=${cacheBust}`,
+    ];
+    for (const url of urls) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        const text = (await res.text()).trim();
+        if (!text.startsWith('{') && !text.startsWith('[')) continue;
+        return JSON.parse(text) as T;
+      } catch {
+        // try next source
       }
-      return null;
-    };
+    }
+    return null;
+  }, []);
 
-    void (async () => {
-      const todayIso = new Date().toISOString().slice(0, 10);
-      const [consumiJson, bolletteJson] = await Promise.all([
-        fetchJsonWithFallback<{
-          readings?: Array<{
-            date: string;
-            f1Kwh: number;
-            f2Kwh: number;
-            f3Kwh: number;
-            totalKwh: number;
-            peakKw: number;
-          }>;
-        }>('consumi.json'),
-        fetchJsonWithFallback<{
-          electricityBills?: BillRecord[];
-          tariBills?: Omit<TariBillRecord, 'id'>[];
-        }>('bollette.json'),
-      ]);
-
-      const existingDates = new Set(readings.map((r) => r.date));
-      const missingReadings = (consumiJson?.readings || []).filter(
-        (r) => r?.date && r.date <= todayIso && !existingDates.has(r.date)
-      );
-
-      if (missingReadings.length > 0) {
-        setReadings((prev) => {
-          const byDate = new Map(prev.map((r) => [r.date, r]));
-          for (const r of missingReadings) {
-            if (!byDate.has(r.date)) {
-              byDate.set(r.date, {
-                id: `day_${r.date.replace(/-/g, '')}`,
-                ownerId: activeUid,
-                date: r.date,
-                f1Kwh: Number(r.f1Kwh || 0),
-                f2Kwh: Number(r.f2Kwh || 0),
-                f3Kwh: Number(r.f3Kwh || 0),
-                totalKwh: Number(r.totalKwh || 0),
-                peakKw: Number(r.peakKw || 0),
-                estimatedCostEur:
-                  Math.round(Number(r.totalKwh || 0) * homeConfig.tariffEurPerKwh * 100) / 100,
-                source: 'e-distribuzione-api',
-              });
-            }
-          }
-          return Array.from(byDate.values());
-        });
-      }
+  const backfillGitHubDataToFirestore = useCallback(
+    async (
+      targetUser: User,
+      parsedReadings: EnergyReading[],
+      parsedElec: BillRecord[],
+      parsedTari: Omit<TariBillRecord, 'id'>[],
+      showNotice = false
+    ) => {
+      const firestoreDates = new Set(firestoreReadings.map((r) => r.date));
+      const missingReadings = parsedReadings.filter((r) => !firestoreDates.has(r.date));
 
       const existingInvoices = new Set(electricityBills.map((b) => b.invoiceNumber));
-      const missingElec = (bolletteJson?.electricityBills || []).filter(
+      const missingElec = parsedElec.filter(
         (b) => b?.invoiceNumber && !existingInvoices.has(b.invoiceNumber)
       );
-      if (missingElec.length > 0) {
-        setElectricityBills((prev) => {
-          const seen = new Set(prev.map((b) => b.invoiceNumber));
-          return [...prev, ...missingElec.filter((b) => !seen.has(b.invoiceNumber))];
-        });
-      }
 
       const existingNotices = new Set(tariBills.map((t) => t.noticeNumber));
-      const missingTari = (bolletteJson?.tariBills || []).filter(
+      const missingTari = parsedTari.filter(
         (t) => t?.noticeNumber && !existingNotices.has(t.noticeNumber)
       );
+
+      if (missingReadings.length === 0 && missingElec.length === 0 && missingTari.length === 0) {
+        if (showNotice) {
+          setGmailNotice({
+            tone: 'info',
+            text: `data/consumi.json verificato (${parsedReadings.length} giorni): tutti i dati sono già sincronizzati su Firebase Firestore.`,
+          });
+        }
+        return;
+      }
+
+      let savedReadingsCount = 0;
+      let savedBillsCount = 0;
+      let writeErrorMsg: string | null = null;
+
+      if (missingReadings.length > 0) {
+        const basePath = `users/${targetUser.uid}/energyReadings`;
+        for (let i = 0; i < missingReadings.length; i += 400) {
+          const chunk = missingReadings.slice(i, i + 400);
+          const batch = writeBatch(db);
+          for (const item of chunk) {
+            const docId = `day_${item.date.replace(/-/g, '')}`;
+            batch.set(doc(db, basePath, docId), {
+              ownerId: targetUser.uid,
+              date: item.date.slice(0, 10),
+              f1Kwh: item.f1Kwh,
+              f2Kwh: item.f2Kwh,
+              f3Kwh: item.f3Kwh,
+              totalKwh: item.totalKwh,
+              peakKw: item.peakKw,
+              estimatedCostEur: item.estimatedCostEur,
+              source: 'e-distribuzione-api',
+              createdAt: serverTimestamp(),
+            });
+          }
+          try {
+            await batch.commit();
+            savedReadingsCount += chunk.length;
+          } catch (err) {
+            writeErrorMsg =
+              err instanceof Error ? err.message : 'Errore scrittura energyReadings su Firestore.';
+            console.warn('Backfill consumi.json -> Firestore failed:', err);
+          }
+        }
+      }
+
+      if (missingElec.length > 0) {
+        const elecPath = `users/${targetUser.uid}/electricityBills`;
+        const batch = writeBatch(db);
+        for (const b of missingElec) {
+          const docId = `edison_${b.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+          batch.set(doc(db, elecPath, docId), {
+            ownerId: targetUser.uid,
+            invoiceNumber: b.invoiceNumber.slice(0, 40),
+            issueDate: b.issueDate.slice(0, 20),
+            sortKey: b.sortKey.slice(0, 16),
+            year: Number(b.year),
+            period: b.period.slice(0, 80),
+            supplier: b.supplier.slice(0, 80),
+            offerName: b.offerName.slice(0, 100),
+            kwh: Number(b.kwh),
+            punText: b.punText.slice(0, 60),
+            variableCostPerKwh: Number(b.variableCostPerKwh),
+            canoneTv: Number(b.canoneTv),
+            electricityOnly: Number(b.electricityOnly),
+            totalPaid: Number(b.totalPaid),
+            createdAt: serverTimestamp(),
+          });
+        }
+        try {
+          await batch.commit();
+          savedBillsCount += missingElec.length;
+        } catch (err) {
+          if (!writeErrorMsg) {
+            writeErrorMsg = err instanceof Error ? err.message : 'Errore scrittura bollette su Firestore.';
+          }
+          console.warn('Backfill bollette luce -> Firestore failed:', err);
+        }
+      }
+
       if (missingTari.length > 0) {
-        setTariBills((prev) => {
-          const seen = new Set(prev.map((t) => t.noticeNumber));
-          return [
-            ...prev,
-            ...missingTari
+        const tariPath = `users/${targetUser.uid}/tariBills`;
+        const batch = writeBatch(db);
+        for (const t of missingTari) {
+          const docId = `tari_${t.noticeNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+          batch.set(doc(db, tariPath, docId), {
+            ownerId: targetUser.uid,
+            noticeNumber: t.noticeNumber.slice(0, 50),
+            issueDate: (t.issueDate || t.dueDate || '—').slice(0, 20),
+            dueDate: (t.dueDate || t.issueDate || '—').slice(0, 20),
+            year: Number(t.year),
+            period: t.period.slice(0, 80),
+            supplier: t.supplier.slice(0, 80),
+            totalPaid: Number(t.totalPaid),
+            paid: Boolean(t.paid),
+            source: t.source === 'gmail-pdf' ? 'gmail-pdf' : 'manuale',
+            createdAt: serverTimestamp(),
+          });
+        }
+        try {
+          await batch.commit();
+          savedBillsCount += missingTari.length;
+        } catch (err) {
+          if (!writeErrorMsg) {
+            writeErrorMsg = err instanceof Error ? err.message : 'Errore scrittura TARI su Firestore.';
+          }
+          console.warn('Backfill TARI -> Firestore failed:', err);
+        }
+      }
+
+      if (writeErrorMsg) {
+        setGmailNotice({
+          tone: 'warn',
+          text: `Dati caricati in dashboard da data/consumi.json (${parsedReadings.length} giorni), ma il salvataggio su Firestore è fallito: ${writeErrorMsg}`,
+        });
+      } else if (showNotice || savedReadingsCount > 0 || savedBillsCount > 0) {
+        setGmailNotice({
+          tone: 'ok',
+          text: `Sincronizzati su Firebase Firestore ${savedReadingsCount} giorni da data/consumi.json${savedBillsCount > 0 ? ` e ${savedBillsCount} bollette` : ''}.`,
+        });
+      }
+    },
+    [firestoreReadings, electricityBills, tariBills]
+  );
+
+  const loadGitHubJsonData = useCallback(
+    async (forceRefresh = false) => {
+      setGithubSyncing(true);
+      try {
+        const currentTodayIso = getLocalTodayIso();
+        const clamp = (val: number, min: number, max: number) =>
+          Number.isFinite(val) ? Math.min(max, Math.max(min, Math.round(val * 100) / 100)) : 0;
+
+        const [consumiJson, bolletteJson] = await Promise.all([
+          fetchJsonWithFallback<{
+            readings?: Array<{
+              date: string;
+              f1Kwh: number;
+              f2Kwh: number;
+              f3Kwh: number;
+              totalKwh: number;
+              peakKw: number;
+            }>;
+          }>('consumi.json', forceRefresh),
+          fetchJsonWithFallback<{
+            electricityBills?: BillRecord[];
+            tariBills?: Omit<TariBillRecord, 'id'>[];
+          }>('bollette.json', forceRefresh),
+        ]);
+
+        const parsedReadings: EnergyReading[] = [];
+        for (const r of consumiJson?.readings || []) {
+          const d = typeof r?.date === 'string' ? r.date.trim() : '';
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d > currentTodayIso) continue;
+          const f1 = clamp(Number(r.f1Kwh || 0), 0, 500);
+          const f2 = clamp(Number(r.f2Kwh || 0), 0, 500);
+          const f3 = clamp(Number(r.f3Kwh || 0), 0, 500);
+          const tot = clamp(Number(r.totalKwh || 0), 0, 1500);
+          const peak = clamp(Number(r.peakKw || 0), 0, 50);
+          const estCost = clamp(tot * homeConfig.tariffEurPerKwh, 0, 1000);
+          parsedReadings.push({
+            id: `day_${d.replace(/-/g, '')}`,
+            ownerId: activeUid,
+            date: d,
+            f1Kwh: f1,
+            f2Kwh: f2,
+            f3Kwh: f3,
+            totalKwh: tot,
+            peakKw: peak,
+            estimatedCostEur: estCost,
+            source: 'e-distribuzione-api',
+          });
+        }
+
+        const parsedElec = (bolletteJson?.electricityBills || []).filter((b) =>
+          Boolean(b?.invoiceNumber)
+        );
+        const parsedTari = (bolletteJson?.tariBills || []).filter((t) =>
+          Boolean(t?.noticeNumber)
+        );
+
+        if (parsedReadings.length > 0) {
+          setGithubReadings(parsedReadings);
+        }
+        if (parsedElec.length > 0) {
+          setGithubElecBills(parsedElec);
+          setElectricityBills((prev) => {
+            const seen = new Set(prev.map((b) => b.invoiceNumber));
+            const next = parsedElec.filter((b) => !seen.has(b.invoiceNumber));
+            return next.length > 0 ? [...prev, ...next] : prev;
+          });
+        }
+        if (parsedTari.length > 0) {
+          setGithubTariBills(parsedTari);
+          setTariBills((prev) => {
+            const seen = new Set(prev.map((t) => t.noticeNumber));
+            const next = parsedTari
               .filter((t) => !seen.has(t.noticeNumber))
               .map((t) => ({
                 ...t,
                 id: `tari_${t.noticeNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`,
-              })),
-          ];
-        });
-      }
+              }));
+            return next.length > 0 ? [...prev, ...next] : prev;
+          });
+        }
 
-      if (user && user.uid === activeUid) {
-        if (missingReadings.length > 0) {
-          const basePath = `users/${user.uid}/energyReadings`;
-          for (let i = 0; i < missingReadings.length; i += 400) {
-            const chunk = missingReadings.slice(i, i + 400);
-            const batch = writeBatch(db);
-            for (const item of chunk) {
-              const docId = `day_${item.date.replace(/-/g, '')}`;
-              batch.set(doc(db, basePath, docId), {
-                ownerId: user.uid,
-                date: item.date.slice(0, 20),
-                f1Kwh: Number(item.f1Kwh || 0),
-                f2Kwh: Number(item.f2Kwh || 0),
-                f3Kwh: Number(item.f3Kwh || 0),
-                totalKwh: Number(item.totalKwh || 0),
-                peakKw: Number(item.peakKw || 0),
-                estimatedCostEur:
-                  Math.round(Number(item.totalKwh || 0) * homeConfig.tariffEurPerKwh * 100) / 100,
-                source: 'e-distribuzione-api',
-                createdAt: serverTimestamp(),
-              });
-            }
-            await batch.commit().catch(() => {});
-          }
-        }
-        if (missingElec.length > 0) {
-          const elecPath = `users/${user.uid}/electricityBills`;
-          const batch = writeBatch(db);
-          for (const b of missingElec) {
-            const docId = `edison_${b.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`;
-            batch.set(doc(db, elecPath, docId), {
-              ownerId: user.uid,
-              invoiceNumber: b.invoiceNumber.slice(0, 40),
-              issueDate: b.issueDate.slice(0, 20),
-              sortKey: b.sortKey.slice(0, 16),
-              year: Number(b.year),
-              period: b.period.slice(0, 80),
-              supplier: b.supplier.slice(0, 80),
-              offerName: b.offerName.slice(0, 100),
-              kwh: Number(b.kwh),
-              punText: b.punText.slice(0, 60),
-              variableCostPerKwh: Number(b.variableCostPerKwh),
-              canoneTv: Number(b.canoneTv),
-              electricityOnly: Number(b.electricityOnly),
-              totalPaid: Number(b.totalPaid),
-              createdAt: serverTimestamp(),
+        if (forceRefresh) {
+          backfillAttemptKeyRef.current = null;
+          if (!consumiJson && !bolletteJson) {
+            setGmailNotice({
+              tone: 'warn',
+              text: 'Impossibile raggiungere data/consumi.json su GitHub in questo momento.',
+            });
+          } else if (user && user.uid === activeUid) {
+            await backfillGitHubDataToFirestore(
+              user,
+              parsedReadings,
+              parsedElec,
+              parsedTari,
+              true
+            );
+          } else {
+            setGmailNotice({
+              tone: 'info',
+              text: `Caricati ${parsedReadings.length} giorni da data/consumi.json. Accedi con Google per salvarli su Firebase Firestore.`,
             });
           }
-          await batch.commit().catch(() => {});
         }
-        if (missingTari.length > 0) {
-          const tariPath = `users/${user.uid}/tariBills`;
-          const batch = writeBatch(db);
-          for (const t of missingTari) {
-            const docId = `tari_${t.noticeNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`;
-            batch.set(doc(db, tariPath, docId), {
-              ownerId: user.uid,
-              noticeNumber: t.noticeNumber.slice(0, 50),
-              issueDate: (t.issueDate || t.dueDate || '—').slice(0, 20),
-              dueDate: (t.dueDate || t.issueDate || '—').slice(0, 20),
-              year: Number(t.year),
-              period: t.period.slice(0, 80),
-              supplier: t.supplier.slice(0, 80),
-              totalPaid: Number(t.totalPaid),
-              paid: Boolean(t.paid),
-              source: t.source === 'gmail-pdf' ? 'gmail-pdf' : 'manuale',
-              createdAt: serverTimestamp(),
-            });
-          }
-          await batch.commit().catch(() => {});
-        }
+      } finally {
+        setGithubSyncing(false);
       }
-    })();
-  }, [authReady, readingsLoading, activeUid, user, readings, electricityBills, tariBills, homeConfig.tariffEurPerKwh]);
+    },
+    [
+      activeUid,
+      backfillGitHubDataToFirestore,
+      fetchJsonWithFallback,
+      homeConfig.tariffEurPerKwh,
+      user,
+    ]
+  );
+
+  // Automatic initial load of data/consumi.json & data/bollette.json from GitHub
+  useEffect(() => {
+    if (!authReady || loadedGitHubJsonRef.current) return;
+    loadedGitHubJsonRef.current = true;
+    void loadGitHubJsonData(false);
+  }, [authReady, loadGitHubJsonData]);
+
+  // Automatic backfill of missing GitHub JSON rows into Firestore once signed in as owner
+  useEffect(() => {
+    if (!authReady || readingsLoading || !user || user.uid !== activeUid) return;
+    if (!firestoreReadingsFromServer && firestoreReadings.length > 0) return;
+    if (
+      githubReadings.length === 0 &&
+      githubElecBills.length === 0 &&
+      githubTariBills.length === 0
+    ) {
+      return;
+    }
+
+    const attemptKey = `${user.uid}:${githubReadings.length}:${firestoreReadings.length}:${githubElecBills.length}:${electricityBills.length}:${githubTariBills.length}:${tariBills.length}`;
+    if (backfillAttemptKeyRef.current === attemptKey) return;
+    backfillAttemptKeyRef.current = attemptKey;
+
+    void backfillGitHubDataToFirestore(
+      user,
+      githubReadings,
+      githubElecBills,
+      githubTariBills,
+      false
+    );
+  }, [
+    authReady,
+    readingsLoading,
+    user,
+    activeUid,
+    firestoreReadingsFromServer,
+    firestoreReadings.length,
+    githubReadings,
+    githubElecBills,
+    githubTariBills,
+    electricityBills.length,
+    tariBills.length,
+    backfillGitHubDataToFirestore,
+  ]);
 
   async function handleImportCsv(items: ParsedReadingInput[]) {
     if (!user || items.length === 0) return;
@@ -977,11 +1148,11 @@ export default function App() {
   }
 
   async function handleClearAllReadings() {
-    if (!user || readings.length === 0) return;
+    if (!user || firestoreReadings.length === 0) return;
     const basePath = `users/${user.uid}/energyReadings`;
     try {
-      for (let i = 0; i < readings.length; i += 400) {
-        const chunk = readings.slice(i, i + 400);
+      for (let i = 0; i < firestoreReadings.length; i += 400) {
+        const chunk = firestoreReadings.slice(i, i + 400);
         const batch = writeBatch(db);
         for (const r of chunk) {
           batch.delete(doc(db, basePath, r.id));
@@ -2258,6 +2429,8 @@ export default function App() {
               loading={readingsLoading}
               readOnly={!canEdit}
               isGmailConnected={Boolean(gmailToken)}
+              githubSyncing={githubSyncing}
+              onSyncGitHubJson={() => void loadGitHubJsonData(true)}
               onSignIn={handleSignIn}
               onConnectGmail={handleManualGmailSync}
               onActivateAutopilot={handleActivateClimateAutopilot}

@@ -1,3 +1,7 @@
-# Generated runtime data files updated by 24/7 GitHub Actions (not needed for AI code editing)
+# Generated runtime data files & binary assets (never read with AI to save credits)
 data/consumi.json
 data/bollette.json
+public/assets/
+dist/
+node_modules/
+

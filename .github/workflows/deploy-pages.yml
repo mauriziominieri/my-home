@@ -3,6 +3,8 @@ name: Deploy su GitHub Pages (mauriziominieri.github.io/my-home)
 on:
   push:
     branches: ['main']
+  schedule:
+    - cron: '0 4 * * *' # Rebuild giornaliero automatico per includere gli aggiornamenti di data/*.json
   workflow_dispatch:
 
 permissions:
