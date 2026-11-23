@@ -33,7 +33,9 @@ export interface OnlineArticleSearchResult {
   suggestedRoom: string;
   specs: string;
   manualUrl: string;
-  manualSummary: string;
+  description: string;
+  imageUrl?: string;
+  imageCredit?: string;
   sourceUrls: { title: string; url: string }[];
   providerLabel: string;
 }
@@ -157,7 +159,7 @@ const CURATED_DEVICES: CuratedDeviceTemplate[] = [
       suggestedRoom: 'Salone',
       specs: '75 pollici · Pannello QD-Mini LED 4K HDR 144Hz · Google TV · Audio Onkyo',
       manualUrl: 'https://www.tcl.com/it/it/tvs/75q7c',
-      manualSummary:
+      description:
         'Smart TV 75" QD-Mini LED 4K UHD con Google TV, HDMI 2.1 eARC, audio Onkyo e modalità eco.',
       sourceUrls: [{ title: 'TCL Italia Supporto', url: 'https://www.tcl.com/it/it/support' }],
     },
@@ -225,7 +227,7 @@ const CURATED_DEVICES: CuratedDeviceTemplate[] = [
       suggestedRoom: 'Locale Tecnico / Esterno',
       specs: 'Inverter ibrido monofase 4 kW · 2 MPPT · Wi-Fi FusionSolar · IP65',
       manualUrl: 'https://support.huawei.com/enterprise/en/doc/EDOC1100167258',
-      manualSummary:
+      description:
         'Inverter solare ibrido monofase 4 kW con monitoraggio FusionSolar e predisposizione accumulo LUNA2000.',
       sourceUrls: [
         {
@@ -351,7 +353,7 @@ const SUPPLEMENTAL_SEARCH_CATALOG: Omit<OnlineArticleSearchResult, 'id' | 'provi
     suggestedRoom: 'Bagno 1',
     specs: '9 kg · 1400 giri/min · Classe A · i-DOS dosaggio automatico · Iron Assist',
     manualUrl: 'https://www.bosch-home.com/it/assistenza/ottieni-assistenza/manuali-di-istruzioni',
-    manualSummary:
+    description:
       'Lavatrice frontale da 9 kg a basso consumo con dosaggio automatico detersivo e programma vapore.',
     sourceUrls: [
       {
@@ -368,7 +370,7 @@ const SUPPLEMENTAL_SEARCH_CATALOG: Omit<OnlineArticleSearchResult, 'id' | 'provi
     suggestedRoom: 'Locale Tecnico / Esterno',
     specs: '9 kg · Pompa di calore Classe A++ · AutoDry · Condensatore autopulente',
     manualUrl: 'https://www.bosch-home.com/it/assistenza/ottieni-assistenza/manuali-di-istruzioni',
-    manualSummary:
+    description:
       'Asciugatrice a pompa di calore con sensori di umidità AutoDry e pulizia facilitata filtro EasyClean.',
     sourceUrls: [
       {
@@ -385,7 +387,7 @@ const SUPPLEMENTAL_SEARCH_CATALOG: Omit<OnlineArticleSearchResult, 'id' | 'provi
     suggestedRoom: 'Cucina',
     specs: '13 coperti · AirDry apertura automatica porta · Classe E · 49 dB',
     manualUrl: 'https://www.electrolux.it/support/user-manuals/?q=KEAF7200L',
-    manualSummary:
+    description:
       'Lavastoviglie da incasso 60 cm con tecnologia AirDry (apertura automatica fine ciclo) e programma Eco 50°C.',
     sourceUrls: [
       {
@@ -402,7 +404,7 @@ const SUPPLEMENTAL_SEARCH_CATALOG: Omit<OnlineArticleSearchResult, 'id' | 'provi
     suggestedRoom: 'Cucina',
     specs: '4 zone induzione · Hob2Hood cappa automatica · PowerBoost · Limitatore kW',
     manualUrl: 'https://www.electrolux.it/support/user-manuals/?q=LIT60433',
-    manualSummary:
+    description:
       'Piano a induzione 4 zone con gestione potenza configurabile (2.5–7.2 kW) e funzione booster rapido.',
     sourceUrls: [
       {
@@ -419,7 +421,7 @@ const SUPPLEMENTAL_SEARCH_CATALOG: Omit<OnlineArticleSearchResult, 'id' | 'provi
     suggestedRoom: 'Cucina',
     specs: '25 litri · Microonde 900W + Grill 1000W · Piatto rotante 31,5 cm · Inox antimpronta',
     manualUrl: 'https://www.electrolux.it/support/user-manuals/?q=LMS4253TMX',
-    manualSummary:
+    description:
       'Microonde da incasso 25L con funzione grill combinata, scongelamento a peso e blocco sicurezza bambini.',
     sourceUrls: [
       {
@@ -436,7 +438,7 @@ const SUPPLEMENTAL_SEARCH_CATALOG: Omit<OnlineArticleSearchResult, 'id' | 'provi
     suggestedRoom: 'Bagno 1',
     specs: '9 kg · 1400 giri · EcoBubble · Wi-Fi SmartThings · Vapore igienizzante',
     manualUrl: 'https://www.samsung.com/it/support/model/WW90T534DAE/S3/',
-    manualSummary:
+    description:
       'Lavatrice smart con tecnologia EcoBubble a freddo, programma igienizzante a vapore e controllo SmartThings.',
     sourceUrls: [
       {
@@ -453,7 +455,7 @@ const SUPPLEMENTAL_SEARCH_CATALOG: Omit<OnlineArticleSearchResult, 'id' | 'provi
     suggestedRoom: 'Stanza Maurizio',
     specs: '27 pollici IPS QHD 2560x1440 · 165Hz · 1ms GtG · DisplayPort + 2x HDMI',
     manualUrl: 'https://www.lg.com/it/supporto/manuali/',
-    manualSummary:
+    description:
       'Monitor IPS 27" QHD ad alta frequenza di aggiornamento adatto a produttività, studio e gaming.',
     sourceUrls: [
       { title: 'Supporto LG Italia', url: 'https://www.lg.com/it/supporto/manuali/' },
@@ -467,7 +469,7 @@ const SUPPLEMENTAL_SEARCH_CATALOG: Omit<OnlineArticleSearchResult, 'id' | 'provi
     suggestedRoom: 'Salone',
     specs: '240 AW · Spazzola Fluffy Optic laser · Display LCD particelle · Autonomia 60 min',
     manualUrl: 'https://www.dyson.it/support/vacuum-cleaners/cordless/v15',
-    manualSummary:
+    description:
       'Aspirapolvere ciclonico cordless con rilevamento laser della polvere, spazzola anti-groviglio e filtro HEPA lavabile.',
     sourceUrls: [
       {
@@ -484,7 +486,7 @@ const SUPPLEMENTAL_SEARCH_CATALOG: Omit<OnlineArticleSearchResult, 'id' | 'provi
     suggestedRoom: 'Stanza Maurizio',
     specs: 'Display Liquid Retina 13,6" · Chip Apple M3 · Wi-Fi 6E · MagSafe 3 + 2x Thunderbolt',
     manualUrl: 'https://support.apple.com/it-it/guide/macbook-air/welcome/mac',
-    manualSummary:
+    description:
       'Manuale utente ufficiale Apple MacBook Air con gestione batteria ottimizzata, porte MagSafe e backup Time Machine.',
     sourceUrls: [
       {
@@ -501,7 +503,7 @@ const SUPPLEMENTAL_SEARCH_CATALOG: Omit<OnlineArticleSearchResult, 'id' | 'provi
     suggestedRoom: 'Stanza Roberta',
     specs: '1600W · Controllo intelligente calore · 5 accessori magnetici incluso diffusore e Flyaway',
     manualUrl: 'https://www.dyson.it/support/hair-care/hair-dryers/supersonic',
-    manualSummary:
+    description:
       'Asciugacapelli ad alta velocità con controllo termico 40 volte/sec e filtro inferiore removibile per pulizia periodica.',
     sourceUrls: [
       {
@@ -518,7 +520,7 @@ const SUPPLEMENTAL_SEARCH_CATALOG: Omit<OnlineArticleSearchResult, 'id' | 'provi
     suggestedRoom: 'Casa / Ingresso',
     specs: 'Wi-Fi 6 Dual Band · VDSL/Fibra WAN · 4x LAN Gigabit · Base DECT & NAS USB 3.0',
     manualUrl: 'https://it.avm.de/assistenza/manuali/',
-    manualSummary:
+    description:
       'Modem router Wi-Fi 6 con gestione rete mesh, priorità QoS e monitoraggio energetico porta per porta.',
     sourceUrls: [
       { title: 'Manuali AVM FRITZ!', url: 'https://it.avm.de/assistenza/manuali/' },
@@ -569,7 +571,7 @@ export function getArticleManualGuide(article: HomeArticleRecord): ArticleManual
 
   const summary =
     cached?.summary ||
-    supplemental?.manualSummary ||
+    supplemental?.description ||
     `Scheda tecnica e manuale operativo per ${article.name} (${article.brand} ${article.model}), installato in ${article.room}.`;
 
   const keySpecs = cached?.keySpecs?.length

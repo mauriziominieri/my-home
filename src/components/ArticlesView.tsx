@@ -28,6 +28,7 @@ import { HomeArticleCategory, HomeArticleRecord } from '../types/home';
 import {
   ARTICLE_ROOM_PRESETS,
   ArticleManualGuide,
+  OnlineArticleSearchResult,
   extractArticleManualDetails,
   formatAllArticlesMarkdown,
   formatArticlesHtmlDossier,
@@ -39,6 +40,7 @@ import {
 } from '../utils/articleCatalog';
 import { extractPdfTextFromBytes } from '../utils/billImporter';
 import { MAX_CLOUD_FILE_BYTES } from '../utils/documentVault';
+import { searchFreeArticles } from '../utils/freeArticleSearch';
 
 import { AccessUnlockBanner } from './AccessUnlockBanner';
 
@@ -135,6 +137,11 @@ export function ArticlesView({
   // Online Search states
   const [showOnlineSearch, setShowOnlineSearch] = useState(false);
   const [onlineQuery, setOnlineQuery] = useState('');
+  const [onlineResults, setOnlineResults] = useState<OnlineArticleSearchResult[]>([]);
+  const [onlineProvider, setOnlineProvider] = useState('');
+  const [onlineSearching, setOnlineSearching] = useState(false);
+  const [onlineSearchError, setOnlineSearchError] = useState('');
+  const [failedOnlineImages, setFailedOnlineImages] = useState<Set<string>>(new Set());
 
   // Article Sheet & Manual modal states
   const [activeSheetArticle, setActiveSheetArticle] = useState<HomeArticleRecord | null>(null);
@@ -298,10 +305,52 @@ export function ArticlesView({
     }
   }
 
-  function openSearchResultAsNewArticle() {
-    const initialName = onlineQuery.trim().slice(0, 80);
-    openNewForm();
-    setName(initialName);
+  async function searchOnlineArticles(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const query = onlineQuery.trim();
+    if (query.length < 2) {
+      setOnlineSearchError('Inserisci almeno due caratteri per avviare la ricerca.');
+      return;
+    }
+
+    setOnlineSearching(true);
+    setOnlineSearchError('');
+    setOnlineResults([]);
+    setOnlineProvider('');
+    setFailedOnlineImages(new Set());
+    try {
+      const response = await searchFreeArticles(query);
+      setOnlineResults(response.results);
+      setOnlineProvider(response.provider);
+    } catch (error) {
+      setOnlineSearchError(
+        error instanceof Error
+          ? error.message
+          : 'La ricerca online non è disponibile in questo momento.'
+      );
+    } finally {
+      setOnlineSearching(false);
+    }
+  }
+
+  function openSearchResultAsNewArticle(result: OnlineArticleSearchResult) {
+    resetForm(result.suggestedRoom || 'Cucina');
+    setName(result.name);
+    setBrand(result.brand);
+    setModel(result.model);
+    setCategory(result.category);
+    setRoom(result.suggestedRoom || 'Cucina');
+    setSpecs(result.specs);
+    setManualUrlInput(result.manualUrl);
+    const sourceNote = result.sourceUrls[0]?.url
+      ? `Fonte immagine: ${result.sourceUrls[0].url}`
+      : '';
+    setNotes(
+      `${result.description.slice(0, Math.max(0, 239 - sourceNote.length))} ${sourceNote}`
+        .trim()
+        .slice(0, 240)
+    );
+    setShowForm(true);
   }
 
   async function handleDownloadManual(article: HomeArticleRecord) {
@@ -615,7 +664,7 @@ export function ArticlesView({
                 }`}
               >
                 <Globe className="w-3.5 h-3.5" />
-                Cerca su Google Shopping
+                Cerca prodotti online
               </button>
 
               <button
@@ -636,7 +685,7 @@ export function ArticlesView({
         onSignIn={onSignIn}
         pageName="Articoli & Manuali"
         unlockedFeatures={[
-          'Apri Google Shopping e crea schede articoli per le stanze di casa',
+          'Cerca modelli online con immagini e crea schede articoli per le stanze di casa',
           'Registra nuovi elettrodomestici, garanzie e link manuali su Firestore',
           'Modifica o elimina schede articoli esistenti',
         ]}
@@ -652,7 +701,7 @@ export function ArticlesView({
                 Cerca un prodotto
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                La ricerca si apre su Google Shopping, fuori da My Home. Dopo aver scelto il modello, torna qui per inserire i dati e aggiungerlo alla casa. Non vengono fatte chiamate AI.
+                Cerca modelli reali e confronta immagini, descrizioni e fonti prima di aggiungerli alla casa.
               </p>
             </div>
             <button
@@ -664,7 +713,7 @@ export function ArticlesView({
             </button>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2">
+          <form onSubmit={searchOnlineArticles} className="flex flex-col sm:flex-row gap-2">
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -673,37 +722,113 @@ export function ArticlesView({
                 maxLength={140}
                 onChange={(event) => setOnlineQuery(event.target.value)}
                 placeholder="Es. TV TCL, frigo Bosch, chitarra Ibanez..."
+                aria-label="Cerca prodotti online"
                 className="w-full pl-9 pr-3 py-2 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-violet-400"
               />
             </div>
-            <a
-              href={`https://www.google.com/search?tbm=shop&q=${encodeURIComponent(onlineQuery.trim())}`}
-              target="_blank"
-              rel="noreferrer"
-              aria-disabled={!onlineQuery.trim()}
-              onClick={(event) => {
-                if (!onlineQuery.trim()) event.preventDefault();
-              }}
-              className={`inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg transition-colors ${
-                onlineQuery.trim()
-                  ? 'text-slate-950 bg-violet-400 hover:bg-violet-300'
-                  : 'text-slate-500 bg-slate-800 cursor-not-allowed'
-              }`}
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              Apri Google Shopping
-            </a>
-          </div>
-          {onlineQuery.trim() && (
             <button
-              type="button"
-              onClick={openSearchResultAsNewArticle}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800"
+              type="submit"
+              disabled={onlineSearching || onlineQuery.trim().length < 2}
+              className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-violet-400 text-slate-950 hover:bg-violet-300 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Plus className="h-3.5 w-3.5" />
-              Crea scheda per “{onlineQuery.trim()}”
+              <Search className={`w-3.5 h-3.5 ${onlineSearching ? 'animate-pulse' : ''}`} />
+              {onlineSearching ? 'Ricerca…' : 'Cerca'}
             </button>
+          </form>
+
+          {onlineSearchError && (
+            <p role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+              {onlineSearchError}
+            </p>
           )}
+
+          {onlineProvider && (
+            <p className="text-[10px] text-slate-500">{onlineProvider}</p>
+          )}
+
+          {onlineResults.length > 0 && (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {onlineResults.map((result) => (
+                <article
+                  key={result.id}
+                  className="overflow-hidden rounded-xl border border-slate-700 bg-slate-950/70"
+                >
+                  <div className="flex h-40 items-center justify-center bg-slate-900">
+                    {result.imageUrl && !failedOnlineImages.has(result.id) ? (
+                      <img
+                        src={result.imageUrl}
+                        alt={`${result.brand} ${result.model}`}
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                        className="h-full w-full object-contain"
+                        onError={(event) => {
+                          setFailedOnlineImages((current) => new Set(current).add(result.id));
+                        }}
+                      />
+                    ) : (
+                      <Package className="h-10 w-10 text-slate-700" aria-hidden="true" />
+                    )}
+                  </div>
+                  {result.imageCredit && (
+                    <p className="border-t border-slate-800 px-3 py-1.5 text-[10px] text-slate-500">
+                      {result.imageCredit}
+                    </p>
+                  )}
+                  <div className="space-y-2 p-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-100">{result.name}</h3>
+                      <p className="text-[11px] text-violet-300">
+                        {result.brand} · {result.model}
+                      </p>
+                    </div>
+                    {result.description && (
+                      <p className="text-xs leading-relaxed text-slate-400">
+                        {result.description}
+                      </p>
+                    )}
+                    {result.specs && (
+                      <p className="text-[11px] text-slate-500">{result.specs}</p>
+                    )}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => openSearchResultAsNewArticle(result)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-sky-400 px-3 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-300"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Aggiungi alla casa
+                      </button>
+                      {result.sourceUrls.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {result.sourceUrls.map((source) => (
+                            <a
+                              key={source.url}
+                              href={source.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-100"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              {source.title}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+
+          {!onlineSearching &&
+            onlineProvider &&
+            onlineResults.length === 0 &&
+            !onlineSearchError && (
+              <p className="text-xs text-slate-400">
+                Nessun modello verificabile trovato. Prova con una ricerca più specifica, ad esempio “Ibanez RG550”.
+              </p>
+            )}
         </section>
       )}
 

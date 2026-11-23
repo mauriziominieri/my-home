@@ -9,7 +9,7 @@
 1. **ZERO CREDITI AI SU CONSUMI, BOLLETTE E PDF:**
    - **NON leggere mai** eventuali file binari o PDF in `public/assets/` (sono protetti in `.aiignore`).
    - **NON usare mai** chiamate a LLM / Gemini API per parsare CSV e-distribuzione, bollette Edison/Acegas/TARI o allegati PDF. Il parsing è al 100% locale e deterministico lato browser (`pdfjs-dist`, `jszip`, regex) e lato Python (`scripts/sync_edistribuzione.py`).
-   - L'unico uso opzionale dell'API Gemini riguarda la ricerca articoli in `server.ts` (`/api/articles/search` e `/api/articles/manual`), che ha già un fallback gratuito automatico su Wikidata / Wikipedia / link produttore in caso di quota `429` o assenza di `GEMINI_API_KEY`.
+   - La ricerca articoli usa le API pubbliche di Wikipedia e Wikimedia Commons dal browser (`src/utils/freeArticleSearch.ts`): nessuna chiave, Function o chiamata Gemini. Immagini e relative attribuzioni rimandano alle pagine Commons; i risultati dipendono dalla copertura dei cataloghi aperti.
 
 2. **PROGETTO FIREBASE UNIFICATO (`gen-lang-client-0721850501`):**
    - `src/firebase.ts` usa **un solo progetto Firebase principale** letto da `firebase-applet-config.json`:
