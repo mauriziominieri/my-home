@@ -8,6 +8,8 @@ import {
 
 export const SYSTEM_ROOM_CAR = '__macchina__';
 export const SYSTEM_ROOM_GROCERY = '__spesa__';
+export const SYSTEM_ROOM_GROCERY_META = '__spesa_meta__';
+export const GROCERY_SEED_MARKER_ID = 'grocery_seed_v1_done';
 export const CAR_PROFILE_ID = 'car_profile_ea218es';
 
 export const DEFAULT_PANDA_PROFILE: CarProfile = {
@@ -144,8 +146,8 @@ export function articleToGroceryProduct(article: HomeArticleRecord): GroceryProd
   return {
     id: article.id,
     name: article.name,
-    category: article.brand || 'Dispensa',
-    unit: article.model || 'pz',
+    category: article.brand || 'Condimenti & Dispensa',
+    unit: article.model || '1 kg',
     priceIns: parsePriceVal(kv.INS),
     priceMd: parsePriceVal(kv.MD),
     priceConad: parsePriceVal(kv.CONAD),
@@ -162,8 +164,8 @@ export function groceryProductToArticlePayload(
   const conad = item.priceConad !== null ? item.priceConad.toFixed(2) : '-';
   return {
     name: item.name.trim().slice(0, 80),
-    brand: (item.category || 'Dispensa').trim().slice(0, 60),
-    model: (item.unit || 'pz').trim().slice(0, 80),
+    brand: (item.category || 'Condimenti & Dispensa').trim().slice(0, 60),
+    model: (item.unit || '1 kg').trim().slice(0, 80),
     category: 'altro',
     room: SYSTEM_ROOM_GROCERY,
     familyWarranty: Boolean(item.inShoppingList),

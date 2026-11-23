@@ -127,55 +127,7 @@ export interface BundledPdfAsset {
   mimeType: string;
 }
 
-export const STATIC_BILL_PDF_ASSETS: Record<string, BundledPdfAsset> = {
-  // AcegasApsAmga Acqua
-  bill_water_722500018753: {
-    relPath: 'assets/aistudio/Acegas_2025-02-28_722500018753_50d49e8c.pdf',
-    fileName: 'Acegas_2025-02-28_722500018753.pdf',
-    mimeType: 'application/pdf',
-  },
-  bill_water_712501028617: {
-    relPath: 'assets/aistudio/Acegas_2025-11-14_712501028617_9cd2288c.pdf',
-    fileName: 'Acegas_2025-11-14_712501028617.pdf',
-    mimeType: 'application/pdf',
-  },
-  bill_water_712600216248: {
-    relPath: 'assets/aistudio/Acegas_2026-03-13_712600216248_507244b7.pdf',
-    fileName: 'Acegas_2026-03-13_712600216248.pdf',
-    mimeType: 'application/pdf',
-  },
-  bill_water_712600627713: {
-    relPath: 'assets/aistudio/Acegas_2026-07-13_712600627713_47643a93.pdf',
-    fileName: 'Acegas_2026-07-13_712600627713.pdf',
-    mimeType: 'application/pdf',
-  },
-  // Edison Energia Luce
-  bill_elec_6106606060: {
-    relPath: 'assets/aistudio/Edison_6106606060_32f2c201.pdf',
-    fileName: 'Edison_6106606060.pdf',
-    mimeType: 'application/pdf',
-  },
-  bill_elec_6109009993: {
-    relPath: 'assets/aistudio/Edison_6109009993_e7b9a98a.pdf',
-    fileName: 'Edison_6109009993.pdf',
-    mimeType: 'application/pdf',
-  },
-  bill_elec_6111444860: {
-    relPath: 'assets/aistudio/Edison_6111444860_0d038043.pdf',
-    fileName: 'Edison_6111444860.pdf',
-    mimeType: 'application/pdf',
-  },
-  bill_elec_6113821093: {
-    relPath: 'assets/aistudio/Edison_6113821093_4b99950d.pdf',
-    fileName: 'Edison_6113821093.pdf',
-    mimeType: 'application/pdf',
-  },
-  bill_elec_6116408117: {
-    relPath: 'assets/aistudio/Edison_6116408117_29719266.pdf',
-    fileName: 'Edison_6116408117.pdf',
-    mimeType: 'application/pdf',
-  },
-};
+export const STATIC_BILL_PDF_ASSETS: Record<string, BundledPdfAsset> = {};
 
 // ---------- Binary vault: Firestore cross-device chunked storage + IndexedDB cache ----------
 

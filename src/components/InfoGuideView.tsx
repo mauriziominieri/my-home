@@ -489,40 +489,59 @@ export function InfoGuideView() {
             </div>
           </div>
 
-          {/* Flusso Automatico Email -> Firestore */}
+          {/* Flusso Automatico Email -> Firestore + Differenza Bottoni */}
           <div className="bg-slate-950/70 border border-sky-500/25 rounded-lg p-4 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="font-semibold text-xs text-slate-100 flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
-                Flusso Automatico Email ➔ Analisi ➔ data/consumi.json &amp; Firestore ➔ Pulizia INBOX
+                Flusso Completo: Email 24/7 ➔ data/consumi.json &amp; Firestore ➔ Pulizia INBOX
               </div>
               <span className="px-2 py-0.5 text-[10px] font-mono bg-sky-500/15 text-sky-300 border border-sky-500/30 rounded">
-                Ogni 10 min · Solo INBOX
+                ~10–30 min (coda GitHub) · Solo INBOX
               </span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-[11px]">
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
-                <div className="font-semibold text-sky-300">1. Controllo 24/7 (10 min)</div>
+                <div className="font-semibold text-sky-300">1. Controllo 24/7 (dipende da GitHub)</div>
                 <p className="text-slate-400 leading-relaxed">
-                  GitHub Actions controlla la <strong className="text-slate-200">sola INBOX</strong> ogni <strong className="text-slate-200">10 minuti</strong> anche a PC/browser spento (ignorando il Cestino), più sync istantaneo da <em>Sincronizza Gmail</em>.
+                  <strong className="text-slate-200">GitHub Actions</strong> schedula il controllo ogni <strong className="text-slate-200">10 minuti</strong> a PC spento sulla <strong className="text-slate-200">sola INBOX</strong>. Nota: sui server gratuiti GitHub il ritardo reale è spesso di <strong className="text-slate-200">10–30 min</strong> (e dopo 60 giorni senza commit umani il cron va riattivato su Actions).
                 </p>
               </div>
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
-                <div className="font-semibold text-amber-300">2. Analisi allegati</div>
+                <div className="font-semibold text-amber-300">2. Analisi file (0 crediti AI)</div>
                 <p className="text-slate-400 leading-relaxed">
-                  Estrae automaticamente dati da <span className="text-slate-200">CSV/ZIP e-distribuzione</span> e bollette PDF (<span className="text-slate-200">Edison Luce, TARI Acegas</span>) aggiornando <span className="font-mono text-slate-300">data/consumi.json</span> e <span className="font-mono text-slate-300">data/bollette.json</span>.
+                  Se trova un nuovo allegato (<span className="text-slate-200">CSV/ZIP e-distribuzione</span>, <span className="text-slate-200">PDF Edison Luce</span> o <span className="text-slate-200">PDF TARI Acegas</span>), estrae i numeri in Python e aggiorna <span className="font-mono text-slate-300">data/consumi.json</span> e <span className="font-mono text-slate-300">data/bollette.json</span> su GitHub.
                 </p>
               </div>
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
-                <div className="font-semibold text-emerald-300">3. Sync su Dashboard &amp; Firestore</div>
+                <div className="font-semibold text-emerald-300">3. Copia su Firebase Firestore</div>
                 <p className="text-slate-400 leading-relaxed">
-                  L&apos;app carica i nuovi giorni in diretta da GitHub (<span className="font-mono text-slate-300">main</span>) e li salva su <strong className="text-slate-200">Firebase Firestore</strong> appena accedi con Google (zero crediti AI).
+                  Appena apri il sito, la dashboard legge in diretta i nuovi giorni da GitHub (<span className="font-mono text-slate-300">main</span>); quando accedi con Google, li salva automaticamente anche su <strong className="text-slate-200">Firebase Firestore</strong>.
                 </p>
               </div>
               <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1">
                 <div className="font-semibold text-rose-300">4. Pulizia INBOX</div>
                 <p className="text-slate-400 leading-relaxed">
-                  Solo dopo la conferma di avvenuto salvataggio, le email elaborate vengono spostate dalla INBOX nel <strong className="text-slate-200">Cestino</strong> per evitare doppie elaborazioni.
+                  Solo dopo aver scritto i dati con successo, il bot sposta l&apos;email elaborata dalla INBOX nel <strong className="text-slate-200">Cestino</strong> così non viene mai letta due volte.
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-slate-800/80 grid grid-cols-1 md:grid-cols-2 gap-2.5 text-[11px]">
+              <div className="bg-slate-900/60 border border-emerald-500/25 rounded-lg p-3 space-y-1">
+                <div className="font-semibold text-emerald-300">
+                  1) Bottone in alto: &quot;Collega Gmail&quot; / &quot;Sincronizza Gmail&quot;
+                </div>
+                <p className="text-slate-400 leading-relaxed">
+                  Unico bottone nella barra in alto (facoltativo). Serve quando vuoi: <strong className="text-slate-200">a)</strong> leggere la INBOX <strong className="text-slate-200">subito</strong> senza aspettare i tempi di coda di GitHub Actions; <strong className="text-slate-200">b)</strong> importare anche le bollette <strong className="text-slate-200">Acqua Acegas</strong> e salvare il <strong className="text-slate-200">file PDF originale</strong> su Firestore per scaricarlo ovunque (cosa che il bot GitHub non fa).
+                </p>
+              </div>
+              <div className="bg-slate-900/60 border border-sky-500/25 rounded-lg p-3 space-y-1">
+                <div className="font-semibold text-sky-300">
+                  2) In Consumi Annuali: &quot;Aggiorna consumi.json&quot;
+                </div>
+                <p className="text-slate-400 leading-relaxed">
+                  Non tocca Gmail: rilegge <span className="font-mono text-slate-300">data/consumi.json</span> da GitHub e copia su Firestore eventuali nuovi giorni già scaricati dal bot in background (cosa che avviene già da sola all&apos;apertura del sito, utile solo per aggiornare senza ricaricare la pagina).
                 </p>
               </div>
             </div>

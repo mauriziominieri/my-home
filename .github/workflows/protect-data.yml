@@ -1,0 +1,43 @@
+name: Proteggi data/consumi.json e data/bollette.json
+
+on:
+  push:
+    branches: ['main']
+    paths:
+      - 'data/consumi.json'
+      - 'data/bollette.json'
+
+permissions:
+  contents: write
+
+jobs:
+  restore-if-deleted:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository con storico
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ripristina eventuali file data/*.json eliminati per errore
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          restored=0
+          for f in data/consumi.json data/bollette.json; do
+            if [ ! -f "$f" ]; then
+              last_commit=$(git log --diff-filter=AM -n 1 --format=%H -- "$f")
+              if [ -n "$last_commit" ]; then
+                echo "Ripristino $f dal commit $last_commit"
+                git checkout "$last_commit" -- "$f"
+                git add "$f"
+                restored=1
+              fi
+            fi
+          done
+
+          if [ "$restored" -eq 1 ] && ! git diff --staged --quiet; then
+            git commit -m "Ripristino automatico data/*.json dopo push export"
+            git push
+          fi

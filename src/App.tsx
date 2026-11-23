@@ -78,9 +78,11 @@ import {
   CAR_PROFILE_ID,
   carLogToArticlePayload,
   carProfileToArticlePayload,
+  GROCERY_SEED_MARKER_ID,
   groceryProductToArticlePayload,
   SYSTEM_ROOM_CAR,
   SYSTEM_ROOM_GROCERY,
+  SYSTEM_ROOM_GROCERY_META,
 } from './utils/carGroceryStore';
 import {
   articleToHomeDocument,
@@ -104,6 +106,7 @@ import {
 } from './utils/climateAutopilot';
 import { SEED_ELECTRICITY_BILLS, SEED_WATER_BILLS } from './data/billsSeed';
 import { SEED_HOME_ARTICLES } from './data/articlesSeed';
+import { SEED_GROCERY_ARTICLES } from './data/grocerySeed';
 import { OverviewView } from './components/OverviewView';
 import { DomoticsView } from './components/DomoticsView';
 import { EnergyDatabaseView } from './components/EnergyDatabaseView';
@@ -178,12 +181,16 @@ export default function App() {
   const [waterBills, setWaterBills] = useState<WaterBillRecord[]>(SEED_WATER_BILLS);
   const [tariBills, setTariBills] = useState<TariBillRecord[]>([]);
   const [gsePayments, setGsePayments] = useState<GsePaymentRecord[]>([]);
-  const [homeArticles, setHomeArticles] = useState<HomeArticleRecord[]>(SEED_HOME_ARTICLES);
+  const [homeArticles, setHomeArticles] = useState<HomeArticleRecord[]>([
+    ...SEED_HOME_ARTICLES,
+    ...SEED_GROCERY_ARTICLES,
+  ]);
   const [readingsLoading, setReadingsLoading] = useState(true);
   const [firestoreFallbackNotice, setFirestoreFallbackNotice] = useState<string | null>(null);
   const syncedElecBillsRef = useRef(false);
   const syncedWaterBillsRef = useRef(false);
   const syncedArticlesRef = useRef(false);
+  const syncedGrocerySeedRef = useRef(false);
   const loadedGitHubJsonRef = useRef(false);
   const backfillAttemptKeyRef = useRef<string | null>(null);
   const skippedTrashIdsRef = useRef<Set<string>>(new Set());
@@ -696,43 +703,112 @@ export default function App() {
           };
         });
 
+        const normalizeGroceryKey = (name: string) =>
+          name
+            .toLowerCase()
+            .split('/')[0]
+            .split('(')[0]
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]+/g, ' ')
+            .trim();
+
+        const hasGrocerySeedMarker = list.some((a) => a.id === GROCERY_SEED_MARKER_ID);
+        const existingIds = new Set(list.map((a) => a.id));
+        const missingGrocerySeed: HomeArticleRecord[] = [];
+        const enrichedById = new Map<string, HomeArticleRecord>();
+
+        if (!hasGrocerySeedMarker) {
+          const existingGroceryByKey = new Map<string, HomeArticleRecord>();
+          for (const art of list) {
+            if (art.room === SYSTEM_ROOM_GROCERY) {
+              const key = normalizeGroceryKey(art.name);
+              if (key && !existingGroceryByKey.has(key)) {
+                existingGroceryByKey.set(key, art);
+              }
+            }
+          }
+
+          for (const seedArt of SEED_GROCERY_ARTICLES) {
+            if (existingIds.has(seedArt.id)) continue;
+            const key = normalizeGroceryKey(seedArt.name);
+            const matchedExisting = existingGroceryByKey.get(key);
+            if (matchedExisting) {
+              // Se l'articolo già presente su Firestore non ha alcun prezzo inserito,
+              // lo arricchiamo con i prezzi del listino senza creare duplicati.
+              if (!/\d/.test(matchedExisting.specs || '')) {
+                enrichedById.set(matchedExisting.id, {
+                  ...matchedExisting,
+                  brand: seedArt.brand,
+                  model: matchedExisting.model && matchedExisting.model !== 'pz' ? matchedExisting.model : seedArt.model,
+                  specs: seedArt.specs,
+                  notes: matchedExisting.notes || seedArt.notes,
+                });
+              }
+            } else {
+              missingGrocerySeed.push(seedArt);
+            }
+          }
+        }
+
         if (list.length > 0) {
-          setHomeArticles(list);
+          const mergedList = [
+            ...list.map((item) => enrichedById.get(item.id) || item),
+            ...missingGrocerySeed,
+          ];
+          setHomeArticles(mergedList);
           try {
-            localStorage.setItem(`myhome_articles_cache_${activeUid}`, JSON.stringify(list));
+            localStorage.setItem(`myhome_articles_cache_${activeUid}`, JSON.stringify(mergedList));
           } catch {
             // ignore
           }
         }
 
-        if (user && user.uid === activeUid && !snap.metadata.fromCache && !syncedArticlesRef.current) {
-          syncedArticlesRef.current = true;
-          const existingIds = new Set(list.map((a) => a.id));
-          const missing = SEED_HOME_ARTICLES.filter((a) => !existingIds.has(a.id));
-          if (missing.length > 0) {
+        if (user && user.uid === activeUid && !snap.metadata.fromCache) {
+          const toSync: HomeArticleRecord[] = [];
+          if (!syncedArticlesRef.current) {
+            syncedArticlesRef.current = true;
+            toSync.push(...SEED_HOME_ARTICLES.filter((a) => !existingIds.has(a.id)));
+          }
+          if (!hasGrocerySeedMarker && !syncedGrocerySeedRef.current) {
+            syncedGrocerySeedRef.current = true;
+            toSync.push(...Array.from(enrichedById.values()), ...missingGrocerySeed, {
+              id: GROCERY_SEED_MARKER_ID,
+              name: 'Catalogo Spesa v1',
+              brand: 'seed',
+              model: 'v1',
+              category: 'altro',
+              room: SYSTEM_ROOM_GROCERY_META,
+              familyWarranty: false,
+            });
+          }
+          if (toSync.length > 0) {
             void (async () => {
               try {
-                const batch = writeBatch(db);
-                for (const art of missing) {
-                  const docId = art.id.replace(/[^a-zA-Z0-9_-]/g, '');
-                  const payload: Record<string, unknown> = {
-                    ownerId: user.uid,
-                    name: art.name.slice(0, 80),
-                    brand: art.brand.slice(0, 60),
-                    model: art.model.slice(0, 80),
-                    category: art.category,
-                    room: art.room.slice(0, 60),
-                    familyWarranty: Boolean(art.familyWarranty),
-                    createdAt: serverTimestamp(),
-                  };
-                  if (art.purchaseDate) payload.purchaseDate = art.purchaseDate.slice(0, 20);
-                  if (art.warrantyEnd) payload.warrantyEnd = art.warrantyEnd.slice(0, 20);
-                  if (art.serialNumber) payload.serialNumber = art.serialNumber.slice(0, 80);
-                  if (art.specs) payload.specs = art.specs.slice(0, 240);
-                  if (art.notes) payload.notes = art.notes.slice(0, 240);
-                  batch.set(doc(db, articlesPath, docId), payload);
+                for (let i = 0; i < toSync.length; i += 400) {
+                  const chunk = toSync.slice(i, i + 400);
+                  const batch = writeBatch(db);
+                  for (const art of chunk) {
+                    const docId = art.id.replace(/[^a-zA-Z0-9_-]/g, '');
+                    const payload: Record<string, unknown> = {
+                      ownerId: user.uid,
+                      name: art.name.slice(0, 80),
+                      brand: art.brand.slice(0, 60),
+                      model: art.model.slice(0, 80),
+                      category: art.category,
+                      room: art.room.slice(0, 60),
+                      familyWarranty: Boolean(art.familyWarranty),
+                      createdAt: serverTimestamp(),
+                    };
+                    if (art.purchaseDate) payload.purchaseDate = art.purchaseDate.slice(0, 20);
+                    if (art.warrantyEnd) payload.warrantyEnd = art.warrantyEnd.slice(0, 20);
+                    if (art.serialNumber) payload.serialNumber = art.serialNumber.slice(0, 80);
+                    if (art.specs) payload.specs = art.specs.slice(0, 240);
+                    if (art.notes) payload.notes = art.notes.slice(0, 240);
+                    batch.set(doc(db, articlesPath, docId), payload);
+                  }
+                  await batch.commit();
                 }
-                await batch.commit();
               } catch (err) {
                 if (!isResilientFirestoreOutage(err)) {
                   handleFirestoreError(err, OperationType.WRITE, articlesPath);
@@ -1796,6 +1872,7 @@ export default function App() {
         (a) =>
           a.room !== SYSTEM_ROOM_CAR &&
           a.room !== SYSTEM_ROOM_GROCERY &&
+          a.room !== SYSTEM_ROOM_GROCERY_META &&
           a.room !== SYSTEM_ROOM_DOCUMENTS &&
           a.room !== SYSTEM_ROOM_CLIMATE_AUTO
       ),

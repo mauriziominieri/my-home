@@ -4,11 +4,13 @@ import {
   Award,
   Check,
   CheckCircle2,
+  Copy,
   Pencil,
   Plus,
   Search,
   ShoppingBasket,
   ShoppingCart,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { GroceryProduct, SupermarketId } from '../types/home';
@@ -69,6 +71,89 @@ function parseOptionalPrice(raw: string): number | null {
   return Number.isFinite(val) && val >= 0 ? Math.round(val * 100) / 100 : null;
 }
 
+function inferGroceryCategory(rawName: string): string | null {
+  const t = rawName
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+  if (t.length < 2) return null;
+
+  // Regole specifiche prima di quelle generiche
+  if (/(farina di cocco|burro di arachidi|burro d'arachidi|gocce di cioccolato)/.test(t)) {
+    return 'Colazione & Dolci';
+  }
+  if (/(pasta sfoglia|pasta brise|pasta brisee)/.test(t)) {
+    return 'Latticini & Uova';
+  }
+  if (/(pan grattato|pangrattato|pane grattugiato)/.test(t)) {
+    return 'Condimenti & Dispensa';
+  }
+  if (/(orzo perlato)/.test(t)) {
+    return 'Pasta, Riso & Pane';
+  }
+  if (/(succo|spremuta|the freddo|te freddo|acqua|birra|vino|prosecco|cola|aranciata|gassosa|tonica|limonata|bibita|aperitivo|analcolico|integratore)/.test(t)) {
+    return 'Bevande & Acqua';
+  }
+  if (/(fagiolini)/.test(t)) {
+    return 'Frutta & Verdura';
+  }
+  if (/(surgelat|ghiacciol|bastoncini|sofficini|minestrone|patatine surgelate)/.test(t)) {
+    return 'Surgelati';
+  }
+  if (
+    /(biscott|gocciole|abbracci|oro saiwa|petit|digestive|togo|misura|macine|pan di stelle|fette biscottate|brioche|cornett|croissant|merendin|cereali|muesli|fiocchi d'avena|cioccolat|cacao|nutella|crema spalmabile|marmellat|confettur|miele|sciroppo|zucchero|vanillina|lievito|colla di pesce|caffe|orzo solubile|camomilla|tisana|granella|mandorle|nocciole|noci|pinoli|pistacchi|torta|dolce|dolci|plumcake|wafer|gelato|gelati)/.test(
+      t
+    )
+  ) {
+    return 'Colazione & Dolci';
+  }
+  if (
+    /(latte|uov|yogurt|kefir|burro|margarina|formagg|parmigian|grana|pecorin|mozzarell|ricotta|mascarpone|philadelphia|spalmabile|crescenza|stracchino|brie|scamorza|provola|provolone|sottilett|panna|besciamella|gorgonzola|feta|asiago|emmental|fontina)/.test(
+      t
+    )
+  ) {
+    return 'Latticini & Uova';
+  }
+  if (
+    /(pasta|spaghett|penne|fusilli|rigatoni|farfalle|maccheroni|tortell|ravioli|gnocchi|lasagn|tagliatell|riso|risotto|carnaroli|basmati|jasmin|venere|farro|cous cous|pane|panin|bauletto|pancarr|focaccia|pizza|piadina|grissini|cracker|crostini|taralli|saltimbocca|fette|gallette)/.test(
+      t
+    )
+  ) {
+    return 'Pasta, Riso & Pane';
+  }
+  if (
+    /(carne|pollo|petto|coscia|fesa|tacchino|manzo|vitello|maiale|suino|bistecca|macinato|hamburger|svizzera|salsicc|wurstel|prosciutto|salame|speck|bresaola|pancetta|mortadella|bacon|guanciale|pesce|tonno|salmone|merluzzo|orata|branzino|gamber|calamar|acciug|alici|sgombro|surimi|trota)/.test(
+      t
+    )
+  ) {
+    return 'Carne & Pesce';
+  }
+  if (
+    /(mela|mele|banan|aranc|mandarin|limon|pera|pere|pesca|pesche|albicocc|cilieg|fragol|uva|kiwi|ananas|anguria|melone|avocado|frutta|verdur|insalat|lattuga|rucola|spinac|zucchin|melanzan|peperon|pomodor|carot|patat|cipoll|aglio|scalogn|cavol|broccol|finocchi|sedan|zucca|asparag|funghi|carciof|basilico|salvia|rosmarino|prezzemolo|menta|cetriol|ravanell)/.test(
+      t
+    )
+  ) {
+    return 'Frutta & Verdura';
+  }
+  if (
+    /(olio|aceto|sale|pepe|spezie|farina|amido|maizena|bicarbonato|passata|pelati|polpa|sugo|pesto|ragu|ceci|fagioli|lenticchie|piselli|legumi|mais|semi|chia|lino|maionese|ketchup|senape|salsa|dado|brodo|insalatissime|olive|capperi|sottaceti|tonno in scatola|senza glutine)/.test(
+      t
+    )
+  ) {
+    return 'Condimenti & Dispensa';
+  }
+  if (
+    /(detersiv|sapone|shampoo|bagnoschiuma|dentifricio|spazzolin|carta igienica|scottex|rotoloni|tovaglioli|fazzoletti|spugn|sacch|spazzatura|candeggina|ammorbidente|lavastoviglie|brillantante|pellicola|alluminio|carta forno|deodorante)/.test(
+      t
+    )
+  ) {
+    return 'Casa & Altro';
+  }
+
+  return null;
+}
+
 function getBestSupermarkets(item: GroceryProduct): {
   bestIds: SupermarketId[];
   minPrice: number | null;
@@ -113,24 +198,43 @@ export function GroceryView({
   const [deleting, setDeleting] = useState(false);
 
   const [name, setName] = useState('');
-  const [category, setCategory] = useState(GROCERY_CATEGORIES[0]);
-  const [unit, setUnit] = useState('1 pz');
+  const [category, setCategory] = useState('Condimenti & Dispensa');
+  const [categoryManuallyPicked, setCategoryManuallyPicked] = useState(false);
+  const [categoryAutoDetected, setCategoryAutoDetected] = useState(false);
+  const [unit, setUnit] = useState('1 kg');
   const [priceIns, setPriceIns] = useState('');
   const [priceMd, setPriceMd] = useState('');
   const [priceConad, setPriceConad] = useState('');
   const [inShoppingList, setInShoppingList] = useState(true);
   const [notes, setNotes] = useState('');
+  const [copiedList, setCopiedList] = useState(false);
 
   function resetForm() {
     setEditingId(null);
     setName('');
-    setCategory(GROCERY_CATEGORIES[0]);
-    setUnit('1 pz');
+    setCategory('Condimenti & Dispensa');
+    setCategoryManuallyPicked(false);
+    setCategoryAutoDetected(false);
+    setUnit('1 kg');
     setPriceIns('');
     setPriceMd('');
     setPriceConad('');
     setInShoppingList(true);
     setNotes('');
+  }
+
+  function handleNameChange(nextName: string) {
+    setName(nextName);
+    if (!editingId && !categoryManuallyPicked) {
+      const guessed = inferGroceryCategory(nextName);
+      if (guessed) {
+        setCategory(guessed);
+        setCategoryAutoDetected(true);
+      } else {
+        setCategory('Condimenti & Dispensa');
+        setCategoryAutoDetected(false);
+      }
+    }
   }
 
   function openNewForm() {
@@ -142,7 +246,9 @@ export function GroceryView({
     setEditingId(item.id);
     setName(item.name);
     setCategory(item.category);
-    setUnit(item.unit);
+    setCategoryManuallyPicked(true);
+    setCategoryAutoDetected(false);
+    setUnit(item.unit || '1 kg');
     setPriceIns(item.priceIns !== null ? item.priceIns.toFixed(2).replace('.', ',') : '');
     setPriceMd(item.priceMd !== null ? item.priceMd.toFixed(2).replace('.', ',') : '');
     setPriceConad(item.priceConad !== null ? item.priceConad.toFixed(2).replace('.', ',') : '');
@@ -156,10 +262,14 @@ export function GroceryView({
     if (!name.trim()) return;
     setSaving(true);
     try {
+      const inferred = inferGroceryCategory(name);
+      const finalCategory = categoryManuallyPicked
+        ? category.trim() || inferred || 'Condimenti & Dispensa'
+        : inferred || category.trim() || 'Condimenti & Dispensa';
       const payload: Omit<GroceryProduct, 'id'> = {
         name: name.trim().slice(0, 80),
-        category: category.trim() || 'Dispensa',
-        unit: unit.trim() || '1 pz',
+        category: finalCategory,
+        unit: unit.trim() || '1 kg',
         priceIns: parseOptionalPrice(priceIns),
         priceMd: parseOptionalPrice(priceMd),
         priceConad: parseOptionalPrice(priceConad),
@@ -203,10 +313,41 @@ export function GroceryView({
     }
   }
 
+  const shoppingListItems = useMemo(
+    () => products.filter((p) => p.inShoppingList),
+    [products]
+  );
+
+  async function handleCopyShoppingList() {
+    if (shoppingListItems.length === 0) return;
+    const lines = shoppingListItems.map((item) => {
+      const best = getBestSupermarkets(item);
+      const bestText =
+        best.bestIds.length > 0 && best.minPrice !== null
+          ? ` (${best.bestIds.map((id) => SUPERMARKET_META[id].label).join('/')} ${best.minPrice.toFixed(2).replace('.', ',')} €)`
+          : '';
+      return `- ${item.name}${bestText}`;
+    });
+    const text = `Lista spesa (${shoppingListItems.length}):\n${lines.join('\n')}`;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+    }
+    setCopiedList(true);
+    window.setTimeout(() => setCopiedList(false), 2500);
+  }
+
   const basketSource = useMemo(() => {
-    const activeList = products.filter((p) => p.inShoppingList);
-    return activeList.length > 0 ? activeList : products;
-  }, [products]);
+    return shoppingListItems.length > 0 ? shoppingListItems : products;
+  }, [shoppingListItems, products]);
 
   const basketSummary = useMemo(() => {
     let insTotal = 0;
@@ -311,16 +452,38 @@ export function GroceryView({
           </p>
         </div>
 
-        {!readOnly && (
-          <button
-            type="button"
-            onClick={openNewForm}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors self-start sm:self-auto"
-          >
-            <Plus className="w-4 h-4" />
-            Aggiungi prodotto alimentare
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {shoppingListItems.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void handleCopyShoppingList()}
+              title="Copia la lista da comprare negli appunti per incollarla in Bring!, WhatsApp o Note"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition-colors"
+            >
+              {copiedList ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-emerald-300">Lista copiata!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Copia lista ({shoppingListItems.length})</span>
+                </>
+              )}
+            </button>
+          )}
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={openNewForm}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Aggiungi prodotto alimentare
+            </button>
+          )}
+        </div>
       </div>
 
       <AccessUnlockBanner
@@ -434,18 +597,30 @@ export function GroceryView({
                 type="text"
                 required
                 maxLength={80}
-                placeholder="Es. Latte Intero UHT, Pasta 500g..."
+                placeholder="Es. Biscotti, Latte, Zucchine, Pasta..."
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => handleNameChange(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
               />
             </label>
 
             <label className="space-y-1">
-              <span className="text-slate-400">Categoria</span>
+              <span className="text-slate-400 flex items-center justify-between gap-2">
+                <span>Categoria</span>
+                {categoryAutoDetected && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-300">
+                    <Sparkles className="w-3 h-3" />
+                    Auto
+                  </span>
+                )}
+              </span>
               <select
                 value={category}
-                onChange={(e) => setCategory(e.target.value)}
+                onChange={(e) => {
+                  setCategory(e.target.value);
+                  setCategoryManuallyPicked(true);
+                  setCategoryAutoDetected(false);
+                }}
                 className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark]"
               >
                 {categoriesPresent.map((cat) => (
@@ -457,11 +632,11 @@ export function GroceryView({
             </label>
 
             <label className="space-y-1">
-              <span className="text-slate-400">Formato / Quantità</span>
+              <span className="text-slate-400">Formato / Quantità (default 1 kg)</span>
               <input
                 type="text"
                 maxLength={80}
-                placeholder="Es. 1 L, 500 g, 1 kg, 6 pz"
+                placeholder="1 kg (es. 1 kg, 1 L, 1 pz)"
                 value={unit}
                 onChange={(e) => setUnit(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
@@ -469,10 +644,12 @@ export function GroceryView({
             </label>
 
             <label className="space-y-1">
-              <span className="text-amber-300 font-semibold">Prezzo IN&apos;S (€)</span>
+              <span className="text-amber-300 font-semibold">
+                Prezzo IN&apos;S (€{unit.trim() === '1 kg' ? '/kg' : ''})
+              </span>
               <input
                 type="text"
-                placeholder="Es. 1,19 (lascia vuoto se non presente)"
+                placeholder="Es. 2,79 (vuoto se assente)"
                 value={priceIns}
                 onChange={(e) => setPriceIns(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-950 border border-amber-500/30 rounded-lg font-mono text-slate-100"
@@ -480,10 +657,12 @@ export function GroceryView({
             </label>
 
             <label className="space-y-1">
-              <span className="text-sky-300 font-semibold">Prezzo MD (€)</span>
+              <span className="text-sky-300 font-semibold">
+                Prezzo MD (€{unit.trim() === '1 kg' ? '/kg' : ''})
+              </span>
               <input
                 type="text"
-                placeholder="Es. 1,09 (lascia vuoto se non presente)"
+                placeholder="Es. 2,49 (vuoto se assente)"
                 value={priceMd}
                 onChange={(e) => setPriceMd(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-950 border border-sky-500/30 rounded-lg font-mono text-slate-100"
@@ -491,10 +670,12 @@ export function GroceryView({
             </label>
 
             <label className="space-y-1">
-              <span className="text-rose-300 font-semibold">Prezzo CONAD (€)</span>
+              <span className="text-rose-300 font-semibold">
+                Prezzo CONAD (€{unit.trim() === '1 kg' ? '/kg' : ''})
+              </span>
               <input
                 type="text"
-                placeholder="Es. 1,45 (lascia vuoto se non presente)"
+                placeholder="Es. 3,45 (vuoto se assente)"
                 value={priceConad}
                 onChange={(e) => setPriceConad(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-950 border border-rose-500/30 rounded-lg font-mono text-slate-100"
