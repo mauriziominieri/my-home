@@ -769,37 +769,6 @@ export function extractArticleManualDetails(
   return { name, brand, model, category, room, specs };
 }
 
-export async function searchArticlesOnline(query: string): Promise<{
-  results: OnlineArticleSearchResult[];
-  provider: string;
-  unavailable?: boolean;
-}> {
-  const trimmed = query.trim();
-  if (!trimmed) return { results: [], provider: '' };
-
-  try {
-    const response = await fetch('/api/articles/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: trimmed }),
-    });
-    if (!response.ok) {
-      return { results: [], provider: 'Ricerca integrata non disponibile', unavailable: true };
-    }
-
-    const payload = (await response.json()) as {
-      results?: OnlineArticleSearchResult[];
-      provider?: string;
-    };
-    return {
-      results: Array.isArray(payload.results) ? payload.results : [],
-      provider: payload.provider || 'Ricerca prodotti',
-    };
-  } catch {
-    return { results: [], provider: 'Ricerca integrata non disponibile', unavailable: true };
-  }
-}
-
 // ---------- Export utilities (Markdown / Printable HTML / JSON) ----------
 
 function escapeHtml(raw: string): string {

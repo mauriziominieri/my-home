@@ -16,7 +16,6 @@ import {
   Plus,
   Search,
   ShieldCheck,
-  Sparkles,
   Sun,
   Thermometer,
   Trash2,
@@ -29,14 +28,12 @@ import { HomeArticleCategory, HomeArticleRecord } from '../types/home';
 import {
   ARTICLE_ROOM_PRESETS,
   ArticleManualGuide,
-  OnlineArticleSearchResult,
   extractArticleManualDetails,
   formatAllArticlesMarkdown,
   formatArticlesHtmlDossier,
   formatSingleArticleMarkdown,
   getArticleManualGuide,
   packArticleNotes,
-  searchArticlesOnline,
   triggerTextDownload,
   unpackArticleNotes,
 } from '../utils/articleCatalog';
@@ -138,15 +135,6 @@ export function ArticlesView({
   // Online Search states
   const [showOnlineSearch, setShowOnlineSearch] = useState(false);
   const [onlineQuery, setOnlineQuery] = useState('');
-  const [onlineSearchDone, setOnlineSearchDone] = useState(false);
-  const [onlineLoading, setOnlineLoading] = useState(false);
-  const [onlineResults, setOnlineResults] = useState<OnlineArticleSearchResult[]>([]);
-  const [onlineProvider, setOnlineProvider] = useState('');
-  const [onlineUnavailable, setOnlineUnavailable] = useState(false);
-  const [onlineError, setOnlineError] = useState('');
-  const [onlineTargetRooms, setOnlineTargetRooms] = useState<Record<string, string>>({});
-  const [addingOnlineId, setAddingOnlineId] = useState<string | null>(null);
-  const [onlineAddedIds, setOnlineAddedIds] = useState<string[]>([]);
 
   // Article Sheet & Manual modal states
   const [activeSheetArticle, setActiveSheetArticle] = useState<HomeArticleRecord | null>(null);
@@ -307,60 +295,6 @@ export function ArticlesView({
       setActionError(error instanceof Error ? error.message : 'Non è stato possibile eliminare l’articolo.');
     } finally {
       setDeleting(false);
-    }
-  }
-
-  async function handleOnlineSearch(e: React.FormEvent) {
-    e.preventDefault();
-    if (!onlineQuery.trim()) return;
-    setOnlineLoading(true);
-    setOnlineSearchDone(false);
-    setOnlineResults([]);
-    setOnlineError('');
-    setOnlineAddedIds([]);
-    setOnlineProvider('');
-    setOnlineUnavailable(false);
-    try {
-      const response = await searchArticlesOnline(onlineQuery);
-      setOnlineResults(response.results);
-      setOnlineProvider(response.provider);
-      setOnlineUnavailable(Boolean(response.unavailable));
-      setOnlineTargetRooms(
-        Object.fromEntries(response.results.map((result) => [result.id, result.suggestedRoom]))
-      );
-    } catch (error) {
-      setOnlineUnavailable(true);
-      setOnlineError(
-        error instanceof Error ? error.message : 'La ricerca online non è riuscita.'
-      );
-    } finally {
-      setOnlineLoading(false);
-      setOnlineSearchDone(true);
-    }
-  }
-
-  async function handleAddOnlineResult(result: OnlineArticleSearchResult) {
-    const targetRoom = onlineTargetRooms[result.id] || result.suggestedRoom;
-    setAddingOnlineId(result.id);
-    setOnlineError('');
-    try {
-      await onAddArticle({
-        name: result.name,
-        brand: result.brand,
-        model: result.model,
-        category: result.category,
-        room: targetRoom,
-        familyWarranty: false,
-        specs: result.specs || undefined,
-        notes: packArticleNotes('', result.manualUrl),
-      });
-      setOnlineAddedIds((current) => [...current, result.id]);
-    } catch (error) {
-      setOnlineError(
-        error instanceof Error ? error.message : 'Non è stato possibile aggiungere l’articolo.'
-      );
-    } finally {
-      setAddingOnlineId(null);
     }
   }
 
@@ -681,7 +615,7 @@ export function ArticlesView({
                 }`}
               >
                 <Globe className="w-3.5 h-3.5" />
-                Cerca online &amp; aggiungi
+                Cerca su Google Shopping
               </button>
 
               <button
@@ -702,7 +636,7 @@ export function ArticlesView({
         onSignIn={onSignIn}
         pageName="Articoli & Manuali"
         unlockedFeatures={[
-          'Cerca nuovi articoli online e aggiungili alle stanze di casa',
+          'Apri Google Shopping e crea schede articoli per le stanze di casa',
           'Registra nuovi elettrodomestici, garanzie e link manuali su Firestore',
           'Modifica o elimina schede articoli esistenti',
         ]}
@@ -714,11 +648,11 @@ export function ArticlesView({
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-violet-400" />
-                Cerca Articoli &amp; Manuali Online
+                <Search className="w-4 h-4 text-violet-400" />
+                Cerca un prodotto
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                La ricerca AI parte solo quando la invii e usa la cache per le query recenti. L’estrazione dai PDF resta locale; se la ricerca integrata non è disponibile puoi aprire Google Shopping.
+                La ricerca si apre su Google Shopping, fuori da My Home. Dopo aver scelto il modello, torna qui per inserire i dati e aggiungerlo alla casa. Non vengono fatte chiamate AI.
               </p>
             </div>
             <button
@@ -730,125 +664,45 @@ export function ArticlesView({
             </button>
           </div>
 
-          <form onSubmit={handleOnlineSearch} className="flex flex-col sm:flex-row gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
-                type="text"
+                type="search"
                 value={onlineQuery}
                 maxLength={140}
-                onChange={(e) => {
-                  setOnlineQuery(e.target.value);
-                  setOnlineSearchDone(false);
-                  setOnlineResults([]);
-                  setOnlineError('');
-                }}
-                placeholder="Es. chitarra Ibanez, frigo Bosch, LG OLED C4..."
+                onChange={(event) => setOnlineQuery(event.target.value)}
+                placeholder="Es. TV TCL, frigo Bosch, chitarra Ibanez..."
                 className="w-full pl-9 pr-3 py-2 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-violet-400"
               />
             </div>
-            <button
-              type="submit"
-              disabled={!onlineQuery.trim() || onlineLoading}
-              className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold text-slate-950 bg-violet-400 hover:bg-violet-300 disabled:opacity-50 rounded-lg transition-colors"
+            <a
+              href={`https://www.google.com/search?tbm=shop&q=${encodeURIComponent(onlineQuery.trim())}`}
+              target="_blank"
+              rel="noreferrer"
+              aria-disabled={!onlineQuery.trim()}
+              onClick={(event) => {
+                if (!onlineQuery.trim()) event.preventDefault();
+              }}
+              className={`inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg transition-colors ${
+                onlineQuery.trim()
+                  ? 'text-slate-950 bg-violet-400 hover:bg-violet-300'
+                  : 'text-slate-500 bg-slate-800 cursor-not-allowed'
+              }`}
             >
-              <Globe className="w-3.5 h-3.5" />
-              {onlineLoading ? 'Ricerca in corso...' : 'Cerca modelli'}
+              <ExternalLink className="w-3.5 h-3.5" />
+              Apri Google Shopping
+            </a>
+          </div>
+          {onlineQuery.trim() && (
+            <button
+              type="button"
+              onClick={openSearchResultAsNewArticle}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Crea scheda per “{onlineQuery.trim()}”
             </button>
-          </form>
-
-          {onlineSearchDone && onlineProvider && (
-            <p className="text-[11px] text-slate-400">{onlineProvider}</p>
-          )}
-          {onlineError && (
-            <p role="alert" className="text-xs text-rose-300">{onlineError}</p>
-          )}
-          {onlineResults.length > 0 && (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {onlineResults.map((result) => {
-                const added = onlineAddedIds.includes(result.id);
-                return (
-                  <article
-                    key={result.id}
-                    className="rounded-lg border border-slate-700 bg-slate-950/70 p-3 space-y-2"
-                  >
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-100">{result.name}</h3>
-                      <p className="text-xs text-slate-400">{result.brand} · {result.model}</p>
-                    </div>
-                    {result.specs && <p className="text-xs text-slate-300">{result.specs}</p>}
-                    {result.sourceUrls.map((source) => (
-                      <a
-                        key={source.url}
-                        href={source.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="block truncate text-[11px] text-sky-300 hover:text-sky-200 underline"
-                      >
-                        Fonte: {source.title}
-                      </a>
-                    ))}
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <select
-                        value={onlineTargetRooms[result.id] || result.suggestedRoom}
-                        onChange={(event) =>
-                          setOnlineTargetRooms((current) => ({
-                            ...current,
-                            [result.id]: event.target.value,
-                          }))
-                        }
-                        className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-slate-100"
-                        aria-label={`Stanza per ${result.name}`}
-                      >
-                        {allRooms.map((roomOption) => (
-                          <option key={roomOption} value={roomOption}>{roomOption}</option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        disabled={added || addingOnlineId === result.id}
-                        onClick={() => void handleAddOnlineResult(result)}
-                        className="rounded-lg bg-sky-400 px-3 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-300 disabled:opacity-60"
-                      >
-                        {added ? 'Aggiunto' : addingOnlineId === result.id ? 'Salvataggio...' : 'Aggiungi alla casa'}
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-          {onlineSearchDone && (
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-950/50 px-3 py-3 text-xs">
-              <p className="text-slate-300">
-                {onlineUnavailable
-                  ? 'La ricerca integrata non è configurata in questa versione del sito.'
-                  : onlineResults.length
-                    ? 'Scegli un modello e la stanza per aggiungerlo alla casa.'
-                    : 'Nessun modello verificabile trovato. Puoi provare su Google Shopping e creare la scheda manualmente.'}
-              </p>
-              <div className="flex shrink-0 flex-wrap gap-2">
-                <a
-                  href={`https://www.google.com/search?tbm=shop&q=${encodeURIComponent(onlineQuery.trim())}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-400 px-3 py-2 font-semibold text-slate-950 hover:bg-amber-300"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  Apri Google Shopping
-                </a>
-                {(onlineUnavailable || onlineResults.length === 0) && (
-                  <button
-                    type="button"
-                    onClick={openSearchResultAsNewArticle}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-semibold text-slate-200 hover:bg-slate-800"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    Crea scheda
-                  </button>
-                )}
-              </div>
-            </div>
           )}
         </section>
       )}

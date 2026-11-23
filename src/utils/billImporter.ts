@@ -10,6 +10,7 @@ export type ImportedBillDraft =
       kind: 'luce';
       fileName: string;
       sourceFile?: File;
+      sourceFileFingerprint?: string;
       confidence: 'alta' | 'media' | 'manuale';
       rawPreview: string;
       data: BillRecord;
@@ -19,6 +20,7 @@ export type ImportedBillDraft =
       kind: 'acqua';
       fileName: string;
       sourceFile?: File;
+      sourceFileFingerprint?: string;
       confidence: 'alta' | 'media' | 'manuale';
       rawPreview: string;
       data: Omit<WaterBillRecord, 'id'>;
@@ -28,10 +30,65 @@ export type ImportedBillDraft =
       kind: 'tari';
       fileName: string;
       sourceFile?: File;
+      sourceFileFingerprint?: string;
       confidence: 'alta' | 'media' | 'manuale';
       rawPreview: string;
       data: Omit<TariBillRecord, 'id'>;
     };
+
+export type BillImportIdentityCandidate =
+  | { kind: 'luce'; data: BillRecord; sourceFileFingerprint?: string }
+  | { kind: 'acqua'; data: Omit<WaterBillRecord, 'id'>; sourceFileFingerprint?: string }
+  | { kind: 'tari'; data: Omit<TariBillRecord, 'id'>; sourceFileFingerprint?: string };
+
+function normalizeBillIdentity(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function amountIdentity(value: number): string {
+  return (Number.isFinite(value) ? value : 0).toFixed(2);
+}
+
+export function getBillImportIdentityKeys(candidate: BillImportIdentityCandidate): string[] {
+  const keys: string[] = [];
+  const { kind, data, sourceFileFingerprint } = candidate;
+  if (sourceFileFingerprint) keys.push(`file:${sourceFileFingerprint}`);
+
+  if (kind === 'luce') {
+    const supplier = normalizeBillIdentity(data.supplier);
+    const invoice = normalizeBillIdentity(data.invoiceNumber);
+    if (supplier && invoice) keys.push(`luce:invoice:${supplier}:${invoice}`);
+    const period = normalizeBillIdentity(data.sortKey || data.period);
+    if (supplier && period && data.kwh > 0 && data.totalPaid > 0) {
+      keys.push(
+        `luce:bill:${supplier}:${period}:${data.kwh}:${amountIdentity(data.totalPaid)}`
+      );
+    }
+  } else if (kind === 'acqua') {
+    const invoice = normalizeBillIdentity(data.invoiceNumber);
+    if (invoice) keys.push(`acqua:invoice:${invoice}`);
+    const period = normalizeBillIdentity(data.period || String(data.year));
+    if (period && data.cubicMeters > 0 && data.totalPaid > 0) {
+      keys.push(
+        `acqua:bill:${period}:${data.cubicMeters}:${amountIdentity(data.totalPaid)}`
+      );
+    }
+  } else {
+    const supplier = normalizeBillIdentity(data.supplier);
+    const notice = normalizeBillIdentity(data.noticeNumber);
+    if (supplier && notice) keys.push(`tari:notice:${supplier}:${notice}`);
+    const period = normalizeBillIdentity(data.period || String(data.year));
+    if (supplier && period && data.totalPaid > 0) {
+      keys.push(`tari:bill:${supplier}:${data.year}:${period}:${amountIdentity(data.totalPaid)}`);
+    }
+  }
+
+  return keys;
+}
 
 const IT_MONTHS_SHORT: Record<string, string> = {
   GEN: '01',
@@ -971,6 +1028,12 @@ export function parseBillText(
   ];
 }
 
+async function fingerprintBytes(bytes: ArrayBuffer): Promise<string | undefined> {
+  if (!globalThis.crypto?.subtle) return undefined;
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 export async function parseImportedBillFiles(
   files: FileList | File[],
   forcedKind?: 'luce' | 'acqua' | 'tari'
@@ -981,9 +1044,11 @@ export async function parseImportedBillFiles(
   for (const file of fileArr) {
     const lower = file.name.toLowerCase();
     let draftsForFile: ImportedBillDraft[] = [];
+    let sourceFileFingerprint: string | undefined;
     if (lower.endsWith('.pdf') || file.type === 'application/pdf') {
       try {
         const buffer = await file.arrayBuffer();
+        sourceFileFingerprint = await fingerprintBytes(buffer);
         const text = await extractPdfTextFromBytes(new Uint8Array(buffer), 5);
         draftsForFile = parseBillText(text, file.name, forcedKind);
       } catch (err) {
@@ -992,10 +1057,11 @@ export async function parseImportedBillFiles(
       }
     } else {
       const content = await file.text();
+      sourceFileFingerprint = await fingerprintBytes(new TextEncoder().encode(content).buffer);
       draftsForFile = parseCsvOrJsonText(content, file.name, forcedKind);
     }
     for (const d of draftsForFile) {
-      results.push({ ...d, sourceFile: file });
+      results.push({ ...d, sourceFile: file, sourceFileFingerprint });
     }
   }
 

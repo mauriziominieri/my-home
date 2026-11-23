@@ -865,6 +865,34 @@ export default function App() {
       }
     );
 
+    const publicGroceryPath = `users/${publicOwnerUid}/homeArticles`;
+    const publicGroceryQuery = query(
+      collection(db, publicGroceryPath),
+      where('room', '==', SYSTEM_ROOM_GROCERY)
+    );
+    const unsubPublicGroceries = onSnapshot(
+      publicGroceryQuery,
+      (snap) => {
+        setHomeArticles(
+          snap.docs.map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              name: String(data.name || ''),
+              brand: String(data.brand || ''),
+              model: String(data.model || ''),
+              category: (data.category as HomeArticleCategory) || 'altro',
+              room: SYSTEM_ROOM_GROCERY,
+              familyWarranty: Boolean(data.familyWarranty),
+              specs: data.specs ? String(data.specs) : undefined,
+              notes: data.notes ? String(data.notes) : undefined,
+            };
+          })
+        );
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, publicGroceryPath)
+    );
+
     const publicElectricityBillsPath = `users/${publicOwnerUid}/electricityBills`;
     const publicElectricityBillsQuery = query(
       collection(db, publicElectricityBillsPath),
@@ -966,6 +994,7 @@ export default function App() {
       unsubReadings();
       unsubClimate();
       unsubAutopilot();
+      unsubPublicGroceries();
       unsubPublicElectricityBills();
       unsubPublicWaterBills();
       unsubPublicTariBills();

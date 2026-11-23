@@ -2051,6 +2051,11 @@ export function BillsView({
       {importModalKind && (
         <BillImportModal
           defaultKind={importModalKind === 'auto' ? undefined : importModalKind}
+          existingElectricityBills={allElectricityRecords.filter(
+            (bill) => !isOctopusContractRecord(bill)
+          )}
+          existingWaterBills={propWaterBills}
+          existingTariBills={propTariBills}
           onClose={() => setImportModalKind(null)}
           onSaveElectricityBill={onAddElectricityBill}
           onSaveWaterBill={onAddWaterBill}

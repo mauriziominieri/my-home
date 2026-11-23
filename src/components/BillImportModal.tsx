@@ -13,7 +13,9 @@ import {
 } from 'lucide-react';
 import { BillRecord, TariBillRecord, WaterBillRecord } from '../types/home';
 import {
+  BillImportIdentityCandidate,
   ImportedBillDraft,
+  getBillImportIdentityKeys,
   parseBillText,
   parseImportedBillFiles,
 } from '../utils/billImporter';
@@ -21,6 +23,9 @@ import { MAX_CLOUD_FILE_BYTES } from '../utils/documentVault';
 
 interface BillImportModalProps {
   defaultKind?: 'luce' | 'acqua' | 'tari';
+  existingElectricityBills?: BillRecord[];
+  existingWaterBills?: WaterBillRecord[];
+  existingTariBills?: TariBillRecord[];
   onClose: () => void;
   onSaveElectricityBill?: (bill: BillRecord, pdfFile: File) => Promise<void>;
   onSaveWaterBill?: (bill: Omit<WaterBillRecord, 'id'>, pdfFile: File) => Promise<void>;
@@ -29,6 +34,9 @@ interface BillImportModalProps {
 
 export function BillImportModal({
   defaultKind,
+  existingElectricityBills = [],
+  existingWaterBills = [],
+  existingTariBills = [],
   onClose,
   onSaveElectricityBill,
   onSaveWaterBill,
@@ -38,6 +46,7 @@ export function BillImportModal({
   const [parsing, setParsing] = useState(false);
   const [savingAll, setSavingAll] = useState(false);
   const [savedCount, setSavedCount] = useState(0);
+  const [duplicateCount, setDuplicateCount] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<ImportedBillDraft[]>([]);
   const [expandedRawId, setExpandedRawId] = useState<string | null>(null);
@@ -82,6 +91,7 @@ export function BillImportModal({
     setParsing(true);
     setErrorMsg(null);
     setSavedCount(0);
+    setDuplicateCount(0);
     try {
       const forced = forceTypeOnUpload === 'auto' ? undefined : forceTypeOnUpload;
       const parsed = await parseImportedBillFiles(files, forced);
@@ -90,9 +100,37 @@ export function BillImportModal({
           'Nessuna bolletta riconosciuta. Verifica che il file contenga periodo e importi: i contratti non vengono importati come bollette.'
         );
       } else {
+        const existingCandidates: BillImportIdentityCandidate[] = [
+          ...existingElectricityBills.map((data) => ({ kind: 'luce' as const, data })),
+          ...existingWaterBills.map((data) => ({ kind: 'acqua' as const, data })),
+          ...existingTariBills.map((data) => ({ kind: 'tari' as const, data })),
+          ...drafts,
+        ];
+        const seenKeys = new Set(
+          existingCandidates.flatMap((candidate) => getBillImportIdentityKeys(candidate))
+        );
+        const uniqueParsed: ImportedBillDraft[] = [];
+        let duplicates = 0;
+        for (const draft of parsed) {
+          const keys = getBillImportIdentityKeys(draft);
+          if (keys.some((key) => seenKeys.has(key))) {
+            duplicates++;
+            continue;
+          }
+          keys.forEach((key) => seenKeys.add(key));
+          uniqueParsed.push(draft);
+        }
+        setDuplicateCount(duplicates);
+        if (uniqueParsed.length === 0) {
+          setErrorMsg(
+            'Le bollette selezionate risultano già presenti nei file selezionati o nell’archivio: non sono state importate di nuovo.'
+          );
+          return;
+        }
+
         const reviewDrafts: ImportedBillDraft[] = [];
         let autoSaved = 0;
-        for (const draft of parsed) {
+        for (const draft of uniqueParsed) {
           if (!isReadyForAutomaticSave(draft)) {
             reviewDrafts.push(draft);
             continue;
@@ -331,6 +369,12 @@ export function BillImportModal({
           {errorMsg && (
             <div className="px-3.5 py-2.5 rounded-lg bg-rose-500/15 border border-rose-500/35 text-xs text-rose-200">
               {errorMsg}
+            </div>
+          )}
+
+          {duplicateCount > 0 && (
+            <div className="px-3.5 py-2.5 rounded-lg bg-amber-500/15 border border-amber-500/35 text-xs text-amber-200">
+              Ignorati {duplicateCount} {duplicateCount === 1 ? 'doppione' : 'doppioni'}: non sono stati salvati due volte.
             </div>
           )}
 
