@@ -4,6 +4,8 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
+  getDocs,
   onSnapshot,
   query,
   serverTimestamp,
@@ -89,6 +91,7 @@ import {
 import {
   articleToHomeDocument,
   deleteVaultFile,
+  getElectricityBillFileKey,
   getTariBillFileKey,
   homeDocumentToArticlePayload,
   notifyVaultUpdated,
@@ -1540,6 +1543,41 @@ export default function App() {
     }
   }
 
+  async function handleDeleteElectricityBill(bill: BillRecord) {
+    if (!user) return;
+    const basePath = `users/${user.uid}/electricityBills`;
+    const billsSnap = await getDocs(
+      query(collection(db, basePath), where('ownerId', '==', user.uid))
+    );
+    const matchingDocs = billsSnap.docs.filter(
+      (billDoc) => String(billDoc.data().invoiceNumber || '') === bill.invoiceNumber
+    );
+    if (matchingDocs.length === 0) {
+      throw new Error('La bolletta non è stata trovata nell’archivio Firebase.');
+    }
+
+    const fileKey = getElectricityBillFileKey(bill.invoiceNumber);
+    const fileMetaRef = doc(db, `users/${user.uid}/vaultFiles`, fileKey);
+    const fileMetaSnap = await getDoc(fileMetaRef);
+    const batch = writeBatch(db);
+    for (const billDoc of matchingDocs) batch.delete(billDoc.ref);
+
+    if (fileMetaSnap.exists()) {
+      const chunkCount = Math.min(16, Math.max(0, Number(fileMetaSnap.data()?.chunkCount || 0)));
+      batch.delete(fileMetaRef);
+      for (let i = 0; i < chunkCount; i++) {
+        batch.delete(doc(db, `users/${user.uid}/vaultFileChunks`, `${fileKey}_chunk_${i}`));
+      }
+    }
+
+    try {
+      await batch.commit();
+      await deleteVaultFile(fileKey, user.uid);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `${basePath}/${fileKey}`);
+    }
+  }
+
   async function handleAddWaterBill(bill: Omit<WaterBillRecord, 'id'>) {
     if (!user) return;
     const basePath = `users/${user.uid}/waterBills`;
@@ -2486,6 +2524,7 @@ export default function App() {
               onSignIn={handleSignIn}
               onConnectGmail={handleManualGmailSync}
               onAddElectricityBill={handleAddElectricityBill}
+              onDeleteElectricityBill={handleDeleteElectricityBill}
               onAddWaterBill={handleAddWaterBill}
               onAddTariBill={handleAddTariBill}
               onToggleTariPaid={handleToggleTariPaid}

@@ -322,8 +322,17 @@ function extractSortKeyAndYear(
   issueDate: string
 ): { year: number; sortKey: string; period: string } {
   const dateParts = issueDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  let year = dateParts ? Number(dateParts[3]) : new Date().getFullYear();
-  let month = dateParts ? dateParts[2] : String(new Date().getMonth() + 1).padStart(2, '0');
+  const isoDateParts = issueDate.match(/^(20\d{2})[-/](\d{2})[-/]\d{2}$/);
+  let year = dateParts
+    ? Number(dateParts[3])
+    : isoDateParts
+      ? Number(isoDateParts[1])
+      : new Date().getFullYear();
+  let month = dateParts
+    ? dateParts[2]
+    : isoDateParts
+      ? isoDateParts[2]
+      : String(new Date().getMonth() + 1).padStart(2, '0');
 
   const monthRange = text.match(
     /\b(GEN(?:NAIO)?|FEB(?:BRAIO)?|MAR(?:ZO)?|APR(?:ILE)?|MAG(?:GIO)?|GIU(?:GNO)?|LUG(?:LIO)?|AGO(?:STO)?|SET(?:TEMBRE)?|OTT(?:OBRE)?|NOV(?:EMBRE)?|DIC(?:EMBRE)?)\s+(20\d{2})\s*[-–]\s*(GEN(?:NAIO)?|FEB(?:BRAIO)?|MAR(?:ZO)?|APR(?:ILE)?|MAG(?:GIO)?|GIU(?:GNO)?|LUG(?:LIO)?|AGO(?:STO)?|SET(?:TEMBRE)?|OTT(?:OBRE)?|NOV(?:EMBRE)?|DIC(?:EMBRE)?)\s+(20\d{2})\b/i
@@ -366,8 +375,24 @@ function extractSortKeyAndYear(
     }
   }
 
+  const numericMonth = text.match(
+    /(?:mese\s+di|competenza|periodo)\s*[:.]?\s*(0?[1-9]|1[0-2])[-/](20\d{2})\b/i
+  );
+  if (numericMonth) {
+    year = Number(numericMonth[2]);
+    month = numericMonth[1].padStart(2, '0');
+    const monthNames = [
+      'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic',
+    ];
+    return {
+      year,
+      sortKey: `${year}-${month}`,
+      period: `${monthNames[Number(month) - 1]} ${year}`,
+    };
+  }
+
   const singleMonth = text.match(
-    /(?:mese\s+di|competenza|periodo)\s*[:.]?\s*(gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)\s+(20\d{2})/i
+    /(?:mese\s+di|competenza|periodo)\s*[:.]?\s*(gen(?:naio)?|feb(?:braio)?|mar(?:zo)?|apr(?:ile)?|mag(?:gio)?|giu(?:gno)?|lug(?:lio)?|ago(?:sto)?|set(?:tembre)?|ott(?:obre)?|nov(?:embre)?|dic(?:embre)?)\s+(20\d{2})/i
   );
   if (singleMonth) {
     year = Number(singleMonth[2]);
@@ -377,6 +402,22 @@ function extractSortKeyAndYear(
       year,
       sortKey: `${year}-${month}`,
       period: `${cap} ${year}`,
+    };
+  }
+
+  const isoMonth = text.match(
+    /(?:mese\s+di|competenza|periodo)\s*[:.]?\s*(20\d{2})[-/](0?[1-9]|1[0-2])\b/i
+  );
+  if (isoMonth) {
+    year = Number(isoMonth[1]);
+    month = isoMonth[2].padStart(2, '0');
+    const monthNames = [
+      'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic',
+    ];
+    return {
+      year,
+      sortKey: `${year}-${month}`,
+      period: `${monthNames[Number(month) - 1]} ${year}`,
     };
   }
 
@@ -578,9 +619,22 @@ function detectUtilityKind(text: string, fileName: string): 'luce' | 'acqua' | '
   return 'luce';
 }
 
+function isContractDocument(text: string, fileName: string): boolean {
+  const hay = `${fileName}\n${text.slice(0, 5000)}`.toLowerCase();
+  const contractSignal =
+    fileName.toLowerCase().includes('contratt') ||
+    /\b(proposta\s+di\s+contratto|contratto\s+di\s+fornitura|modulo\s+di\s+adesione|contract)\b/.test(hay);
+  const billSignal =
+    /\b(bolletta|fattura|totale\s+da\s+pagare|importo\s+da\s+pagare|consumo\s+fatturato)\b/.test(
+      hay
+    );
+  return contractSignal && !billSignal;
+}
+
 function parseCsvOrJsonText(
   content: string,
-  fileName: string
+  fileName: string,
+  forcedKind?: 'luce' | 'acqua' | 'tari'
 ): ImportedBillDraft[] {
   const trimmed = content.trim();
   if (!trimmed) return [];
@@ -680,9 +734,21 @@ function parseCsvOrJsonText(
   if (lines.length >= 2 && lines[0].includes(sep)) {
     const headers = lines[0].split(sep).map((h) => h.trim().toLowerCase().replace(/"/g, ''));
     const hasBillHeader = headers.some((h) =>
-      ['fattura', 'invoice', 'totale', 'total', 'kwh', 'fornitore', 'periodo', 'mc'].some((k) =>
-        h.includes(k)
-      )
+      [
+        'fattura',
+        'invoice',
+        'avviso',
+        'totale',
+        'total',
+        'importo',
+        'kwh',
+        'fornitore',
+        'periodo',
+        'mc',
+        'm3',
+        'tari',
+        'rifiuti',
+      ].some((k) => h.includes(k))
     );
     if (hasBillHeader) {
       const idx = (keys: string[]) => headers.findIndex((h) => keys.some((k) => h.includes(k)));
@@ -694,18 +760,83 @@ function parseCsvOrJsonText(
       const iMc = idx(['mc', 'm3', 'metri']);
       const iTot = idx(['totale', 'total', 'importo']);
       const iTv = idx(['canone', 'tv']);
+      const iDue = idx(['scadenza', 'due']);
+      const iYear = idx(['anno', 'year']);
+      const tariColumns =
+        headers.some((h) => ['tari', 'rifiuti', 'tributo'].some((k) => h.includes(k))) ||
+        (headers.some((h) => h.includes('avviso')) && iDue >= 0);
+      const waterColumns = headers.some((h) =>
+        ['m3', 'm³', 'mc', 'metri cubi'].some((k) => h.includes(k))
+      );
       const drafts: ImportedBillDraft[] = [];
 
       for (let r = 1; r < lines.length; r++) {
         const cols = lines[r].split(sep).map((c) => c.trim().replace(/^"|"$/g, ''));
         if (cols.every((c) => !c)) continue;
+        const rowKind =
+          forcedKind ||
+          (tariColumns
+            ? 'tari'
+            : waterColumns
+              ? 'acqua'
+              : detectUtilityKind(lines[r], fileName));
         const issueDate = (iDate >= 0 ? cols[iDate] : '') || new Date().toLocaleDateString('it-IT');
         const dm = issueDate.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-        const year = dm ? Number(dm[3]) : new Date().getFullYear();
-        const sortKey = dm ? `${dm[3]}-${dm[2]}` : `${year}-01`;
+        const periodValue = iPeriod >= 0 ? cols[iPeriod] : '';
+        const periodInfo = extractSortKeyAndYear(
+          `periodo ${periodValue}\n${lines[r]}`,
+          issueDate
+        );
+        const yearValue = iYear >= 0 ? Number(cols[iYear]) : NaN;
+        const year =
+          Number.isFinite(yearValue) && yearValue > 0
+            ? yearValue
+            : periodValue
+              ? periodInfo.year
+              : dm
+                ? Number(dm[3])
+                : periodInfo.year;
+        const sortKey = periodValue
+          ? periodInfo.sortKey
+          : dm
+            ? `${dm[3]}-${dm[2]}`
+            : periodInfo.sortKey || `${year}-01`;
         const totalPaid = iTot >= 0 ? parseItNumber(cols[iTot]) : 0;
 
-        if (iMc >= 0 && cols[iMc]) {
+        if (rowKind === 'tari') {
+          const dueDate = (iDue >= 0 ? cols[iDue] : '') || issueDate;
+          const dueYearMatch =
+            dueDate.match(/\b(\d{2})\/\d{2}\/(20\d{2})\b/) ||
+            dueDate.match(/\b(20\d{2})[-/]\d{2}[-/]\d{2}\b/);
+          const tariYear =
+            Number.isFinite(yearValue) && yearValue > 0
+              ? yearValue
+              : periodValue
+                ? periodInfo.year
+                : dueYearMatch
+                  ? Number(dueYearMatch[dueYearMatch.length - 1])
+                  : year;
+          const noticeNumber = iInv >= 0 ? cols[iInv] : `TARI_${tariYear}_${r}`;
+          drafts.push({
+            id: `imp_${Date.now()}_${r}`,
+            kind: 'tari',
+            fileName,
+            confidence: noticeNumber && totalPaid > 0 ? 'alta' : 'media',
+            rawPreview: lines[r],
+            data: {
+              noticeNumber: noticeNumber.slice(0, 50),
+              issueDate: issueDate.slice(0, 20),
+              dueDate: dueDate.slice(0, 20),
+              year: tariYear,
+              period: (periodValue || `TARI ${tariYear}`).slice(0, 80),
+              supplier: (iSupp >= 0 ? cols[iSupp] : 'Ente / TARI').slice(0, 80),
+              totalPaid,
+              paid: false,
+              source: 'manuale',
+              note: `Importata da ${fileName}`.slice(0, 240),
+            },
+          });
+        } else if (rowKind === 'acqua' || (iMc >= 0 && cols[iMc])) {
           drafts.push({
             id: `imp_${Date.now()}_${r}`,
             kind: 'acqua',
@@ -716,7 +847,7 @@ function parseCsvOrJsonText(
               invoiceNumber: (iInv >= 0 ? cols[iInv] : `H2O_${r}`).slice(0, 40),
               issueDate: issueDate.slice(0, 20),
               year,
-              period: ((iPeriod >= 0 ? cols[iPeriod] : '') || `Periodo ${year}`).slice(0, 80),
+              period: (periodValue || periodInfo.period || `Periodo ${year}`).slice(0, 80),
               cubicMeters: parseItNumber(cols[iMc]),
               fixedCostEur: 0,
               totalPaid,
@@ -738,7 +869,7 @@ function parseCsvOrJsonText(
               issueDate: issueDate.slice(0, 20),
               sortKey,
               year,
-              period: ((iPeriod >= 0 ? cols[iPeriod] : '') || `Bolletta ${year}`).slice(0, 80),
+              period: (periodValue || periodInfo.period || `Bolletta ${year}`).slice(0, 80),
               supplier: ((iSupp >= 0 ? cols[iSupp] : '') || 'Fornitore Luce').slice(0, 80),
               offerName: 'Importata CSV',
               kwh,
@@ -767,6 +898,7 @@ export function parseBillText(
   fileName: string,
   forcedKind?: 'luce' | 'acqua' | 'tari'
 ): ImportedBillDraft[] {
+  if (!forcedKind && isContractDocument(text, fileName)) return [];
   const kind = forcedKind || detectUtilityKind(text, fileName);
   const rawPreview = text.trim().slice(0, 1800);
 
@@ -856,15 +988,11 @@ export async function parseImportedBillFiles(
         draftsForFile = parseBillText(text, file.name, forcedKind);
       } catch (err) {
         console.warn('Errore lettura PDF bolletta:', err);
-        draftsForFile = parseBillText('', file.name, forcedKind || 'luce');
+        draftsForFile = [];
       }
     } else {
       const content = await file.text();
-      if (forcedKind) {
-        draftsForFile = parseBillText(content, file.name, forcedKind);
-      } else {
-        draftsForFile = parseCsvOrJsonText(content, file.name);
-      }
+      draftsForFile = parseCsvOrJsonText(content, file.name, forcedKind);
     }
     for (const d of draftsForFile) {
       results.push({ ...d, sourceFile: file });

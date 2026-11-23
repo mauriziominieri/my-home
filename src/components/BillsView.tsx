@@ -5,7 +5,6 @@ import {
   Download,
   Droplets,
   ExternalLink,
-  FileCheck2,
   FileUp,
   HelpCircle,
   Mail,
@@ -66,6 +65,7 @@ interface BillsViewProps {
   onSignIn?: () => void;
   onConnectGmail?: () => void;
   onAddElectricityBill?: (bill: BillRecord) => Promise<void>;
+  onDeleteElectricityBill?: (bill: BillRecord) => Promise<void>;
   onAddWaterBill?: (bill: Omit<WaterBillRecord, 'id'>) => Promise<void>;
   onAddTariBill?: (bill: Omit<TariBillRecord, 'id'>) => Promise<void>;
   onToggleTariPaid?: (bill: TariBillRecord) => Promise<void>;
@@ -98,6 +98,7 @@ export function BillsView({
   onSignIn,
   onConnectGmail,
   onAddElectricityBill,
+  onDeleteElectricityBill,
   onAddWaterBill,
   onAddTariBill,
   onToggleTariPaid,
@@ -140,7 +141,6 @@ export function BillsView({
     | 'kwh'
     | 'pun'
     | 'elecOnly'
-    | 'tv'
     | 'total';
   type WaterSortKey = 'period' | 'invoice' | 'mc' | 'fixed' | 'total';
   type TariSortKey = 'period' | 'notice' | 'due' | 'source' | 'paid' | 'total';
@@ -248,6 +248,7 @@ export function BillsView({
   // Form states per caricamenti manuali
   const [importModalKind, setImportModalKind] = useState<'auto' | 'luce' | 'acqua' | 'tari' | null>(null);
   const [shareBillItem, setShareBillItem] = useState<ShareableItemPayload | null>(null);
+  const [deleteBillFromShare, setDeleteBillFromShare] = useState<BillRecord | null>(null);
   const [vaultMeta, setVaultMeta] = useState<Record<string, VaultFileMeta>>({});
   const attachFileInputRef = useRef<HTMLInputElement | null>(null);
   const [attachingFileKey, setAttachingFileKey] = useState<string | null>(null);
@@ -509,8 +510,6 @@ export function BillsView({
           );
         case 'elecOnly':
           return compareSortValues(a.electricityOnly, b.electricityOnly, elecSort.dir);
-        case 'tv':
-          return compareSortValues(a.canoneTv, b.canoneTv, elecSort.dir);
         case 'total':
           return compareSortValues(a.totalPaid, b.totalPaid, elecSort.dir);
       }
@@ -736,17 +735,11 @@ export function BillsView({
           {!readOnly && (onAddElectricityBill || onAddWaterBill || onAddTariBill) && (
             <button
               type="button"
-              onClick={() =>
-                setImportModalKind(
-                  utilityTab === 'luce' || utilityTab === 'acqua' || utilityTab === 'tari'
-                    ? utilityTab
-                    : 'auto'
-                )
-              }
+              onClick={() => setImportModalKind('auto')}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors"
             >
               <FileUp className="w-3.5 h-3.5" />
-              Importa bollette (PDF / CSV)
+              Importa bolletta
             </button>
           )}
 
@@ -1086,7 +1079,7 @@ export function BillsView({
                     >
                       Totale Pagato
                     </SortableTh>
-                    <th className="px-3 py-2.5 font-medium text-right">File / Invia</th>
+                    <th className="px-3 py-2.5 font-medium text-right">Azioni</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/70">
@@ -1114,58 +1107,24 @@ export function BillsView({
                           {w.totalPaid.toFixed(2).replace('.', ',')} €
                         </td>
                         <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                          <div className="inline-flex items-center gap-1.5">
-                            {hasPdf ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => void downloadShareableItem(sharePayload)}
-                                  title={`Scarica PDF originale (${vaultMeta[fileKey]?.fileName})`}
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 rounded"
-                                >
-                                  <Download className="w-3 h-3" />
-                                  Scarica PDF
-                                </button>
-                                {!readOnly && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setAttachingFileKey(fileKey);
-                                      attachFileInputRef.current?.click();
-                                    }}
-                                    title="Sostituisci PDF su Firebase"
-                                    className="p-1 text-emerald-400 hover:bg-emerald-500/15 rounded"
-                                  >
-                                    <FileCheck2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                              </>
-                            ) : (
-                              !readOnly && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setAttachingFileKey(fileKey);
-                                    attachFileInputRef.current?.click();
-                                  }}
-                                  title="Carica il PDF originale su Firebase per scaricarlo ovunque"
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded"
-                                >
-                                  <FileUp className="w-3 h-3" />
-                                  Allega PDF
-                                </button>
-                              )
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => setShareBillItem(sharePayload)}
-                              title="Condividi bolletta"
-                              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-sky-300 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded"
-                            >
-                              <Share2 className="w-3 h-3" />
-                              Invia
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDeleteBillFromShare(null);
+                              setShareBillItem(sharePayload);
+                            }}
+                            title={
+                              readOnly
+                                ? 'Condividi o scarica il riepilogo HTML; il PDF originale è riservato'
+                                : hasPdf
+                                  ? `Apri condivisione e PDF originale (${vaultMeta[fileKey]?.fileName})`
+                                  : 'Apri condivisione e scarica il riepilogo HTML'
+                            }
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-sky-200 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded-md"
+                          >
+                            <Share2 className="w-3.5 h-3.5" />
+                            {readOnly ? 'Condividi / scarica HTML' : 'Condividi / scarica'}
+                          </button>
                         </td>
                       </tr>
                     );
@@ -1447,55 +1406,23 @@ export function BillsView({
                           </td>
                           <td className="px-3 py-2.5 text-right whitespace-nowrap">
                             <div className="inline-flex items-center gap-1.5">
-                              {hasPdf ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => void downloadShareableItem(sharePayload)}
-                                    title={`Scarica PDF originale (${vaultMeta[fileKey]?.fileName})`}
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 rounded"
-                                  >
-                                    <Download className="w-3 h-3" />
-                                    Scarica PDF
-                                  </button>
-                                  {!readOnly && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setAttachingFileKey(fileKey);
-                                        attachFileInputRef.current?.click();
-                                      }}
-                                      title="Sostituisci PDF su Firebase"
-                                      className="p-1 text-emerald-400 hover:bg-emerald-500/15 rounded"
-                                    >
-                                      <FileCheck2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
-                                </>
-                              ) : (
-                                !readOnly && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setAttachingFileKey(fileKey);
-                                      attachFileInputRef.current?.click();
-                                    }}
-                                    title="Carica il PDF originale su Firebase per scaricarlo ovunque"
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded"
-                                  >
-                                    <FileUp className="w-3 h-3" />
-                                    Allega PDF
-                                  </button>
-                                )
-                              )}
                               <button
                                 type="button"
-                                onClick={() => setShareBillItem(sharePayload)}
-                                title="Condividi avviso TARI"
-                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-sky-300 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded"
+                                onClick={() => {
+                                  setDeleteBillFromShare(null);
+                                  setShareBillItem(sharePayload);
+                                }}
+                                title={
+                                  readOnly
+                                    ? 'Condividi o scarica il riepilogo HTML; il PDF originale è riservato'
+                                    : hasPdf
+                                      ? `Apri condivisione e PDF originale (${vaultMeta[fileKey]?.fileName})`
+                                      : 'Apri condivisione e scarica il riepilogo HTML'
+                                }
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-sky-200 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded-md"
                               >
-                                <Share2 className="w-3 h-3" />
-                                Invia
+                                <Share2 className="w-3.5 h-3.5" />
+                                {readOnly ? 'Condividi / scarica HTML' : 'Condividi / scarica'}
                               </button>
                               {!readOnly && onDeleteTariBill && (
                                 <button
@@ -1937,11 +1864,27 @@ export function BillsView({
 
           {/* Riepilogo reale per Fornitore / Offerta */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            {offerSummaries.map((item) => (
-              <div
-                key={item.key}
-                className="bg-slate-900/70 border border-slate-800 rounded-xl p-4 space-y-3 min-w-0"
-              >
+            {offerSummaries.map((item) => {
+              const latestBill = [...bills]
+                .filter(
+                  (bill) =>
+                    bill.year === item.year &&
+                    bill.supplier === item.supplier &&
+                    bill.offerName === item.offerName
+                )
+                .sort((a, b) => b.sortKey.localeCompare(a.sortKey))[0];
+              const latestFileKey = latestBill
+                ? getElectricityBillFileKey(latestBill.invoiceNumber)
+                : null;
+              const hasOriginal = Boolean(latestFileKey && vaultMeta[latestFileKey]);
+              const summaryPayload = latestBill
+                ? buildElectricityBillSharePayload(latestBill)
+                : null;
+              return (
+                <div
+                  key={item.key}
+                  className="bg-slate-900/70 border border-slate-800 rounded-xl p-4 space-y-3 min-w-0"
+                >
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
@@ -1964,16 +1907,22 @@ export function BillsView({
                   </div>
                   <button
                     type="button"
+                    disabled={!summaryPayload}
                     onClick={() => {
-                      setSelectedBillYear(String(item.year));
-                      document
-                        .getElementById('storico-bollette-luce')
-                        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      if (!summaryPayload) return;
+                      void downloadShareableItem(
+                        readOnly ? { ...summaryPayload, attachmentKey: undefined } : summaryPayload
+                      );
                     }}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 rounded-lg whitespace-nowrap shrink-0 transition-colors"
+                    title={
+                      !readOnly && hasOriginal
+                        ? 'Scarica il PDF originale della bolletta più recente'
+                        : 'Scarica il riepilogo HTML della bolletta più recente'
+                    }
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 rounded-lg whitespace-nowrap shrink-0 transition-colors disabled:opacity-50"
                   >
                     <Download className="w-3 h-3" />
-                    Vedi bollette e PDF ↓
+                    {!readOnly && hasOriginal ? 'Scarica originale' : 'Scarica riepilogo'}
                   </button>
                 </div>
 
@@ -2048,8 +1997,9 @@ export function BillsView({
                     Tariffa <strong className="text-slate-200">variabile</strong> legata al <strong className="text-slate-200">PUN</strong>, più dispacciamento (~0,015 €/kWh) e oneri/imposte di legge.
                   </p>
                 )}
-              </div>
-            ))}
+                </div>
+              );
+            })}
 
             {!offerSummaries.some((o) => o.supplier.toLowerCase().includes('octopus')) && (
               <div className="bg-slate-900/70 border border-emerald-500/30 rounded-xl p-4 space-y-3">
@@ -2264,9 +2214,15 @@ export function BillsView({
                   Storico Bollette Luce ({filteredBills.length})
                 </h3>
                 <p className="text-[11px] text-slate-400">
-                  Per scaricare il PDF originale da ogni dispositivo, allegalo una volta con{' '}
-                  <strong className="text-amber-300">Allega PDF</strong> (o da{' '}
-                  <strong className="text-sky-300">Collega Gmail</strong> se la mail è in INBOX): resta salvato privatamente su Firebase.
+                  {readOnly ? (
+                    <>
+                      Senza accesso puoi scaricare o condividere il <strong className="text-sky-300">riepilogo HTML</strong>; il PDF originale non è accessibile pubblicamente.
+                    </>
+                  ) : (
+                    <>
+                      Apri <strong className="text-sky-300">Condividi / scarica</strong> per inviare il riepilogo o scaricare il PDF originale. Se manca, puoi allegarlo da lì o collegare Gmail.
+                    </>
+                  )}
                 </p>
               </div>
               <div className="flex items-center gap-1.5">
@@ -2387,15 +2343,6 @@ export function BillsView({
                       Solo Luce
                     </SortableTh>
                     <SortableTh
-                      sortKey="tv"
-                      currentSort={elecSort}
-                      onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'desc'))}
-                      align="right"
-                      className="px-3 py-2.5 font-medium text-right"
-                    >
-                      Canone TV
-                    </SortableTh>
-                    <SortableTh
                       sortKey="total"
                       currentSort={elecSort}
                       onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'desc'))}
@@ -2404,13 +2351,19 @@ export function BillsView({
                     >
                       Totale
                     </SortableTh>
-                    <th className="px-3 py-2.5 font-medium text-right">File / Invia</th>
+                    <th className="px-3 py-2.5 font-medium text-right">Azioni</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/70">
                   {sortedElecBills.map((b) => {
                     const fileKey = getElectricityBillFileKey(b.invoiceNumber);
                     const hasPdf = Boolean(vaultMeta[fileKey]);
+                    const canDeleteBill = Boolean(
+                      onDeleteElectricityBill &&
+                        propElectricityBills?.some(
+                          (persistedBill) => persistedBill.invoiceNumber === b.invoiceNumber
+                        )
+                    );
                     const sharePayload = buildElectricityBillSharePayload(b);
                     return (
                       <tr key={b.invoiceNumber} className="hover:bg-slate-800/30">
@@ -2433,65 +2386,28 @@ export function BillsView({
                         <td className="px-3 py-2.5 text-right font-mono text-sky-300">
                           {b.electricityOnly.toFixed(2).replace('.', ',')} €
                         </td>
-                        <td className="px-3 py-2.5 text-right font-mono text-amber-300">
-                          {b.canoneTv.toFixed(2).replace('.', ',')} €
-                        </td>
                         <td className="px-4 py-2.5 text-right font-mono font-semibold text-slate-100">
                           {b.totalPaid.toFixed(2).replace('.', ',')} €
                         </td>
                         <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                          <div className="inline-flex items-center gap-1.5">
-                            {hasPdf ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => void downloadShareableItem(sharePayload)}
-                                  title={`Scarica PDF originale (${vaultMeta[fileKey]?.fileName})`}
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 rounded"
-                                >
-                                  <Download className="w-3 h-3" />
-                                  Scarica PDF
-                                </button>
-                                {!readOnly && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setAttachingFileKey(fileKey);
-                                      attachFileInputRef.current?.click();
-                                    }}
-                                    title="Sostituisci PDF su Firebase"
-                                    className="p-1 text-emerald-400 hover:bg-emerald-500/15 rounded"
-                                  >
-                                    <FileCheck2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                              </>
-                            ) : (
-                              !readOnly && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setAttachingFileKey(fileKey);
-                                    attachFileInputRef.current?.click();
-                                  }}
-                                  title="Carica il PDF originale su Firebase per scaricarlo ovunque"
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded"
-                                >
-                                  <FileUp className="w-3 h-3" />
-                                  Allega PDF
-                                </button>
-                              )
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => setShareBillItem(sharePayload)}
-                              title="Condividi bolletta"
-                              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-sky-300 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded"
-                            >
-                              <Share2 className="w-3 h-3" />
-                              Invia
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDeleteBillFromShare(canDeleteBill ? b : null);
+                              setShareBillItem(sharePayload);
+                            }}
+                            title={
+                              readOnly
+                                ? 'Condividi o scarica il riepilogo HTML; il PDF originale è riservato'
+                                : hasPdf
+                                  ? `Apri condivisione e PDF originale (${vaultMeta[fileKey]?.fileName})`
+                                  : 'Apri condivisione e scarica il riepilogo HTML'
+                            }
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-sky-200 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded-md"
+                          >
+                            <Share2 className="w-3.5 h-3.5" />
+                            {readOnly ? 'Condividi / scarica HTML' : 'Condividi / scarica'}
+                          </button>
                         </td>
                       </tr>
                     );
@@ -2534,7 +2450,7 @@ export function BillsView({
       <input
         ref={attachFileInputRef}
         type="file"
-        accept=".pdf,.png,.jpg,.jpeg,.txt"
+        accept=".pdf,application/pdf"
         onChange={(e) => void handleAttachPdfToBill(e.target.files)}
         className="hidden"
       />
@@ -2542,7 +2458,21 @@ export function BillsView({
       {shareBillItem && (
         <ShareSheetModal
           item={shareBillItem}
-          onClose={() => setShareBillItem(null)}
+          readOnly={readOnly}
+          onClose={() => {
+            setShareBillItem(null);
+            setDeleteBillFromShare(null);
+          }}
+          onReplaceAttachment={() => {
+            if (!shareBillItem.attachmentKey) return;
+            setAttachingFileKey(shareBillItem.attachmentKey);
+            attachFileInputRef.current?.click();
+          }}
+          onDeleteItem={
+            deleteBillFromShare && onDeleteElectricityBill
+              ? () => onDeleteElectricityBill(deleteBillFromShare)
+              : undefined
+          }
         />
       )}
 

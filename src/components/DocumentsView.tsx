@@ -778,7 +778,9 @@ export function DocumentsView({
                 Tutte le Bollette Pronte da Scaricare o Condividere ({allBillsForSharing.length})
               </h2>
               <p className="text-[11px] text-slate-400">
-                Se qualcuno ti chiede una bolletta specifica, scarica il PDF originale (se allegato/importato) o la scheda stampabile, oppure condividila su WhatsApp / Email.
+                {readOnly
+                  ? 'Senza accesso puoi scaricare o condividere il riepilogo HTML; i PDF originali restano privati.'
+                  : 'Apri le azioni per scaricare il PDF originale (se disponibile), il riepilogo HTML o condividere la bolletta.'}
               </p>
             </div>
           </div>
@@ -793,7 +795,7 @@ export function DocumentsView({
                   <th className="px-3 py-2.5 font-medium">N° Documento</th>
                   <th className="px-3 py-2.5 font-medium text-right">Totale</th>
                   <th className="px-3 py-2.5 font-medium">PDF Allegato</th>
-                  <th className="px-4 py-2.5 font-medium text-right">Scarica / Condividi</th>
+                  <th className="px-4 py-2.5 font-medium text-right">Azioni</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/70">
@@ -843,9 +845,11 @@ export function DocumentsView({
                             className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-medium"
                           >
                             <FileCheck2 className="w-3 h-3" />
-                            {localFile.size > 0
-                              ? `${localFile.origin === 'firestore' ? 'Firestore' : 'PDF'} (${formatFileSize(localFile.size)})`
-                              : 'PDF pronto'}
+                            {readOnly
+                              ? 'PDF originale privato'
+                              : localFile.size > 0
+                                ? `${localFile.origin === 'firestore' ? 'Firestore' : 'PDF'} (${formatFileSize(localFile.size)})`
+                                : 'PDF pronto'}
                           </span>
                         ) : !readOnly ? (
                           <button
@@ -864,28 +868,21 @@ export function DocumentsView({
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1.5">
-                          {localFile && (
-                            <button
-                              type="button"
-                              onClick={() => void downloadShareableItem(b.payload)}
-                              title={`Scarica PDF (${localFile.fileName})`}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-300 rounded-md"
-                            >
-                              <Download className="w-3 h-3" />
-                              Scarica PDF
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => setShareItem(b.payload)}
-                            title="Condividi bolletta"
-                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 rounded-md"
-                          >
-                            <Share2 className="w-3 h-3" />
-                            Condividi
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShareItem(b.payload)}
+                          title={
+                            readOnly
+                              ? 'Condividi o scarica il riepilogo HTML; il PDF originale è riservato'
+                              : localFile
+                                ? `Apri condivisione e PDF originale (${localFile.fileName})`
+                                : 'Apri condivisione e scarica il riepilogo HTML'
+                          }
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-200 rounded-md"
+                        >
+                          <Share2 className="w-3.5 h-3.5" />
+                          {readOnly ? 'Condividi / scarica HTML' : 'Condividi / scarica'}
+                        </button>
                       </td>
                     </tr>
                   );
@@ -1062,7 +1059,7 @@ export function DocumentsView({
       )}
 
       {shareItem && (
-        <ShareSheetModal item={shareItem} onClose={() => setShareItem(null)} />
+        <ShareSheetModal item={shareItem} readOnly={readOnly} onClose={() => setShareItem(null)} />
       )}
 
       {pendingDelete && (

@@ -51,6 +51,33 @@ export function BillImportModal({
     defaultKind || 'auto'
   );
 
+  function isPdfFile(file: File): boolean {
+    return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+  }
+
+  function isReadyForAutomaticSave(draft: ImportedBillDraft): boolean {
+    if (draft.confidence !== 'alta') return false;
+    if (draft.kind === 'luce') {
+      return Boolean(
+        draft.data.invoiceNumber.trim() &&
+          draft.data.period.trim() &&
+          draft.data.kwh > 0 &&
+          draft.data.totalPaid > 0
+      );
+    }
+    if (draft.kind === 'acqua') {
+      return Boolean(
+        draft.data.invoiceNumber.trim() &&
+          draft.data.period.trim() &&
+          draft.data.cubicMeters > 0 &&
+          draft.data.totalPaid > 0
+      );
+    }
+    return Boolean(
+      draft.data.noticeNumber.trim() && draft.data.period.trim() && draft.data.totalPaid > 0
+    );
+  }
+
   async function handleFilesSelected(files: FileList | null) {
     if (!files || files.length === 0) return;
     setParsing(true);
@@ -60,9 +87,33 @@ export function BillImportModal({
       const forced = forceTypeOnUpload === 'auto' ? undefined : forceTypeOnUpload;
       const parsed = await parseImportedBillFiles(files, forced);
       if (parsed.length === 0) {
-        setErrorMsg('Nessun dato leggibile trovato nei file selezionati.');
+        setErrorMsg(
+          'Nessuna bolletta riconosciuta. Verifica che il file contenga periodo e importi: i contratti non vengono importati come bollette.'
+        );
       } else {
-        setDrafts((prev) => [...prev, ...parsed]);
+        const reviewDrafts: ImportedBillDraft[] = [];
+        let autoSaved = 0;
+        for (const draft of parsed) {
+          if (!isReadyForAutomaticSave(draft)) {
+            reviewDrafts.push(draft);
+            continue;
+          }
+          try {
+            await saveDraft(draft);
+            autoSaved++;
+          } catch (err) {
+            reviewDrafts.push(draft);
+            setErrorMsg(
+              err instanceof Error
+                ? err.message
+                : 'Salvataggio automatico non riuscito: controlla i dati e riprova.'
+            );
+          }
+        }
+        if (reviewDrafts.length > 0) {
+          setDrafts((prev) => [...prev, ...reviewDrafts]);
+        }
+        if (autoSaved > 0) setSavedCount((count) => count + autoSaved);
       }
     } catch (err) {
       setErrorMsg(
@@ -141,33 +192,33 @@ export function BillImportModal({
   async function saveDraft(draft: ImportedBillDraft) {
     if (draft.kind === 'luce' && onSaveElectricityBill) {
       await onSaveElectricityBill(draft.data);
-      if (draft.sourceFile) {
+      if (draft.sourceFile && isPdfFile(draft.sourceFile)) {
         await saveVaultFile(
           getElectricityBillFileKey(draft.data.invoiceNumber),
           draft.sourceFile,
           draft.sourceFile.name,
           draft.sourceFile.type
-        ).catch(() => {});
+        );
       }
     } else if (draft.kind === 'acqua' && onSaveWaterBill) {
       await onSaveWaterBill(draft.data);
-      if (draft.sourceFile) {
+      if (draft.sourceFile && isPdfFile(draft.sourceFile)) {
         await saveVaultFile(
           getWaterBillFileKey(draft.data.invoiceNumber),
           draft.sourceFile,
           draft.sourceFile.name,
           draft.sourceFile.type
-        ).catch(() => {});
+        );
       }
     } else if (draft.kind === 'tari' && onSaveTariBill) {
       await onSaveTariBill(draft.data);
-      if (draft.sourceFile) {
+      if (draft.sourceFile && isPdfFile(draft.sourceFile)) {
         await saveVaultFile(
           getTariBillFileKey(draft.data.noticeNumber),
           draft.sourceFile,
           draft.sourceFile.name,
           draft.sourceFile.type
-        ).catch(() => {});
+        );
       }
     } else {
       throw new Error('Salvataggio non disponibile per questo tipo di bolletta (effettua prima il login).');
@@ -222,7 +273,7 @@ export function BillImportModal({
               Importa le tue Bollette (PDF / CSV / JSON)
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Carica qualsiasi bolletta Luce, Acqua o TARI: estraggo i dati automaticamente (0 crediti AI) e salvo sia i numeri che il PDF originale su Firestore (fino a 6 MB, scaricabile anche da altri dispositivi).
+              Rilevo automaticamente utenza e periodo. Le bollette complete vengono archiviate subito; se manca un dato puoi correggere la bozza prima di salvarla. Il PDF originale resta privato su Firestore.
             </p>
           </div>
           <button
@@ -349,14 +400,19 @@ export function BillImportModal({
                       {draft.sourceFile && (
                         <span
                           className={`px-2 py-0.5 rounded text-[10px] border ${
+                            isPdfFile(draft.sourceFile) &&
                             draft.sourceFile.size > MAX_CLOUD_FILE_BYTES
                               ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                              : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                              : isPdfFile(draft.sourceFile)
+                                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                : 'bg-slate-800 text-slate-300 border-slate-700'
                           }`}
                         >
-                          {draft.sourceFile.size > MAX_CLOUD_FILE_BYTES
-                            ? 'PDF > 6 MB (solo locale)'
-                            : 'PDF originale salvato su Firestore'}
+                          {isPdfFile(draft.sourceFile)
+                            ? draft.sourceFile.size > MAX_CLOUD_FILE_BYTES
+                              ? 'PDF > 6 MB (solo locale)'
+                              : 'PDF originale incluso al salvataggio'
+                            : 'File CSV/JSON usato per importazione'}
                         </span>
                       )}
                       <span

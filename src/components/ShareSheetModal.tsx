@@ -7,7 +7,9 @@ import {
   FileCheck2,
   Mail,
   MessageCircle,
+  FileUp,
   Share2,
+  Trash2,
   X,
 } from 'lucide-react';
 import {
@@ -16,33 +18,48 @@ import {
   getVaultFile,
   ShareableItemPayload,
   StoredVaultFile,
+  VAULT_UPDATED_EVENT,
 } from '../utils/documentVault';
 
 interface ShareSheetModalProps {
   item: ShareableItemPayload;
+  readOnly?: boolean;
   onClose: () => void;
+  onReplaceAttachment?: () => void;
+  onDeleteItem?: () => Promise<void>;
 }
 
-export function ShareSheetModal({ item, onClose }: ShareSheetModalProps) {
+export function ShareSheetModal({
+  item,
+  readOnly = false,
+  onClose,
+  onReplaceAttachment,
+  onDeleteItem,
+}: ShareSheetModalProps) {
   const [attachedFile, setAttachedFile] = useState<StoredVaultFile | null>(null);
   const [loadingFile, setLoadingFile] = useState(true);
   const [copied, setCopied] = useState(false);
   const [shareFeedback, setShareFeedback] = useState<string | null>(null);
+  const [deletingItem, setDeletingItem] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    setLoadingFile(true);
-    void (async () => {
-      const found = item.attachmentKey ? await getVaultFile(item.attachmentKey) : null;
+    const refreshFile = async () => {
+      const found =
+        !readOnly && item.attachmentKey ? await getVaultFile(item.attachmentKey) : null;
       if (!cancelled) {
         setAttachedFile(found);
         setLoadingFile(false);
       }
-    })();
+    };
+    setLoadingFile(!readOnly);
+    void refreshFile();
+    window.addEventListener(VAULT_UPDATED_EVENT, refreshFile);
     return () => {
       cancelled = true;
+      window.removeEventListener(VAULT_UPDATED_EVENT, refreshFile);
     };
-  }, [item.attachmentKey]);
+  }, [item.attachmentKey, readOnly]);
 
   async function handleNativeShare() {
     setShareFeedback(null);
@@ -52,19 +69,27 @@ export function ShareSheetModal({ item, onClose }: ShareSheetModalProps) {
     }
 
     try {
-      if (attachedFile) {
-        const fileObj = new File([attachedFile.blob], attachedFile.fileName, {
-          type: attachedFile.mimeType || 'application/pdf',
+      const fileObj =
+        attachedFile && !readOnly
+          ? new File([attachedFile.blob], attachedFile.fileName, {
+              type: attachedFile.mimeType || 'application/pdf',
+            })
+          : new File([item.htmlDocument], item.fallbackFileName, { type: 'text/html' });
+      if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [fileObj] })) {
+        await navigator.share({
+          title: item.title,
+          text: item.shareText,
+          files: [fileObj],
         });
-        if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [fileObj] })) {
-          await navigator.share({
-            title: item.title,
-            text: item.shareText,
-            files: [fileObj],
-          });
-          setShareFeedback('File condiviso con successo.');
-          return;
-        }
+        setShareFeedback(
+          attachedFile && !readOnly ? 'PDF originale condiviso.' : 'Riepilogo HTML condiviso.'
+        );
+        return;
+      }
+
+      if (attachedFile && !readOnly) {
+        setShareFeedback('Questo browser non consente di condividere il PDF come file: usa Scarica o Email.');
+        return;
       }
 
       await navigator.share({
@@ -80,11 +105,13 @@ export function ShareSheetModal({ item, onClose }: ShareSheetModalProps) {
   }
 
   async function handleDownload() {
-    const mode = await downloadShareableItem(item);
+    const mode = await downloadShareableItem(
+      readOnly ? { ...item, attachmentKey: undefined } : item
+    );
     setShareFeedback(
       mode === 'attached'
         ? `PDF originale "${attachedFile?.fileName}" scaricato.`
-        : 'Scheda stampabile scaricata (aprila e salva come PDF se ti serve in formato PDF).'
+        : 'Riepilogo HTML scaricato.'
     );
   }
 
@@ -96,6 +123,29 @@ export function ShareSheetModal({ item, onClose }: ShareSheetModalProps) {
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       setShareFeedback('Impossibile accedere agli appunti su questo browser.');
+    }
+  }
+
+  async function handleDeleteItem() {
+    if (!onDeleteItem || deletingItem) return;
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm('Eliminare questa scheda dall’archivio e il relativo PDF originale?')
+    ) {
+      return;
+    }
+
+    setDeletingItem(true);
+    setShareFeedback(null);
+    try {
+      await onDeleteItem();
+      onClose();
+    } catch (err) {
+      setShareFeedback(
+        err instanceof Error ? err.message : 'Errore durante l’eliminazione della bolletta.'
+      );
+    } finally {
+      setDeletingItem(false);
     }
   }
 
@@ -144,7 +194,9 @@ export function ShareSheetModal({ item, onClose }: ShareSheetModalProps) {
                 }`}
               />
               <span className="truncate">
-                {loadingFile
+                {readOnly
+                  ? 'Accesso pubblico: PDF originale riservato. Puoi scaricare e condividere il riepilogo HTML.'
+                  : loadingFile
                   ? 'Verifica file su Firestore...'
                   : attachedFile
                     ? `PDF originale pronto (${
@@ -154,9 +206,32 @@ export function ShareSheetModal({ item, onClose }: ShareSheetModalProps) {
                             ? 'incluso nell’app · multi-dispositivo'
                             : 'solo cache locale'
                       }): ${attachedFile.fileName}${sizeLabel ? ` (${sizeLabel})` : ''}`
-                    : 'Nessun PDF allegato: puoi scaricare la scheda stampabile o inviare il riepilogo.'}
+                    : 'Nessun PDF allegato: puoi scaricare o inviare il riepilogo HTML.'}
               </span>
             </div>
+            {!readOnly && onReplaceAttachment && (
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={onReplaceAttachment}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-sky-200 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded-lg"
+                >
+                  <FileUp className="w-3.5 h-3.5" />
+                  {attachedFile ? 'Sostituisci PDF' : 'Allega PDF originale'}
+                </button>
+                {onDeleteItem && (
+                  <button
+                    type="button"
+                    onClick={() => void handleDeleteItem()}
+                    disabled={deletingItem}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-rose-200 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    {deletingItem ? 'Elimino…' : 'Elimina scheda + PDF'}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Preview text */}
@@ -177,7 +252,9 @@ export function ShareSheetModal({ item, onClose }: ShareSheetModalProps) {
               className="inline-flex items-center justify-center gap-2 px-3.5 py-2.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors"
             >
               <Download className="w-4 h-4" />
-              {attachedFile ? 'Scarica PDF Originale' : 'Scarica Scheda Stampabile'}
+              {attachedFile && !readOnly
+                ? 'Scarica PDF originale'
+                : 'Scarica riepilogo HTML'}
             </button>
 
             {canNativeShare ? (
@@ -187,7 +264,9 @@ export function ShareSheetModal({ item, onClose }: ShareSheetModalProps) {
                 className="inline-flex items-center justify-center gap-2 px-3.5 py-2.5 text-xs font-semibold text-slate-100 bg-violet-600 hover:bg-violet-500 rounded-lg transition-colors"
               >
                 <Share2 className="w-4 h-4" />
-                {attachedFile ? 'Invia / Condividi PDF' : 'Condividi dal dispositivo'}
+                {attachedFile && !readOnly
+                  ? 'Condividi PDF originale'
+                  : 'Condividi riepilogo'}
               </button>
             ) : (
               <button
@@ -228,7 +307,7 @@ export function ShareSheetModal({ item, onClose }: ShareSheetModalProps) {
             </a>
           </div>
 
-          {attachedFile && (
+          {attachedFile && !readOnly && (
             <p className="text-[11px] text-slate-400 leading-relaxed">
               Su smartphone o browser compatibili <strong className="text-slate-200">Invia / Condividi PDF</strong> allega direttamente il file; su PC da WhatsApp Web o Email clicca prima <strong className="text-slate-200">Scarica PDF Originale</strong> per allegarlo.
             </p>
