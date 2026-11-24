@@ -300,112 +300,125 @@ export async function saveVaultFile(
   const safeMime = (mimeType || file.type || 'application/octet-stream').trim().slice(0, 80);
   const nowMs = Date.now();
 
-  let record: StoredVaultFile = {
+  const uid = getAuthenticatedUid(ownerUid);
+  if (!uid) {
+    throw new Error('Devi accedere con il tuo account Google per salvare i file su Firestore.');
+  }
+
+  if (file.size > MAX_CLOUD_FILE_BYTES) {
+    throw new Error(
+      `Il file "${safeFileName}" supera il limite di ${Math.floor(
+        MAX_CLOUD_FILE_BYTES / 1_000_000
+      )} MB supportato su Firestore.`
+    );
+  }
+
+  const record: StoredVaultFile = {
     key: cleanKey,
     fileName: safeFileName,
     mimeType: safeMime,
     size: file.size,
     updatedAt: nowMs,
     blob: file,
-    origin: 'local',
+    origin: 'firestore',
     cloudSynced: false,
-    cloudTooLarge: file.size > MAX_CLOUD_FILE_BYTES,
+    cloudTooLarge: false,
   };
 
-  await putLocalCache(record);
+  try {
+    const base64 = await blobToBase64(file);
+    const chunks: string[] = [];
+    for (let i = 0; i < base64.length; i += CHUNK_CHAR_SIZE) {
+      chunks.push(base64.slice(i, i + CHUNK_CHAR_SIZE));
+    }
 
-  const uid = getAuthenticatedUid(ownerUid);
-  if (uid && file.size <= MAX_CLOUD_FILE_BYTES) {
+    if (chunks.length === 0 || chunks.length > 16) {
+      throw new Error('Il file supera la dimensione massima archiviabile su Firestore (6 MB).');
+    }
+
+    const filesColPath = `users/${uid}/vaultFiles`;
+    const chunksColPath = `users/${uid}/vaultFileChunks`;
+    const metaRef = doc(db, filesColPath, cleanKey);
+
+    let prevChunkCount = cloudMetaCache.get(cleanKey)?.chunkCount || 0;
     try {
-      const base64 = await blobToBase64(file);
-      const chunks: string[] = [];
-      for (let i = 0; i < base64.length; i += CHUNK_CHAR_SIZE) {
-        chunks.push(base64.slice(i, i + CHUNK_CHAR_SIZE));
+      const prevSnap = await getDoc(metaRef);
+      if (prevSnap.exists()) {
+        const rawCount = Number(prevSnap.data()?.chunkCount || 0);
+        if (Number.isFinite(rawCount)) prevChunkCount = rawCount;
       }
+    } catch {
+      // ignore pre-check errors; permission issues will be caught on batch.commit()
+    }
 
-      if (chunks.length > 0 && chunks.length <= 16) {
-        const filesColPath = `users/${uid}/vaultFiles`;
-        const chunksColPath = `users/${uid}/vaultFileChunks`;
-        const metaRef = doc(db, filesColPath, cleanKey);
-
-        let prevChunkCount = cloudMetaCache.get(cleanKey)?.chunkCount || 0;
-        try {
-          const prevSnap = await getDoc(metaRef);
-          if (prevSnap.exists()) {
-            const rawCount = Number(prevSnap.data()?.chunkCount || 0);
-            if (Number.isFinite(rawCount)) prevChunkCount = rawCount;
-          }
-        } catch {
-          // ignore pre-check errors; permission issues will be caught on batch.commit()
-        }
-
-        // Write chunks in <= 4-op batches (~2.4 MB base64 max per commit)
-        const CHUNKS_PER_BATCH = 4;
-        for (let start = 0; start < chunks.length; start += CHUNKS_PER_BATCH) {
-          const slice = chunks.slice(start, start + CHUNKS_PER_BATCH);
-          const batch = writeBatch(db);
-          slice.forEach((chunkData, offset) => {
-            const idx = start + offset;
-            const chunkId = `${cleanKey}_chunk_${idx}`;
-            batch.set(doc(db, chunksColPath, chunkId), {
-              ownerId: uid,
-              fileKey: cleanKey,
-              chunkIndex: idx,
-              data: chunkData,
-              createdAt: serverTimestamp(),
-            });
-          });
-          await batch.commit();
-        }
-
-        // Finalize metadata doc + clean any shrinking surplus chunks
-        const finalBatch = writeBatch(db);
-        finalBatch.set(metaRef, {
+    // Write chunks in <= 4-op batches (~2.4 MB base64 max per commit)
+    const CHUNKS_PER_BATCH = 4;
+    for (let start = 0; start < chunks.length; start += CHUNKS_PER_BATCH) {
+      const slice = chunks.slice(start, start + CHUNKS_PER_BATCH);
+      const batch = writeBatch(db);
+      slice.forEach((chunkData, offset) => {
+        const idx = start + offset;
+        const chunkId = `${cleanKey}_chunk_${idx}`;
+        batch.set(doc(db, chunksColPath, chunkId), {
           ownerId: uid,
           fileKey: cleanKey,
-          fileName: safeFileName,
-          mimeType: safeMime,
-          size: file.size,
-          chunkCount: chunks.length,
-          updatedAt: serverTimestamp(),
+          chunkIndex: idx,
+          data: chunkData,
+          createdAt: serverTimestamp(),
         });
-        for (let idx = chunks.length; idx < prevChunkCount; idx++) {
-          finalBatch.delete(doc(db, chunksColPath, `${cleanKey}_chunk_${idx}`));
-        }
-        await finalBatch.commit();
-
-        const syncedAtMs = Date.now();
-        cloudMetaCache.set(cleanKey, {
-          fileKey: cleanKey,
-          fileName: safeFileName,
-          mimeType: safeMime,
-          size: file.size,
-          chunkCount: chunks.length,
-          updatedAtMs: syncedAtMs,
-        });
-        setVaultCloudStatus('ok');
-
-        record = {
-          ...record,
-          updatedAt: syncedAtMs,
-          origin: 'firestore',
-          cloudSynced: true,
-          cloudTooLarge: false,
-        };
-        await putLocalCache(record);
-      }
-    } catch (err) {
-      if (isPermissionDeniedError(err)) {
-        setVaultCloudStatus('rules-required');
-      } else {
-        console.warn('Firestore vault upload fallback to local:', err);
-        setVaultCloudStatus('error');
-      }
+      });
+      await batch.commit();
     }
-  }
 
-  notifyVaultUpdated();
-  return record;
+    // Finalize metadata doc + clean any shrinking surplus chunks
+    const finalBatch = writeBatch(db);
+    finalBatch.set(metaRef, {
+      ownerId: uid,
+      fileKey: cleanKey,
+      fileName: safeFileName,
+      mimeType: safeMime,
+      size: file.size,
+      chunkCount: chunks.length,
+      updatedAt: serverTimestamp(),
+    });
+    for (let idx = chunks.length; idx < prevChunkCount; idx++) {
+      finalBatch.delete(doc(db, chunksColPath, `${cleanKey}_chunk_${idx}`));
+    }
+    await finalBatch.commit();
+
+    const syncedAtMs = Date.now();
+    cloudMetaCache.set(cleanKey, {
+      fileKey: cleanKey,
+      fileName: safeFileName,
+      mimeType: safeMime,
+      size: file.size,
+      chunkCount: chunks.length,
+      updatedAtMs: syncedAtMs,
+    });
+    setVaultCloudStatus('ok');
+
+    const syncedRecord: StoredVaultFile = {
+      ...record,
+      updatedAt: syncedAtMs,
+      origin: 'firestore',
+      cloudSynced: true,
+      cloudTooLarge: false,
+    };
+    await putLocalCache(syncedRecord);
+    notifyVaultUpdated();
+    return syncedRecord;
+  } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      setVaultCloudStatus('rules-required');
+      throw new Error(
+        'Permessi Firestore insufficienti per salvare il file. Verifica l’accesso o le regole Firestore.'
+      );
+    }
+    setVaultCloudStatus('error');
+    throw err instanceof Error
+      ? err
+      : new Error('Errore durante il caricamento del file su Firestore.');
+  }
 }
 
 export async function getVaultFile(key: string, ownerUid?: string): Promise<StoredVaultFile | null> {

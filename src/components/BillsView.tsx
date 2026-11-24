@@ -312,12 +312,11 @@ export function BillsView({
     setAttachNotice(null);
     try {
       const saved = await saveVaultFile(attachingFileKey, f, f.name, f.type);
+      if (!saved.cloudSynced) {
+        throw new Error(`Il PDF "${f.name}" non è stato salvato su Firestore.`);
+      }
       setAttachNotice(
-        saved.cloudSynced
-          ? `PDF "${f.name}" salvato su Firestore: scaricabile da tutti i tuoi dispositivi.`
-          : saved.cloudTooLarge
-            ? `PDF "${f.name}" (> 6 MB) salvato solo in locale su questo browser.`
-            : `PDF "${f.name}" salvato in locale (verifica regole Firestore per vederlo su altri dispositivi).`
+        `PDF "${f.name}" salvato su Firestore: scaricabile da tutti i tuoi dispositivi.`
       );
       const updated = await listVaultFileMetadata();
       setVaultMeta(updated);

@@ -219,14 +219,13 @@ export function DocumentsView({
           pendingFile.name,
           pendingFile.type
         );
+        if (!stored.cloudSynced) {
+          throw new Error('Il file allegato non è stato salvato su Firestore. Nessuna modifica salvata.');
+        }
         fileName = pendingFile.name;
         fileMime = pendingFile.type || 'application/octet-stream';
         fileSize = pendingFile.size;
-        cloudInfo = stored.cloudSynced
-          ? ' File salvato su Firestore (scaricabile da ogni dispositivo).'
-          : stored.cloudTooLarge
-            ? ' File > 6 MB: salvato solo in locale su questo browser.'
-            : ' File salvato in locale (verifica regole Firestore per vederlo su altri dispositivi).';
+        cloudInfo = ' File salvato su Firestore (scaricabile da ogni dispositivo).';
       }
 
       const payload: Omit<HomeDocumentRecord, 'id'> = {
@@ -283,12 +282,11 @@ export function DocumentsView({
     const file = files[0];
     try {
       const stored = await saveVaultFile(attachingBillKey, file, file.name, file.type);
+      if (!stored.cloudSynced) {
+        throw new Error(`Il file "${file.name}" non è stato salvato su Firestore.`);
+      }
       setStatusNotice(
-        stored.cloudSynced
-          ? `PDF "${file.name}" salvato su Firestore: pronto per download/invio da qualsiasi dispositivo.`
-          : stored.cloudTooLarge
-            ? `PDF "${file.name}" (> 6 MB) salvato solo in locale su questo browser.`
-            : `PDF "${file.name}" salvato in locale (verifica regole Firestore per sincronizzarlo tra dispositivi).`
+        `PDF "${file.name}" salvato su Firestore: pronto per download/invio da qualsiasi dispositivo.`
       );
       await reloadVaultMeta();
     } catch (err) {

@@ -1266,6 +1266,59 @@ export function searchArticleCatalog(rawQuery: string): OnlineArticleSearchResul
   return scored.slice(0, 24).map((s) => s.item);
 }
 
+const ONLINE_GUIDE_TAG_RE = /\[ONLINE_GUIDE_JSON\]([\s\S]*?)\[\/ONLINE_GUIDE_JSON\]\s*/;
+
+export function stripOnlineGuideMarker(raw?: string): string {
+  if (!raw) return '';
+  return raw.replace(ONLINE_GUIDE_TAG_RE, '').trim();
+}
+
+export function extractOnlineGuideFromText(raw?: string): Partial<ArticleManualGuide> | null {
+  if (!raw) return null;
+  const match = raw.match(ONLINE_GUIDE_TAG_RE);
+  if (!match?.[1]) return null;
+  try {
+    const parsed = JSON.parse(match[1]) as Partial<ArticleManualGuide>;
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function embedOnlineGuideInExtractText(
+  guide: Partial<ArticleManualGuide>,
+  existingExtractText?: string
+): string {
+  const compactGuide: Partial<ArticleManualGuide> = {
+    manualUrl: guide.manualUrl?.slice(0, 300),
+    summary: guide.summary?.slice(0, 700),
+    keySpecs: Array.isArray(guide.keySpecs)
+      ? guide.keySpecs.slice(0, 6).map((s) => s.slice(0, 180))
+      : undefined,
+    quickUsage: Array.isArray(guide.quickUsage)
+      ? guide.quickUsage.slice(0, 5).map((s) => s.slice(0, 180))
+      : undefined,
+    maintenance: Array.isArray(guide.maintenance)
+      ? guide.maintenance.slice(0, 4).map((s) => s.slice(0, 180))
+      : undefined,
+    safetyAndEnergy: Array.isArray(guide.safetyAndEnergy)
+      ? guide.safetyAndEnergy.slice(0, 4).map((s) => s.slice(0, 180))
+      : undefined,
+    sourceUrls: Array.isArray(guide.sourceUrls)
+      ? guide.sourceUrls.slice(0, 4).map((u) => ({
+          title: (u.title || 'Fonte Web').slice(0, 80),
+          url: (u.url || '').slice(0, 260),
+        }))
+      : undefined,
+    sourceType: 'online',
+  };
+  const block = `[ONLINE_GUIDE_JSON]${JSON.stringify(compactGuide)}[/ONLINE_GUIDE_JSON]`;
+  const pdfText = stripOnlineGuideMarker(existingExtractText);
+  if (!pdfText) return block.slice(0, 12_000);
+  const available = Math.max(0, 12_000 - block.length - 2);
+  return available > 0 ? `${block}\n\n${pdfText.slice(0, available)}` : block.slice(0, 12_000);
+}
+
 function getCachedManualStore(): Record<string, Partial<ArticleManualGuide>> {
   try {
     const raw = localStorage.getItem(CUSTOM_GUIDES_STORAGE_KEY);
@@ -1280,7 +1333,7 @@ export function getArticleManualGuide(article: HomeArticleRecord): ArticleManual
   const { manualUrl: unpackedUrl, userNotes } = unpackArticleNotes(article.notes);
   const supportSearchUrl = buildManufacturerManualSearchUrl(article.brand, article.model);
   const cacheKey = `${article.brand.trim().toLowerCase()}|${article.model.trim().toLowerCase()}`;
-  const cached = getCachedManualStore()[cacheKey];
+  const cached = extractOnlineGuideFromText(article.manualExtractText) ?? getCachedManualStore()[cacheKey];
   const fullKey = `${article.brand} ${article.model} ${article.name}`.toLowerCase();
 
   const curated = CURATED_DEVICES.find((d) => d.match(fullKey));

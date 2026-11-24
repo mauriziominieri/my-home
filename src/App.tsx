@@ -1847,7 +1847,10 @@ export default function App() {
     try {
       await deleteDoc(doc(db, path));
       if (target) {
-        await deleteVaultFile(getTariBillFileKey(target.noticeNumber), user.uid);
+        await deleteVaultFile(
+          target.pdfFileKey || getTariBillFileKey(target.noticeNumber),
+          user.uid
+        );
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);

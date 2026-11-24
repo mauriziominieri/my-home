@@ -43,6 +43,7 @@ import {
   EXTRA_FAMILY_COVERAGE_INFO,
   OnlineArticleSearchResult,
   USER_ELECTROLUX_AEG_PRESETS,
+  embedOnlineGuideInExtractText,
   extractArticleManualDetails,
   formatAllArticlesMarkdown,
   formatArticlesHtmlDossier,
@@ -51,6 +52,7 @@ import {
   getFullArticleCatalog,
   packArticleNotes,
   saveCachedManualGuide,
+  stripOnlineGuideMarker,
   triggerTextDownload,
   unpackArticleNotes,
 } from '../utils/articleCatalog';
@@ -785,6 +787,23 @@ export function ArticlesView({
       }
       const guide = (await res.json()) as Partial<ArticleManualGuide>;
       saveCachedManualGuide(activeSheetArticle.brand, activeSheetArticle.model, guide);
+      if (!readOnly) {
+        const nextExtract = embedOnlineGuideInExtractText(
+          guide,
+          activeSheetArticle.manualExtractText
+        );
+        const { id: _ignoredId, ...articleFields } = activeSheetArticle;
+        await onUpdateArticle(activeSheetArticle.id, {
+          ...articleFields,
+          manualExtractText: nextExtract,
+        });
+        setActiveSheetArticle((prev) =>
+          prev && prev.id === activeSheetArticle.id
+            ? { ...prev, manualExtractText: nextExtract }
+            : prev
+        );
+        setActionNotice('Scheda tecnica online aggiornata e salvata su Firestore.');
+      }
       setManualRefreshNonce((n) => n + 1);
     } catch (err) {
       setActionError(
@@ -2364,13 +2383,13 @@ export function ArticlesView({
                 </div>
               </div>
 
-              {activeSheetArticle.manualExtractText && (
+              {stripOnlineGuideMarker(activeSheetArticle.manualExtractText) && (
                 <details className="bg-slate-950/60 border border-slate-800 rounded-xl p-4">
                   <summary className="cursor-pointer font-semibold text-slate-200">
                     Testo estratto dal manuale caricato
                   </summary>
                   <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-slate-400">
-                    {activeSheetArticle.manualExtractText}
+                    {stripOnlineGuideMarker(activeSheetArticle.manualExtractText)}
                   </pre>
                 </details>
               )}
