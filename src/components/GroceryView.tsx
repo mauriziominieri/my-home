@@ -861,7 +861,7 @@ export function GroceryView({
             <tbody className="divide-y divide-slate-800/70">
               {filteredProducts.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-slate-400 space-y-2">
+                  <td colSpan={readOnly ? 7 : 8} className="px-4 py-8 text-center text-slate-400 space-y-2">
                     <p>Nessun prodotto alimentare ancora inserito o trovato.</p>
                     {!readOnly && products.length === 0 && (
                       <p className="text-[11px] text-slate-500">
@@ -1007,16 +1007,26 @@ export function GroceryView({
                         <button
                           type="button"
                           disabled={readOnly}
-                          onClick={() => void toggleShoppingList(item)}
+                          onClick={() => {
+                            if (!readOnly) void toggleShoppingList(item);
+                          }}
                           title={
-                            item.inShoppingList
-                              ? 'Rimuovi dalla lista da comprare'
-                              : 'Aggiungi alla lista da comprare'
+                            readOnly
+                              ? 'Accedi con Google per modificare la lista'
+                              : item.inShoppingList
+                                ? 'Rimuovi dalla lista da comprare'
+                                : 'Aggiungi alla lista da comprare'
                           }
                           className={`p-1 rounded transition-colors ${
+                            readOnly ? 'cursor-default opacity-80' : ''
+                          } ${
                             item.inShoppingList
-                              ? 'text-emerald-400 hover:bg-emerald-500/15'
-                              : 'text-slate-600 hover:text-slate-300'
+                              ? readOnly
+                                ? 'text-emerald-400'
+                                : 'text-emerald-400 hover:bg-emerald-500/15'
+                              : readOnly
+                                ? 'text-slate-600'
+                                : 'text-slate-600 hover:text-slate-300'
                           }`}
                         >
                           <CheckCircle2 className="w-4 h-4" />

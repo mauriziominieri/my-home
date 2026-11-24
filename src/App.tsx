@@ -172,24 +172,7 @@ const AVAILABLE_YEARS = Array.from(
   { length: Math.max(1, CURRENT_YEAR - MIN_HOME_YEAR + 1) },
   (_, idx) => CURRENT_YEAR - idx
 );
-const LEGACY_DEMO_ARTICLE_IDS = new Set([
-  'art_tcl_75q7c',
-  'art_avs_a300',
-  'art_huawei_sun2000',
-  'art_electrolux_forno',
-  'art_electrolux_frigo',
-  'art_piano_induzione',
-  'art_lavastoviglie',
-  'art_microonde',
-]);
-
-function isLegacyDemoArticleId(id: string): boolean {
-  return (
-    LEGACY_DEMO_ARTICLE_IDS.has(id) ||
-    id === 'grocery_seed_v1_done' ||
-    /^spesa_[a-z][a-z0-9_]*$/.test(id)
-  );
-}
+const PUBLIC_GROCERY_CACHE_KEY = 'myhome_spesa_cache_public';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -686,52 +669,40 @@ export default function App() {
     const unsubArticles = onSnapshot(
       articlesQuery,
       (snap) => {
-        const legacyDemoDocs = snap.docs.filter((d) => isLegacyDemoArticleId(d.id));
         const list: HomeArticleRecord[] = snap.docs
-          .filter((d) => !isLegacyDemoArticleId(d.id))
+          .filter((d) => d.id !== 'grocery_seed_v1_done')
           .map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            name: String(data.name || ''),
-            brand: String(data.brand || ''),
-            model: String(data.model || ''),
-            category: (data.category as HomeArticleCategory) || 'altro',
-            room: String(data.room || 'Casa'),
-            purchaseDate: data.purchaseDate ? String(data.purchaseDate) : undefined,
-            warrantyEnd: data.warrantyEnd ? String(data.warrantyEnd) : undefined,
-            familyWarranty: Boolean(data.familyWarranty),
-            serialNumber: data.serialNumber ? String(data.serialNumber) : undefined,
-            specs: data.specs ? String(data.specs) : undefined,
-            notes: data.notes ? String(data.notes) : undefined,
-            manualFileKey: data.manualFileKey ? String(data.manualFileKey) : undefined,
-            manualFileName: data.manualFileName ? String(data.manualFileName) : undefined,
-            manualExtractText: data.manualExtractText
-              ? String(data.manualExtractText)
-              : undefined,
-          };
-        });
+            const data = d.data();
+            return {
+              id: d.id,
+              name: String(data.name || ''),
+              brand: String(data.brand || ''),
+              model: String(data.model || ''),
+              category: (data.category as HomeArticleCategory) || 'altro',
+              room: String(data.room || 'Casa'),
+              purchaseDate: data.purchaseDate ? String(data.purchaseDate) : undefined,
+              warrantyEnd: data.warrantyEnd ? String(data.warrantyEnd) : undefined,
+              familyWarranty: Boolean(data.familyWarranty),
+              serialNumber: data.serialNumber ? String(data.serialNumber) : undefined,
+              specs: data.specs ? String(data.specs) : undefined,
+              notes: data.notes ? String(data.notes) : undefined,
+              manualFileKey: data.manualFileKey ? String(data.manualFileKey) : undefined,
+              manualFileName: data.manualFileName ? String(data.manualFileName) : undefined,
+              manualExtractText: data.manualExtractText
+                ? String(data.manualExtractText)
+                : undefined,
+            };
+          });
 
         setHomeArticles(list);
         try {
           localStorage.setItem(`myhome_articles_cache_${activeUid}`, JSON.stringify(list));
+          localStorage.setItem(
+            PUBLIC_GROCERY_CACHE_KEY,
+            JSON.stringify(list.filter((item) => item.room === SYSTEM_ROOM_GROCERY))
+          );
         } catch {
           // ignore
-        }
-        if (user?.uid === activeUid && !snap.metadata.fromCache && legacyDemoDocs.length > 0) {
-          void (async () => {
-            try {
-              for (let start = 0; start < legacyDemoDocs.length; start += 400) {
-                const batch = writeBatch(db);
-                legacyDemoDocs
-                  .slice(start, start + 400)
-                  .forEach((articleDoc) => batch.delete(articleDoc.ref));
-                await batch.commit();
-              }
-            } catch (error) {
-              handleFirestoreError(error, OperationType.DELETE, articlesPath);
-            }
-          })();
         }
       },
       (error) => {
@@ -743,7 +714,7 @@ export default function App() {
             const cached = localStorage.getItem(`myhome_articles_cache_${activeUid}`);
             if (cached) {
               const articles = JSON.parse(cached) as HomeArticleRecord[];
-              setHomeArticles(articles.filter((article) => !isLegacyDemoArticleId(article.id)));
+              setHomeArticles(articles.filter((article) => article.id !== 'grocery_seed_v1_done'));
             }
           } catch {
             // ignore
@@ -876,121 +847,145 @@ export default function App() {
     const unsubPublicGroceries = onSnapshot(
       publicGroceryQuery,
       (snap) => {
-        setHomeArticles(
-          snap.docs.map((d) => {
-            const data = d.data();
-            return {
-              id: d.id,
-              name: String(data.name || ''),
-              brand: String(data.brand || ''),
-              model: String(data.model || ''),
-              category: (data.category as HomeArticleCategory) || 'altro',
-              room: SYSTEM_ROOM_GROCERY,
-              familyWarranty: Boolean(data.familyWarranty),
-              specs: data.specs ? String(data.specs) : undefined,
-              notes: data.notes ? String(data.notes) : undefined,
-            };
-          })
-        );
+        const list = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            name: String(data.name || ''),
+            brand: String(data.brand || ''),
+            model: String(data.model || ''),
+            category: (data.category as HomeArticleCategory) || 'altro',
+            room: SYSTEM_ROOM_GROCERY,
+            familyWarranty: Boolean(data.familyWarranty),
+            specs: data.specs ? String(data.specs) : undefined,
+            notes: data.notes ? String(data.notes) : undefined,
+          };
+        });
+        setHomeArticles(list);
+        try {
+          localStorage.setItem(PUBLIC_GROCERY_CACHE_KEY, JSON.stringify(list));
+        } catch {
+          // ignore
+        }
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, publicGroceryPath)
+      (error) => {
+        if (isResilientFirestoreOutage(error)) {
+          try {
+            const cached = localStorage.getItem(PUBLIC_GROCERY_CACHE_KEY);
+            if (cached) setHomeArticles(JSON.parse(cached) as HomeArticleRecord[]);
+          } catch {
+            // ignore
+          }
+          return;
+        }
+        handleFirestoreError(error, OperationType.LIST, publicGroceryPath);
+      }
     );
 
     const publicElectricityBillsPath = `users/${publicOwnerUid}/electricityBills`;
     const publicElectricityBillsQuery = query(
       collection(db, publicElectricityBillsPath),
-      where('ownerId', '==', publicOwnerUid),
-      where('pdfFileKey', '>', '')
+      where('ownerId', '==', publicOwnerUid)
     );
     const unsubPublicElectricityBills = onSnapshot(
       publicElectricityBillsQuery,
       (snap) => {
         setElectricityBills(
-          snap.docs.map((d) => {
-            const data = d.data();
-            return {
-              invoiceNumber: String(data.invoiceNumber || ''),
-              issueDate: String(data.issueDate || ''),
-              sortKey: String(data.sortKey || ''),
-              year: Number(data.year || 2025),
-              period: String(data.period || ''),
-              supplier: String(data.supplier || ''),
-              offerName: String(data.offerName || ''),
-              kwh: Number(data.kwh || 0),
-              punText: String(data.punText || ''),
-              variableCostPerKwh: Number(data.variableCostPerKwh || 0),
-              canoneTv: Number(data.canoneTv || 0),
-              electricityOnly: Number(data.electricityOnly || 0),
-              totalPaid: Number(data.totalPaid || 0),
-              note: data.note ? String(data.note) : undefined,
-              pdfFileKey: String(data.pdfFileKey),
-            };
-          })
+          snap.docs
+            .map((d) => {
+              const data = d.data();
+              return {
+                invoiceNumber: String(data.invoiceNumber || ''),
+                issueDate: String(data.issueDate || ''),
+                sortKey: String(data.sortKey || ''),
+                year: Number(data.year || 2025),
+                period: String(data.period || ''),
+                supplier: String(data.supplier || ''),
+                offerName: String(data.offerName || ''),
+                kwh: Number(data.kwh || 0),
+                punText: String(data.punText || ''),
+                variableCostPerKwh: Number(data.variableCostPerKwh || 0),
+                canoneTv: Number(data.canoneTv || 0),
+                electricityOnly: Number(data.electricityOnly || 0),
+                totalPaid: Number(data.totalPaid || 0),
+                note: data.note ? String(data.note) : undefined,
+                pdfFileKey: data.pdfFileKey ? String(data.pdfFileKey) : '',
+              };
+            })
+            .filter((b) => Boolean(b.pdfFileKey))
         );
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, publicElectricityBillsPath)
+      (error) => {
+        console.warn('Public electricityBills listener warning:', error);
+      }
     );
 
     const publicWaterBillsPath = `users/${publicOwnerUid}/waterBills`;
     const publicWaterBillsQuery = query(
       collection(db, publicWaterBillsPath),
-      where('ownerId', '==', publicOwnerUid),
-      where('pdfFileKey', '>', '')
+      where('ownerId', '==', publicOwnerUid)
     );
     const unsubPublicWaterBills = onSnapshot(
       publicWaterBillsQuery,
       (snap) => {
         setWaterBills(
-          snap.docs.map((d) => {
-            const data = d.data();
-            return {
-              id: d.id,
-              invoiceNumber: String(data.invoiceNumber || ''),
-              issueDate: String(data.issueDate || ''),
-              year: Number(data.year || 2025),
-              period: String(data.period || ''),
-              cubicMeters: Number(data.cubicMeters || 0),
-              fixedCostEur: Number(data.fixedCostEur || 0),
-              totalPaid: Number(data.totalPaid || 0),
-              note: data.note ? String(data.note) : undefined,
-              pdfFileKey: String(data.pdfFileKey),
-            };
-          })
+          snap.docs
+            .map((d) => {
+              const data = d.data();
+              return {
+                id: d.id,
+                invoiceNumber: String(data.invoiceNumber || ''),
+                issueDate: String(data.issueDate || ''),
+                year: Number(data.year || 2025),
+                period: String(data.period || ''),
+                cubicMeters: Number(data.cubicMeters || 0),
+                fixedCostEur: Number(data.fixedCostEur || 0),
+                totalPaid: Number(data.totalPaid || 0),
+                note: data.note ? String(data.note) : undefined,
+                pdfFileKey: data.pdfFileKey ? String(data.pdfFileKey) : '',
+              };
+            })
+            .filter((b) => Boolean(b.pdfFileKey))
         );
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, publicWaterBillsPath)
+      (error) => {
+        console.warn('Public waterBills listener warning:', error);
+      }
     );
 
     const publicTariBillsPath = `users/${publicOwnerUid}/tariBills`;
     const publicTariBillsQuery = query(
       collection(db, publicTariBillsPath),
-      where('ownerId', '==', publicOwnerUid),
-      where('pdfFileKey', '>', '')
+      where('ownerId', '==', publicOwnerUid)
     );
     const unsubPublicTariBills = onSnapshot(
       publicTariBillsQuery,
       (snap) => {
         setTariBills(
-          snap.docs.map((d) => {
-            const data = d.data();
-            return {
-              id: d.id,
-              noticeNumber: String(data.noticeNumber || ''),
-              issueDate: String(data.issueDate || ''),
-              dueDate: String(data.dueDate || ''),
-              year: Number(data.year || new Date().getFullYear()),
-              period: String(data.period || ''),
-              supplier: String(data.supplier || 'AcegasApsAmga / TARI'),
-              totalPaid: Number(data.totalPaid || 0),
-              paid: Boolean(data.paid),
-              source: data.source === 'gmail-pdf' ? 'gmail-pdf' : 'manuale',
-              note: data.note ? String(data.note) : undefined,
-              pdfFileKey: String(data.pdfFileKey),
-            };
-          })
+          snap.docs
+            .map((d) => {
+              const data = d.data();
+              return {
+                id: d.id,
+                noticeNumber: String(data.noticeNumber || ''),
+                issueDate: String(data.issueDate || ''),
+                dueDate: String(data.dueDate || ''),
+                year: Number(data.year || new Date().getFullYear()),
+                period: String(data.period || ''),
+                supplier: String(data.supplier || 'AcegasApsAmga / TARI'),
+                totalPaid: Number(data.totalPaid || 0),
+                paid: Boolean(data.paid),
+                source: data.source === 'gmail-pdf' ? ('gmail-pdf' as const) : ('manuale' as const),
+                note: data.note ? String(data.note) : undefined,
+                pdfFileKey: data.pdfFileKey ? String(data.pdfFileKey) : '',
+              };
+            })
+            .filter((b) => Boolean(b.pdfFileKey))
         );
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, publicTariBillsPath)
+      (error) => {
+        console.warn('Public tariBills listener warning:', error);
+      }
     );
 
     return () => {

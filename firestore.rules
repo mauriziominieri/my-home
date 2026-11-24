@@ -41,12 +41,6 @@ service cloud.firestore {
         && data.pdfFileKey.matches('^' + prefix + '[a-zA-Z0-9_\\-]+$');
     }
 
-    function hasPdfFileKey(data) {
-      return data.keys().hasAll(['pdfFileKey'])
-        && data.pdfFileKey is string
-        && data.pdfFileKey.size() > 0;
-    }
-
     function hasBillPdfFile(userId, fileKey) {
       let filePath = /databases/$(database)/documents/users/$(userId)/vaultFiles/$(fileKey);
       return exists(filePath)
@@ -256,9 +250,8 @@ service cloud.firestore {
         && (isOwner(userId)
           || (isPublicDataOwner(userId) && existing().ownerId == userId
             && isPdfBackedBill(existing(), 'bill_elec_')));
-      allow list: if isOwner(userId) && existing().ownerId == userId
-        || (isPublicDataOwner(userId) && existing().ownerId == userId
-          && hasPdfFileKey(existing()));
+      allow list: if (isOwner(userId) || isPublicDataOwner(userId))
+        && existing().ownerId == userId;
       allow create: if isOwner(userId)
         && isValidId(billId)
         && isValidElectricityBill(incoming(), userId)
@@ -304,9 +297,8 @@ service cloud.firestore {
         && (isOwner(userId)
           || (isPublicDataOwner(userId) && existing().ownerId == userId
             && isPdfBackedBill(existing(), 'bill_water_')));
-      allow list: if isOwner(userId) && existing().ownerId == userId
-        || (isPublicDataOwner(userId) && existing().ownerId == userId
-          && hasPdfFileKey(existing()));
+      allow list: if (isOwner(userId) || isPublicDataOwner(userId))
+        && existing().ownerId == userId;
       allow create: if isOwner(userId)
         && isValidId(billId)
         && isValidWaterBill(incoming(), userId)
@@ -353,9 +345,8 @@ service cloud.firestore {
         && (isOwner(userId)
           || (isPublicDataOwner(userId) && existing().ownerId == userId
             && isPdfBackedBill(existing(), 'bill_tari_')));
-      allow list: if isOwner(userId) && existing().ownerId == userId
-        || (isPublicDataOwner(userId) && existing().ownerId == userId
-          && hasPdfFileKey(existing()));
+      allow list: if (isOwner(userId) || isPublicDataOwner(userId))
+        && existing().ownerId == userId;
       allow create: if isOwner(userId)
         && isValidId(billId)
         && isValidTariBill(incoming(), userId)

@@ -1,7 +1,6 @@
 # Generated runtime data files & binary assets (never read with AI to save credits)
 data/consumi.json
 data/bollette.json
-public/assets/
 dist/
 node_modules/
 

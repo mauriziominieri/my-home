@@ -421,7 +421,7 @@ async function startServer() {
         ].join('\n');
 
         const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: 'gemini-4-hydrogen',
           contents: prompt,
           config: {
             tools: [{ googleSearch: {} }],
@@ -450,15 +450,33 @@ async function startServer() {
                 const brand = String(item.brand || '').trim().slice(0, 60);
                 const model = String(item.model || '').trim().slice(0, 80);
                 const name = String(item.name || `${brand} ${model}`).trim().slice(0, 80);
-                const productSource =
-                  typeof item.productUrl === 'string'
-                    ? verifiedSources.get(normalizeUrl(item.productUrl))
-                    : undefined;
-                if (!brand || !model || !productSource) return [];
+                if (!brand || !model) return [];
+
+                const rawProductUrl =
+                  typeof item.productUrl === 'string' && item.productUrl.startsWith('https://')
+                    ? item.productUrl.trim()
+                    : '';
+                const matchedSource = rawProductUrl
+                  ? verifiedSources.get(normalizeUrl(rawProductUrl))
+                  : undefined;
+
+                const itemSources: SourceLinkDto[] = [];
+                if (matchedSource) {
+                  itemSources.push(matchedSource);
+                } else if (rawProductUrl) {
+                  itemSources.push({ title: `${brand} ${model}`, url: rawProductUrl });
+                }
+                for (const src of sourceUrls) {
+                  if (itemSources.length >= 3) break;
+                  if (!itemSources.some((s) => normalizeUrl(s.url) === normalizeUrl(src.url))) {
+                    itemSources.push(src);
+                  }
+                }
+                if (itemSources.length === 0) return [];
 
                 const category = VALID_CATEGORIES.has(String(item.category || '').toLowerCase())
                   ? String(item.category).toLowerCase()
-                  : 'altro';
+                  : inferCategoryFromText(`${name} ${brand} ${model}`);
                 const manualUrl =
                   typeof item.manualUrl === 'string' && item.manualUrl.startsWith('https://')
                     ? item.manualUrl
@@ -476,8 +494,8 @@ async function startServer() {
                   specs: String(item.specs || '').trim().slice(0, 240),
                   manualUrl,
                   manualSummary: String(item.manualSummary || '').trim().slice(0, 240),
-                  sourceUrls: [productSource],
-                  providerLabel: 'Google Search · prodotto verificato',
+                  sourceUrls: itemSources,
+                  providerLabel: 'Google Search · Gemini',
                 }];
               })
           : [];
@@ -547,7 +565,7 @@ async function startServer() {
         ].join('\n');
 
         const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: 'gemini-4-hydrogen',
           contents: prompt,
           config: {
             tools: [{ googleSearch: {} }],

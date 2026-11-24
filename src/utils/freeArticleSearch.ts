@@ -1,5 +1,9 @@
 import { HomeArticleCategory } from '../types/home';
-import { OnlineArticleSearchResult } from './articleCatalog';
+import {
+  buildManufacturerManualSearchUrl,
+  OnlineArticleSearchResult,
+  searchArticleCatalog,
+} from './articleCatalog';
 
 interface WikipediaPage {
   pageid: number;
@@ -34,6 +38,25 @@ interface CommonsResponse {
   query?: { pages?: Record<string, CommonsPage> };
 }
 
+interface ServerSearchItemDto {
+  id: string;
+  name: string;
+  brand: string;
+  model: string;
+  category: string;
+  suggestedRoom: string;
+  specs: string;
+  manualUrl: string;
+  manualSummary?: string;
+  sourceUrls?: { title: string; url: string }[];
+  providerLabel?: string;
+}
+
+interface ServerSearchResponse {
+  results?: ServerSearchItemDto[];
+  provider?: string;
+}
+
 export interface FreeArticleSearchResponse {
   results: OnlineArticleSearchResult[];
   provider: string;
@@ -41,23 +64,32 @@ export interface FreeArticleSearchResponse {
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const searchCache = new Map<string, { expiresAt: number; data: FreeArticleSearchResponse }>();
+
 const PRODUCT_WORDS = new Set([
   'acoustic',
   'appliance',
+  'asciugatrice',
   'bass',
   'chitarra',
   'condizionatore',
+  'forno',
   'fridge',
   'frigo',
+  'frigorifero',
   'guitar',
+  'induzione',
+  'lavastoviglie',
   'lavatrice',
+  'microonde',
   'monitor',
   'piano',
   'prodotto',
   'router',
+  'smart',
   'tv',
   'washer',
 ]);
+
 const KNOWN_BRANDS = [
   'Ibanez',
   'TCL',
@@ -79,12 +111,26 @@ const KNOWN_BRANDS = [
   'Hisense',
   'Haier',
   'Smeg',
+  'Ariston',
+  'Huawei',
+  'Rehau',
+  'AVS',
+  'Daikin',
 ];
+
+const VALID_CATEGORIES = new Set<HomeArticleCategory>([
+  'elettrodomestici',
+  'elettronica',
+  'sicurezza',
+  'fotovoltaico',
+  'clima',
+  'altro',
+]);
 
 async function fetchJson<T>(url: URL): Promise<T> {
   const response = await fetch(url, {
     headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(12_000),
+    signal: AbortSignal.timeout(8_000),
   });
   if (!response.ok) {
     throw new Error(`Servizio catalogo non disponibile (HTTP ${response.status}).`);
@@ -92,14 +138,14 @@ async function fetchJson<T>(url: URL): Promise<T> {
   return (await response.json()) as T;
 }
 
-function getWikipediaSearch(query: string): Promise<WikipediaPage[]> {
-  const url = new URL('https://en.wikipedia.org/w/api.php');
+function getWikipediaSearch(query: string, lang: 'it' | 'en' = 'it'): Promise<WikipediaPage[]> {
+  const url = new URL(`https://${lang}.wikipedia.org/w/api.php`);
   url.search = new URLSearchParams({
     action: 'query',
     generator: 'search',
     gsrsearch: query,
     gsrnamespace: '0',
-    gsrlimit: '10',
+    gsrlimit: '6',
     prop: 'pageimages|extracts|info',
     inprop: 'url',
     exintro: '1',
@@ -123,7 +169,7 @@ function getCommonsSearch(query: string): Promise<CommonsPage[]> {
     generator: 'search',
     gsrsearch: query,
     gsrnamespace: '6',
-    gsrlimit: '10',
+    gsrlimit: '8',
     prop: 'imageinfo',
     iiprop: 'url|extmetadata',
     iiurlwidth: '640',
@@ -154,12 +200,60 @@ function getCommonsFiles(fileNames: string[]): Promise<CommonsPage[]> {
   );
 }
 
+async function tryServerLiveSearch(query: string): Promise<FreeArticleSearchResponse | null> {
+  try {
+    const res = await fetch('/api/articles/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(8_500),
+    });
+    if (!res.ok) return null;
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) return null;
+
+    const json = (await res.json()) as ServerSearchResponse;
+    if (!Array.isArray(json.results) || json.results.length === 0) return null;
+
+    const mapped: OnlineArticleSearchResult[] = json.results.map((item, idx) => {
+      const cat = VALID_CATEGORIES.has(item.category as HomeArticleCategory)
+        ? (item.category as HomeArticleCategory)
+        : inferCategory(`${item.name} ${item.brand} ${item.model}`);
+      return {
+        id: item.id || `web_${idx}`,
+        name: String(item.name || `${item.brand} ${item.model}`).slice(0, 80),
+        brand: String(item.brand || '').slice(0, 60),
+        model: String(item.model || '').slice(0, 80),
+        category: cat,
+        suggestedRoom: String(item.suggestedRoom || inferRoom(cat)).slice(0, 60),
+        specs: String(item.specs || '').slice(0, 240),
+        manualUrl:
+          item.manualUrl || buildManufacturerManualSearchUrl(item.brand || '', item.model || ''),
+        description: String(item.manualSummary || item.specs || '').slice(0, 320),
+        familyWarrantySuggested:
+          cat === 'elettrodomestici' || cat === 'elettronica' || cat === 'clima',
+        sourceUrls: Array.isArray(item.sourceUrls) ? item.sourceUrls : [],
+        providerLabel: item.providerLabel || 'Google Search',
+      };
+    });
+
+    return {
+      results: mapped,
+      provider: json.provider || 'Ricerca online live · Google Search',
+    };
+  } catch {
+    return null;
+  }
+}
+
 function cleanHtml(value?: string): string {
   if (!value) return '';
-  return new DOMParser()
-    .parseFromString(value, 'text/html')
-    .body.textContent?.replace(/\s+/g, ' ')
-    .trim() || '';
+  return (
+    new DOMParser()
+      .parseFromString(value, 'text/html')
+      .body.textContent?.replace(/\s+/g, ' ')
+      .trim() || ''
+  );
 }
 
 function normalize(value: string): string {
@@ -191,12 +285,18 @@ function inferCategory(text: string): HomeArticleCategory {
   if (/\b(tv|television|televisore|monitor|router|modem|laptop|computer|tablet)\b/.test(value)) {
     return 'elettronica';
   }
-  if (/\b(fridge|frigo|refrigerator|lavatrice|washer|forno|oven|dishwasher|lavastoviglie)\b/.test(value)) {
+  if (
+    /\b(fridge|frigo|frigorifero|refrigerator|lavatrice|washer|forno|oven|dishwasher|lavastoviglie|induzione|microonde|asciugatrice|dyson)\b/.test(
+      value
+    )
+  ) {
     return 'elettrodomestici';
   }
-  if (/\b(alarm|allarme|camera|telecamera|security)\b/.test(value)) return 'sicurezza';
-  if (/\b(heat pump|pompa di calore|air conditioner|condizionatore)\b/.test(value)) return 'clima';
-  if (/\b(solar|fotovoltaico|inverter)\b/.test(value)) return 'fotovoltaico';
+  if (/\b(alarm|allarme|camera|telecamera|security|avs)\b/.test(value)) return 'sicurezza';
+  if (/\b(heat pump|pompa di calore|air conditioner|condizionatore|ariston|rehau|daikin)\b/.test(value)) {
+    return 'clima';
+  }
+  if (/\b(solar|fotovoltaico|inverter|huawei)\b/.test(value)) return 'fotovoltaico';
   return 'altro';
 }
 
@@ -276,10 +376,12 @@ function toProductResult(
     category,
     suggestedRoom: inferRoom(category),
     specs: '',
-    manualUrl: '',
+    manualUrl: buildManufacturerManualSearchUrl(brand, model),
     description: description.slice(0, 360),
     imageUrl,
     imageCredit: imageCredit || 'Wikimedia Commons · attribuzione nella fonte',
+    familyWarrantySuggested:
+      category === 'elettrodomestici' || category === 'elettronica' || category === 'clima',
     sourceUrls: [
       { title: 'Immagine e licenza su Wikimedia Commons', url: sourceUrl },
       ...(wikipediaPage?.fullurl
@@ -302,22 +404,31 @@ export async function searchFreeArticles(
   const cached = searchCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
 
+  const catalogMatches = searchArticleCatalog(query);
+
   const searchQuery =
     /\bibanez\b/i.test(query) && !/\b(guitar|chitarra|guitars|chitarre)\b/i.test(query)
       ? `${query} guitar`
       : query;
-  const [commonsResult, wikipediaResult] = await Promise.allSettled([
-    getCommonsSearch(searchQuery),
-    getWikipediaSearch(searchQuery),
-  ]);
-  if (commonsResult.status === 'rejected' && wikipediaResult.status === 'rejected') {
-    throw new Error('La ricerca Wikimedia non è raggiungibile. Riprova tra poco.');
-  }
 
-  const commonsPages =
-    commonsResult.status === 'fulfilled' ? commonsResult.value : [];
-  const wikipediaPages =
-    wikipediaResult.status === 'fulfilled' ? wikipediaResult.value : [];
+  const [serverRes, commonsResult, wikiItResult, wikiEnResult] = await Promise.all([
+    tryServerLiveSearch(query),
+    getCommonsSearch(searchQuery).then(
+      (value) => ({ ok: true as const, value }),
+      () => ({ ok: false as const, value: [] as CommonsPage[] })
+    ),
+    getWikipediaSearch(searchQuery, 'it').then(
+      (value) => ({ ok: true as const, value }),
+      () => ({ ok: false as const, value: [] as WikipediaPage[] })
+    ),
+    getWikipediaSearch(searchQuery, 'en').then(
+      (value) => ({ ok: true as const, value }),
+      () => ({ ok: false as const, value: [] as WikipediaPage[] })
+    ),
+  ]);
+
+  const commonsPages = commonsResult.value;
+  const wikipediaPages = [...wikiItResult.value, ...wikiEnResult.value];
   const missingImagePages = wikipediaPages
     .filter((page) => page.pageimage)
     .filter(
@@ -326,23 +437,31 @@ export async function searchFreeArticles(
           normalize(commons.title).includes(normalize(page.pageimage || ''))
         )
     )
-    .slice(0, 5);
+    .slice(0, 4);
+
   let extraImages: CommonsPage[] = [];
-  let extraImagesFailed = false;
   if (missingImagePages.length > 0) {
-    const extraImageResult = await Promise.allSettled([
-      getCommonsFiles(missingImagePages.map((page) => page.pageimage as string)),
-    ]);
-    if (extraImageResult[0].status === 'fulfilled') {
-      extraImages = extraImageResult[0].value;
-    } else {
-      extraImagesFailed = true;
+    try {
+      extraImages = await getCommonsFiles(
+        missingImagePages.map((page) => page.pageimage as string)
+      );
+    } catch {
+      // ignore extra image fetch errors
     }
   }
+
   const allCommonsPages = [...commonsPages, ...extraImages];
-  const results = allCommonsPages
+  const wikimediaResults = allCommonsPages
     .map((page) => toProductResult(query, page, wikipediaPages))
-    .filter((result): result is OnlineArticleSearchResult => result !== null)
+    .filter((result): result is OnlineArticleSearchResult => result !== null);
+
+  const combined: OnlineArticleSearchResult[] = [
+    ...(serverRes?.results || []),
+    ...catalogMatches,
+    ...wikimediaResults,
+  ];
+
+  const deduped = combined
     .filter(
       (result, index, all) =>
         all.findIndex(
@@ -351,16 +470,20 @@ export async function searchFreeArticles(
             normalize(candidate.model) === normalize(result.model)
         ) === index
     )
-    .slice(0, 5);
+    .slice(0, 24);
+
+  const providerParts: string[] = [];
+  if (serverRes?.results.length) providerParts.push('Google Search');
+  if (catalogMatches.length) providerParts.push('Catalogo Casa & Elettrodomestici');
+  if (wikimediaResults.length) providerParts.push('Wikimedia / Wikipedia');
 
   const provider =
-    commonsResult.status === 'rejected' ||
-    wikipediaResult.status === 'rejected' ||
-    extraImagesFailed
-      ? 'Ricerca gratuita Wikimedia · risultati parziali'
-      : 'Ricerca gratuita Wikimedia Commons e Wikipedia';
-  const response = { results, provider };
-  if (results.length > 0) {
+    providerParts.length > 0
+      ? `Fonti utilizzate: ${providerParts.join(' · ')}`
+      : 'Ricerca completata (usa il pulsante sotto per creare la scheda personalizzata)';
+
+  const response: FreeArticleSearchResponse = { results: deduped, provider };
+  if (deduped.length > 0) {
     searchCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, data: response });
   }
   return response;

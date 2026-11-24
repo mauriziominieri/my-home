@@ -223,6 +223,72 @@ export interface CarProfile {
   notes?: string;
 }
 
+export interface CarInsuranceCoverage {
+  id: string;
+  name: string;
+  premiumEur: number;
+  active: boolean;
+  note?: string;
+}
+
+export interface CarInsuranceSubject {
+  role: string;
+  fullName: string;
+  gender: string;
+  birthDate: string;
+  birthPlace: string;
+  taxCode: string;
+  birthCountry: string;
+  residence: string;
+  profession: string;
+  maritalStatus: string;
+  childrenCount: number;
+  education: string;
+}
+
+export interface CarInsurancePolicy {
+  company: string;
+  policyNumber?: string;
+  startDate: string;
+  endDate: string;
+  totalPremiumEur: number;
+  paymentFrequency: string;
+  insuranceSituation: string;
+  classCu: string;
+  classInternal: string;
+  licenseSuspensions5y: number;
+  duiFines: number;
+  atFaultClaims5y: number;
+  noFaultClaims5y: number;
+  vehicleFullName: string;
+  registrationDate: string;
+  vehicleValueEur: number;
+  overnightParking: string;
+  annualKm: number;
+  vehicleUsage: string;
+  vehicleModified: string;
+  antiTheft: string;
+  coverages: CarInsuranceCoverage[];
+  subject?: CarInsuranceSubject;
+  lastDocUpdatedAt?: string;
+}
+
+export type CarDocumentSlotType =
+  | 'certificato_assicurazione'
+  | 'attestato_rischio'
+  | 'polizza_contratto'
+  | 'carta_verde'
+  | 'quietanza'
+  | 'libretto_circolazione'
+  | 'altro';
+
+export type ArticleAttachmentType =
+  | 'manuale'
+  | 'scontrino_fattura'
+  | 'garanzia_extra_family'
+  | 'targhetta_pnc'
+  | 'altro';
+
 export type CarEntryType =
   | 'manutenzione'
   | 'scadenza'

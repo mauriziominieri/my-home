@@ -337,10 +337,33 @@ export function DocumentsView({
           !isOctopusContractRecord(bill) &&
           (readOnly
             ? Boolean(bill.pdfFileKey)
-            : Boolean(vaultMeta[bill.pdfFileKey || getElectricityBillFileKey(bill.invoiceNumber)]))
+            : Boolean(bill.pdfFileKey || vaultMeta[getElectricityBillFileKey(bill.invoiceNumber)]))
       ),
     [electricityBills, readOnly, vaultMeta]
   );
+
+  const shareableWaterBills = useMemo(
+    () =>
+      waterBills.filter((bill) =>
+        readOnly
+          ? Boolean(bill.pdfFileKey)
+          : Boolean(bill.pdfFileKey || vaultMeta[getWaterBillFileKey(bill.invoiceNumber)])
+      ),
+    [waterBills, readOnly, vaultMeta]
+  );
+
+  const shareableTariBills = useMemo(
+    () =>
+      tariBills.filter((bill) =>
+        readOnly
+          ? Boolean(bill.pdfFileKey)
+          : Boolean(bill.pdfFileKey || vaultMeta[getTariBillFileKey(bill.noticeNumber)])
+      ),
+    [tariBills, readOnly, vaultMeta]
+  );
+
+  const totalShareableBillsCount =
+    shareableElectricityBills.length + shareableWaterBills.length + shareableTariBills.length;
 
   const allBillsForSharing = useMemo<UnifiedBillShareItem[]>(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -354,16 +377,10 @@ export function DocumentsView({
         number: b.invoiceNumber,
         date: b.issueDate,
         amount: b.totalPaid,
-        fileKey: getElectricityBillFileKey(b.invoiceNumber),
+        fileKey: b.pdfFileKey || getElectricityBillFileKey(b.invoiceNumber),
         payload: buildElectricityBillSharePayload(b),
       })),
-      ...waterBills
-        .filter((bill) =>
-          readOnly
-            ? Boolean(bill.pdfFileKey)
-            : Boolean(vaultMeta[bill.pdfFileKey || getWaterBillFileKey(bill.invoiceNumber)])
-        )
-        .map((w) => ({
+      ...shareableWaterBills.map((w) => ({
         id: `water_${w.id || w.invoiceNumber}`,
         kind: 'acqua' as const,
         label: 'Acqua',
@@ -372,16 +389,10 @@ export function DocumentsView({
         number: w.invoiceNumber,
         date: w.issueDate,
         amount: w.totalPaid,
-        fileKey: getWaterBillFileKey(w.invoiceNumber),
+        fileKey: w.pdfFileKey || getWaterBillFileKey(w.invoiceNumber),
         payload: buildWaterBillSharePayload(w),
-        })),
-      ...tariBills
-        .filter((bill) =>
-          readOnly
-            ? Boolean(bill.pdfFileKey)
-            : Boolean(vaultMeta[bill.pdfFileKey || getTariBillFileKey(bill.noticeNumber)])
-        )
-        .map((t) => ({
+      })),
+      ...shareableTariBills.map((t) => ({
         id: `tari_${t.id || t.noticeNumber}`,
         kind: 'tari' as const,
         label: 'TARI',
@@ -390,9 +401,9 @@ export function DocumentsView({
         number: t.noticeNumber,
         date: t.issueDate || t.dueDate,
         amount: t.totalPaid,
-        fileKey: getTariBillFileKey(t.noticeNumber),
+        fileKey: t.pdfFileKey || getTariBillFileKey(t.noticeNumber),
         payload: buildTariBillSharePayload(t),
-        })),
+      })),
     ];
 
     return list
@@ -402,7 +413,7 @@ export function DocumentsView({
           .some((x) => x.toLowerCase().includes(q));
       })
       .sort((a, b) => b.id.localeCompare(a.id));
-  }, [shareableElectricityBills, waterBills, tariBills, searchQuery, readOnly, vaultMeta]);
+  }, [shareableElectricityBills, shareableWaterBills, shareableTariBills, searchQuery]);
 
   const attachedDocsCount = useMemo(
     () =>
@@ -490,7 +501,7 @@ export function DocumentsView({
             Bollette Condivisibili
           </div>
           <div className="text-xl font-bold font-mono text-sky-300 mt-0.5">
-            {shareableElectricityBills.length + waterBills.length + tariBills.length}
+            {totalShareableBillsCount}
           </div>
         </div>
       </div>
@@ -542,7 +553,7 @@ export function DocumentsView({
                 : 'bg-slate-900 text-slate-300 border-slate-800 hover:text-slate-100'
             }`}
           >
-            Tutti i Documenti ({documents.length})
+            Tutti i Documenti ({documents.length + totalShareableBillsCount})
           </button>
 
           {DOCUMENT_CATEGORIES.map((cat) => {
@@ -573,7 +584,7 @@ export function DocumentsView({
             }`}
           >
             <Receipt className="w-3.5 h-3.5" />
-            Bollette da Inviare ({shareableElectricityBills.length + waterBills.length + tariBills.length})
+            Bollette da Inviare ({totalShareableBillsCount})
           </button>
         </div>
 
@@ -794,294 +805,322 @@ export function DocumentsView({
         className="hidden"
       />
 
-      {/* Content: Documents Grid OR Shareable Bills Table */}
-      {activeTab === 'bollette' ? (
-        <section className="bg-slate-900/75 border border-slate-800 rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-bold text-slate-100">
-                Tutte le Bollette Pronte da Scaricare o Condividere ({allBillsForSharing.length})
-              </h2>
-              <p className="text-[11px] text-slate-400">
-                {readOnly
-                  ? 'Senza accesso puoi scaricare o condividere il riepilogo HTML; i PDF originali restano privati.'
-                  : 'Apri le azioni per scaricare il PDF originale (se disponibile), il riepilogo HTML o condividere la bolletta.'}
-              </p>
-            </div>
-          </div>
+      {/* Content: Documents Grid + Shareable Bills Table */}
+      {(() => {
+        const showBillsSection =
+          activeTab === 'bollette' || (activeTab === 'all' && allBillsForSharing.length > 0);
+        const showDocsSection = activeTab !== 'bollette';
+        const hasAnyContent =
+          (showDocsSection && filteredDocuments.length > 0) ||
+          (showBillsSection && allBillsForSharing.length > 0);
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
-              <thead className="bg-slate-950/60 text-slate-400 border-b border-slate-800">
-                <tr>
-                  <th className="px-4 py-2.5 font-medium">Utenza</th>
-                  <th className="px-3 py-2.5 font-medium">Periodo</th>
-                  <th className="px-3 py-2.5 font-medium">Fornitore</th>
-                  <th className="px-3 py-2.5 font-medium">N° Documento</th>
-                  <th className="px-3 py-2.5 font-medium text-right">Totale</th>
-                  <th className="px-3 py-2.5 font-medium">PDF Allegato</th>
-                  <th className="px-4 py-2.5 font-medium text-right">Azioni</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/70">
-                {allBillsForSharing.map((b) => {
-                  const localFile = vaultMeta[b.fileKey];
+        const billsTable = showBillsSection && (
+          <section className="bg-slate-900/75 border border-slate-800 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-bold text-slate-100">
+                  {activeTab === 'all'
+                    ? `Bollette dell'Archivio (${allBillsForSharing.length})`
+                    : `Tutte le Bollette Pronte da Scaricare o Condividere (${allBillsForSharing.length})`}
+                </h2>
+                <p className="text-[11px] text-slate-400">
+                  {readOnly
+                    ? 'Senza accesso puoi scaricare o condividere il riepilogo HTML; i PDF originali restano privati.'
+                    : 'Apri le azioni per scaricare il PDF originale (se disponibile), il riepilogo HTML o condividere la bolletta.'}
+                </p>
+              </div>
+            </div>
+
+            {allBillsForSharing.length === 0 ? (
+              <div className="px-4 py-6 text-center text-xs text-slate-400">
+                Nessuna bolletta trovata con questo filtro.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-950/60 text-slate-400 border-b border-slate-800">
+                    <tr>
+                      <th className="px-4 py-2.5 font-medium">Utenza</th>
+                      <th className="px-3 py-2.5 font-medium">Periodo</th>
+                      <th className="px-3 py-2.5 font-medium">Fornitore</th>
+                      <th className="px-3 py-2.5 font-medium">N° Documento</th>
+                      <th className="px-3 py-2.5 font-medium text-right">Totale</th>
+                      <th className="px-3 py-2.5 font-medium">PDF Allegato</th>
+                      <th className="px-4 py-2.5 font-medium text-right">Azioni</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/70">
+                    {allBillsForSharing.map((b) => {
+                      const localFile = vaultMeta[b.fileKey];
+                      return (
+                        <tr key={b.id} className="hover:bg-slate-800/30">
+                          <td className="px-4 py-2.5">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                                b.kind === 'luce'
+                                  ? 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
+                                  : b.kind === 'acqua'
+                                    ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30'
+                                    : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                              }`}
+                            >
+                              {b.kind === 'luce' ? (
+                                <Zap className="w-3 h-3" />
+                              ) : b.kind === 'acqua' ? (
+                                <Droplets className="w-3 h-3" />
+                              ) : (
+                                <Receipt className="w-3 h-3" />
+                              )}
+                              {b.label}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 font-medium text-slate-100">{b.period}</td>
+                          <td className="px-3 py-2.5 text-slate-300">{b.supplier}</td>
+                          <td className="px-3 py-2.5 font-mono text-slate-400">
+                            <div>#{b.number}</div>
+                            <div className="text-[10px]">{b.date}</div>
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-mono font-semibold text-slate-100">
+                            {b.amount.toFixed(2).replace('.', ',')} €
+                          </td>
+                          <td className="px-3 py-2.5">
+                            {localFile ? (
+                              <span
+                                title={
+                                  localFile.origin === 'firestore'
+                                    ? 'Salvato su Firestore (accessibile da tutti i tuoi dispositivi)'
+                                    : localFile.origin === 'bundled'
+                                      ? 'PDF incluso nell’app (accessibile da tutti i dispositivi)'
+                                      : 'Solo cache locale su questo browser'
+                                }
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-medium"
+                              >
+                                <FileCheck2 className="w-3 h-3" />
+                                {readOnly
+                                  ? 'PDF originale privato'
+                                  : localFile.size > 0
+                                    ? `${localFile.origin === 'firestore' ? 'Firestore' : 'PDF'} (${formatFileSize(localFile.size)})`
+                                    : 'PDF pronto'}
+                              </span>
+                            ) : !readOnly ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAttachingBillKey(b.fileKey);
+                                  billAttachInputRef.current?.click();
+                                }}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px]"
+                              >
+                                <FileUp className="w-3 h-3 text-sky-400" />
+                                Allega PDF
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-slate-500">Scheda pronta</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => setShareItem(b.payload)}
+                              title={
+                                readOnly
+                                  ? 'Condividi o scarica il riepilogo HTML; il PDF originale è riservato'
+                                  : localFile
+                                    ? `Apri condivisione e PDF originale (${localFile.fileName})`
+                                    : 'Apri condivisione e scarica il riepilogo HTML'
+                              }
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-200 rounded-md"
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                              {readOnly ? 'Condividi / scarica HTML' : 'Condividi / scarica'}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        );
+
+        if (!hasAnyContent) {
+          return (
+            <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-8 text-center space-y-3">
+              <FolderOpen className="w-8 h-8 text-slate-500 mx-auto" />
+              <div className="text-sm font-semibold text-slate-200">
+                Nessun documento trovato in questa sezione
+              </div>
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                Aggiungi qui i documenti importanti della casa: contratto del mutuo, contratto Wi-Fi WindTre, rogito, polizze assicurative o documenti d&apos;identità per poterli scaricare e inviare in qualsiasi momento.
+              </p>
+              {!readOnly && (
+                <button
+                  type="button"
+                  onClick={() => openNewForm(DOCUMENT_STARTER_TEMPLATES[0])}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Inserisci primo documento
+                </button>
+              )}
+            </div>
+          );
+        }
+
+        return (
+          <div className="space-y-6">
+            {showDocsSection && filteredDocuments.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {filteredDocuments.map((doc) => {
+                  const meta = CATEGORY_STYLE[doc.category] || CATEGORY_STYLE.Altro;
+                  const Icon = meta.icon;
+                  const localFile = doc.attachmentKey ? vaultMeta[doc.attachmentKey] : undefined;
+                  const sharePayload = buildDocumentSharePayload(doc);
+
                   return (
-                    <tr key={b.id} className="hover:bg-slate-800/30">
-                      <td className="px-4 py-2.5">
-                        <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                            b.kind === 'luce'
-                              ? 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
-                              : b.kind === 'acqua'
-                                ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30'
-                                : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                          }`}
-                        >
-                          {b.kind === 'luce' ? (
-                            <Zap className="w-3 h-3" />
-                          ) : b.kind === 'acqua' ? (
-                            <Droplets className="w-3 h-3" />
-                          ) : (
-                            <Receipt className="w-3 h-3" />
-                          )}
-                          {b.label}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2.5 font-medium text-slate-100">{b.period}</td>
-                      <td className="px-3 py-2.5 text-slate-300">{b.supplier}</td>
-                      <td className="px-3 py-2.5 font-mono text-slate-400">
-                        <div>#{b.number}</div>
-                        <div className="text-[10px]">{b.date}</div>
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-mono font-semibold text-slate-100">
-                        {b.amount.toFixed(2).replace('.', ',')} €
-                      </td>
-                      <td className="px-3 py-2.5">
-                        {localFile ? (
+                    <article
+                      key={doc.id}
+                      className="bg-slate-900/75 border border-slate-800 hover:border-slate-700 rounded-xl p-4 flex flex-col justify-between gap-3 transition-colors"
+                    >
+                      <div className="space-y-2.5">
+                        <div className="flex items-start justify-between gap-2">
                           <span
-                            title={
-                              localFile.origin === 'firestore'
-                                ? 'Salvato su Firestore (accessibile da tutti i tuoi dispositivi)'
-                                : localFile.origin === 'bundled'
-                                  ? 'PDF incluso nell’app (accessibile da tutti i dispositivi)'
-                                  : 'Solo cache locale su questo browser'
-                            }
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-medium"
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border rounded-md ${meta.badge}`}
                           >
-                            <FileCheck2 className="w-3 h-3" />
-                            {readOnly
-                              ? 'PDF originale privato'
-                              : localFile.size > 0
-                                ? `${localFile.origin === 'firestore' ? 'Firestore' : 'PDF'} (${formatFileSize(localFile.size)})`
-                                : 'PDF pronto'}
+                            <Icon className="w-3 h-3" />
+                            {doc.category}
                           </span>
-                        ) : !readOnly ? (
+
+                          <div className="flex items-center gap-1.5">
+                            {doc.pinned && (
+                              <span
+                                title="In evidenza"
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 rounded"
+                              >
+                                <Star className="w-2.5 h-2.5 fill-amber-300" />
+                                Top
+                              </span>
+                            )}
+                            {localFile ? (
+                              <span
+                                title={
+                                  localFile.origin === 'firestore'
+                                    ? 'Salvato su Firestore (scaricabile anche da altri dispositivi)'
+                                    : 'Solo cache locale su questo browser'
+                                }
+                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded"
+                              >
+                                <FileCheck2 className="w-3 h-3" />
+                                {localFile.origin === 'firestore' ? 'Cloud · ' : ''}
+                                {formatFileSize(localFile.size) || 'File'}
+                              </span>
+                            ) : doc.fileName ? (
+                              <span className="px-2 py-0.5 text-[10px] bg-slate-800 text-slate-400 rounded">
+                                {doc.fileName}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div>
+                          <h3 className="text-sm font-bold text-slate-100">{doc.title}</h3>
+                          <div className="text-xs text-sky-300 font-medium mt-0.5">{doc.provider}</div>
+                        </div>
+
+                        {(doc.referenceCode || doc.issueDate || doc.expiryDate) && (
+                          <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 text-[11px] space-y-1">
+                            {doc.referenceCode && (
+                              <div className="flex justify-between gap-2">
+                                <span className="text-slate-500">Codice / Pratica:</span>
+                                <span className="font-mono text-slate-200 truncate">
+                                  {doc.referenceCode}
+                                </span>
+                              </div>
+                            )}
+                            {doc.issueDate && (
+                              <div className="flex justify-between gap-2">
+                                <span className="text-slate-500">Data:</span>
+                                <span className="font-mono text-slate-300">{doc.issueDate}</span>
+                              </div>
+                            )}
+                            {doc.expiryDate && (
+                              <div className="flex justify-between gap-2">
+                                <span className="text-slate-500">Scadenza:</span>
+                                <span className="font-mono text-amber-300">{doc.expiryDate}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {doc.notes && (
+                          <p className="text-xs text-slate-400 leading-relaxed">{doc.notes}</p>
+                        )}
+
+                        {doc.cloudUrl && (
+                          <a
+                            href={doc.cloudUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            Apri su Cloud / Drive
+                          </a>
+                        )}
+                      </div>
+
+                      <div className="pt-2.5 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
                           <button
                             type="button"
-                            onClick={() => {
-                              setAttachingBillKey(b.fileKey);
-                              billAttachInputRef.current?.click();
-                            }}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px]"
+                            onClick={() => void downloadShareableItem(sharePayload)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg"
                           >
-                            <FileUp className="w-3 h-3 text-sky-400" />
-                            Allega PDF
+                            <Download className="w-3.5 h-3.5 text-sky-400" />
+                            Scarica
                           </button>
-                        ) : (
-                          <span className="text-[10px] text-slate-500">Scheda pronta</span>
+                          <button
+                            type="button"
+                            onClick={() => setShareItem(sharePayload)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-lg"
+                          >
+                            <Share2 className="w-3.5 h-3.5" />
+                            Condividi
+                          </button>
+                        </div>
+
+                        {!readOnly && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openEditForm(doc)}
+                              aria-label="Modifica documento"
+                              className="p-1.5 text-slate-400 hover:text-sky-300 rounded-lg"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPendingDelete(doc)}
+                              aria-label="Elimina documento"
+                              className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         )}
-                      </td>
-                      <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={() => setShareItem(b.payload)}
-                          title={
-                            readOnly
-                              ? 'Condividi o scarica il riepilogo HTML; il PDF originale è riservato'
-                              : localFile
-                                ? `Apri condivisione e PDF originale (${localFile.fileName})`
-                                : 'Apri condivisione e scarica il riepilogo HTML'
-                          }
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-200 rounded-md"
-                        >
-                          <Share2 className="w-3.5 h-3.5" />
-                          {readOnly ? 'Condividi / scarica HTML' : 'Condividi / scarica'}
-                        </button>
-                      </td>
-                    </tr>
+                      </div>
+                    </article>
                   );
                 })}
-              </tbody>
-            </table>
+              </div>
+            )}
+            {billsTable}
           </div>
-        </section>
-      ) : filteredDocuments.length === 0 ? (
-        <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-8 text-center space-y-3">
-          <FolderOpen className="w-8 h-8 text-slate-500 mx-auto" />
-          <div className="text-sm font-semibold text-slate-200">
-            Nessun documento trovato in questa sezione
-          </div>
-          <p className="text-xs text-slate-400 max-w-md mx-auto">
-            Aggiungi qui i documenti importanti della casa: contratto del mutuo, contratto Wi-Fi WindTre, rogito, polizze assicurative o documenti d&apos;identità per poterli scaricare e inviare in qualsiasi momento.
-          </p>
-          {!readOnly && (
-            <button
-              type="button"
-              onClick={() => openNewForm(DOCUMENT_STARTER_TEMPLATES[0])}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Inserisci primo documento
-            </button>
-          )}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filteredDocuments.map((doc) => {
-            const meta = CATEGORY_STYLE[doc.category] || CATEGORY_STYLE.Altro;
-            const Icon = meta.icon;
-            const localFile = doc.attachmentKey ? vaultMeta[doc.attachmentKey] : undefined;
-            const sharePayload = buildDocumentSharePayload(doc);
-
-            return (
-              <article
-                key={doc.id}
-                className="bg-slate-900/75 border border-slate-800 hover:border-slate-700 rounded-xl p-4 flex flex-col justify-between gap-3 transition-colors"
-              >
-                <div className="space-y-2.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <span
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border rounded-md ${meta.badge}`}
-                    >
-                      <Icon className="w-3 h-3" />
-                      {doc.category}
-                    </span>
-
-                    <div className="flex items-center gap-1.5">
-                      {doc.pinned && (
-                        <span
-                          title="In evidenza"
-                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 rounded"
-                        >
-                          <Star className="w-2.5 h-2.5 fill-amber-300" />
-                          Top
-                        </span>
-                      )}
-                      {localFile ? (
-                        <span
-                          title={
-                            localFile.origin === 'firestore'
-                              ? 'Salvato su Firestore (scaricabile anche da altri dispositivi)'
-                              : 'Solo cache locale su questo browser'
-                          }
-                          className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded"
-                        >
-                          <FileCheck2 className="w-3 h-3" />
-                          {localFile.origin === 'firestore' ? 'Cloud · ' : ''}
-                          {formatFileSize(localFile.size) || 'File'}
-                        </span>
-                      ) : doc.fileName ? (
-                        <span className="px-2 py-0.5 text-[10px] bg-slate-800 text-slate-400 rounded">
-                          {doc.fileName}
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-100">{doc.title}</h3>
-                    <div className="text-xs text-sky-300 font-medium mt-0.5">{doc.provider}</div>
-                  </div>
-
-                  {(doc.referenceCode || doc.issueDate || doc.expiryDate) && (
-                    <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 text-[11px] space-y-1">
-                      {doc.referenceCode && (
-                        <div className="flex justify-between gap-2">
-                          <span className="text-slate-500">Codice / Pratica:</span>
-                          <span className="font-mono text-slate-200 truncate">
-                            {doc.referenceCode}
-                          </span>
-                        </div>
-                      )}
-                      {doc.issueDate && (
-                        <div className="flex justify-between gap-2">
-                          <span className="text-slate-500">Data:</span>
-                          <span className="font-mono text-slate-300">{doc.issueDate}</span>
-                        </div>
-                      )}
-                      {doc.expiryDate && (
-                        <div className="flex justify-between gap-2">
-                          <span className="text-slate-500">Scadenza:</span>
-                          <span className="font-mono text-amber-300">{doc.expiryDate}</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {doc.notes && (
-                    <p className="text-xs text-slate-400 leading-relaxed">{doc.notes}</p>
-                  )}
-
-                  {doc.cloudUrl && (
-                    <a
-                      href={doc.cloudUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300"
-                    >
-                      <ExternalLink className="w-3 h-3" />
-                      Apri su Cloud / Drive
-                    </a>
-                  )}
-                </div>
-
-                <div className="pt-2.5 border-t border-slate-800/80 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => void downloadShareableItem(sharePayload)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg"
-                    >
-                      <Download className="w-3.5 h-3.5 text-sky-400" />
-                      Scarica
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShareItem(sharePayload)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-lg"
-                    >
-                      <Share2 className="w-3.5 h-3.5" />
-                      Condividi
-                    </button>
-                  </div>
-
-                  {!readOnly && (
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => openEditForm(doc)}
-                        aria-label="Modifica documento"
-                        className="p-1.5 text-slate-400 hover:text-sky-300 rounded-lg"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPendingDelete(doc)}
-                        aria-label="Elimina documento"
-                        className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
+        );
+      })()}
 
       {shareItem && (
         <ShareSheetModal item={shareItem} readOnly={readOnly} onClose={() => setShareItem(null)} />
