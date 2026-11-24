@@ -83,6 +83,7 @@
       "properties": {
         "ownerId": { "type": "string", "maxLength": 128 },
         "invoiceNumber": { "type": "string", "maxLength": 40 },
+        "pdfFileKey": { "type": "string", "maxLength": 80, "pattern": "^bill_elec_[a-zA-Z0-9_\\-]+$" },
         "issueDate": { "type": "string", "maxLength": 20 },
         "sortKey": { "type": "string", "maxLength": 16, "pattern": "^[0-9]{4}-[0-9]{2}$" },
         "year": { "type": "number" },
@@ -99,7 +100,7 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": [
-        "ownerId", "invoiceNumber", "issueDate", "sortKey", "year", "period",
+        "ownerId", "invoiceNumber", "pdfFileKey", "issueDate", "sortKey", "year", "period",
         "supplier", "offerName", "kwh", "punText", "variableCostPerKwh",
         "canoneTv", "electricityOnly", "totalPaid", "createdAt"
       ]
@@ -111,6 +112,7 @@
       "properties": {
         "ownerId": { "type": "string", "maxLength": 128 },
         "invoiceNumber": { "type": "string", "maxLength": 40 },
+        "pdfFileKey": { "type": "string", "maxLength": 80, "pattern": "^bill_water_[a-zA-Z0-9_\\-]+$" },
         "issueDate": { "type": "string", "maxLength": 20 },
         "year": { "type": "number" },
         "period": { "type": "string", "maxLength": 80 },
@@ -121,7 +123,7 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": [
-        "ownerId", "invoiceNumber", "issueDate", "year", "period",
+        "ownerId", "invoiceNumber", "pdfFileKey", "issueDate", "year", "period",
         "cubicMeters", "fixedCostEur", "totalPaid", "createdAt"
       ]
     },
@@ -132,6 +134,7 @@
       "properties": {
         "ownerId": { "type": "string", "maxLength": 128 },
         "noticeNumber": { "type": "string", "maxLength": 50 },
+        "pdfFileKey": { "type": "string", "maxLength": 80, "pattern": "^bill_tari_[a-zA-Z0-9_\\-]+$" },
         "issueDate": { "type": "string", "maxLength": 20 },
         "dueDate": { "type": "string", "maxLength": 20 },
         "year": { "type": "number" },
@@ -144,7 +147,7 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": [
-        "ownerId", "noticeNumber", "issueDate", "dueDate", "year", "period",
+        "ownerId", "noticeNumber", "pdfFileKey", "issueDate", "dueDate", "year", "period",
         "supplier", "totalPaid", "paid", "source", "createdAt"
       ]
     },
@@ -162,6 +165,7 @@
         "kwhInjected": { "type": "number" },
         "reference": { "type": "string", "maxLength": 80 },
         "note": { "type": "string", "maxLength": 240 },
+        "attachmentFileKey": { "type": "string", "maxLength": 80 },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": [
@@ -189,6 +193,9 @@
         "serialNumber": { "type": "string", "maxLength": 80 },
         "specs": { "type": "string", "maxLength": 240 },
         "notes": { "type": "string", "maxLength": 240 },
+        "manualFileKey": { "type": "string", "maxLength": 80 },
+        "manualFileName": { "type": "string", "maxLength": 140 },
+        "manualExtractText": { "type": "string", "maxLength": 12000 },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": [
@@ -238,13 +245,14 @@
       "description": "Esito dell'ultimo controllo automatico delle tariffe luce di mercato scritto da GitHub Actions via Admin SDK.",
       "type": "object",
       "properties": {
-        "checkedAt": { "type": "string", "maxLength": 40 },
+        "updatedAt": { "type": "string", "maxLength": 40 },
         "myLockedRate": { "type": "number" },
-        "bestMarketRate": { "type": "number" },
-        "bestSupplier": { "type": "string", "maxLength": 80 },
-        "alert": { "type": "boolean" }
+        "myFixedEurMonth": { "type": "number" },
+        "currentRate": { "type": "number" },
+        "competitors": { "type": "array" },
+        "bestCompetitor": { "type": "object" }
       },
-      "required": ["checkedAt"]
+      "required": ["myLockedRate"]
     }
   },
   "firestore": {

@@ -41,6 +41,7 @@ export function ShareSheetModal({
   const [copied, setCopied] = useState(false);
   const [shareFeedback, setShareFeedback] = useState<string | null>(null);
   const [deletingItem, setDeletingItem] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -128,13 +129,7 @@ export function ShareSheetModal({
 
   async function handleDeleteItem() {
     if (!onDeleteItem || deletingItem) return;
-    if (
-      typeof window !== 'undefined' &&
-      !window.confirm('Eliminare questa scheda dall’archivio e il relativo PDF originale?')
-    ) {
-      return;
-    }
-
+    setConfirmDelete(false);
     setDeletingItem(true);
     setShareFeedback(null);
     try {
@@ -220,15 +215,36 @@ export function ShareSheetModal({
                   {attachedFile ? 'Sostituisci PDF' : 'Allega PDF originale'}
                 </button>
                 {onDeleteItem && (
-                  <button
-                    type="button"
-                    onClick={() => void handleDeleteItem()}
-                    disabled={deletingItem}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-rose-200 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg disabled:opacity-50"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    {deletingItem ? 'Elimino…' : 'Elimina scheda + PDF'}
-                  </button>
+                  confirmDelete ? (
+                    <div className="inline-flex items-center gap-1 px-2 py-1 bg-rose-500/15 border border-rose-500/40 rounded-lg text-[11px]">
+                      <span className="text-rose-200">Confermi?</span>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteItem()}
+                        disabled={deletingItem}
+                        className="px-2 py-0.5 font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded disabled:opacity-50"
+                      >
+                        {deletingItem ? 'Elimino…' : 'Elimina'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDelete(false)}
+                        className="px-1.5 py-0.5 text-slate-300 hover:text-white"
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDelete(true)}
+                      disabled={deletingItem}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-rose-200 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      {deletingItem ? 'Elimino…' : 'Elimina scheda + PDF'}
+                    </button>
+                  )
                 )}
               </div>
             )}

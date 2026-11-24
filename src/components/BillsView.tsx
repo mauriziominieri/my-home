@@ -201,6 +201,72 @@ export function BillsView({
     dir: 'desc',
   });
 
+  const TRACKED_SUPPLIERS_DEFAULT: SupplierMarketOffer[] = [
+    {
+      supplier: 'Octopus Energy',
+      offerName: 'Octopus Fissa 12M / 24M',
+      rateEurKwh: 0.1727,
+      fixedEurMonth: 6.0,
+      estAnnualEur: 469.21,
+      url: 'https://octopusenergy.it/offerta/tariffe',
+      status: 'ok',
+    },
+    {
+      supplier: 'ENGIE',
+      offerName: 'Energia PuntoFisso 24M Solo Luce',
+      rateEurKwh: 0.158,
+      fixedEurMonth: 7.0,
+      estAnnualEur: 447.4,
+      url: 'https://www.engie.it/casa/offerte-luce-gas/energia-puntofisso-24mesi-singleele/',
+      status: 'ok',
+    },
+    {
+      supplier: 'Eni Plenitude',
+      offerName: 'Fixa Time Luce',
+      rateEurKwh: 0.2339,
+      fixedEurMonth: 8.0,
+      estAnnualEur: 633.97,
+      url: 'https://eniplenitude.com/offerta/casa/gas-e-luce/fixa-time',
+      status: 'ok',
+    },
+    {
+      supplier: 'E.ON Energia',
+      offerName: 'LuceClick 24M Verde',
+      rateEurKwh: 0.1507,
+      fixedEurMonth: 9.09,
+      estAnnualEur: 455.69,
+      url: 'https://www.eon-energia.com/luce/casa/offerta-luce-prezzo-fisso-24-mesi.html',
+      status: 'ok',
+    },
+    {
+      supplier: 'NeN',
+      offerName: 'Luce Due 24M (Dieci 10A: 0.129 €/kWh)',
+      rateEurKwh: 0.179,
+      fixedEurMonth: 9.0,
+      estAnnualEur: 519.7,
+      url: 'https://nen.it/offerte-e-prezzi/prezzo-bloccato',
+      status: 'ok',
+    },
+    {
+      supplier: 'Sorgenia',
+      offerName: 'Next Energy Luce Casa',
+      rateEurKwh: 0.17,
+      fixedEurMonth: 9.5,
+      estAnnualEur: 505.0,
+      url: 'https://www.sorgenia.it/offerte-luce-casa',
+      status: 'ok',
+    },
+    {
+      supplier: 'Enel Energia',
+      offerName: 'Enel Fix Web Luce',
+      rateEurKwh: 0.199,
+      fixedEurMonth: 12.0,
+      estAnnualEur: 601.7,
+      url: 'https://www.enel.it/it-it/offerte-luce/enel-fix-web-luce',
+      status: 'ok',
+    },
+  ];
+
   const [marketMonitor, setMarketMonitor] = useState<{
     myLockedRate: number;
     myFixedEurMonth: number;
@@ -211,10 +277,10 @@ export function BillsView({
   }>({
     myLockedRate: 0.1595,
     myFixedEurMonth: 6.0,
-    currentRate: null,
-    updatedAt: null,
-    competitors: [],
-    bestCompetitor: null,
+    currentRate: 0.1727,
+    updatedAt: '2026-11-21T23:45:01Z',
+    competitors: TRACKED_SUPPLIERS_DEFAULT,
+    bestCompetitor: TRACKED_SUPPLIERS_DEFAULT[1],
   });
 
   const [importModalKind, setImportModalKind] = useState<'auto' | 'luce' | 'acqua' | 'tari' | null>(null);
@@ -227,6 +293,9 @@ export function BillsView({
 
   const [attachNotice, setAttachNotice] = useState<string | null>(null);
   const [clearingAllBills, setClearingAllBills] = useState(false);
+  const [confirmClearAllBills, setConfirmClearAllBills] = useState(false);
+  const [confirmDeleteOctopus, setConfirmDeleteOctopus] = useState(false);
+  const [confirmDeleteGseId, setConfirmDeleteGseId] = useState<string | null>(null);
 
   useEffect(() => {
     const refresh = () => {
@@ -319,13 +388,7 @@ export function BillsView({
 
   async function handleDeleteOctopusContract() {
     if (!octopusContractToManage || !onDeleteElectricityBill) return;
-    if (
-      typeof window !== 'undefined' &&
-      !window.confirm('Rimuovere dall’archivio il contratto Octopus e il relativo PDF?')
-    ) {
-      return;
-    }
-
+    setConfirmDeleteOctopus(false);
     try {
       await onDeleteElectricityBill(octopusContractToManage);
       setAttachNotice('Contratto Octopus rimosso dall’archivio.');
@@ -338,13 +401,7 @@ export function BillsView({
 
   async function handleClearAllBills() {
     if (!onClearAllBills || clearingAllBills) return;
-    const confirmed =
-      typeof window !== 'undefined' &&
-      window.confirm(
-        'Eliminare tutte le bollette Luce, Acqua, TARI e i bonifici GSE da Firebase, inclusi i PDF delle bollette? L’operazione è irreversibile. Il contratto Octopus verrà mantenuto.'
-      );
-    if (!confirmed) return;
-
+    setConfirmClearAllBills(false);
     setClearingAllBills(true);
     setAttachNotice(null);
     try {
@@ -379,14 +436,25 @@ export function BillsView({
           const fetchedList: SupplierMarketOffer[] = Array.isArray(json.competitors)
             ? (json.competitors as SupplierMarketOffer[])
             : [];
+          const fetchedBySupplier = new Map(fetchedList.map((c) => [c.supplier, c]));
+          const mergedCompetitors = TRACKED_SUPPLIERS_DEFAULT.map((def) => {
+            const live = fetchedBySupplier.get(def.supplier);
+            return live ? { ...def, ...live, url: def.url || live.url } : def;
+          });
+          for (const extra of fetchedList) {
+            if (!mergedCompetitors.some((c) => c.supplier === extra.supplier)) {
+              mergedCompetitors.push(extra);
+            }
+          }
           setMarketMonitor({
             myLockedRate: json.myLockedRate,
             myFixedEurMonth:
               typeof json.myFixedEurMonth === 'number' ? json.myFixedEurMonth : 6.0,
             currentRate: typeof json.currentRate === 'number' ? json.currentRate : null,
             updatedAt: typeof json.updatedAt === 'string' ? json.updatedAt : null,
-            competitors: fetchedList,
-            bestCompetitor: (json.bestCompetitor as SupplierMarketOffer | null) ?? null,
+            competitors: mergedCompetitors,
+            bestCompetitor:
+              (json.bestCompetitor as SupplierMarketOffer | null) ?? TRACKED_SUPPLIERS_DEFAULT[1],
           });
         }
       } catch {
@@ -696,16 +764,37 @@ export function BillsView({
             </button>
           )}
           {!readOnly && onClearAllBills && (
-            <button
-              type="button"
-              onClick={() => void handleClearAllBills()}
-              disabled={clearingAllBills}
-              title="Elimina bollette Luce, Acqua, TARI, bonifici GSE e relativi PDF; mantiene il contratto Octopus"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-200 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg transition-colors disabled:opacity-50"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              {clearingAllBills ? 'Eliminazione...' : 'Svuota archivio'}
-            </button>
+            confirmClearAllBills ? (
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs bg-rose-500/15 border border-rose-500/40 rounded-lg">
+                <span className="text-rose-200 font-medium">Confermi? (mantiene Octopus)</span>
+                <button
+                  type="button"
+                  onClick={() => void handleClearAllBills()}
+                  disabled={clearingAllBills}
+                  className="px-2 py-0.5 font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded transition-colors disabled:opacity-50"
+                >
+                  Sì, svuota
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmClearAllBills(false)}
+                  className="px-2 py-0.5 text-slate-300 hover:text-white rounded"
+                >
+                  Annulla
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmClearAllBills(true)}
+                disabled={clearingAllBills}
+                title="Elimina bollette Luce, Acqua, TARI, bonifici GSE e relativi PDF; mantiene il contratto Octopus"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-200 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg transition-colors disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {clearingAllBills ? 'Eliminazione...' : 'Svuota archivio'}
+              </button>
+            )
           )}
 
           <div className="inline-flex flex-wrap bg-slate-900 border border-slate-800 rounded-lg p-0.5 gap-0.5">
@@ -1423,22 +1512,37 @@ export function BillsView({
                                 </button>
                               )}
                               {onDeleteGsePayment && (
-                                <button
-                                  type="button"
-                                  title="Elimina bonifico"
-                                  onClick={() => {
-                                    if (
-                                      typeof window !== 'undefined' &&
-                                      window.confirm('Eliminare questo bonifico e il relativo allegato?')
-                                    ) {
-                                      void handleDeleteGsePayment(p.id);
-                                    }
-                                  }}
-                                  className="p-1 text-slate-500 hover:text-rose-400"
-                                  aria-label="Elimina bonifico GSE"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                                confirmDeleteGseId === p.id ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setConfirmDeleteGseId(null);
+                                        void handleDeleteGsePayment(p.id);
+                                      }}
+                                      className="px-1.5 py-0.5 text-[10px] font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded"
+                                    >
+                                      Elimina
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmDeleteGseId(null)}
+                                      className="px-1.5 py-0.5 text-[10px] text-slate-300 hover:text-white"
+                                    >
+                                      No
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    title="Elimina bonifico"
+                                    onClick={() => setConfirmDeleteGseId(p.id)}
+                                    className="p-1 text-slate-500 hover:text-rose-400"
+                                    aria-label="Elimina bonifico GSE"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )
                               )}
                             </div>
                           </td>
@@ -1527,14 +1631,34 @@ export function BillsView({
                           Scarica contratto PDF
                         </button>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => void handleDeleteOctopusContract()}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-rose-200 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        Rimuovi contratto
-                      </button>
+                      {confirmDeleteOctopus ? (
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-rose-500/15 border border-rose-500/40 rounded-lg text-[11px]">
+                          <span className="text-rose-200">Rimuovere contratto + PDF?</span>
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteOctopusContract()}
+                            className="px-2 py-0.5 font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded"
+                          >
+                            Conferma
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteOctopus(false)}
+                            className="px-2 py-0.5 text-slate-300 hover:text-white"
+                          >
+                            Annulla
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteOctopus(true)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-rose-200 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Rimuovi contratto
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

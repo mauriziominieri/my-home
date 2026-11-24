@@ -1,11 +1,27 @@
 import 'dotenv/config';
 import express from 'express';
+import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import { GoogleGenAI } from '@google/genai';
 
-const PORT = Number(process.env.PORT || 3000);
 const isProd = process.env.NODE_ENV === 'production';
+
+function resolveServerPort(): number {
+  const portFlagIdx = process.argv.indexOf('--port');
+  if (portFlagIdx !== -1 && process.argv[portFlagIdx + 1]) {
+    const parsed = Number(process.argv[portFlagIdx + 1]);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  if (!isProd) {
+    const devPort = Number(process.env.DEV_PORT || 3000);
+    return Number.isFinite(devPort) && devPort > 0 ? devPort : 3000;
+  }
+  const envPort = Number(process.env.PORT || 3000);
+  return Number.isFinite(envPort) && envPort > 0 ? envPort : 3000;
+}
+
+const PORT = resolveServerPort();
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const GEMINI_QUOTA_COOLDOWN_MS = 60 * 60 * 1000;
@@ -591,10 +607,15 @@ async function startServer() {
     res.json(fallbackManual);
   });
 
+  const httpServer = http.createServer(app);
+
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -608,7 +629,7 @@ async function startServer() {
     }
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Server listening on http://0.0.0.0:${PORT}`);
   });
 }
