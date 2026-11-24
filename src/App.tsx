@@ -47,7 +47,9 @@ import {
   subscribeAuthWithGmailCleanup,
 } from './firebase';
 import {
+  ArticleAttachmentType,
   BillRecord,
+  CarInsurancePolicy,
   CarLogEntry,
   CarProfile,
   ClimateAutopilotConfig,
@@ -76,13 +78,20 @@ import {
   trashGmailMessages,
 } from './utils/gmailSync';
 import {
+  articleToCarInsurance,
   articleToCarLog,
   articleToCarProfile,
   articleToGroceryProduct,
+  buildArticleDocumentRef,
+  CAR_POLICY_ID,
   CAR_PROFILE_ID,
+  carInsuranceToArticlePayload,
   carLogToArticlePayload,
   carProfileToArticlePayload,
+  DEFAULT_CONTE_POLICY_OWNER,
   groceryProductToArticlePayload,
+  isCarLinkedDocument,
+  parseArticleDocumentRef,
   SYSTEM_ROOM_CAR,
   SYSTEM_ROOM_GROCERY,
   SYSTEM_ROOM_GROCERY_META,
@@ -100,6 +109,7 @@ import {
   homeDocumentToArticlePayload,
   MAX_CLOUD_FILE_BYTES,
   notifyVaultUpdated,
+  sanitizeVaultFileKey,
   saveVaultFile,
   SYSTEM_ROOM_DOCUMENTS,
 } from './utils/documentVault';
@@ -193,12 +203,14 @@ export default function App() {
   const [tariBills, setTariBills] = useState<TariBillRecord[]>([]);
   const [gsePayments, setGsePayments] = useState<GsePaymentRecord[]>([]);
   const [homeArticles, setHomeArticles] = useState<HomeArticleRecord[]>([]);
+  const [homeArticlesLoaded, setHomeArticlesLoaded] = useState(false);
   const [readingsLoading, setReadingsLoading] = useState(true);
   const [firestoreFallbackNotice, setFirestoreFallbackNotice] = useState<string | null>(null);
   const [migratingDb, setMigratingDb] = useState(false);
   const [migrationProgress, setMigrationProgress] = useState<string | null>(null);
   const [migrationDismissed, setMigrationDismissed] = useState(false);
   const clearingBillArchiveRef = useRef(false);
+  const carPolicySeededRef = useRef(false);
   const skippedTrashIdsRef = useRef<Set<string>>(new Set());
   const gmailSyncInFlightRef = useRef(false);
   const autopilotSyncInFlightRef = useRef(false);
@@ -294,6 +306,8 @@ export default function App() {
       setClimateLogs([]);
       setPublicClimateAutopilot(null);
       setHomeConfig({ ownerId: '', ...DEFAULT_HOME_CONFIG });
+      setHomeArticlesLoaded(false);
+      carPolicySeededRef.current = false;
       // homeArticles NON viene svuotato: la spesa è pubblica,
       // viene gestita dal listener publicOwnerUid qui sotto.
       setReadingsLoading(true);
@@ -695,6 +709,7 @@ export default function App() {
           });
 
         setHomeArticles(list);
+        setHomeArticlesLoaded(true);
         try {
           localStorage.setItem(`myhome_articles_cache_${activeUid}`, JSON.stringify(list));
           localStorage.setItem(
@@ -1943,8 +1958,8 @@ export default function App() {
     article: Omit<HomeArticleRecord, 'id'>,
     customPrefix = 'art',
     manualFile?: File
-  ) {
-    if (!user) return;
+  ): Promise<string | undefined> {
+    if (!user) return undefined;
     const basePath = `users/${user.uid}/homeArticles`;
     const safePrefix = customPrefix.replace(/[^a-zA-Z0-9_-]/g, '') || 'art';
     const docId = `${safePrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -1986,6 +2001,7 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, basePath, docId), payload);
+      return docId;
     } catch (error) {
       if (uploadedManual) {
         await deleteVaultFile(uploadedManual.key, user.uid);
@@ -1998,6 +2014,11 @@ export default function App() {
   async function handleSaveCarProfile(profile: Omit<CarProfile, 'id'>) {
     if (!user) return;
     await handleUpdateArticle(CAR_PROFILE_ID, carProfileToArticlePayload(profile));
+  }
+
+  async function handleSaveCarPolicy(policy: CarInsurancePolicy) {
+    if (!user) return;
+    await handleUpdateArticle(CAR_POLICY_ID, carInsuranceToArticlePayload(policy));
   }
 
   async function handleAddCarLog(entry: Omit<CarLogEntry, 'id'>) {
@@ -2017,11 +2038,93 @@ export default function App() {
   }
 
   async function handleAddDocument(docItem: Omit<HomeDocumentRecord, 'id'>) {
-    await handleAddArticle(homeDocumentToArticlePayload(docItem), 'doc');
+    return handleAddArticle(homeDocumentToArticlePayload(docItem), 'doc');
   }
 
   async function handleUpdateDocument(id: string, docItem: Omit<HomeDocumentRecord, 'id'>) {
     await handleUpdateArticle(id, homeDocumentToArticlePayload(docItem));
+  }
+
+  async function handleUploadLinkedDocument(
+    docItem: Omit<HomeDocumentRecord, 'id'>,
+    file: File
+  ) {
+    if (!user) throw new Error('Accedi per archiviare il documento su Firebase.');
+    const basePath = `users/${user.uid}/homeArticles`;
+    const docId = `doc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const attachmentKey = docItem.attachmentKey
+      ? sanitizeVaultFileKey(docItem.attachmentKey)
+      : sanitizeVaultFileKey(`att_${docId}`);
+
+    const stored = await saveVaultFile(
+      attachmentKey,
+      file,
+      file.name,
+      file.type || 'application/octet-stream',
+      user.uid
+    );
+    if (!stored.cloudSynced) {
+      await deleteVaultFiles([attachmentKey], user.uid);
+      throw new Error(
+        stored.cloudTooLarge
+          ? `Il file supera il limite di ${Math.floor(MAX_CLOUD_FILE_BYTES / 1_000_000)} MB su Firebase.`
+          : 'Il file non è stato salvato su Firebase. Verifica connessione e permessi.'
+      );
+    }
+
+    const articlePayload = homeDocumentToArticlePayload({
+      ...docItem,
+      attachmentKey,
+      fileName: stored.fileName,
+      fileMime: stored.mimeType,
+      fileSize: stored.size,
+    });
+
+    const payload: Record<string, unknown> = {
+      ownerId: user.uid,
+      name: articlePayload.name.slice(0, 80),
+      brand: articlePayload.brand.slice(0, 60),
+      model: articlePayload.model.slice(0, 80),
+      category: articlePayload.category,
+      room: articlePayload.room.slice(0, 60),
+      familyWarranty: Boolean(articlePayload.familyWarranty),
+      createdAt: serverTimestamp(),
+    };
+    if (articlePayload.purchaseDate) payload.purchaseDate = articlePayload.purchaseDate.slice(0, 20);
+    if (articlePayload.warrantyEnd) payload.warrantyEnd = articlePayload.warrantyEnd.slice(0, 20);
+    if (articlePayload.serialNumber) payload.serialNumber = articlePayload.serialNumber.slice(0, 80);
+    if (articlePayload.specs) payload.specs = articlePayload.specs.slice(0, 240);
+    if (articlePayload.notes) payload.notes = articlePayload.notes.slice(0, 240);
+
+    try {
+      await setDoc(doc(db, basePath, docId), payload);
+    } catch (error) {
+      await deleteVaultFiles([attachmentKey], user.uid);
+      handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
+      throw error;
+    }
+  }
+
+  async function handleUploadArticleDocument(
+    articleId: string,
+    docType: ArticleAttachmentType,
+    title: string,
+    provider: string,
+    file: File
+  ) {
+    const todayIt = new Date().toLocaleDateString('it-IT');
+    await handleUploadLinkedDocument(
+      {
+        title: title.slice(0, 80),
+        category: docType === 'garanzia_extra_family' ? 'Assicurazioni' : 'Altro',
+        provider: (provider || 'Casa').slice(0, 80),
+        referenceCode: buildArticleDocumentRef(articleId, docType),
+        issueDate: todayIt,
+        pinned: docType === 'garanzia_extra_family' || docType === 'scontrino_fattura',
+        notes: `Documento associato ad articolo casa (${docType})`,
+      },
+      file
+    );
   }
 
   const migrationCompleted = useMemo(
@@ -2048,10 +2151,24 @@ export default function App() {
     [homeArticles]
   );
 
+  const carPolicy = useMemo(
+    () =>
+      articleToCarInsurance(
+        homeArticles.find((a) => a.id === CAR_POLICY_ID),
+        Boolean(canEdit)
+      ),
+    [homeArticles, canEdit]
+  );
+
   const carLogs = useMemo(
     () =>
       homeArticles
-        .filter((a) => a.room === SYSTEM_ROOM_CAR && a.id !== CAR_PROFILE_ID)
+        .filter(
+          (a) =>
+            a.room === SYSTEM_ROOM_CAR &&
+            a.id !== CAR_PROFILE_ID &&
+            a.id !== CAR_POLICY_ID
+        )
         .map(articleToCarLog),
     [homeArticles]
   );
@@ -2071,6 +2188,50 @@ export default function App() {
         .map(articleToHomeDocument),
     [homeArticles]
   );
+
+  const carDocuments = useMemo(
+    () => homeDocuments.filter(isCarLinkedDocument),
+    [homeDocuments]
+  );
+
+  const articleDocuments = useMemo(
+    () => homeDocuments.filter((d) => Boolean(parseArticleDocumentRef(d.referenceCode))),
+    [homeDocuments]
+  );
+
+  // Auto-seed ConTe.it car policy once for owner if not yet persisted
+  useEffect(() => {
+    if (!user || !homeArticlesLoaded || carPolicySeededRef.current) return;
+    if (homeArticles.some((a) => a.id === CAR_POLICY_ID)) {
+      carPolicySeededRef.current = true;
+      return;
+    }
+    carPolicySeededRef.current = true;
+    const artPayload = carInsuranceToArticlePayload(DEFAULT_CONTE_POLICY_OWNER);
+    const payload: Record<string, unknown> = {
+      ownerId: user.uid,
+      name: artPayload.name.slice(0, 80),
+      brand: artPayload.brand.slice(0, 60),
+      model: artPayload.model.slice(0, 80),
+      category: artPayload.category,
+      room: artPayload.room.slice(0, 60),
+      familyWarranty: false,
+      createdAt: serverTimestamp(),
+    };
+    if (artPayload.purchaseDate) payload.purchaseDate = artPayload.purchaseDate.slice(0, 20);
+    if (artPayload.warrantyEnd) payload.warrantyEnd = artPayload.warrantyEnd.slice(0, 20);
+    if (artPayload.serialNumber) payload.serialNumber = artPayload.serialNumber.slice(0, 80);
+    if (artPayload.specs) payload.specs = artPayload.specs.slice(0, 240);
+    if (artPayload.notes) payload.notes = artPayload.notes.slice(0, 240);
+    if (artPayload.manualExtractText) {
+      payload.manualExtractText = artPayload.manualExtractText.slice(0, 12_000);
+    }
+    void setDoc(doc(db, `users/${user.uid}/homeArticles/${CAR_POLICY_ID}`), payload).catch(
+      (err) => {
+        console.warn('Auto-seed polizza ConTe.it saltato:', err);
+      }
+    );
+  }, [user, homeArticlesLoaded, homeArticles]);
 
   const climateAutopilot = useMemo<ClimateAutopilotConfig | null>(
     () =>
@@ -2334,14 +2495,40 @@ export default function App() {
     }
   }
 
+  async function handleDeleteLinkedDocument(docId: string) {
+    if (!user || !/^[a-zA-Z0-9_-]+$/.test(docId)) return;
+    const targetDoc = homeDocuments.find((d) => d.id === docId);
+    const path = `users/${user.uid}/homeArticles/${docId}`;
+    try {
+      await deleteDoc(doc(db, path));
+      if (targetDoc?.attachmentKey) {
+        await deleteVaultFiles([targetDoc.attachmentKey], user.uid);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, path);
+      throw error;
+    }
+  }
+
   async function handleDeleteArticle(id: string) {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
     const path = `users/${user.uid}/homeArticles/${id}`;
     const article = homeArticles.find((entry) => entry.id === id);
+    const linkedDocs = articleDocuments.filter(
+      (d) => parseArticleDocumentRef(d.referenceCode)?.articleId === id
+    );
     try {
       await deleteDoc(doc(db, path));
-      if (article?.manualFileKey) {
-        await deleteVaultFiles([article.manualFileKey], user.uid);
+      const keysToDelete: string[] = [];
+      if (article?.manualFileKey) keysToDelete.push(article.manualFileKey);
+      for (const linked of linkedDocs) {
+        if (/^[a-zA-Z0-9_-]+$/.test(linked.id)) {
+          await deleteDoc(doc(db, `users/${user.uid}/homeArticles/${linked.id}`));
+        }
+        if (linked.attachmentKey) keysToDelete.push(linked.attachmentKey);
+      }
+      if (keysToDelete.length > 0) {
+        await deleteVaultFiles(keysToDelete, user.uid);
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
@@ -2821,12 +3008,15 @@ export default function App() {
           {activeNav === 'articoli' && (
             <ArticlesView
               articles={visibleHomeArticles}
+              articleDocuments={articleDocuments}
               readOnly={!canEdit}
               onSignIn={handleSignIn}
               onAddArticle={(art, manualFile) => handleAddArticle(art, 'art', manualFile)}
               onUpdateArticle={handleUpdateArticle}
               onDeleteArticle={handleDeleteArticle}
               onDownloadManual={handleDownloadArticleManual}
+              onUploadArticleDocument={handleUploadArticleDocument}
+              onDeleteArticleDocument={handleDeleteLinkedDocument}
             />
           )}
 
@@ -2842,17 +3032,22 @@ export default function App() {
               onConnectGmail={handleManualGmailSync}
               onAddDocument={handleAddDocument}
               onUpdateDocument={handleUpdateDocument}
-              onDeleteDocument={handleDeleteArticle}
+              onDeleteDocument={handleDeleteLinkedDocument}
             />
           )}
 
           {activeNav === 'macchina' && (
             <CarView
               profile={carProfile}
+              insurancePolicy={carPolicy}
               logs={carLogs}
+              carDocuments={carDocuments}
               readOnly={!canEdit}
               onSignIn={handleSignIn}
               onSaveProfile={handleSaveCarProfile}
+              onSaveInsurancePolicy={handleSaveCarPolicy}
+              onUploadCarDocument={handleUploadLinkedDocument}
+              onDeleteCarDocument={handleDeleteLinkedDocument}
               onAddLog={handleAddCarLog}
               onUpdateLog={handleUpdateCarLog}
               onDeleteLog={handleDeleteArticle}

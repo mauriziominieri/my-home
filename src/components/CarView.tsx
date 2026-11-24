@@ -5,8 +5,6 @@ import {
   Calendar,
   Car,
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
   Download,
   ExternalLink,
   FileCheck2,
@@ -17,6 +15,7 @@ import {
   Lock,
   Pencil,
   Plus,
+  Share2,
   Shield,
   ShieldCheck,
   Sparkles,
@@ -50,8 +49,10 @@ import {
   downloadShareableItem,
   formatFileSize,
   MAX_CLOUD_FILE_BYTES,
+  ShareableItemPayload,
 } from '../utils/documentVault';
 import { AccessUnlockBanner } from './AccessUnlockBanner';
+import { ShareSheetModal } from './ShareSheetModal';
 
 interface CarViewProps {
   profile: CarProfile;
@@ -176,6 +177,7 @@ export function CarView({
     details?: string[];
   } | null>(null);
   const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
+  const [shareDocItem, setShareDocItem] = useState<ShareableItemPayload | null>(null);
   const [pendingDeleteDoc, setPendingDeleteDoc] = useState<HomeDocumentRecord | null>(null);
   const [deletingDoc, setDeletingDoc] = useState(false);
 
@@ -390,7 +392,8 @@ export function CarView({
   async function handleDownloadDoc(docItem: HomeDocumentRecord) {
     setDownloadingDocId(docItem.id);
     try {
-      await downloadShareableItem(buildDocumentSharePayload(docItem));
+      const payload = buildDocumentSharePayload(docItem);
+      await downloadShareableItem(readOnly ? { ...payload, attachmentKey: undefined } : payload);
     } finally {
       setDownloadingDocId(null);
     }
@@ -1139,11 +1142,22 @@ export function CarView({
                           type="button"
                           disabled={downloadingDocId === docItem.id}
                           onClick={() => void handleDownloadDoc(docItem)}
-                          className="p-1 text-emerald-300 hover:bg-slate-800 rounded"
+                          className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-md transition-colors"
                           title="Scarica documento"
                           aria-label={`Scarica ${docItem.fileName || docItem.title}`}
                         >
-                          <Download className="w-3.5 h-3.5" />
+                          <Download className="w-3 h-3 text-sky-400" />
+                          Scarica
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShareDocItem(buildDocumentSharePayload(docItem))}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-md transition-colors"
+                          title="Condividi documento"
+                          aria-label={`Condividi ${docItem.fileName || docItem.title}`}
+                        >
+                          <Share2 className="w-3 h-3" />
+                          Condividi
                         </button>
                         {!readOnly && (
                           <button
@@ -1197,21 +1211,29 @@ export function CarView({
                         {docItem.fileName} {docItem.fileSize ? `(${formatFileSize(docItem.fileSize)})` : ''}
                       </div>
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
+                    <div className="flex items-center gap-1.5 shrink-0">
                       <button
                         type="button"
                         disabled={downloadingDocId === docItem.id}
                         onClick={() => void handleDownloadDoc(docItem)}
-                        className="inline-flex items-center gap-1 px-2 py-1 text-emerald-300 hover:bg-slate-800 rounded"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
                       >
-                        <Download className="w-3.5 h-3.5" />
+                        <Download className="w-3.5 h-3.5 text-sky-400" />
                         Scarica
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShareDocItem(buildDocumentSharePayload(docItem))}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-lg transition-colors"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                        Condividi
                       </button>
                       {!readOnly && (
                         <button
                           type="button"
                           onClick={() => setPendingDeleteDoc(docItem)}
-                          className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded"
+                          className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg"
                           aria-label="Elimina documento"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -1950,6 +1972,13 @@ export function CarView({
             </div>
           </div>
         </div>
+      )}
+      {shareDocItem && (
+        <ShareSheetModal
+          item={shareDocItem}
+          readOnly={readOnly}
+          onClose={() => setShareDocItem(null)}
+        />
       )}
     </div>
   );

@@ -2287,30 +2287,31 @@ export function ArticlesView({
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1 shrink-0">
+                        <div className="flex items-center gap-1.5 shrink-0">
                           <button
                             type="button"
                             disabled={downloadingDocId === docItem.id}
                             onClick={() => void handleDownloadArticleDoc(docItem)}
-                            className="inline-flex items-center gap-1 px-2 py-1 text-emerald-300 hover:bg-slate-800 rounded"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
                           >
-                            <Download className="w-3.5 h-3.5" />
+                            <Download className="w-3.5 h-3.5 text-sky-400" />
                             Scarica
                           </button>
                           <button
                             type="button"
                             onClick={() => setShareItem(buildDocumentSharePayload(docItem))}
-                            className="p-1.5 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-lg transition-colors"
                             aria-label="Condividi documento"
                           >
                             <Share2 className="w-3.5 h-3.5" />
+                            Condividi
                           </button>
                           {!readOnly && (
                             <button
                               type="button"
                               disabled={deletingDocId === docItem.id}
                               onClick={() => void handleDeleteArticleDoc(docItem)}
-                              className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded"
+                              className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg"
                               aria-label="Elimina allegato"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -2506,7 +2507,13 @@ export function ArticlesView({
         </div>
       )}
 
-      {shareItem && <ShareSheetModal item={shareItem} onClose={() => setShareItem(null)} />}
+      {shareItem && (
+        <ShareSheetModal
+          item={shareItem}
+          readOnly={readOnly}
+          onClose={() => setShareItem(null)}
+        />
+      )}
 
       {pendingDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">

@@ -826,7 +826,7 @@ export function DocumentsView({
                 <p className="text-[11px] text-slate-400">
                   {readOnly
                     ? 'Senza accesso puoi scaricare o condividere il riepilogo HTML; i PDF originali restano privati.'
-                    : 'Apri le azioni per scaricare il PDF originale (se disponibile), il riepilogo HTML o condividere la bolletta.'}
+                    : 'Usa Scarica per ottenere il file (PDF originale se presente, oppure riepilogo HTML) e Condividi per inviarlo.'}
                 </p>
               </div>
             </div>
@@ -919,21 +919,42 @@ export function DocumentsView({
                             )}
                           </td>
                           <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                            <button
-                              type="button"
-                              onClick={() => setShareItem(b.payload)}
-                              title={
-                                readOnly
-                                  ? 'Condividi o scarica il riepilogo HTML; il PDF originale è riservato'
-                                  : localFile
-                                    ? `Apri condivisione e PDF originale (${localFile.fileName})`
-                                    : 'Apri condivisione e scarica il riepilogo HTML'
-                              }
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-200 rounded-md"
-                            >
-                              <Share2 className="w-3.5 h-3.5" />
-                              {readOnly ? 'Condividi / scarica HTML' : 'Condividi / scarica'}
-                            </button>
+                            <div className="inline-flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void downloadShareableItem(
+                                    readOnly ? { ...b.payload, attachmentKey: undefined } : b.payload
+                                  )
+                                }
+                                title={
+                                  readOnly
+                                    ? 'Scarica riepilogo HTML'
+                                    : localFile
+                                      ? `Scarica PDF originale (${localFile.fileName})`
+                                      : 'Scarica riepilogo HTML'
+                                }
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
+                              >
+                                <Download className="w-3.5 h-3.5 text-sky-400" />
+                                Scarica
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setShareItem(b.payload)}
+                                title={
+                                  readOnly
+                                    ? 'Condividi il riepilogo della bolletta'
+                                    : localFile
+                                      ? `Condividi bolletta e PDF (${localFile.fileName})`
+                                      : 'Condividi riepilogo bolletta'
+                                }
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-lg transition-colors"
+                              >
+                                <Share2 className="w-3.5 h-3.5" />
+                                Condividi
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1075,8 +1096,14 @@ export function DocumentsView({
                         <div className="flex items-center gap-1.5">
                           <button
                             type="button"
-                            onClick={() => void downloadShareableItem(sharePayload)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg"
+                            onClick={() =>
+                              void downloadShareableItem(
+                                readOnly
+                                  ? { ...sharePayload, attachmentKey: undefined }
+                                  : sharePayload
+                              )
+                            }
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
                           >
                             <Download className="w-3.5 h-3.5 text-sky-400" />
                             Scarica

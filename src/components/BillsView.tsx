@@ -1071,24 +1071,47 @@ export function BillsView({
                           {w.totalPaid.toFixed(2).replace('.', ',')} €
                         </td>
                         <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setDeleteBillFromShare(null);
-                              setShareBillItem(sharePayload);
-                            }}
-                            title={
-                              readOnly
-                                ? 'Condividi o scarica il riepilogo HTML; il PDF originale è riservato'
-                                : hasPdf
-                                  ? `Apri condivisione e PDF originale (${vaultMeta[fileKey]?.fileName})`
-                                  : 'Apri condivisione e scarica il riepilogo HTML'
-                            }
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-sky-200 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded-md"
-                          >
-                            <Share2 className="w-3.5 h-3.5" />
-                            {readOnly ? 'Condividi / scarica HTML' : 'Condividi / scarica'}
-                          </button>
+                          <div className="inline-flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void downloadShareableItem(
+                                  readOnly
+                                    ? { ...sharePayload, attachmentKey: undefined }
+                                    : sharePayload
+                                )
+                              }
+                              title={
+                                readOnly
+                                  ? 'Scarica riepilogo HTML'
+                                  : hasPdf
+                                    ? `Scarica PDF originale (${vaultMeta[fileKey]?.fileName})`
+                                    : 'Scarica riepilogo HTML'
+                              }
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
+                            >
+                              <Download className="w-3.5 h-3.5 text-sky-400" />
+                              Scarica
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDeleteBillFromShare(null);
+                                setShareBillItem(sharePayload);
+                              }}
+                              title={
+                                readOnly
+                                  ? 'Condividi il riepilogo della bolletta'
+                                  : hasPdf
+                                    ? `Condividi bolletta e PDF originale (${vaultMeta[fileKey]?.fileName})`
+                                    : 'Condividi riepilogo della bolletta'
+                              }
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-lg transition-colors"
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                              Condividi
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1280,7 +1303,28 @@ export function BillsView({
                             {t.totalPaid.toFixed(2).replace('.', ',')} €
                           </td>
                           <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                            <div className="inline-flex items-center gap-1.5">
+                            <div className="inline-flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void downloadShareableItem(
+                                    readOnly
+                                      ? { ...sharePayload, attachmentKey: undefined }
+                                      : sharePayload
+                                  )
+                                }
+                                title={
+                                  readOnly
+                                    ? 'Scarica riepilogo HTML'
+                                    : hasPdf
+                                      ? `Scarica PDF originale (${vaultMeta[fileKey]?.fileName})`
+                                      : 'Scarica riepilogo HTML'
+                                }
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
+                              >
+                                <Download className="w-3.5 h-3.5 text-sky-400" />
+                                Scarica
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => {
@@ -1289,21 +1333,21 @@ export function BillsView({
                                 }}
                                 title={
                                   readOnly
-                                    ? 'Condividi o scarica il riepilogo HTML; il PDF originale è riservato'
+                                    ? 'Condividi il riepilogo dell’avviso TARI'
                                     : hasPdf
-                                      ? `Apri condivisione e PDF originale (${vaultMeta[fileKey]?.fileName})`
-                                      : 'Apri condivisione e scarica il riepilogo HTML'
+                                      ? `Condividi avviso e PDF originale (${vaultMeta[fileKey]?.fileName})`
+                                      : 'Condividi riepilogo dell’avviso TARI'
                                 }
-                                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-sky-200 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded-md"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-lg transition-colors"
                               >
                                 <Share2 className="w-3.5 h-3.5" />
-                                {readOnly ? 'Condividi / scarica HTML' : 'Condividi / scarica'}
+                                Condividi
                               </button>
                               {!readOnly && onDeleteTariBill && (
                                 <button
                                   type="button"
                                   onClick={() => void onDeleteTariBill(t.id)}
-                                  className="p-1 text-slate-500 hover:text-rose-400"
+                                  className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg"
                                   aria-label="Elimina avviso TARI"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -1476,9 +1520,9 @@ export function BillsView({
                                   attachmentKey: p.attachmentFileKey,
                                 })
                               }
-                              className="inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
                             >
-                              <Download className="w-3.5 h-3.5" />
+                              <Download className="w-3.5 h-3.5 text-sky-400" />
                               Scarica
                             </button>
                           ) : (
@@ -2052,44 +2096,52 @@ export function BillsView({
                         </td>
                         <td className="px-3 py-2.5 text-right whitespace-nowrap">
                           <div className="inline-flex items-center justify-end gap-1.5">
-                            {!readOnly && (
-                              hasPdf ? (
-                                <button
-                                  type="button"
-                                  onClick={() => void downloadShareableItem(sharePayload)}
-                                  title={`Scarica il PDF originale (${vaultMeta[fileKey]?.fileName})`}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-emerald-200 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 rounded-md"
-                                >
-                                  <Download className="w-3.5 h-3.5" />
-                                  Scarica
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setAttachingFileKey(fileKey);
-                                    attachFileInputRef.current?.click();
-                                  }}
-                                  title="Importa il PDF originale di questa bolletta"
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded-md"
-                                >
-                                  <FileUp className="w-3.5 h-3.5" />
-                                  Importa
-                                </button>
-                              )
+                            {!readOnly && !hasPdf ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAttachingFileKey(fileKey);
+                                  attachFileInputRef.current?.click();
+                                }}
+                                title="Importa il PDF originale di questa bolletta"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded-lg transition-colors"
+                              >
+                                <FileUp className="w-3.5 h-3.5" />
+                                Importa
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void downloadShareableItem(
+                                    readOnly
+                                      ? { ...sharePayload, attachmentKey: undefined }
+                                      : sharePayload
+                                  )
+                                }
+                                title={
+                                  readOnly
+                                    ? 'Scarica riepilogo HTML'
+                                    : `Scarica il PDF originale (${vaultMeta[fileKey]?.fileName})`
+                                }
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
+                              >
+                                <Download className="w-3.5 h-3.5 text-sky-400" />
+                                Scarica
+                              </button>
                             )}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setDeleteBillFromShare(canDeleteBill ? b : null);
-                              setShareBillItem(sharePayload);
-                            }}
-                            title="Condividi il riepilogo della bolletta"
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-sky-200 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded-md"
-                          >
-                            <Share2 className="w-3.5 h-3.5" />
-                            {readOnly ? 'Condividi riepilogo' : 'Condividi'}
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDeleteBillFromShare(canDeleteBill ? b : null);
+                                setShareBillItem(sharePayload);
+                              }}
+                              title="Condividi il riepilogo o il PDF della bolletta"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-lg transition-colors"
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                              Condividi
+                            </button>
                           </div>
                         </td>
                       </tr>
