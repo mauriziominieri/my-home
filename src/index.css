@@ -10,6 +10,19 @@
     font-family: var(--font-sans);
   }
 
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  select:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [role="button"][aria-disabled="true"],
+  select:disabled {
+    cursor: not-allowed;
+  }
+
   .tabular-nums {
     font-variant-numeric: tabular-nums;
   }

@@ -7,9 +7,9 @@ import {
   serverTimestamp,
   Timestamp,
   where,
-  writeBatch,
+  writeBatch as rawWriteBatch,
 } from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { auth, db, raceWithFirestoreQuotaAbort } from '../firebase';
 import {
   BillRecord,
   HomeArticleRecord,
@@ -18,6 +18,15 @@ import {
   TariBillRecord,
   WaterBillRecord,
 } from '../types/home';
+
+const writeBatch: typeof rawWriteBatch = ((...args: unknown[]) => {
+  const batch = (rawWriteBatch as (...inner: unknown[]) => ReturnType<typeof rawWriteBatch>)(
+    ...args
+  );
+  const origCommit = batch.commit.bind(batch);
+  batch.commit = () => raceWithFirestoreQuotaAbort(origCommit());
+  return batch;
+}) as typeof rawWriteBatch;
 
 export const SYSTEM_ROOM_DOCUMENTS = '__documenti__';
 
@@ -412,6 +421,20 @@ export async function saveVaultFile(
       setVaultCloudStatus('rules-required');
       throw new Error(
         'Permessi Firestore insufficienti per salvare il file. Verifica l’accesso o le regole Firestore.'
+      );
+    }
+    const errRaw = `${(err as { code?: string })?.code || ''} ${
+      err instanceof Error ? err.message : String(err)
+    }`.toLowerCase();
+    if (
+      errRaw.includes('resource-exhausted') ||
+      (errRaw.includes('quota') && errRaw.includes('exceeded'))
+    ) {
+      setVaultCloudStatus('error');
+      const { notifyFirestoreQuotaExceeded } = await import('../firebase');
+      notifyFirestoreQuotaExceeded();
+      throw new Error(
+        'Quota giornaliera gratuita di scrittura Firestore esaurita: impossibile caricare il file ora. Il limite si azzera automaticamente il giorno successivo.'
       );
     }
     setVaultCloudStatus('error');

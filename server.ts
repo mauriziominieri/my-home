@@ -1686,6 +1686,24 @@ async function startServer() {
     return {};
   }
 
+  function extractAmazonAStateJson<T>(html: string, stateKey: string): T | null {
+    const regex = /<script\b[^>]*\bdata-a-state=(["'])([\s\S]*?)\1[^>]*>([\s\S]*?)<\/script>/gi;
+    for (const match of html.matchAll(regex)) {
+      const attrRaw = match[2].replace(/&quot;/g, '"');
+      if (!attrRaw.includes(`"${stateKey}"`)) continue;
+      try {
+        const meta = JSON.parse(attrRaw) as { key?: string };
+        if (meta.key !== stateKey) continue;
+        const body = match[3].trim();
+        if (!body) continue;
+        return JSON.parse(body) as T;
+      } catch {
+        // ignore malformed a-state block
+      }
+    }
+    return null;
+  }
+
   function extractAmazonAsin(parsedUrl: URL): string | undefined {
     const m = parsedUrl.pathname.match(/\/(?:dp|gp\/product|gp\/aw\/d)\/([A-Z0-9]{10})(?:[/?]|$)/i);
     return m?.[1]?.toUpperCase();
@@ -1775,6 +1793,7 @@ async function startServer() {
     size?: string;
     availableSizes: string[];
     sizeAsinCandidates: Record<string, string[]>;
+    colorAsinCandidates: Record<string, string>;
     model?: string;
     specsList: string[];
     bullets: string[];
@@ -1991,19 +2010,40 @@ async function startServer() {
         ? overviewBrand
         : bylineBrand || overviewBrand;
 
-    // 6. Product Variants (Colors & Sizes) from Amazon Twister JSON + DOM fallback
-    const variationValues = extractJsonAfterKey<Record<string, unknown>>(
+    // 6. Product Variants (Colors & Sizes) from Amazon Twister JSON + Mobile Twister Plus a-state + DOM fallback
+    const desktopVariationValues = extractJsonAfterKey<Record<string, unknown>>(
       html,
       'variationValues',
       '{',
       '}'
     );
-    const dimensions = extractJsonAfterKey<string[]>(html, 'dimensions', '[', ']');
+    const mobileVariationValues = extractAmazonAStateJson<Record<string, unknown>>(
+      html,
+      'mobile-twister-dim-val-list'
+    );
+    const variationValues = desktopVariationValues || mobileVariationValues;
+
+    const desktopDimensions = extractJsonAfterKey<string[]>(html, 'dimensions', '[', ']');
+    const mobileDimensions = extractAmazonAStateJson<{ key?: string[] }>(
+      html,
+      'mobile-twister-dim-list'
+    )?.key;
+    const dimensions =
+      Array.isArray(desktopDimensions) && desktopDimensions.length > 0
+        ? desktopDimensions
+        : Array.isArray(mobileDimensions) && mobileDimensions.length > 0
+          ? mobileDimensions
+          : null;
+
     const dimensionValuesDisplayData = extractJsonAfterKey<Record<string, unknown>>(
       html,
       'dimensionValuesDisplayData',
       '{',
       '}'
+    );
+    const mobileDimsToAsin = extractAmazonAStateJson<Record<string, string>>(
+      html,
+      'mobile-twister-dims-to-asin-list'
     );
 
     let availableColors: string[] = [];
@@ -2073,7 +2113,7 @@ async function startServer() {
       }
     }
 
-    // Extract active color & size for this ASIN from dimensionValuesDisplayData if present
+    // Extract active color & size for this ASIN from dimensionValuesDisplayData or mobile-twister-dims-to-asin-list
     let twisterActiveColor: string | undefined;
     let twisterActiveSize: string | undefined;
     if (asin && dimensionValuesDisplayData && Array.isArray(dimensions)) {
@@ -2092,6 +2132,40 @@ async function startServer() {
           const sIdx = dimensions.indexOf(sizeDimKey);
           if (sIdx !== -1 && typeof activeTuple[sIdx] === 'string') {
             twisterActiveSize = stripHtmlTags(activeTuple[sIdx]).slice(0, 60);
+          }
+        }
+      }
+    }
+    if (
+      asin &&
+      (!twisterActiveColor || !twisterActiveSize) &&
+      mobileDimsToAsin &&
+      Array.isArray(dimensions) &&
+      variationValues
+    ) {
+      const activeEntry = Object.entries(mobileDimsToAsin).find(
+        ([, valAsin]) => typeof valAsin === 'string' && valAsin.toUpperCase() === asin.toUpperCase()
+      );
+      if (activeEntry) {
+        const parts = activeEntry[0].split(':').map((n) => Number.parseInt(n, 10));
+        if (!twisterActiveColor && colorDimKey) {
+          const cIdx = dimensions.indexOf(colorDimKey);
+          const colorArr = Array.isArray(variationValues[colorDimKey])
+            ? (variationValues[colorDimKey] as unknown[])
+            : [];
+          const valIdx = cIdx !== -1 ? parts[cIdx] : -1;
+          if (Number.isInteger(valIdx) && valIdx >= 0 && typeof colorArr[valIdx] === 'string') {
+            twisterActiveColor = stripHtmlTags(colorArr[valIdx]).slice(0, 60);
+          }
+        }
+        if (!twisterActiveSize && sizeDimKey) {
+          const sIdx = dimensions.indexOf(sizeDimKey);
+          const sizeArr = Array.isArray(variationValues[sizeDimKey])
+            ? (variationValues[sizeDimKey] as unknown[])
+            : [];
+          const valIdx = sIdx !== -1 ? parts[sIdx] : -1;
+          if (Number.isInteger(valIdx) && valIdx >= 0 && typeof sizeArr[valIdx] === 'string') {
+            twisterActiveSize = stripHtmlTags(sizeArr[valIdx]).slice(0, 60);
           }
         }
       }
@@ -2143,23 +2217,29 @@ async function startServer() {
       }
     }
 
+    const cleanTwisterAriaVal = (raw: string): string =>
+      stripHtmlTags(raw)
+        .replace(/\.?\s*(?:tocca per espandere|tap to expand)\.?$/i, '')
+        .trim()
+        .slice(0, 60);
+
     // Active Color from Twister variation widget if not found yet
     let color = twisterActiveColor || overviewColor;
     if (!color) {
       const twisterAria = html.match(/aria-label=["']La Colore selezionat[ao] è ([^"']+)["']/i);
-      if (twisterAria?.[1]) color = stripHtmlTags(twisterAria[1]).slice(0, 60);
+      if (twisterAria?.[1]) color = cleanTwisterAriaVal(twisterAria[1]);
     }
     if (!color) {
       const twisterDim = html.match(
         /inline-twister-expander-header-color_name[\s\S]{0,1200}?inline-twister-dim-title-value[^>]*>([\s\S]*?)<\/span>/i
       );
-      if (twisterDim?.[1]) color = stripHtmlTags(twisterDim[1]).slice(0, 60);
+      if (twisterDim?.[1]) color = cleanTwisterAriaVal(twisterDim[1]);
     }
     if (!color) {
       const varColor = html.match(
         /id=["']variation_color_name["'][\s\S]{0,1000}?class=["']selection["'][^>]*>([\s\S]*?)<\/span>/i
       );
-      if (varColor?.[1]) color = stripHtmlTags(varColor[1]).slice(0, 60);
+      if (varColor?.[1]) color = cleanTwisterAriaVal(varColor[1]);
     }
 
     // Active Size from Twister variation widget / overview if not found yet
@@ -2168,19 +2248,19 @@ async function startServer() {
       const twisterSizeAria = html.match(
         /aria-label=["']La (?:Taglia|Capacità(?: memoria)?|Dimensione) selezionat[ao] è ([^"']+)["']/i
       );
-      if (twisterSizeAria?.[1]) size = stripHtmlTags(twisterSizeAria[1]).slice(0, 60);
+      if (twisterSizeAria?.[1]) size = cleanTwisterAriaVal(twisterSizeAria[1]);
     }
     if (!size) {
       const twisterSizeDim = html.match(
         /inline-twister-expander-header-(?:size_name|memory_storage_capacity|capacity_name)[\s\S]{0,1200}?inline-twister-dim-title-value[^>]*>([\s\S]*?)<\/span>/i
       );
-      if (twisterSizeDim?.[1]) size = stripHtmlTags(twisterSizeDim[1]).slice(0, 60);
+      if (twisterSizeDim?.[1]) size = cleanTwisterAriaVal(twisterSizeDim[1]);
     }
     if (!size) {
       const varSize = html.match(
         /id=["']variation_(?:size_name|memory_storage_capacity|capacity_name)["'][\s\S]{0,1000}?class=["']selection["'][^>]*>([\s\S]*?)<\/span>/i
       );
-      if (varSize?.[1]) size = stripHtmlTags(varSize[1]).slice(0, 60);
+      if (varSize?.[1]) size = cleanTwisterAriaVal(varSize[1]);
     }
 
     // 7. Feature bullets (#feature-bullets)
@@ -2352,6 +2432,82 @@ async function startServer() {
       }
     }
 
+    const colorAsinCandidates: Record<string, string> = {};
+    if (mobileDimsToAsin && Array.isArray(dimensions) && variationValues) {
+      const sIdx = sizeDimKey ? dimensions.indexOf(sizeDimKey) : -1;
+      const cIdx = colorDimKey ? dimensions.indexOf(colorDimKey) : -1;
+      const sizeArr =
+        sIdx !== -1 && sizeDimKey && Array.isArray(variationValues[sizeDimKey])
+          ? (variationValues[sizeDimKey] as unknown[])
+          : [];
+      const colorArr =
+        cIdx !== -1 && colorDimKey && Array.isArray(variationValues[colorDimKey])
+          ? (variationValues[colorDimKey] as unknown[])
+          : [];
+      const activeColorNorm = color?.trim().toLowerCase() || '';
+      const activeSizeCompact = size?.trim().toLowerCase().replace(/\s+/g, '') || '';
+
+      for (const [dimTupleKey, candAsin] of Object.entries(mobileDimsToAsin)) {
+        if (typeof candAsin !== 'string' || !/^[A-Z0-9]{10}$/i.test(candAsin)) continue;
+        const parts = dimTupleKey.split(':').map((n) => Number.parseInt(n, 10));
+        const rawColorVal = cIdx !== -1 && Number.isInteger(parts[cIdx]) ? colorArr[parts[cIdx]] : undefined;
+        const colRaw =
+          typeof rawColorVal === 'string'
+            ? stripHtmlTags(rawColorVal).replace(/\s+/g, ' ').trim()
+            : '';
+        const rawSizeVal = sIdx !== -1 && Number.isInteger(parts[sIdx]) ? sizeArr[parts[sIdx]] : undefined;
+        const szRaw =
+          typeof rawSizeVal === 'string'
+            ? stripHtmlTags(rawSizeVal).replace(/\s+/g, ' ').trim()
+            : '';
+
+        if (szRaw) {
+          const canonicalSz = matchCanonicalSize(szRaw) || szRaw;
+          const isSameColor = Boolean(activeColorNorm && colRaw.toLowerCase() === activeColorNorm);
+          addSizeAsinCandidate(canonicalSz, candAsin, isSameColor);
+        }
+        if (colRaw) {
+          const canonicalCol =
+            availableColors.find((c) => c.trim().toLowerCase() === colRaw.toLowerCase()) || colRaw;
+          const isSameSize = Boolean(
+            activeSizeCompact && szRaw.toLowerCase().replace(/\s+/g, '') === activeSizeCompact
+          );
+          if (!colorAsinCandidates[canonicalCol] || isSameSize) {
+            colorAsinCandidates[canonicalCol] = candAsin.toUpperCase();
+          }
+        }
+      }
+    }
+
+    if (
+      dimensionValuesDisplayData &&
+      Array.isArray(dimensions) &&
+      availableColors.length > 0 &&
+      Object.keys(colorAsinCandidates).length === 0
+    ) {
+      const cIdx = colorDimKey ? dimensions.indexOf(colorDimKey) : -1;
+      const sIdx = sizeDimKey ? dimensions.indexOf(sizeDimKey) : -1;
+      const activeSizeCompact = size?.trim().toLowerCase().replace(/\s+/g, '') || '';
+      if (cIdx !== -1) {
+        for (const [candAsin, tuple] of Object.entries(dimensionValuesDisplayData)) {
+          if (!Array.isArray(tuple) || typeof tuple[cIdx] !== 'string' || !/^[A-Z0-9]{10}$/i.test(candAsin)) {
+            continue;
+          }
+          const rawCol = stripHtmlTags(tuple[cIdx]).replace(/\s+/g, ' ').trim();
+          const canonicalCol =
+            availableColors.find((c) => c.trim().toLowerCase() === rawCol.toLowerCase()) || rawCol;
+          const rawSz =
+            sIdx !== -1 && typeof tuple[sIdx] === 'string'
+              ? stripHtmlTags(tuple[sIdx]).trim().toLowerCase().replace(/\s+/g, '')
+              : '';
+          const isSameSize = Boolean(activeSizeCompact && rawSz === activeSizeCompact);
+          if (!colorAsinCandidates[canonicalCol] || isSameSize) {
+            colorAsinCandidates[canonicalCol] = candAsin.toUpperCase();
+          }
+        }
+      }
+    }
+
     return {
       title,
       brand,
@@ -2363,6 +2519,7 @@ async function startServer() {
       size,
       availableSizes,
       sizeAsinCandidates,
+      colorAsinCandidates,
       model,
       specsList,
       bullets,
@@ -2962,6 +3119,25 @@ async function startServer() {
     const finalUrl = parsedUrl.toString().slice(0, 1000);
     const cacheKey = canonicalInspectCacheKey(parsedUrl);
     const forceRefresh = Boolean(req.body?.refresh);
+    const inspectDeadlineMs = Date.now() + 25_000;
+    const remainingBudgetMs = () => Math.max(0, inspectDeadlineMs - Date.now());
+    const withStepTimeout = <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
+      new Promise<T>((resolve, reject) => {
+        const clampedMs = Math.max(500, ms);
+        const timer = setTimeout(() => {
+          reject(new Error(`Timeout after ${clampedMs}ms (${label})`));
+        }, clampedMs);
+        promise.then(
+          (val) => {
+            clearTimeout(timer);
+            resolve(val);
+          },
+          (err) => {
+            clearTimeout(timer);
+            reject(err);
+          }
+        );
+      });
     if (!forceRefresh) {
       const cached = inspectCache.get(cacheKey);
       if (cached && cached.expiresAt > Date.now()) {
@@ -3071,17 +3247,36 @@ async function startServer() {
       targetUrl: string,
       headers: Record<string, string>,
       rejectUnauthorized = true,
-      hopsLeft = 4
+      hopsLeft = 4,
+      deadlineMs = Date.now() + 9000
     ): Promise<{ status: number; contentType: string; text: string }> => {
+      const remaining = deadlineMs - Date.now();
+      if (remaining <= 200) {
+        throw new Error('Request deadline exceeded');
+      }
       const u = new URL(targetUrl);
       const client = u.protocol === 'https:' ? https : http;
       return new Promise((resolve, reject) => {
+        let settled = false;
+        const finishResolve = (val: { status: number; contentType: string; text: string }) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(hardTimer);
+          resolve(val);
+        };
+        const finishReject = (err: unknown) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(hardTimer);
+          reject(err);
+        };
+        const reqTimeoutMs = Math.max(500, Math.min(9000, remaining));
         const req = client.request(
           u,
           {
             method: 'GET',
             headers,
-            timeout: 9500,
+            timeout: reqTimeoutMs,
             ...(u.protocol === 'https:' ? { rejectUnauthorized } : {}),
           },
           (resp) => {
@@ -3092,9 +3287,9 @@ async function startServer() {
               try {
                 const nextUrl = new URL(loc, u).toString();
                 if (!isPrivateOrLocalHostname(new URL(nextUrl).hostname)) {
-                  void fetchViaNodeHttp(nextUrl, headers, rejectUnauthorized, hopsLeft - 1)
-                    .then(resolve)
-                    .catch(reject);
+                  void fetchViaNodeHttp(nextUrl, headers, rejectUnauthorized, hopsLeft - 1, deadlineMs)
+                    .then(finishResolve)
+                    .catch(finishReject);
                   return;
                 }
               } catch {
@@ -3110,16 +3305,20 @@ async function startServer() {
               }
             });
             resp.on('end', () => {
-              resolve({
+              finishResolve({
                 status,
                 contentType: String(resp.headers['content-type'] || '').toLowerCase(),
                 text: Buffer.concat(chunks).toString('utf8').slice(0, 3_000_000),
               });
             });
+            resp.on('error', finishReject);
           }
         );
+        const hardTimer = setTimeout(() => {
+          req.destroy(new Error('Request deadline timeout'));
+        }, reqTimeoutMs + 300);
         req.on('timeout', () => req.destroy(new Error('Request timeout')));
-        req.on('error', reject);
+        req.on('error', finishReject);
         req.end();
       });
     };
@@ -3139,8 +3338,14 @@ async function startServer() {
 
     const fetchPageHtml = async (
       targetUrl: string,
-      userAgentOverride?: string
+      userAgentOverride?: string,
+      maxTimeoutMs = 8500
     ): Promise<{ html: string; blocked: boolean }> => {
+      const budget = remainingBudgetMs();
+      if (budget < 1200) {
+        return { html: '', blocked: false };
+      }
+      const stepTimeoutMs = Math.min(maxTimeoutMs, budget);
       const reqHeaders: Record<string, string> = {
         'User-Agent':
           userAgentOverride ||
@@ -3153,21 +3358,27 @@ async function startServer() {
         const response = await fetch(targetUrl, {
           method: 'GET',
           redirect: 'follow',
-          signal: AbortSignal.timeout(9500),
+          signal: AbortSignal.timeout(stepTimeoutMs),
           headers: reqHeaders,
         });
         const contentType = (response.headers.get('content-type') || '').toLowerCase();
         const bodyText = contentType.includes('text/html')
-          ? (await response.text()).slice(0, 3_000_000)
+          ? (await withStepTimeout(response.text(), stepTimeoutMs, 'response.text')).slice(0, 3_000_000)
           : '';
         const blocked = isBotChallengeHtml(bodyText, response.status);
         if (response.ok && contentType.includes('text/html') && !blocked) {
           return { html: bodyText, blocked: false };
         }
         // Fallback via Node native HTTP/1.1 client when fetch() (undici TLS/ALPN) gets 503/403 bot-challenged
-        if (blocked || response.status === 403 || response.status === 503) {
+        if ((blocked || response.status === 403 || response.status === 503) && remainingBudgetMs() >= 1800) {
           try {
-            const nodeRes = await fetchViaNodeHttp(targetUrl, reqHeaders, true);
+            const nodeRes = await fetchViaNodeHttp(
+              targetUrl,
+              reqHeaders,
+              true,
+              4,
+              Date.now() + Math.min(stepTimeoutMs, remainingBudgetMs())
+            );
             const parsed = parseNodeHttpResult(nodeRes);
             if (parsed.html) return parsed;
           } catch {
@@ -3176,9 +3387,15 @@ async function startServer() {
         }
         return { html: '', blocked };
       } catch (err) {
-        if (isTlsChainError(err)) {
+        if (isTlsChainError(err) && remainingBudgetMs() >= 1800) {
           try {
-            const fallbackRes = await fetchViaNodeHttp(targetUrl, reqHeaders, false);
+            const fallbackRes = await fetchViaNodeHttp(
+              targetUrl,
+              reqHeaders,
+              false,
+              4,
+              Date.now() + Math.min(stepTimeoutMs, remainingBudgetMs())
+            );
             return parseNodeHttpResult(fallbackRes);
           } catch {
             return { html: '', blocked: false };
@@ -3219,21 +3436,30 @@ async function startServer() {
           },
         ];
         for (const strat of retryStrategies) {
-          const retryRes = await fetchPageHtml(strat.url, strat.ua);
-          if (hasUsableProductHtml(retryRes.html)) {
-            html = retryRes.html;
-            blockedBySite = false;
-            break;
+          if (remainingBudgetMs() < 3000) break;
+          try {
+            const retryRes = await fetchPageHtml(strat.url, strat.ua, 6000);
+            if (hasUsableProductHtml(retryRes.html)) {
+              html = retryRes.html;
+              blockedBySite = false;
+              break;
+            }
+          } catch {
+            // ignore individual strategy failures
           }
         }
-      } else if (!amazonAsin && (blockedBySite || !hasUsableProductHtml(html))) {
+      } else if (!amazonAsin && (blockedBySite || !hasUsableProductHtml(html)) && remainingBudgetMs() >= 4500) {
         // Non-Amazon site WAF-blocked datacenter IP (e.g. AWS ELB 403 on manufacturer sites): try Wayback snapshot
         const wbUrl = await resolveWaybackSnapshotUrl(finalUrl);
-        if (wbUrl) {
-          const wbRes = await fetchPageHtml(wbUrl);
-          if (hasUsableProductHtml(wbRes.html)) {
-            html = wbRes.html;
-            blockedBySite = false;
+        if (wbUrl && remainingBudgetMs() >= 2500) {
+          try {
+            const wbRes = await fetchPageHtml(wbUrl, undefined, 6500);
+            if (hasUsableProductHtml(wbRes.html)) {
+              html = wbRes.html;
+              blockedBySite = false;
+            }
+          } catch {
+            // ignore Wayback HTML fetch failures
           }
         }
       }
@@ -3260,7 +3486,8 @@ async function startServer() {
           (amazonDom?.priceEur === undefined ||
             !amazonDom?.title ||
             !amazonDom?.imageUrl ||
-            (amazonDom.availableColors.length === 0 && amazonDom.availableSizes.length === 0))
+            amazonDom.availableColors.length === 0 ||
+            amazonDom.availableSizes.length === 0)
         ) {
           try {
             const mobileRes = await fetchPageHtml(
@@ -3411,12 +3638,55 @@ async function startServer() {
           collectedSizePrices[activeSizeKey] = priceEur;
         }
 
-        // Fetch sibling Amazon size ASIN prices in parallel when multiple sizes exist
+        // Fetch sibling Amazon ASINs (for size prices AND missing color photos) using cached HTML per ASIN
+        const siblingDomCache = new Map<
+          string,
+          { priceEur?: number; imageUrl?: string }
+        >();
+        const fetchAmazonSiblingDetails = async (candAsin: string) => {
+          const upper = candAsin.toUpperCase();
+          const cached = siblingDomCache.get(upper);
+          if (cached) return cached;
+          let sibHtml = '';
+          try {
+            const sibMobile = await fetchPageHtml(
+              `https://${parsedUrl.hostname}/gp/aw/d/${upper}?th=1&psc=1`,
+              'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1'
+            );
+            sibHtml = sibMobile.html || '';
+            if (!sibHtml || extractAmazonBuyboxPrice(sibHtml) === undefined) {
+              const sibDesk = await fetchPageHtml(
+                `https://${parsedUrl.hostname}/dp/${upper}?th=1&psc=1`
+              );
+              if (sibDesk.html && extractAmazonBuyboxPrice(sibDesk.html) !== undefined) {
+                sibHtml = sibDesk.html;
+              } else if (!sibHtml) {
+                sibHtml = sibDesk.html || '';
+              }
+            }
+          } catch {
+            // ignore sibling ASIN fetch failures
+          }
+          const sibDom = sibHtml ? extractAmazonDomDetails(sibHtml, upper) : null;
+          const entry = {
+            priceEur: sibDom?.priceEur,
+            imageUrl: sibDom?.imageUrl,
+          };
+          siblingDomCache.set(upper, entry);
+          return entry;
+        };
+
         const mergedSizeAsins =
           amazonDom?.sizeAsinCandidates && Object.keys(amazonDom.sizeAsinCandidates).length > 0
             ? amazonDom.sizeAsinCandidates
             : mobileDom?.sizeAsinCandidates || {};
 
+        const mergedColorAsins =
+          amazonDom?.colorAsinCandidates && Object.keys(amazonDom.colorAsinCandidates).length > 0
+            ? amazonDom.colorAsinCandidates
+            : mobileDom?.colorAsinCandidates || {};
+
+        const sizeLookupTasks: Array<Promise<void>> = [];
         if (amazonAsin && availableSizes.length > 1 && Object.keys(mergedSizeAsins).length > 0) {
           const sizesToLookup = availableSizes
             .filter((sz) => {
@@ -3428,33 +3698,62 @@ async function startServer() {
             })
             .slice(0, 8);
 
-          await Promise.all(
-            sizesToLookup.map(async (sz) => {
-              const rawCandidates = mergedSizeAsins[sz] || [];
-              const candidates =
-                priceEur === undefined
-                  ? rawCandidates.filter((a) => a.toUpperCase() !== amazonAsin.toUpperCase())
-                  : rawCandidates;
-              const orderedAsins = (candidates.length > 0 ? candidates : rawCandidates).slice(0, 2);
-              for (const candAsin of orderedAsins) {
-                if (candAsin.toUpperCase() === amazonAsin.toUpperCase()) continue;
-                try {
-                  const sibRes = await fetchPageHtml(
-                    `https://${parsedUrl.hostname}/dp/${candAsin}?th=1&psc=1`
-                  );
-                  if (!sibRes.html) continue;
-                  const sibPrice = extractAmazonBuyboxPrice(sibRes.html);
-                  if (typeof sibPrice === 'number') {
-                    collectedSizePrices[sz] = sibPrice;
+          for (const sz of sizesToLookup) {
+            sizeLookupTasks.push(
+              (async () => {
+                const rawCandidates = mergedSizeAsins[sz] || [];
+                const candidates =
+                  priceEur === undefined
+                    ? rawCandidates.filter((a) => a.toUpperCase() !== amazonAsin.toUpperCase())
+                    : rawCandidates;
+                const orderedAsins = (candidates.length > 0 ? candidates : rawCandidates).slice(0, 2);
+                for (const candAsin of orderedAsins) {
+                  if (candAsin.toUpperCase() === amazonAsin.toUpperCase()) continue;
+                  const sib = await fetchAmazonSiblingDetails(candAsin);
+                  if (typeof sib.priceEur === 'number') {
+                    collectedSizePrices[sz] = sib.priceEur;
                     break;
                   }
-                } catch {
-                  // ignore sibling ASIN fetch failures
                 }
-              }
-            })
-          );
+              })()
+            );
+          }
         }
+
+        const colorLookupTasks: Array<Promise<void>> = [];
+        const collectedColorImages: Record<string, string> = {
+          ...(colorImages || {}),
+        };
+        if (amazonAsin && availableColors.length > 1 && Object.keys(mergedColorAsins).length > 0) {
+          const colorsMissingImage = availableColors
+            .filter((col) => !collectedColorImages[col] && Boolean(mergedColorAsins[col]))
+            .slice(0, 8);
+          for (const col of colorsMissingImage) {
+            const candAsin = mergedColorAsins[col];
+            if (!candAsin || candAsin.toUpperCase() === amazonAsin.toUpperCase()) continue;
+            colorLookupTasks.push(
+              (async () => {
+                const sib = await fetchAmazonSiblingDetails(candAsin);
+                if (sib.imageUrl) {
+                  collectedColorImages[col] = sib.imageUrl;
+                }
+              })()
+            );
+          }
+        }
+
+        if ((sizeLookupTasks.length > 0 || colorLookupTasks.length > 0) && remainingBudgetMs() >= 2500) {
+          try {
+            await withStepTimeout(
+              Promise.all([...sizeLookupTasks, ...colorLookupTasks]),
+              Math.min(8500, remainingBudgetMs() - 1500),
+              'amazon sibling variants'
+            );
+          } catch {
+            // keep partial sibling results collected before timeout
+          }
+        }
+        colorImages = sanitizeColorImagesMap(collectedColorImages);
 
         sizePrices = sanitizeSizePricesMapServer(collectedSizePrices);
         if (priceEur === undefined && activeSizeKey && sizePrices?.[activeSizeKey] !== undefined) {
@@ -3576,24 +3875,38 @@ async function startServer() {
             .filter(Boolean)
             .join('\n');
 
-          let aiRes;
-          try {
-            aiRes = await ai.models.generateContent({
-              model: 'gemini-4-hydrogen',
-              contents: searchPrompt,
-              config: {
-                tools: [{ googleSearch: {} }, { urlContext: {} }],
-              },
-            });
-          } catch (comboErr) {
-            if (isQuotaOrRateError(comboErr)) throw comboErr;
-            aiRes = await ai.models.generateContent({
-              model: 'gemini-4-hydrogen',
-              contents: searchPrompt,
-              config: {
-                tools: [{ googleSearch: {} }],
-              },
-            });
+          let aiRes: { text?: string } | undefined;
+          const comboTimeoutMs = Math.min(12_000, remainingBudgetMs());
+          if (comboTimeoutMs >= 3000) {
+            try {
+              aiRes = await withStepTimeout(
+                ai.models.generateContent({
+                  model: 'gemini-4-hydrogen',
+                  contents: searchPrompt,
+                  config: {
+                    tools: [{ googleSearch: {} }, { urlContext: {} }],
+                  },
+                }),
+                comboTimeoutMs,
+                'gemini inspect combo'
+              );
+            } catch (comboErr) {
+              if (isQuotaOrRateError(comboErr)) throw comboErr;
+              const searchTimeoutMs = Math.min(9000, remainingBudgetMs());
+              if (searchTimeoutMs >= 3000) {
+                aiRes = await withStepTimeout(
+                  ai.models.generateContent({
+                    model: 'gemini-4-hydrogen',
+                    contents: searchPrompt,
+                    config: {
+                      tools: [{ googleSearch: {} }],
+                    },
+                  }),
+                  searchTimeoutMs,
+                  'gemini inspect search'
+                );
+              }
+            }
           }
 
           const enriched = extractJsonFromText<{
@@ -3789,6 +4102,7 @@ async function startServer() {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
       Accept: 'application/pdf,application/zip,application/octet-stream,*/*;q=0.8',
       'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+      Referer: `${parsedDocUrl.origin}/`,
     };
 
     const fetchBinaryWithTlsFallback = async (
@@ -3841,8 +4155,28 @@ async function startServer() {
           throw err;
         }
         return new Promise((resolve, reject) => {
+          let settled = false;
           const u = new URL(targetUrl);
           const client = u.protocol === 'https:' ? https : http;
+          let hardTimer: ReturnType<typeof setTimeout> | undefined;
+          const finishResolve = (val: {
+            status: number;
+            contentType: string;
+            contentDisposition: string;
+            buffer: Buffer;
+            tooLarge: boolean;
+          }) => {
+            if (settled) return;
+            settled = true;
+            if (hardTimer) clearTimeout(hardTimer);
+            resolve(val);
+          };
+          const finishReject = (err: unknown) => {
+            if (settled) return;
+            settled = true;
+            if (hardTimer) clearTimeout(hardTimer);
+            reject(err);
+          };
           const r = client.request(
             u,
             {
@@ -3860,8 +4194,8 @@ async function startServer() {
                   const nextUrl = new URL(loc, u).toString();
                   if (!isPrivateOrLocalHostname(new URL(nextUrl).hostname)) {
                     void fetchBinaryWithTlsFallback(nextUrl, hopsLeft - 1)
-                      .then(resolve)
-                      .catch(reject);
+                      .then(finishResolve)
+                      .catch(finishReject);
                     return;
                   }
                 } catch {
@@ -3881,7 +4215,7 @@ async function startServer() {
                 chunks.push(chunk);
               });
               resp.on('end', () => {
-                resolve({
+                finishResolve({
                   status,
                   contentType: String(resp.headers['content-type'] || '').toLowerCase(),
                   contentDisposition: String(resp.headers['content-disposition'] || ''),
@@ -3891,7 +4225,7 @@ async function startServer() {
               });
               resp.on('close', () => {
                 if (tooLarge) {
-                  resolve({
+                  finishResolve({
                     status,
                     contentType: String(resp.headers['content-type'] || '').toLowerCase(),
                     contentDisposition: String(resp.headers['content-disposition'] || ''),
@@ -3900,10 +4234,14 @@ async function startServer() {
                   });
                 }
               });
+              resp.on('error', finishReject);
             }
           );
+          hardTimer = setTimeout(() => {
+            r.destroy(new Error('Document fetch hard timeout'));
+          }, 12500);
           r.on('timeout', () => r.destroy(new Error('Document fetch timeout')));
-          r.on('error', reject);
+          r.on('error', finishReject);
           r.end();
         });
       }

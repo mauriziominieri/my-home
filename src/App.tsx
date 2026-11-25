@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { signOut, User } from 'firebase/auth';
 import {
   collection,
-  deleteDoc,
+  deleteDoc as rawDeleteDoc,
   deleteField,
   doc,
   getDoc,
@@ -10,11 +10,12 @@ import {
   onSnapshot,
   query,
   serverTimestamp,
-  setDoc,
+  setDoc as rawSetDoc,
   where,
-  writeBatch,
+  writeBatch as rawWriteBatch,
 } from 'firebase/firestore';
 import {
+  AlertTriangle,
   BookOpen,
   Car,
   CheckCircle2,
@@ -40,13 +41,18 @@ import {
   clearGmailAccessToken,
   connectGmailAccount,
   db,
+  dismissFirestoreQuotaExceeded,
   FIREBASE_PROJECT_ID,
   getGmailAccessToken,
   GMAIL_OAUTH_PROJECT_ID,
   handleFirestoreError,
+  isFirestoreQuotaExceededActive,
+  notifyFirestoreQuotaExceeded,
   OperationType,
+  raceWithFirestoreQuotaAbort,
   signInPrimaryOwner,
   subscribeAuthWithGmailCleanup,
+  subscribeFirestoreQuotaExceeded,
 } from './firebase';
 import {
   ArticleAttachmentType,
@@ -167,6 +173,25 @@ import { ClimateAutopilotInput } from './components/ClimateAutopilotCard';
 import { InfoGuideView } from './components/InfoGuideView';
 import { VaultCloudNotice } from './components/VaultCloudNotice';
 
+const setDoc: typeof rawSetDoc = ((...args: unknown[]) =>
+  raceWithFirestoreQuotaAbort(
+    (rawSetDoc as (...inner: unknown[]) => Promise<void>)(...args)
+  )) as typeof rawSetDoc;
+
+const deleteDoc: typeof rawDeleteDoc = ((...args: unknown[]) =>
+  raceWithFirestoreQuotaAbort(
+    (rawDeleteDoc as (...inner: unknown[]) => Promise<void>)(...args)
+  )) as typeof rawDeleteDoc;
+
+const writeBatch: typeof rawWriteBatch = ((...args: unknown[]) => {
+  const batch = (rawWriteBatch as (...inner: unknown[]) => ReturnType<typeof rawWriteBatch>)(
+    ...args
+  );
+  const origCommit = batch.commit.bind(batch);
+  batch.commit = () => raceWithFirestoreQuotaAbort(origCommit());
+  return batch;
+}) as typeof rawWriteBatch;
+
 const EXTENDED_ROOM_OVERRIDES_KEY = 'myhome_research_terrace_rooms_v1';
 
 function readExtendedRoomOverrides(): Record<string, string> {
@@ -277,9 +302,12 @@ function isResilientFirestoreOutage(error: unknown): boolean {
   if (lower.includes('permission-denied') || lower.includes('unauthenticated')) {
     return false;
   }
+  if (lower.includes('resource-exhausted') || (lower.includes('quota') && lower.includes('exceeded'))) {
+    notifyFirestoreQuotaExceeded();
+    return true;
+  }
   return (
     lower.includes('quota') ||
-    lower.includes('resource-exhausted') ||
     lower.includes('unavailable') ||
     lower.includes('deadline-exceeded') ||
     lower.includes('internal') ||
@@ -303,8 +331,17 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [firestoreQuotaExceeded, setFirestoreQuotaExceeded] = useState(() =>
+    isFirestoreQuotaExceededActive()
+  );
   const [activeNav, setActiveNav] = useState<NavSection>(() => resolveInitialNavSection());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    return subscribeFirestoreQuotaExceeded((active) => {
+      setFirestoreQuotaExceeded(active);
+    });
+  }, []);
 
   const navigateToSection = useCallback((section: NavSection) => {
     setActiveNav(section);
@@ -440,14 +477,26 @@ export default function App() {
     return () => unsubscribe();
   }, [authReady, activeUid]);
 
-  // Registra automaticamente l'ownerUid corrente su appMeta/owner per GitHub Actions -> Firestore
+  // Registra l'ownerUid su appMeta/owner solo se mancante o diverso, evitando scritture ridondanti a ogni avvio
   useEffect(() => {
     if (!authReady || !user || user.email !== 'mauminieri@gmail.com') return;
-    void setDoc(
-      doc(db, 'appMeta', 'owner'),
-      { ownerUid: user.uid, updatedAt: serverTimestamp() },
-      { merge: true }
-    ).catch(() => {});
+    let cancelled = false;
+    const ownerRef = doc(db, 'appMeta', 'owner');
+    void getDoc(ownerRef)
+      .then((snap) => {
+        if (cancelled) return;
+        const currentOwner = snap.exists() ? snap.data()?.ownerUid : null;
+        if (currentOwner === user.uid) return;
+        return setDoc(
+          ownerRef,
+          { ownerUid: user.uid, updatedAt: serverTimestamp() },
+          { merge: true }
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [authReady, user]);
 
   // Subscribe to private Firestore data when signed in as owner.
@@ -3571,6 +3620,39 @@ export default function App() {
               )}
             </div>
         </header>
+
+        {firestoreQuotaExceeded && (
+          <div
+            role="alert"
+            className="sticky top-14 z-30 px-4 sm:px-6 py-2.5 bg-amber-950/95 backdrop-blur-xs border-b border-amber-500/50 text-xs text-amber-100 flex flex-wrap items-center justify-between gap-2.5 shadow-md"
+          >
+            <div className="flex items-start sm:items-center gap-2 min-w-0">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5 sm:mt-0" />
+              <span className="leading-relaxed">
+                <strong className="font-semibold text-amber-200">
+                  Quota gratuita giornaliera Firestore esaurita:
+                </strong>{' '}
+                i nuovi salvataggi e il caricamento file su cloud sono bloccati fino al reset automatico di domani.{' '}
+                <a
+                  href="https://firebase.google.com/pricing#cloud-firestore"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline text-amber-300 hover:text-amber-100 font-medium"
+                >
+                  Dettagli limiti Spark
+                </a>
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => dismissFirestoreQuotaExceeded()}
+              className="text-amber-200/80 hover:text-amber-100 p-1 rounded shrink-0"
+              aria-label="Chiudi avviso quota Firestore"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {authError && (
           <div className="px-5 py-2 bg-rose-500/10 border-b border-rose-500/30 text-xs text-rose-200 flex items-center justify-between gap-2">

@@ -118,11 +118,163 @@ export interface FirestoreErrorInfo {
   };
 }
 
+const quotaExceededListeners = new Set<(active: boolean) => void>();
+let quotaExceededActive = false;
+let quotaExceededObserved = false;
+
+export function isFirestoreQuotaExceededActive(): boolean {
+  return quotaExceededActive;
+}
+
+export function subscribeFirestoreQuotaExceeded(
+  listener: (active: boolean) => void
+): () => void {
+  quotaExceededListeners.add(listener);
+  listener(quotaExceededActive);
+  return () => {
+    quotaExceededListeners.delete(listener);
+  };
+}
+
+export function notifyFirestoreQuotaExceeded(): void {
+  quotaExceededObserved = true;
+  if (!quotaExceededActive) {
+    quotaExceededActive = true;
+    quotaExceededListeners.forEach((listener) => listener(true));
+  }
+}
+
+export function dismissFirestoreQuotaExceeded(): void {
+  if (quotaExceededActive) {
+    quotaExceededActive = false;
+    quotaExceededListeners.forEach((listener) => listener(false));
+  }
+}
+
+export function raceWithFirestoreQuotaAbort<T>(promise: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const observedAtStart = quotaExceededObserved;
+    let unsubscribe = () => {};
+
+    const cleanup = () => {
+      unsubscribe();
+      if (timer) clearTimeout(timer);
+    };
+
+    const abortForQuota = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(
+        new Error(
+          'Quota giornaliera gratuita di scrittura Firestore esaurita. Il limite si azzera automaticamente domani.'
+        )
+      );
+    };
+
+    let isInitialEmission = true;
+    unsubscribe = subscribeFirestoreQuotaExceeded((active) => {
+      if (isInitialEmission) {
+        isInitialEmission = false;
+        return;
+      }
+      if (active) {
+        abortForQuota();
+      }
+    });
+
+    // If quota was already hit earlier in this session and SDK suppresses duplicate backoff logs,
+    // abort after a brief window so spinners never keep spinning.
+    if (observedAtStart) {
+      timer = setTimeout(() => {
+        notifyFirestoreQuotaExceeded();
+        abortForQuota();
+      }, 1500);
+    }
+
+    promise.then(
+      (val) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        quotaExceededObserved = false;
+        dismissFirestoreQuotaExceeded();
+        resolve(val);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(err);
+      }
+    );
+  });
+}
+
+function textLooksLikeFirestoreQuotaError(raw: string): boolean {
+  const lower = raw.toLowerCase();
+  return (
+    lower.includes('resource-exhausted') ||
+    (lower.includes('quota') && lower.includes('exceeded'))
+  );
+}
+
+// Intercept @firebase/firestore SDK backoff/quota logs so UI alerts appear even when promises stay pending in retry backoff
+if (typeof window !== 'undefined' && typeof console !== 'undefined') {
+  const win = window as unknown as { __myHomeQuotaLogHooked?: boolean };
+  if (!win.__myHomeQuotaLogHooked) {
+    win.__myHomeQuotaLogHooked = true;
+    const origError = console.error.bind(console);
+    const origWarn = console.warn.bind(console);
+    const inspectLogArgs = (args: unknown[]) => {
+      try {
+        const joined = args
+          .map((a) => (a instanceof Error ? `${a.message}` : String(a)))
+          .join(' ');
+        if (
+          (joined.includes('@firebase/firestore') || joined.includes('firestore.googleapis.com')) &&
+          textLooksLikeFirestoreQuotaError(joined)
+        ) {
+          notifyFirestoreQuotaExceeded();
+        }
+      } catch {
+        // ignore log inspection failures
+      }
+    };
+    console.error = (...args: unknown[]) => {
+      inspectLogArgs(args);
+      origError(...args);
+    };
+    console.warn = (...args: unknown[]) => {
+      inspectLogArgs(args);
+      origWarn(...args);
+    };
+  }
+}
+
+export function isFirestoreQuotaError(error: unknown): boolean {
+  const code = (error as { code?: string })?.code || '';
+  const msg = error instanceof Error ? error.message : String(error);
+  const matched = textLooksLikeFirestoreQuotaError(`${code} ${msg}`);
+  if (matched) {
+    notifyFirestoreQuotaExceeded();
+  }
+  return matched;
+}
+
 export function handleFirestoreError(
   error: unknown,
   operationType: OperationType,
   path: string | null
 ): never {
+  if (isFirestoreQuotaError(error)) {
+    const quotaMsg =
+      'Quota giornaliera gratuita di scrittura Firestore raggiunta. Il limite si azzera automaticamente domani; nel frattempo le modifiche locali restano temporanee.';
+    console.warn('Firestore Quota Exceeded:', { operationType, path });
+    throw new Error(quotaMsg);
+  }
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowDownWideNarrow,
@@ -41,6 +41,7 @@ import {
   ProductResearchRecord,
   ProductResearchStatus,
 } from '../types/home';
+import { subscribeFirestoreQuotaExceeded } from '../firebase';
 import { getDocumentsForResearch, parseResearchDocumentRef } from '../utils/carGroceryStore';
 import {
   buildDocumentSharePayload,
@@ -203,6 +204,15 @@ type ResearchViewMode = 'grid' | 'list';
 const VIEW_MODE_STORAGE_KEY = 'myhome_researches_view_mode';
 const GROUP_BY_ROOM_STORAGE_KEY = 'myhome_researches_group_by_room';
 const SIZE_PRICES_CACHE_STORAGE_KEY = 'myhome_researches_size_prices_v1';
+const COLOR_IMAGES_CACHE_STORAGE_KEY = 'myhome_researches_color_images_v1';
+
+let backendApiUnavailable =
+  typeof window !== 'undefined' &&
+  (window.location.hostname.endsWith('.github.io') || import.meta.env.BASE_URL !== '/');
+
+function isBackendApiUnavailable(): boolean {
+  return backendApiUnavailable;
+}
 
 function buildSizePriceCacheKey(rawUrl?: string): string {
   if (!rawUrl) return '';
@@ -249,6 +259,44 @@ function writeCachedSizePrices(url: string | undefined, sizePrices: Record<strin
       }
     }
     window.localStorage.setItem(SIZE_PRICES_CACHE_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+function readCachedColorImages(url?: string): Record<string, string> | undefined {
+  if (typeof window === 'undefined' || !url) return undefined;
+  const key = buildSizePriceCacheKey(url);
+  if (!key) return undefined;
+  try {
+    const raw = window.localStorage.getItem(COLOR_IMAGES_CACHE_STORAGE_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return sanitizeColorImagesMap(parsed?.[key]);
+  } catch {
+    return undefined;
+  }
+}
+
+function writeCachedColorImages(
+  url: string | undefined,
+  colorImages: Record<string, string> | undefined
+) {
+  if (typeof window === 'undefined' || !url || !colorImages) return;
+  const clean = sanitizeColorImagesMap(colorImages);
+  const key = buildSizePriceCacheKey(url);
+  if (!clean || !key) return;
+  try {
+    const raw = window.localStorage.getItem(COLOR_IMAGES_CACHE_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, Record<string, string>>) : {};
+    const next: Record<string, Record<string, string>> = { ...parsed, [key]: clean };
+    const keys = Object.keys(next);
+    if (keys.length > 60) {
+      for (const oldKey of keys.slice(0, keys.length - 60)) {
+        delete next[oldKey];
+      }
+    }
+    window.localStorage.setItem(COLOR_IMAGES_CACHE_STORAGE_KEY, JSON.stringify(next));
   } catch {
     // ignore storage quota errors
   }
@@ -758,6 +806,202 @@ function buildResearchSharePayload(item: ProductResearchRecord): ShareableItemPa
   };
 }
 
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+interface CollapsibleColorChipsProps {
+  colors: string[];
+  activeColor?: string;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  readOnly?: boolean;
+  onSelectColor: (color: string) => void;
+}
+
+function CollapsibleColorChips({
+  colors,
+  activeColor,
+  expanded,
+  onToggleExpand,
+  readOnly = false,
+  onSelectColor,
+}: CollapsibleColorChipsProps) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const measureRef = useRef<HTMLDivElement | null>(null);
+  const [fitCount, setFitCount] = useState<number | null>(null);
+  const [promotedColor, setPromotedColor] = useState<string | null>(null);
+
+  const activeNorm = activeColor?.trim().toLowerCase() || '';
+
+  useEffect(() => {
+    if (expanded || !activeNorm) {
+      setPromotedColor(null);
+      return;
+    }
+    setPromotedColor((curr) =>
+      curr && curr.trim().toLowerCase() === activeNorm ? curr : null
+    );
+  }, [expanded, activeNorm]);
+
+  const orderedColors = useMemo(() => {
+    if (!promotedColor || expanded) return colors;
+    const promoNorm = promotedColor.trim().toLowerCase();
+    const matched = colors.find((c) => c.trim().toLowerCase() === promoNorm);
+    if (!matched) return colors;
+    return [matched, ...colors.filter((c) => c !== matched)];
+  }, [colors, promotedColor, expanded]);
+
+  useLayoutEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+
+    const computeFit = () => {
+      const measureEl = measureRef.current;
+      if (!measureEl) return;
+      const parentEl = wrapper.parentElement;
+      const availableWidth =
+        parentEl && parentEl.clientWidth > 0 ? parentEl.clientWidth : wrapper.clientWidth;
+      if (availableWidth > 0) {
+        measureEl.style.width = `${availableWidth}px`;
+      }
+      const chipEls = Array.from(measureEl.querySelectorAll<HTMLElement>('[data-color-chip]'));
+      if (chipEls.length === 0) {
+        setFitCount(colors.length);
+        return;
+      }
+      const firstTop = chipEls[0].offsetTop;
+      let count = 0;
+      for (const el of chipEls) {
+        if (el.offsetTop <= firstTop + 3) {
+          count += 1;
+        } else {
+          break;
+        }
+      }
+      const safeCount = Math.max(1, count);
+      setFitCount(safeCount);
+
+      if (!expanded && activeNorm && safeCount < orderedColors.length) {
+        const activeIdx = orderedColors.findIndex(
+          (c) => c.trim().toLowerCase() === activeNorm
+        );
+        if (activeIdx >= safeCount) {
+          setPromotedColor(orderedColors[activeIdx]);
+        }
+      }
+    };
+
+    computeFit();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => computeFit());
+      ro.observe(wrapper.parentElement || wrapper);
+      return () => ro.disconnect();
+    }
+    window.addEventListener('resize', computeFit);
+    return () => window.removeEventListener('resize', computeFit);
+  }, [orderedColors, colors.length, expanded, activeNorm]);
+
+  if (colors.length === 0) return null;
+
+  const hasExtraColors = fitCount !== null && fitCount < orderedColors.length;
+  const shownColors =
+    expanded || fitCount === null ? orderedColors : orderedColors.slice(0, fitCount);
+
+  return (
+    <div ref={wrapperRef} className="relative space-y-1 shrink-0 max-w-full">
+      {/* Hidden mirror row at parent available width to measure how many chips fit cleanly on 1 line */}
+      <div
+        ref={measureRef}
+        aria-hidden="true"
+        className="flex flex-wrap items-center gap-1 min-h-[24px] invisible absolute left-0 top-0 h-0 overflow-hidden pointer-events-none select-none"
+      >
+        <span className="text-[10px] uppercase tracking-wide text-slate-500 mr-0.5 leading-none">
+          Colori:
+        </span>
+        {orderedColors.map((colOpt) => (
+          <span
+            key={colOpt}
+            data-color-chip="1"
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] leading-4 font-semibold"
+          >
+            <ColorSwatchDot color={colOpt} size="sm" />
+            <span>{colOpt}</span>
+          </span>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1 min-h-[24px]">
+        <span className="text-[10px] uppercase tracking-wide text-slate-500 mr-0.5 leading-none">
+          Colori:
+        </span>
+        {shownColors.map((colOpt) => {
+          const isActive = activeNorm === colOpt.trim().toLowerCase();
+          return readOnly ? (
+            <span
+              key={colOpt}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] leading-4 ${
+                isActive
+                  ? 'bg-sky-500/15 border-sky-400/70 text-slate-100 font-semibold'
+                  : 'bg-slate-950/70 border-slate-800 text-slate-400'
+              }`}
+            >
+              <ColorSwatchDot color={colOpt} size="sm" />
+              <span>{colOpt}</span>
+            </span>
+          ) : (
+            <button
+              key={colOpt}
+              type="button"
+              onClick={() => onSelectColor(colOpt)}
+              title={`Seleziona colore ${colOpt}`}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] leading-4 transition-colors ${
+                isActive
+                  ? 'bg-sky-500/15 border-sky-400/70 text-slate-100 font-semibold'
+                  : 'bg-slate-950/70 border-slate-800 text-slate-300 hover:border-slate-600'
+              }`}
+            >
+              <ColorSwatchDot color={colOpt} size="sm" />
+              <span>{colOpt}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {hasExtraColors && (
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className="inline-flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300 font-medium"
+        >
+          {expanded ? (
+            <>
+              <ChevronUp className="w-3 h-3" />
+              Mostra meno
+            </>
+          ) : (
+            <>
+              <ChevronDown className="w-3 h-3" />
+              Vedi tutti i colori ({colors.length})
+            </>
+          )}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function ResearchesView({
   researches,
   researchDocuments,
@@ -878,6 +1122,7 @@ export function ResearchesView({
         room?: string | null;
         status?: ProductResearchStatus;
         paidPriceEur?: number | null;
+        docTypes?: Record<string, ArticleAttachmentType>;
       }
     >
   >({});
@@ -897,15 +1142,16 @@ export function ResearchesView({
 
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [expandedSpecsIds, setExpandedSpecsIds] = useState<Record<string, boolean>>({});
+  const [expandedColorsIds, setExpandedColorsIds] = useState<Record<string, boolean>>({});
   const [openAttachmentsIds, setOpenAttachmentsIds] = useState<Record<string, boolean>>({});
   const [cardAttachType, setCardAttachType] = useState<Record<string, ArticleAttachmentType>>({});
   const [uploadingResearchId, setUploadingResearchId] = useState<string | null>(null);
   const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
-  const [updatingDocTypeId, setUpdatingDocTypeId] = useState<string | null>(null);
   const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
   const cardFileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadTargetItemRef = useRef<ProductResearchRecord | null>(null);
   const uploadTargetDocTypeRef = useRef<ArticleAttachmentType | null>(null);
+  const replaceLinkDocTargetRef = useRef<HomeDocumentRecord | null>(null);
 
   const [pendingDelete, setPendingDelete] = useState<ProductResearchRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -919,6 +1165,12 @@ export function ResearchesView({
   const [pendingEditSave, setPendingEditSave] = useState<{
     item: ProductResearchRecord;
     payload: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'>;
+    skipProductUpdate?: boolean;
+    docTypeChanges?: Array<{
+      docId: string;
+      researchId: string;
+      nextType: ArticleAttachmentType;
+    }>;
   } | null>(null);
   const [shareItem, setShareItem] = useState<ShareableItemPayload | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -927,6 +1179,22 @@ export function ResearchesView({
   const [movingId, setMovingId] = useState<string | null>(null);
   const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
   const [attachedThumbnails, setAttachedThumbnails] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    return subscribeFirestoreQuotaExceeded((active) => {
+      if (!active) return;
+      setRefreshingId(null);
+      setSavingPendingId(null);
+      setSavingEdit(false);
+      setSavingNew(false);
+      setInspecting(false);
+      setDeleting(false);
+      setDeletingDocId(null);
+      setUploadingResearchId(null);
+      setMovingId(null);
+      setLazySizePriceLoadingIds({});
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1072,12 +1340,23 @@ export function ResearchesView({
     extractedFrom?: 'page-meta' | 'url-slug';
     blockedBySite?: boolean;
   }> {
+    if (isBackendApiUnavailable()) {
+      return clientFallbackInspectUrl(validUrl);
+    }
     try {
-      const resp = await fetch('/api/researches/inspect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: validUrl, refresh }),
-      });
+      const resp = await fetchWithTimeout(
+        '/api/researches/inspect',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: validUrl, refresh }),
+        },
+        29_000
+      );
+      if (resp.status === 405 || resp.status === 404) {
+        backendApiUnavailable = true;
+        return clientFallbackInspectUrl(validUrl);
+      }
       if (resp.ok) {
         const data = (await resp.json()) as {
           url?: string;
@@ -1137,6 +1416,10 @@ export function ResearchesView({
             }
           }
           const cleanColorImages = sanitizeColorImagesMap(data.colorImages);
+          if (cleanColorImages) {
+            writeCachedColorImages(validUrl, cleanColorImages);
+            writeCachedColorImages(data.url, cleanColorImages);
+          }
           const cleanSizePrices = sanitizeSizePricesMap(data.sizePrices);
           if (cleanSizePrices) {
             writeCachedSizePrices(validUrl, cleanSizePrices);
@@ -1177,7 +1460,16 @@ export function ResearchesView({
           };
         }
       }
-    } catch {
+    } catch (err) {
+      if (
+        refresh &&
+        err instanceof DOMException &&
+        err.name === 'AbortError'
+      ) {
+        throw new Error(
+          'Il sito ha impiegato troppo tempo a rispondere. Riprova tra qualche istante.'
+        );
+      }
       // Fallback to client URL slug parsing below
     }
     return clientFallbackInspectUrl(validUrl);
@@ -1192,17 +1484,16 @@ export function ResearchesView({
     if (!researchId || docs.length === 0) return { downloaded: 0, linked: 0 };
     const existingDocs = getDocumentsForResearch(researchDocuments, researchId);
     const existingUrlSet = new Set(
-      existingDocs.map((d) => (d.cloudUrl || '').split('#')[0].toLowerCase()).filter(Boolean)
+      existingDocs
+        .map((d) => (d.cloudUrl || '').split('#')[0].toLowerCase())
+        .filter(Boolean)
     );
     const existingFileNameSet = new Set(
       existingDocs.map((d) => (d.fileName || '').trim().toLowerCase()).filter(Boolean)
     );
-    const existingOpaqueTitleSet = new Set(
-      existingDocs
-        .filter((d) => !d.fileName && !d.cloudUrl)
-        .map((d) => d.title.trim().toLowerCase())
-        .filter(Boolean)
-    );
+    const existingTitleList = existingDocs
+      .map((d) => d.title.trim().toLowerCase())
+      .filter(Boolean);
 
     const extractUniqueUrlFileName = (rawUrl: string): string => {
       try {
@@ -1238,57 +1529,118 @@ export function ResearchesView({
       const fullTitle = cleanProd
         ? `${cleanDocTitle} · ${cleanProd}`.slice(0, 80)
         : cleanDocTitle.slice(0, 80);
-      if (!urlFileName && existingOpaqueTitleSet.has(fullTitle.toLowerCase())) continue;
-
-      let uploadedOk = false;
-      try {
-        const resp = await fetch('/api/researches/fetch-document', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: docItem.url, title: cleanDocTitle }),
-        });
-        const ct = String(resp.headers.get('content-type') || '').toLowerCase();
-        if (resp.ok && !ct.includes('application/json')) {
-          const blob = await resp.blob();
-          if (blob.size > 0 && blob.size <= MAX_CLOUD_FILE_BYTES) {
-            const rawHeaderName = resp.headers.get('x-document-filename');
-            let fileName = '';
-            if (rawHeaderName) {
-              try {
-                fileName = decodeURIComponent(rawHeaderName).trim();
-              } catch {
-                fileName = rawHeaderName.trim();
-              }
-            }
-            if (!fileName) {
-              const slug = cleanDocTitle.replace(/[^a-zA-Z0-9_-]+/g, '_') || 'documento';
-              fileName = `${slug}.${ct.includes('zip') ? 'zip' : 'pdf'}`;
-            }
-            if (existingFileNameSet.has(fileName.toLowerCase())) {
-              existingUrlSet.add(normUrl);
-              continue;
-            }
-            const file = new File([blob], fileName, {
-              type: blob.type || ct || 'application/pdf',
-            });
-            await onUploadResearchDocument(
-              researchId,
-              docType,
-              fullTitle,
-              provider,
-              file
-            );
-            downloaded += 1;
-            uploadedOk = true;
-            existingFileNameSet.add(fileName.toLowerCase());
-            existingUrlSet.add(normUrl);
-          }
-        }
-      } catch {
-        // Fall through to link-only attachment fallback
+      const cleanDocTitleLow = cleanDocTitle.toLowerCase();
+      const fullTitleLow = fullTitle.toLowerCase();
+      const alreadyHasSameTitle = existingTitleList.some(
+        (existingTitle) =>
+          existingTitle === fullTitleLow ||
+          existingTitle === cleanDocTitleLow ||
+          existingTitle.startsWith(`${cleanDocTitleLow} · `)
+      );
+      if (alreadyHasSameTitle) {
+        continue;
       }
 
-      if (!uploadedOk && onAddResearchDocumentLink && docItem.url.length <= 231) {
+      const tryUploadBlobToVault = async (
+        blob: Blob,
+        contentTypeHeader: string,
+        rawHeaderName?: string | null
+      ): Promise<'uploaded' | 'duplicate' | 'failed'> => {
+        if (blob.size <= 0 || blob.size > MAX_CLOUD_FILE_BYTES) return 'failed';
+        const ctLow = contentTypeHeader.toLowerCase();
+        if (ctLow.includes('text/html') || ctLow.includes('application/json')) return 'failed';
+        let fileName = '';
+        if (rawHeaderName) {
+          try {
+            fileName = decodeURIComponent(rawHeaderName).trim();
+          } catch {
+            fileName = rawHeaderName.trim();
+          }
+        }
+        if (!fileName) {
+          const urlSeg = extractUniqueUrlFileName(docItem.url);
+          if (urlSeg) fileName = urlSeg;
+        }
+        if (!fileName) {
+          const slug = cleanDocTitle.replace(/[^a-zA-Z0-9_-]+/g, '_') || 'documento';
+          fileName = `${slug}.${ctLow.includes('zip') ? 'zip' : 'pdf'}`;
+        }
+        if (existingFileNameSet.has(fileName.toLowerCase())) {
+          existingUrlSet.add(normUrl);
+          return 'duplicate';
+        }
+        const file = new File([blob], fileName, {
+          type: blob.type || ctLow || 'application/pdf',
+        });
+        await onUploadResearchDocument(
+          researchId,
+          docType,
+          fullTitle,
+          provider,
+          file
+        );
+        downloaded += 1;
+        existingFileNameSet.add(fileName.toLowerCase());
+        existingUrlSet.add(normUrl);
+        existingTitleList.push(fullTitleLow);
+        return 'uploaded';
+      };
+
+      let uploadOutcome: 'uploaded' | 'duplicate' | 'failed' = 'failed';
+      if (!isBackendApiUnavailable()) {
+        try {
+          const resp = await fetchWithTimeout(
+            '/api/researches/fetch-document',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: docItem.url, title: cleanDocTitle }),
+            },
+            18_000
+          );
+          if (resp.status === 405 || resp.status === 404) {
+            backendApiUnavailable = true;
+          } else {
+            const ct = String(resp.headers.get('content-type') || '').toLowerCase();
+            if (resp.ok && !ct.includes('application/json')) {
+              const blob = await resp.blob();
+              uploadOutcome = await tryUploadBlobToVault(
+                blob,
+                ct,
+                resp.headers.get('x-document-filename')
+              );
+            }
+          }
+        } catch {
+          // Fall through to browser direct fetch fallback
+        }
+      }
+
+      // Direct browser fetch fallback (uses user's residential IP when server datacenter IP is WAF-blocked or on static host)
+      if (uploadOutcome === 'failed') {
+        try {
+          const directResp = await fetchWithTimeout(
+            docItem.url,
+            { method: 'GET', mode: 'cors' },
+            10_000
+          );
+          const directCt = String(directResp.headers.get('content-type') || '').toLowerCase();
+          if (directResp.ok && !directCt.includes('text/html')) {
+            const directBlob = await directResp.blob();
+            uploadOutcome = await tryUploadBlobToVault(
+              directBlob,
+              directCt,
+              directResp.headers.get('content-disposition')?.match(
+                /filename\*?=(?:UTF-8''|["']?)([^"';\r\n]+)["']?/i
+              )?.[1]
+            );
+          }
+        } catch {
+          // CORS or network block on direct fetch -> fall back to direct link below
+        }
+      }
+
+      if (uploadOutcome === 'failed' && onAddResearchDocumentLink && docItem.url.length <= 231) {
         try {
           const kindLabel =
             docItem.kind === 'bim_3d'
@@ -1306,15 +1658,13 @@ export function ResearchesView({
           );
           linked += 1;
           existingUrlSet.add(normUrl);
+          existingTitleList.push(fullTitleLow);
         } catch {
           // Ignore individual link-save errors
         }
       }
     }
 
-    if (downloaded + linked > 0) {
-      setOpenAttachmentsIds((prev) => ({ ...prev, [researchId]: true }));
-    }
     return { downloaded, linked };
   }
 
@@ -1696,11 +2046,18 @@ export function ResearchesView({
 
   async function confirmSaveEdit() {
     if (!pendingEditSave || readOnly) return;
-    const { item, payload } = pendingEditSave;
+    const { item, payload, skipProductUpdate, docTypeChanges } = pendingEditSave;
     setSavingEdit(true);
     setLinkError(null);
     try {
-      await onUpdateResearch(item.id, payload);
+      if (!skipProductUpdate) {
+        await onUpdateResearch(item.id, payload);
+      }
+      if (docTypeChanges && docTypeChanges.length > 0 && onUpdateResearchDocumentType) {
+        for (const chg of docTypeChanges) {
+          await onUpdateResearchDocumentType(chg.docId, chg.researchId, chg.nextType);
+        }
+      }
       setPendingEditSave(null);
       setEditingId((curr) => (curr === item.id ? null : curr));
       handleDiscardPendingCardEdit(item.id);
@@ -1710,7 +2067,11 @@ export function ResearchesView({
         delete next[item.id];
         return next;
       });
-      setFeedback(`Prodotto "${payload.title}" aggiornato e salvato su Firestore.`);
+      setFeedback(
+        skipProductUpdate && docTypeChanges && docTypeChanges.length > 0
+          ? `Tipologia degli allegati per "${payload.title}" salvata su Firestore.`
+          : `Prodotto "${payload.title}" aggiornato e salvato su Firestore.`
+      );
     } catch (err) {
       setLinkError(
         err instanceof Error
@@ -1725,6 +2086,12 @@ export function ResearchesView({
 
   async function handleRefreshFromSite(item: ProductResearchRecord) {
     if (readOnly) return;
+    if (isBackendApiUnavailable()) {
+      setLinkNotice(
+        `L'aggiornamento automatico dal sito richiede il server backend (app AI Studio o server locale): su GitHub Pages statico non è disponibile l'API /api/researches/inspect.`
+      );
+      return;
+    }
     setRefreshingId(item.id);
     setLinkError(null);
     setLinkNotice(null);
@@ -1854,7 +2221,10 @@ export function ResearchesView({
   function getEffectiveItem(item: ProductResearchRecord): ProductResearchRecord {
     const pending = pendingCardEdits[item.id];
     const resolvedColorImages =
-      pending?.colorImages || item.colorImages || lazyColorImages[item.id];
+      pending?.colorImages ||
+      item.colorImages ||
+      lazyColorImages[item.id] ||
+      readCachedColorImages(item.url);
     const resolvedSizePrices =
       pending?.sizePrices ||
       item.sizePrices ||
@@ -1893,6 +2263,55 @@ export function ResearchesView({
     };
   }
 
+  function hasPendingFieldDiff(
+    item: ProductResearchRecord,
+    merged: {
+      title?: string;
+      color?: string;
+      imageUrl?: string;
+      size?: string;
+      priceEur?: number | null;
+      room?: string | null;
+      status?: ProductResearchStatus;
+      paidPriceEur?: number | null;
+    }
+  ): boolean {
+    const nextTitle = merged.title !== undefined ? merged.title : item.title;
+    const nextColor = merged.color !== undefined ? merged.color : item.color;
+    const nextImageUrl = merged.imageUrl !== undefined ? merged.imageUrl : item.imageUrl;
+    const nextSize = merged.size !== undefined ? merged.size : item.size;
+    const nextPrice =
+      merged.priceEur !== undefined
+        ? merged.priceEur === null
+          ? undefined
+          : merged.priceEur
+        : item.priceEur;
+    const nextRoom =
+      merged.room !== undefined
+        ? normalizeResearchRoom(merged.room || undefined)
+        : normalizeResearchRoom(item.room);
+    const nextStatus = merged.status !== undefined ? merged.status : item.status;
+    const nextPaid =
+      nextStatus !== 'acquistato'
+        ? undefined
+        : merged.paidPriceEur !== undefined
+          ? merged.paidPriceEur === null
+            ? undefined
+            : merged.paidPriceEur
+          : item.paidPriceEur;
+
+    return !(
+      nextTitle === item.title &&
+      nextColor === item.color &&
+      nextImageUrl === item.imageUrl &&
+      nextSize === item.size &&
+      nextPrice === item.priceEur &&
+      nextRoom === normalizeResearchRoom(item.room) &&
+      nextStatus === item.status &&
+      nextPaid === item.paidPriceEur
+    );
+  }
+
   function stageCardEdit(
     item: ProductResearchRecord,
     patch: {
@@ -1912,44 +2331,15 @@ export function ResearchesView({
     setLinkError(null);
     setPendingCardEdits((prev) => {
       const merged = { ...(prev[item.id] || {}), ...patch };
-      const nextTitle = merged.title !== undefined ? merged.title : item.title;
-      const nextColor = merged.color !== undefined ? merged.color : item.color;
-      const nextImageUrl = merged.imageUrl !== undefined ? merged.imageUrl : item.imageUrl;
-      const nextSize = merged.size !== undefined ? merged.size : item.size;
-      const nextPrice =
-        merged.priceEur !== undefined
-          ? merged.priceEur === null
-            ? undefined
-            : merged.priceEur
-          : item.priceEur;
-      const nextRoom =
-        merged.room !== undefined
-          ? normalizeResearchRoom(merged.room || undefined)
-          : normalizeResearchRoom(item.room);
       const nextStatus = merged.status !== undefined ? merged.status : item.status;
       if (nextStatus !== 'acquistato') {
         merged.paidPriceEur = item.paidPriceEur !== undefined ? null : undefined;
       }
-      const nextPaid =
-        nextStatus !== 'acquistato'
-          ? undefined
-          : merged.paidPriceEur !== undefined
-            ? merged.paidPriceEur === null
-              ? undefined
-              : merged.paidPriceEur
-            : item.paidPriceEur;
 
-      const isIdentical =
-        nextTitle === item.title &&
-        nextColor === item.color &&
-        nextImageUrl === item.imageUrl &&
-        nextSize === item.size &&
-        nextPrice === item.priceEur &&
-        nextRoom === normalizeResearchRoom(item.room) &&
-        nextStatus === item.status &&
-        nextPaid === item.paidPriceEur;
+      const fieldsChanged = hasPendingFieldDiff(item, merged);
+      const hasDocTypeChanges = Boolean(merged.docTypes && Object.keys(merged.docTypes).length > 0);
 
-      if (isIdentical) {
+      if (!fieldsChanged && !hasDocTypeChanges) {
         if (!prev[item.id]) return prev;
         const copy = { ...prev };
         delete copy[item.id];
@@ -1958,6 +2348,66 @@ export function ResearchesView({
 
       return { ...prev, [item.id]: merged };
     });
+  }
+
+  function handleQuickDocTypeChange(
+    item: ProductResearchRecord,
+    docItem: HomeDocumentRecord,
+    nextType: ArticleAttachmentType
+  ) {
+    if (readOnly || !onUpdateResearchDocumentType) return;
+    setFeedback(null);
+    setLinkError(null);
+    const savedType = parseResearchDocumentRef(docItem.referenceCode)?.docType || 'altro';
+    setPendingCardEdits((prev) => {
+      const existingEntry = prev[item.id] || {};
+      const nextDocTypes = { ...(existingEntry.docTypes || {}) };
+      if (nextType === savedType) {
+        delete nextDocTypes[docItem.id];
+      } else {
+        nextDocTypes[docItem.id] = nextType;
+      }
+      const cleanedDocTypes = Object.keys(nextDocTypes).length > 0 ? nextDocTypes : undefined;
+      const fieldsChanged = hasPendingFieldDiff(item, existingEntry);
+      if (!fieldsChanged && !cleanedDocTypes) {
+        if (!prev[item.id]) return prev;
+        const copy = { ...prev };
+        delete copy[item.id];
+        return copy;
+      }
+      return {
+        ...prev,
+        [item.id]: {
+          ...existingEntry,
+          docTypes: cleanedDocTypes,
+        },
+      };
+    });
+  }
+
+  function collectPendingDocTypeChanges(item: ProductResearchRecord) {
+    const pendingDocTypes = pendingCardEdits[item.id]?.docTypes;
+    if (!pendingDocTypes) return [];
+    const itemDocsList = getDocumentsForResearch(researchDocuments, item.id);
+    const changes: Array<{
+      docId: string;
+      researchId: string;
+      nextType: ArticleAttachmentType;
+    }> = [];
+    for (const [docId, nextType] of Object.entries(pendingDocTypes)) {
+      const docObj = itemDocsList.find((d) => d.id === docId);
+      if (!docObj) continue;
+      const parsedRef = parseResearchDocumentRef(docObj.referenceCode);
+      const savedType = parsedRef?.docType || 'altro';
+      if (savedType !== nextType) {
+        changes.push({
+          docId,
+          researchId: parsedRef?.researchId || item.id,
+          nextType,
+        });
+      }
+    }
+    return changes;
   }
 
   function handleDiscardPendingCardEdit(itemId: string) {
@@ -1975,12 +2425,21 @@ export function ResearchesView({
 
   function requestCommitPendingCardEdit(item: ProductResearchRecord) {
     if (readOnly) return;
-    if (!pendingCardEdits[item.id]) return;
+    const pending = pendingCardEdits[item.id];
+    if (!pending) return;
     setLinkError(null);
     setFeedback(null);
     const effective = getEffectiveItem(item);
+    const fieldsChanged = hasPendingFieldDiff(item, pending);
+    const docTypeChanges = collectPendingDocTypeChanges(item);
+    if (!fieldsChanged && docTypeChanges.length === 0) {
+      handleDiscardPendingCardEdit(item.id);
+      return;
+    }
     setPendingEditSave({
       item,
+      skipProductUpdate: !fieldsChanged,
+      docTypeChanges,
       payload: buildPreservedUpdatePayload(item, {
         title: effective.title,
         color: effective.color,
@@ -1997,25 +2456,35 @@ export function ResearchesView({
 
   async function handleCommitPendingCardEdit(item: ProductResearchRecord) {
     if (readOnly) return;
-    if (!pendingCardEdits[item.id]) return;
+    const pending = pendingCardEdits[item.id];
+    if (!pending) return;
     const effective = getEffectiveItem(item);
+    const fieldsChanged = hasPendingFieldDiff(item, pending);
+    const docTypeChanges = collectPendingDocTypeChanges(item);
     setSavingPendingId(item.id);
     setLinkError(null);
     try {
-      await onUpdateResearch(
-        item.id,
-        buildPreservedUpdatePayload(item, {
-          title: effective.title,
-          color: effective.color,
-          imageUrl: effective.imageUrl,
-          colorImages: effective.colorImages,
-          size: effective.size,
-          priceEur: effective.priceEur,
-          room: normalizeResearchRoom(effective.room),
-          status: effective.status,
-          paidPriceEur: effective.paidPriceEur,
-        })
-      );
+      if (fieldsChanged) {
+        await onUpdateResearch(
+          item.id,
+          buildPreservedUpdatePayload(item, {
+            title: effective.title,
+            color: effective.color,
+            imageUrl: effective.imageUrl,
+            colorImages: effective.colorImages,
+            size: effective.size,
+            priceEur: effective.priceEur,
+            room: normalizeResearchRoom(effective.room),
+            status: effective.status,
+            paidPriceEur: effective.paidPriceEur,
+          })
+        );
+      }
+      if (docTypeChanges.length > 0 && onUpdateResearchDocumentType) {
+        for (const chg of docTypeChanges) {
+          await onUpdateResearchDocumentType(chg.docId, chg.researchId, chg.nextType);
+        }
+      }
       setPendingCardEdits((prev) => {
         if (!prev[item.id]) return prev;
         const next = { ...prev };
@@ -2063,7 +2532,10 @@ export function ResearchesView({
       effective.color,
       item.availableColors
     ).slice(0, 160);
-    const knownColorImages = effective.colorImages || lazyColorImages[item.id];
+    const knownColorImages =
+      effective.colorImages ||
+      lazyColorImages[item.id] ||
+      readCachedColorImages(item.url);
     const nextVariantImg = findColorImageUrl(knownColorImages, nextColor);
     if (nextVariantImg) {
       setBrokenImages((prev) => {
@@ -2081,51 +2553,75 @@ export function ResearchesView({
 
     if (
       (!knownColorImages || Object.keys(knownColorImages).length === 0) &&
-      /^https?:\/\/.+/.test(item.url) &&
-      !lazyInspectingIdsRef.current.has(item.id)
+      /^https?:\/\/.+/.test(item.url)
     ) {
-      lazyInspectingIdsRef.current.add(item.id);
-      void inspectProductLink(item.url)
-        .then((inspected) => {
-          if (inspected.sizePrices && Object.keys(inspected.sizePrices).length > 0) {
-            setLazySizePrices((prev) => ({ ...prev, [item.id]: inspected.sizePrices! }));
-          }
-          if (!inspected.colorImages || Object.keys(inspected.colorImages).length === 0) return;
-          setLazyColorImages((prev) => ({ ...prev, [item.id]: inspected.colorImages! }));
-          const targetColor = latestQuickColorRef.current[item.id] || nextColor;
-          const fetchedVariantImg = findColorImageUrl(inspected.colorImages, targetColor);
-          if (fetchedVariantImg) {
-            setBrokenImages((prev) => {
+      if (isBackendApiUnavailable()) {
+        setLinkNotice(
+          `Le foto dei singoli colori per "${item.title}" non sono ancora salvate su Firestore. Seleziona un colore o usa "Aggiorna dal sito" una volta dall'app AI Studio per sincronizzarle anche su questo browser.`
+        );
+        return;
+      }
+      if (!lazyInspectingIdsRef.current.has(item.id)) {
+        lazyInspectingIdsRef.current.add(item.id);
+        void inspectProductLink(item.url)
+          .then(async (inspected) => {
+            if (inspected.sizePrices && Object.keys(inspected.sizePrices).length > 0) {
+              setLazySizePrices((prev) => ({ ...prev, [item.id]: inspected.sizePrices! }));
+            }
+            if (!inspected.colorImages || Object.keys(inspected.colorImages).length === 0) return;
+            setLazyColorImages((prev) => ({ ...prev, [item.id]: inspected.colorImages! }));
+            writeCachedColorImages(item.url, inspected.colorImages);
+            const targetColor = latestQuickColorRef.current[item.id] || nextColor;
+            const fetchedVariantImg = findColorImageUrl(inspected.colorImages, targetColor);
+            if (fetchedVariantImg) {
+              setBrokenImages((prev) => {
+                if (!prev[item.id]) return prev;
+                const copy = { ...prev };
+                delete copy[item.id];
+                return copy;
+              });
+            }
+            const nextAvailColors =
+              inspected.availableColors &&
+              inspected.availableColors.length > (item.availableColors?.length || 0)
+                ? inspected.availableColors
+                : undefined;
+            setPendingCardEdits((prev) => {
               if (!prev[item.id]) return prev;
-              const copy = { ...prev };
-              delete copy[item.id];
-              return copy;
+              return {
+                ...prev,
+                [item.id]: {
+                  ...prev[item.id],
+                  colorImages: inspected.colorImages,
+                  ...(fetchedVariantImg ? { imageUrl: fetchedVariantImg } : {}),
+                },
+              };
             });
-          }
-          const nextAvailColors =
-            inspected.availableColors &&
-            inspected.availableColors.length > (item.availableColors?.length || 0)
-              ? inspected.availableColors
-              : undefined;
-          setPendingCardEdits((prev) => {
-            if (!prev[item.id]) return prev;
-            return {
-              ...prev,
-              [item.id]: {
-                ...prev[item.id],
-                ...(nextAvailColors ? { availableColors: nextAvailColors } : {}),
-                colorImages: inspected.colorImages,
-                ...(fetchedVariantImg ? { imageUrl: fetchedVariantImg } : {}),
-              },
-            };
+
+            // Auto-persist newly discovered colorImages to Firestore so static hosts (Chrome/GitHub Pages) have them immediately
+            const existingCount = item.colorImages ? Object.keys(item.colorImages).length : 0;
+            const fetchedCount = Object.keys(inspected.colorImages).length;
+            if (fetchedCount > existingCount) {
+              try {
+                await onUpdateResearch(
+                  item.id,
+                  buildPreservedUpdatePayload(item, {
+                    colorImages: inspected.colorImages,
+                    ...(nextAvailColors ? { availableColors: nextAvailColors } : {}),
+                  })
+                );
+              } catch {
+                // ignore background metadata sync errors
+              }
+            }
+          })
+          .catch(() => {
+            // ignore lazy variant image lookup failures
+          })
+          .finally(() => {
+            lazyInspectingIdsRef.current.delete(item.id);
           });
-        })
-        .catch(() => {
-          // ignore lazy variant image lookup failures
-        })
-        .finally(() => {
-          lazyInspectingIdsRef.current.delete(item.id);
-        });
+      }
     }
   }
 
@@ -2151,45 +2647,74 @@ export function ResearchesView({
 
     if (
       (!knownSizePrices || Object.keys(knownSizePrices).length === 0) &&
-      /^https?:\/\/.+/.test(item.url) &&
-      !lazyInspectingIdsRef.current.has(item.id)
+      /^https?:\/\/.+/.test(item.url)
     ) {
-      lazyInspectingIdsRef.current.add(item.id);
-      setLazySizePriceLoadingIds((prev) => ({ ...prev, [item.id]: true }));
-      void inspectProductLink(item.url)
-        .then((inspected) => {
-          if (inspected.colorImages && Object.keys(inspected.colorImages).length > 0) {
-            setLazyColorImages((prev) => ({ ...prev, [item.id]: inspected.colorImages! }));
-          }
-          if (!inspected.sizePrices || Object.keys(inspected.sizePrices).length === 0) return;
-          setLazySizePrices((prev) => ({ ...prev, [item.id]: inspected.sizePrices! }));
-          writeCachedSizePrices(item.url, inspected.sizePrices);
-          const targetSize = latestQuickSizeRef.current[item.id] || nextSize;
-          const fetchedPrice = findSizePrice(inspected.sizePrices, targetSize);
-          setPendingCardEdits((prev) => {
-            if (!prev[item.id]) return prev;
-            return {
-              ...prev,
-              [item.id]: {
-                ...prev[item.id],
-                sizePrices: inspected.sizePrices,
-                ...(typeof fetchedPrice === 'number' ? { priceEur: fetchedPrice } : {}),
-              },
-            };
+      if (isBackendApiUnavailable()) {
+        setLinkNotice(
+          `I prezzi delle singole taglie per "${item.title}" non sono ancora salvati su Firestore. Usa "Aggiorna dal sito" una volta dall'app AI Studio per sincronizzarli anche su questo browser.`
+        );
+        return;
+      }
+      if (!lazyInspectingIdsRef.current.has(item.id)) {
+        lazyInspectingIdsRef.current.add(item.id);
+        setLazySizePriceLoadingIds((prev) => ({ ...prev, [item.id]: true }));
+        void inspectProductLink(item.url)
+          .then(async (inspected) => {
+            if (inspected.colorImages && Object.keys(inspected.colorImages).length > 0) {
+              setLazyColorImages((prev) => ({ ...prev, [item.id]: inspected.colorImages! }));
+              writeCachedColorImages(item.url, inspected.colorImages);
+            }
+            if (!inspected.sizePrices || Object.keys(inspected.sizePrices).length === 0) return;
+            setLazySizePrices((prev) => ({ ...prev, [item.id]: inspected.sizePrices! }));
+            writeCachedSizePrices(item.url, inspected.sizePrices);
+            const targetSize = latestQuickSizeRef.current[item.id] || nextSize;
+            const fetchedPrice = findSizePrice(inspected.sizePrices, targetSize);
+            setPendingCardEdits((prev) => {
+              if (!prev[item.id]) return prev;
+              return {
+                ...prev,
+                [item.id]: {
+                  ...prev[item.id],
+                  sizePrices: inspected.sizePrices,
+                  ...(typeof fetchedPrice === 'number' ? { priceEur: fetchedPrice } : {}),
+                },
+              };
+            });
+
+            const existingSizePricesCount = item.sizePrices ? Object.keys(item.sizePrices).length : 0;
+            const fetchedSizePricesCount = Object.keys(inspected.sizePrices).length;
+            const nextAvailSizes =
+              inspected.availableSizes &&
+              inspected.availableSizes.length > (item.availableSizes?.length || 0)
+                ? inspected.availableSizes
+                : undefined;
+            if (fetchedSizePricesCount > existingSizePricesCount) {
+              try {
+                await onUpdateResearch(
+                  item.id,
+                  buildPreservedUpdatePayload(item, {
+                    sizePrices: inspected.sizePrices,
+                    ...(nextAvailSizes ? { availableSizes: nextAvailSizes } : {}),
+                  })
+                );
+              } catch {
+                // ignore background metadata sync errors
+              }
+            }
+          })
+          .catch(() => {
+            // ignore lazy variant price lookup failures
+          })
+          .finally(() => {
+            lazyInspectingIdsRef.current.delete(item.id);
+            setLazySizePriceLoadingIds((prev) => {
+              if (!prev[item.id]) return prev;
+              const copy = { ...prev };
+              delete copy[item.id];
+              return copy;
+            });
           });
-        })
-        .catch(() => {
-          // ignore lazy variant price lookup failures
-        })
-        .finally(() => {
-          lazyInspectingIdsRef.current.delete(item.id);
-          setLazySizePriceLoadingIds((prev) => {
-            if (!prev[item.id]) return prev;
-            const copy = { ...prev };
-            delete copy[item.id];
-            return copy;
-          });
-        });
+      }
     }
   }
 
@@ -2224,11 +2749,13 @@ export function ResearchesView({
 
   function triggerCardFileUpload(
     item: ProductResearchRecord,
-    overrideDocType?: ArticleAttachmentType
+    overrideDocType?: ArticleAttachmentType,
+    replaceLinkDoc?: HomeDocumentRecord
   ) {
     if (readOnly) return;
     uploadTargetItemRef.current = item;
     uploadTargetDocTypeRef.current = overrideDocType || null;
+    replaceLinkDocTargetRef.current = replaceLinkDoc || null;
     cardFileInputRef.current?.click();
   }
 
@@ -2237,8 +2764,10 @@ export function ResearchesView({
     event.target.value = '';
     const targetItem = uploadTargetItemRef.current;
     const overrideDocType = uploadTargetDocTypeRef.current;
+    const replaceLinkDoc = replaceLinkDocTargetRef.current;
     uploadTargetItemRef.current = null;
     uploadTargetDocTypeRef.current = null;
+    replaceLinkDocTargetRef.current = null;
     if (!file || !targetItem || readOnly) return;
 
     if (file.size > MAX_CLOUD_FILE_BYTES) {
@@ -2252,18 +2781,32 @@ export function ResearchesView({
       overrideDocType || cardAttachType[targetItem.id] || 'scontrino_fattura';
     const typeLabel = getAttachmentTypeMeta(docType).label;
     const baseName = file.name.replace(/\.[^.]+$/, '').slice(0, 36);
+    const docTitle = replaceLinkDoc?.title
+      ? replaceLinkDoc.title.slice(0, 80)
+      : `${targetItem.title.slice(0, 36)} · ${baseName || typeLabel}`.slice(0, 80);
     setUploadingResearchId(targetItem.id);
     setLinkError(null);
     try {
       await onUploadResearchDocument(
         targetItem.id,
         docType,
-        `${targetItem.title.slice(0, 36)} · ${baseName || typeLabel}`.slice(0, 80),
-        targetItem.brand || targetItem.store,
+        docTitle,
+        replaceLinkDoc?.provider || targetItem.brand || targetItem.store,
         file
       );
+      if (replaceLinkDoc) {
+        try {
+          await onDeleteResearchDocument(replaceLinkDoc.id);
+        } catch {
+          // ignore cleanup failure if replacement succeeded
+        }
+      }
       setOpenAttachmentsIds((prev) => ({ ...prev, [targetItem.id]: true }));
-      setFeedback(`File "${file.name}" allegato a "${targetItem.title}" su Firestore.`);
+      setFeedback(
+        replaceLinkDoc
+          ? `File "${file.name}" salvato nell'archivio al posto del link diretto.`
+          : `File "${file.name}" allegato a "${targetItem.title}" su Firestore.`
+      );
     } catch (err) {
       setLinkError(
         err instanceof Error ? err.message : 'Errore durante il caricamento dell’allegato.'
@@ -2332,34 +2875,31 @@ export function ResearchesView({
     }
   }
 
-  async function handleChangeDocType(
-    docItem: HomeDocumentRecord,
-    researchId: string,
-    nextType: ArticleAttachmentType
-  ) {
-    if (readOnly || !onUpdateResearchDocumentType) return;
-    setUpdatingDocTypeId(docItem.id);
-    setLinkError(null);
-    try {
-      await onUpdateResearchDocumentType(docItem.id, researchId, nextType);
-      setFeedback(
-        `Tipo allegato aggiornato a "${getAttachmentTypeMeta(nextType).label}".`
-      );
-    } catch (err) {
-      setLinkError(
-        err instanceof Error ? err.message : 'Impossibile aggiornare il tipo dell’allegato.'
-      );
-    } finally {
-      setUpdatingDocTypeId(null);
-    }
-  }
-
   async function handleDeleteDoc(docItem: HomeDocumentRecord) {
     if (readOnly) return;
     setDeletingDocId(docItem.id);
     setLinkError(null);
     try {
       await onDeleteResearchDocument(docItem.id);
+      const deletedResearchId = parseResearchDocumentRef(docItem.referenceCode)?.researchId;
+      if (deletedResearchId) {
+        setPendingCardEdits((prev) => {
+          const entry = prev[deletedResearchId];
+          if (!entry?.docTypes || !(docItem.id in entry.docTypes)) return prev;
+          const nextDocTypes = { ...entry.docTypes };
+          delete nextDocTypes[docItem.id];
+          const remainingDocTypes =
+            Object.keys(nextDocTypes).length > 0 ? nextDocTypes : undefined;
+          const copy = { ...prev };
+          const targetItem = researches.find((r) => r.id === deletedResearchId);
+          if (!remainingDocTypes && (!targetItem || !hasPendingFieldDiff(targetItem, entry))) {
+            delete copy[deletedResearchId];
+          } else {
+            copy[deletedResearchId] = { ...entry, docTypes: remainingDocTypes };
+          }
+          return copy;
+        });
+      }
     } catch (err) {
       setLinkError(err instanceof Error ? err.message : 'Impossibile eliminare l’allegato.');
     } finally {
@@ -2390,12 +2930,9 @@ export function ResearchesView({
 
   async function confirmRefreshResearch() {
     if (!pendingRefresh || readOnly) return;
-    try {
-      await handleRefreshFromSite(pendingRefresh);
-      setPendingRefresh(null);
-    } catch {
-      setPendingRefresh(null);
-    }
+    const target = pendingRefresh;
+    setPendingRefresh(null);
+    await handleRefreshFromSite(target);
   }
 
   async function handleCopyUrl(item: ProductResearchRecord) {
@@ -4021,7 +4558,10 @@ export function ResearchesView({
             const visibleDescriptiveSpecs = visibleSpecs.filter(
               (entry) => entry.isBullet || !entry.label
             );
-            const isAttachOpen = Boolean(openAttachmentsIds[item.id]) || itemDocs.length > 0;
+
+            const allAvailableColors = effectiveItem.availableColors || [];
+            const isColorsExpanded = Boolean(expandedColorsIds[item.id]);
+            const isAttachOpen = Boolean(openAttachmentsIds[item.id]);
             const selectedAttachType = cardAttachType[item.id] || 'scontrino_fattura';
             const isUploadingHere = uploadingResearchId === item.id;
             const isRefreshingHere = refreshingId === item.id;
@@ -4603,9 +5143,19 @@ export function ResearchesView({
                         }))
                       }
                       title={`Allegati (${itemDocs.length})`}
-                      className="inline-flex items-center gap-1 px-1.5 py-1 sm:px-2 sm:py-1.5 text-[11px] font-medium text-slate-300 hover:text-sky-300 bg-slate-800/80 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap"
+                      className={`inline-flex items-center gap-1 px-1.5 py-1 sm:px-2 sm:py-1.5 text-[11px] rounded-lg border transition-colors whitespace-nowrap ${
+                        itemDocs.length > 0
+                          ? isAttachOpen
+                            ? 'font-semibold text-emerald-100 bg-emerald-500/30 border-emerald-400/80 shadow-xs shadow-emerald-500/20'
+                            : 'font-semibold text-emerald-200 hover:text-emerald-100 bg-emerald-500/20 hover:bg-emerald-500/30 border-emerald-400/60'
+                          : 'font-medium text-slate-400 hover:text-slate-200 bg-slate-800/70 hover:bg-slate-800 border-transparent'
+                      }`}
                     >
-                      <Paperclip className="w-3 h-3 text-sky-400" />
+                      <Paperclip
+                        className={`w-3 h-3 ${
+                          itemDocs.length > 0 ? 'text-emerald-300' : 'text-slate-400'
+                        }`}
+                      />
                       <span className="sm:hidden tabular-nums">{itemDocs.length}</span>
                       <span className="hidden sm:inline">Allegati ({itemDocs.length})</span>
                     </button>
@@ -4721,7 +5271,7 @@ export function ResearchesView({
                       rel="noreferrer"
                       className={
                         isList
-                          ? 'group relative w-20 h-20 m-2 sm:w-36 md:w-40 sm:h-36 sm:self-start sm:m-2.5 rounded-lg bg-white border border-slate-800/80 flex items-center justify-center p-1 sm:p-1.5 overflow-hidden shrink-0'
+                          ? 'group relative w-20 h-20 m-2 sm:w-36 md:w-40 sm:h-36 sm:self-start sm:my-2 sm:mx-2.5 rounded-lg bg-white border border-slate-800/80 flex items-center justify-center p-1 sm:p-1.5 overflow-hidden shrink-0'
                           : 'group relative h-56 w-full bg-white border-b border-slate-800/80 flex items-center justify-center p-2.5 overflow-hidden shrink-0'
                       }
                     >
@@ -4741,7 +5291,7 @@ export function ResearchesView({
                     <div
                       className={
                         isList
-                          ? 'relative w-20 h-20 m-2 sm:w-36 md:w-40 sm:h-36 sm:self-start sm:m-2.5 rounded-lg bg-gradient-to-b from-slate-800/40 to-slate-950/90 border border-slate-800 flex flex-col items-center justify-center gap-1 p-1.5 sm:p-2.5 text-center shrink-0'
+                          ? 'relative w-20 h-20 m-2 sm:w-36 md:w-40 sm:h-36 sm:self-start sm:my-2 sm:mx-2.5 rounded-lg bg-gradient-to-b from-slate-800/40 to-slate-950/90 border border-slate-800 flex flex-col items-center justify-center gap-1 p-1.5 sm:p-2.5 text-center shrink-0'
                           : 'relative h-56 w-full bg-gradient-to-b from-slate-800/40 to-slate-950/90 border-b border-slate-800 flex flex-col items-center justify-center gap-2.5 p-4 text-center shrink-0'
                       }
                     >
@@ -4794,8 +5344,8 @@ export function ResearchesView({
                   <div
                     className={
                       isList
-                        ? 'py-2 pr-2.5 pl-0 sm:py-2.5 sm:pr-3 sm:pl-0.5 flex-1 flex flex-col gap-1.5 sm:gap-2 min-w-0'
-                        : 'p-3.5 flex-1 flex flex-col gap-2.5 min-w-0'
+                        ? 'pt-2 pb-1.5 pr-2.5 pl-0 sm:pt-2.5 sm:pb-1.5 sm:pr-3 sm:pl-0.5 flex-1 flex flex-col gap-1.5 sm:gap-2 min-w-0'
+                        : 'p-3.5 pb-3 flex-1 flex flex-col gap-2 min-w-0'
                     }
                   >
                   {isList ? (
@@ -4902,51 +5452,26 @@ export function ResearchesView({
                     <div
                       className={
                         isList
-                          ? 'flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-400'
+                          ? 'flex flex-wrap items-start gap-x-4 gap-y-1.5 text-xs text-slate-400'
                           : 'space-y-1.5 text-xs text-slate-400'
                       }
                     >
-                      {effectiveItem.availableColors && effectiveItem.availableColors.length > 0 ? (
-                        <div className="flex flex-wrap items-center gap-1">
-                          <span className="text-[10px] uppercase tracking-wide text-slate-500 mr-0.5">
-                            Colori:
-                          </span>
-                          {effectiveItem.availableColors.map((colOpt) => {
-                            const isActive =
-                              effectiveItem.color?.trim().toLowerCase() ===
-                              colOpt.trim().toLowerCase();
-                            return readOnly ? (
-                              <span
-                                key={colOpt}
-                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] ${
-                                  isActive
-                                    ? 'bg-sky-500/15 border-sky-400/70 text-slate-100 font-semibold'
-                                    : 'bg-slate-950/70 border-slate-800 text-slate-400'
-                                }`}
-                              >
-                                <ColorSwatchDot color={colOpt} size="sm" />
-                                <span>{colOpt}</span>
-                              </span>
-                            ) : (
-                              <button
-                                key={colOpt}
-                                type="button"
-                                onClick={() => handleQuickColorSelect(item, colOpt)}
-                                title={`Seleziona colore ${colOpt}`}
-                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] transition-colors ${
-                                  isActive
-                                    ? 'bg-sky-500/15 border-sky-400/70 text-slate-100 font-semibold'
-                                    : 'bg-slate-950/70 border-slate-800 text-slate-300 hover:border-slate-600'
-                                }`}
-                              >
-                                <ColorSwatchDot color={colOpt} size="sm" />
-                                <span>{colOpt}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
+                      {allAvailableColors.length > 0 ? (
+                        <CollapsibleColorChips
+                          colors={allAvailableColors}
+                          activeColor={effectiveItem.color}
+                          expanded={isColorsExpanded}
+                          onToggleExpand={() =>
+                            setExpandedColorsIds((prev) => ({
+                              ...prev,
+                              [item.id]: !prev[item.id],
+                            }))
+                          }
+                          readOnly={readOnly}
+                          onSelectColor={(colOpt) => handleQuickColorSelect(item, colOpt)}
+                        />
                       ) : effectiveItem.color ? (
-                        <div className="flex flex-wrap items-center gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5 min-h-[24px]">
                           <span
                             className="inline-flex items-center gap-1.5 text-slate-200 font-medium"
                             title={`Colore: ${effectiveItem.color}`}
@@ -4958,8 +5483,8 @@ export function ResearchesView({
                       ) : null}
 
                       {item.availableSizes && item.availableSizes.length > 0 ? (
-                        <div className="flex flex-wrap items-center gap-1">
-                          <span className="text-[10px] uppercase tracking-wide text-slate-500 mr-0.5">
+                        <div className="flex flex-wrap items-center gap-1 min-h-[24px]">
+                          <span className="text-[10px] uppercase tracking-wide text-slate-500 mr-0.5 leading-none">
                             Taglia:
                           </span>
                           {item.availableSizes.map((sizeOpt) => {
@@ -4975,7 +5500,7 @@ export function ResearchesView({
                               <span
                                 key={sizeOpt}
                                 title={sizeTooltip}
-                                className={`px-2 py-0.5 rounded-md border font-mono text-[11px] ${
+                                className={`inline-flex items-center px-2 py-0.5 rounded-md border font-mono text-[11px] leading-4 ${
                                   isActive
                                     ? 'bg-sky-500/15 border-sky-400/70 text-sky-200 font-semibold'
                                     : 'bg-slate-950/70 border-slate-800 text-slate-400'
@@ -4989,7 +5514,7 @@ export function ResearchesView({
                                 type="button"
                                 onClick={() => handleQuickSizeSelect(item, sizeOpt)}
                                 title={sizeTooltip}
-                                className={`px-2 py-0.5 rounded-md border font-mono text-[11px] transition-colors ${
+                                className={`inline-flex items-center px-2 py-0.5 rounded-md border font-mono text-[11px] leading-4 transition-colors ${
                                   isActive
                                     ? 'bg-sky-500/15 border-sky-400/70 text-sky-200 font-semibold'
                                     : 'bg-slate-950/70 border-slate-800 text-slate-300 hover:border-slate-600'
@@ -5001,15 +5526,15 @@ export function ResearchesView({
                           })}
                         </div>
                       ) : effectiveItem.size ? (
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="px-2 py-0.5 rounded-md border border-slate-700 bg-slate-950 font-mono text-[11px] text-slate-200">
+                        <div className="flex flex-wrap items-center gap-1.5 min-h-[24px]">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md border border-slate-700 bg-slate-950 font-mono text-[11px] leading-4 text-slate-200">
                             {effectiveItem.size}
                           </span>
                         </div>
                       ) : null}
 
                       {item.model && (
-                        <div className="font-mono text-[11px] text-slate-400">
+                        <div className="inline-flex items-center min-h-[24px] font-mono text-[11px] text-slate-400">
                           Cod. {item.model}
                         </div>
                       )}
@@ -5166,49 +5691,12 @@ export function ResearchesView({
                     </div>
                   )}
 
-                  {/* Pending Quick Card Edits Confirmation Bar */}
-                  {hasPendingEdits && !readOnly && (
-                    <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-400/40 text-[11px]">
-                      <span className="text-amber-200 font-medium inline-flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
-                        Modifiche non salvate
-                      </span>
-                      <div className="flex items-center gap-1.5 ml-auto">
-                        <button
-                          type="button"
-                          disabled={isSavingPendingHere}
-                          onClick={() => handleDiscardPendingCardEdit(item.id)}
-                          className="px-2 py-1 text-slate-300 hover:text-slate-100 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-md transition-colors disabled:opacity-50"
-                        >
-                          Annulla
-                        </button>
-                        <button
-                          type="button"
-                          disabled={isSavingPendingHere || savingEdit}
-                          onClick={() => requestCommitPendingCardEdit(item)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-md transition-colors disabled:opacity-50"
-                        >
-                          {isSavingPendingHere ||
-                          (savingEdit && pendingEditSave?.item.id === item.id) ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <Check className="w-3 h-3" />
-                          )}
-                          <span>
-                            {isSavingPendingHere ||
-                            (savingEdit && pendingEditSave?.item.id === item.id)
-                              ? 'Salvataggio...'
-                              : 'Salva modifiche'}
-                          </span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
                   {/* 6. Bottom-pinned Attachments & Actions */}
-                  <div className={isList ? 'mt-auto space-y-2' : 'mt-auto space-y-2.5 pt-1'}>
+                  {(!isList || isAttachOpen) && (
+                  <div className={isList ? 'mt-auto space-y-2' : 'mt-auto space-y-2'}>
                     {/* In Grid mode show attachments header row; in List mode show drawer only when expanded/populated */}
-                    {(!isList && (isAttachOpen || !readOnly)) || (isList && isAttachOpen) ? (
+                    {(!isList && (itemDocs.length > 0 || !readOnly || isAttachOpen)) ||
+                    (isList && isAttachOpen) ? (
                       <div className="border-t border-slate-800/70 pt-2 space-y-2">
                         {!isList && (
                           <div className="flex items-center justify-between gap-2">
@@ -5220,10 +5708,33 @@ export function ResearchesView({
                                   [item.id]: !isAttachOpen,
                                 }))
                               }
-                              className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-300 hover:text-sky-300"
+                              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] transition-colors ${
+                                itemDocs.length > 0
+                                  ? isAttachOpen
+                                    ? 'font-semibold text-emerald-100 bg-emerald-500/30 border-emerald-400/80'
+                                    : 'font-semibold text-emerald-200 hover:text-emerald-100 bg-emerald-500/20 hover:bg-emerald-500/30 border-emerald-400/60'
+                                  : 'font-medium text-slate-400 hover:text-slate-200 border-transparent hover:bg-slate-800/70'
+                              }`}
                             >
-                              <Paperclip className="w-3.5 h-3.5 text-sky-400" />
+                              <Paperclip
+                                className={`w-3.5 h-3.5 ${
+                                  itemDocs.length > 0 ? 'text-emerald-300' : 'text-slate-400'
+                                }`}
+                              />
                               <span>Allegati ({itemDocs.length})</span>
+                              {isAttachOpen ? (
+                                <ChevronUp
+                                  className={`w-3 h-3 ${
+                                    itemDocs.length > 0 ? 'text-emerald-300' : 'text-slate-400'
+                                  }`}
+                                />
+                              ) : (
+                                <ChevronDown
+                                  className={`w-3 h-3 ${
+                                    itemDocs.length > 0 ? 'text-emerald-300' : 'text-slate-400'
+                                  }`}
+                                />
+                              )}
                             </button>
 
                             {!readOnly && (
@@ -5281,154 +5792,186 @@ export function ResearchesView({
                           </div>
                         )}
 
-                        {itemDocs.length > 0 && (
+                        {isAttachOpen && itemDocs.length > 0 && (
                           <div className={isList ? 'grid grid-cols-1 md:grid-cols-2 gap-1.5' : 'space-y-1.5'}>
                             {itemDocs.map((docItem) => {
-                              const parsedRef = parseResearchDocumentRef(docItem.referenceCode);
-                              const docMeta = getAttachmentTypeMeta(parsedRef?.docType);
-                              const isImg = docItem.fileMime?.startsWith('image/');
-                              const isLinkOnlyDoc = !docItem.fileSize && Boolean(docItem.cloudUrl);
-                              const openTabHref = isLinkOnlyDoc
-                                ? docItem.cloudUrl
-                                : vaultDocUrls[docItem.id];
-                              return (
-                                <div
-                                  key={docItem.id}
-                                  className="flex items-center justify-between gap-2 bg-slate-950/70 border border-slate-800 rounded-md px-2 py-1.5 text-[11px]"
-                                >
-                                  <div className="min-w-0 flex items-center gap-1.5">
-                                    {isImg ? (
-                                      <ImageIcon className="w-3.5 h-3.5 text-violet-300 shrink-0" />
-                                    ) : isLinkOnlyDoc ? (
-                                      <Link2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                                    ) : (
-                                      <FileText className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                                    )}
-                                    <div className="min-w-0">
+                                const parsedRef = parseResearchDocumentRef(docItem.referenceCode);
+                                const savedDocType = parsedRef?.docType || 'altro';
+                                const effectiveDocType =
+                                  pendingCardEdits[item.id]?.docTypes?.[docItem.id] ?? savedDocType;
+                                const docMeta = getAttachmentTypeMeta(effectiveDocType);
+                                const isImg = docItem.fileMime?.startsWith('image/');
+                                const isLinkOnlyDoc = !docItem.fileSize && Boolean(docItem.cloudUrl);
+                                const openTabHref = isLinkOnlyDoc
+                                  ? docItem.cloudUrl
+                                  : vaultDocUrls[docItem.id];
+                                return (
+                                  <div
+                                    key={docItem.id}
+                                    className="flex items-center justify-between gap-2 bg-slate-950/70 border border-slate-800 rounded-md px-2 py-1.5 text-[11px]"
+                                  >
+                                    <div className="min-w-0 flex items-center gap-1.5">
+                                      {isImg ? (
+                                        <ImageIcon className="w-3.5 h-3.5 text-violet-300 shrink-0" />
+                                      ) : isLinkOnlyDoc ? (
+                                        <Link2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                      ) : (
+                                        <FileText className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                                      )}
+                                      <div className="min-w-0">
+                                        {openTabHref ? (
+                                          <a
+                                            href={openTabHref}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="block text-slate-200 hover:text-sky-300 font-medium truncate transition-colors"
+                                            title={`Apri in nuova scheda: ${docItem.fileName || docItem.title}`}
+                                          >
+                                            {docItem.fileName || docItem.title}
+                                          </a>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            disabled={openingDocId === docItem.id}
+                                            onClick={() => void handleOpenDocInNewTab(docItem)}
+                                            className="block w-full text-left text-slate-200 hover:text-sky-300 font-medium truncate transition-colors disabled:opacity-50"
+                                            title={`Apri in nuova scheda: ${docItem.fileName || docItem.title}`}
+                                          >
+                                            {docItem.fileName || docItem.title}
+                                          </button>
+                                        )}
+                                        <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400">
+                                          {!readOnly && onUpdateResearchDocumentType ? (
+                                            <select
+                                              value={effectiveDocType}
+                                              disabled={
+                                                isSavingPendingHere ||
+                                                (savingEdit && pendingEditSave?.item.id === item.id)
+                                              }
+                                              title="Modifica tipo allegato"
+                                              aria-label={`Modifica tipo per ${docItem.fileName || docItem.title}`}
+                                              onChange={(e) =>
+                                                handleQuickDocTypeChange(
+                                                  item,
+                                                  docItem,
+                                                  e.target.value as ArticleAttachmentType
+                                                )
+                                              }
+                                              className={`px-1.5 py-0.5 rounded border text-[10px] font-medium cursor-pointer focus:outline-none focus:ring-1 focus:ring-sky-500/60 disabled:opacity-50 [color-scheme:dark] ${docMeta.badgeClass}`}
+                                            >
+                                              {ATTACHMENT_TYPE_OPTIONS.map((opt) => (
+                                                <option
+                                                  key={opt.value}
+                                                  value={opt.value}
+                                                  className="bg-slate-900 text-slate-100"
+                                                >
+                                                  {opt.label}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          ) : (
+                                            <span
+                                              className={`px-1.5 py-0.2 rounded border ${docMeta.badgeClass}`}
+                                            >
+                                              {docMeta.label}
+                                            </span>
+                                          )}
+                                          {docItem.fileSize ? (
+                                            <span>{formatFileSize(docItem.fileSize)}</span>
+                                          ) : isLinkOnlyDoc ? (
+                                            <span
+                                              className="text-amber-300/90"
+                                              title="Il sito di origine ha bloccato il download automatico: puoi caricare il file manualmente nell'archivio"
+                                            >
+                                              Link diretto
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-1 shrink-0">
                                       {openTabHref ? (
                                         <a
                                           href={openTabHref}
                                           target="_blank"
                                           rel="noreferrer"
-                                          className="block text-slate-200 hover:text-sky-300 font-medium truncate transition-colors"
-                                          title={`Apri in nuova scheda: ${docItem.fileName || docItem.title}`}
+                                          title="Apri in nuova scheda"
+                                          className="p-1 text-sky-300 hover:bg-slate-800 rounded transition-colors"
                                         >
-                                          {docItem.fileName || docItem.title}
+                                          <ExternalLink className="w-3.5 h-3.5" />
                                         </a>
                                       ) : (
                                         <button
                                           type="button"
                                           disabled={openingDocId === docItem.id}
                                           onClick={() => void handleOpenDocInNewTab(docItem)}
-                                          className="block w-full text-left text-slate-200 hover:text-sky-300 font-medium truncate transition-colors disabled:opacity-50"
-                                          title={`Apri in nuova scheda: ${docItem.fileName || docItem.title}`}
+                                          title="Apri in nuova scheda"
+                                          className="p-1 text-sky-300 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
                                         >
-                                          {docItem.fileName || docItem.title}
+                                          {openingDocId === docItem.id ? (
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                          ) : (
+                                            <ExternalLink className="w-3.5 h-3.5" />
+                                          )}
                                         </button>
                                       )}
-                                      <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400">
-                                        {!readOnly && onUpdateResearchDocumentType ? (
-                                          <select
-                                            value={parsedRef?.docType || 'altro'}
-                                            disabled={updatingDocTypeId === docItem.id}
-                                            title="Modifica tipo allegato"
-                                            aria-label={`Modifica tipo per ${docItem.fileName || docItem.title}`}
-                                            onChange={(e) =>
-                                              void handleChangeDocType(
-                                                docItem,
-                                                parsedRef?.researchId || item.id,
-                                                e.target.value as ArticleAttachmentType
-                                              )
-                                            }
-                                            className={`px-1.5 py-0.5 rounded border text-[10px] font-medium cursor-pointer focus:outline-none focus:ring-1 focus:ring-sky-500/60 disabled:opacity-50 [color-scheme:dark] ${docMeta.badgeClass}`}
-                                          >
-                                            {ATTACHMENT_TYPE_OPTIONS.map((opt) => (
-                                              <option
-                                                key={opt.value}
-                                                value={opt.value}
-                                                className="bg-slate-900 text-slate-100"
-                                              >
-                                                {opt.label}
-                                              </option>
-                                            ))}
-                                          </select>
-                                        ) : (
-                                          <span
-                                            className={`px-1.5 py-0.2 rounded border ${docMeta.badgeClass}`}
-                                          >
-                                            {docMeta.label}
-                                          </span>
-                                        )}
-                                        {docItem.fileSize ? (
-                                          <span>{formatFileSize(docItem.fileSize)}</span>
-                                        ) : isLinkOnlyDoc ? (
-                                          <span>Link diretto</span>
-                                        ) : null}
-                                      </div>
+                                      {isLinkOnlyDoc && !readOnly && (
+                                        <button
+                                          type="button"
+                                          disabled={isUploadingHere}
+                                          onClick={() =>
+                                            triggerCardFileUpload(
+                                              item,
+                                              parsedRef?.docType || 'manuale',
+                                              docItem
+                                            )
+                                          }
+                                          title="Salva file nell'archivio al posto del link diretto"
+                                          className="p-1 text-amber-300 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                                        >
+                                          {isUploadingHere ? (
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                          ) : (
+                                            <Upload className="w-3.5 h-3.5" />
+                                          )}
+                                        </button>
+                                      )}
+                                      {!isLinkOnlyDoc && (
+                                        <button
+                                          type="button"
+                                          disabled={downloadingDocId === docItem.id}
+                                          onClick={() => void handleDownloadDoc(docItem)}
+                                          title="Scarica allegato"
+                                          className="p-1 text-emerald-300 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                                        >
+                                          {downloadingDocId === docItem.id ? (
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                          ) : (
+                                            <Download className="w-3.5 h-3.5" />
+                                          )}
+                                        </button>
+                                      )}
+                                      {!readOnly && (
+                                        <button
+                                          type="button"
+                                          disabled={deletingDocId === docItem.id}
+                                          onClick={() =>
+                                            setPendingDeleteDoc({
+                                              doc: docItem,
+                                              productTitle: effectiveItem.title,
+                                            })
+                                          }
+                                          title="Rimuovi allegato"
+                                          className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
                                     </div>
                                   </div>
-
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    {openTabHref ? (
-                                      <a
-                                        href={openTabHref}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        title="Apri in nuova scheda"
-                                        className="p-1 text-sky-300 hover:bg-slate-800 rounded transition-colors"
-                                      >
-                                        <ExternalLink className="w-3.5 h-3.5" />
-                                      </a>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        disabled={openingDocId === docItem.id}
-                                        onClick={() => void handleOpenDocInNewTab(docItem)}
-                                        title="Apri in nuova scheda"
-                                        className="p-1 text-sky-300 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
-                                      >
-                                        {openingDocId === docItem.id ? (
-                                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                        ) : (
-                                          <ExternalLink className="w-3.5 h-3.5" />
-                                        )}
-                                      </button>
-                                    )}
-                                    {!isLinkOnlyDoc && (
-                                      <button
-                                        type="button"
-                                        disabled={downloadingDocId === docItem.id}
-                                        onClick={() => void handleDownloadDoc(docItem)}
-                                        title="Scarica allegato"
-                                        className="p-1 text-emerald-300 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
-                                      >
-                                        {downloadingDocId === docItem.id ? (
-                                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                        ) : (
-                                          <Download className="w-3.5 h-3.5" />
-                                        )}
-                                      </button>
-                                    )}
-                                    {!readOnly && (
-                                      <button
-                                        type="button"
-                                        disabled={deletingDocId === docItem.id}
-                                        onClick={() =>
-                                          setPendingDeleteDoc({
-                                            doc: docItem,
-                                            productTitle: effectiveItem.title,
-                                          })
-                                        }
-                                        title="Rimuovi allegato"
-                                        className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
+                                );
+                              })}
                           </div>
                         )}
                       </div>
@@ -5436,10 +5979,49 @@ export function ResearchesView({
 
                     {!isList && renderCardActionButtons(false)}
                   </div>
+                  )}
                 </div>
                 </div>
 
                 {isList && renderCardActionButtons(true)}
+
+                {hasPendingEdits && !readOnly && (
+                  <div className="px-3 py-2 border-t border-amber-400/35 bg-amber-500/10 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                    <span className="text-amber-200 font-medium inline-flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+                      Modifiche non salvate
+                    </span>
+                    <div className="flex items-center gap-1.5 ml-auto">
+                      <button
+                        type="button"
+                        disabled={isSavingPendingHere}
+                        onClick={() => handleDiscardPendingCardEdit(item.id)}
+                        className="px-2 py-1 text-slate-300 hover:text-slate-100 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-md transition-colors disabled:opacity-50"
+                      >
+                        Annulla
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isSavingPendingHere || savingEdit}
+                        onClick={() => requestCommitPendingCardEdit(item)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-md transition-colors disabled:opacity-50"
+                      >
+                        {isSavingPendingHere ||
+                        (savingEdit && pendingEditSave?.item.id === item.id) ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Check className="w-3 h-3" />
+                        )}
+                        <span>
+                          {isSavingPendingHere ||
+                          (savingEdit && pendingEditSave?.item.id === item.id)
+                            ? 'Salvataggio...'
+                            : 'Salva modifiche'}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </article>
             );
               };
@@ -5673,7 +6255,13 @@ export function ResearchesView({
                   <span className="font-semibold text-slate-100">
                     {pendingEditSave.payload.title}
                   </span>{' '}
-                  ({pendingEditSave.payload.store}) salvando i nuovi dati su Firestore?
+                  ({pendingEditSave.payload.store}) salvando{' '}
+                  {pendingEditSave.skipProductUpdate &&
+                  pendingEditSave.docTypeChanges &&
+                  pendingEditSave.docTypeChanges.length > 0
+                    ? 'la nuova tipologia degli allegati'
+                    : 'i nuovi dati'}{' '}
+                  su Firestore?
                 </p>
               </div>
             </div>
