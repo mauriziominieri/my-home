@@ -98,6 +98,11 @@ interface ArticlesViewProps {
     provider: string,
     file: File
   ) => Promise<void>;
+  onUpdateArticleDocumentType?: (
+    docId: string,
+    articleId: string,
+    docType: ArticleAttachmentType
+  ) => Promise<void>;
   onDeleteArticleDocument: (docId: string) => Promise<void>;
 }
 
@@ -180,6 +185,7 @@ export function ArticlesView({
   onDeleteArticle,
   onDownloadManual,
   onUploadArticleDocument,
+  onUpdateArticleDocumentType,
   onDeleteArticleDocument,
 }: ArticlesViewProps) {
   const [viewTab, setViewTab] = useState<'casa' | 'catalogo'>('casa');
@@ -247,6 +253,7 @@ export function ArticlesView({
   const [modalDocTitle, setModalDocTitle] = useState('');
   const [uploadingModalDoc, setUploadingModalDoc] = useState(false);
   const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
+  const [updatingDocTypeId, setUpdatingDocTypeId] = useState<string | null>(null);
   const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
   const [shareItem, setShareItem] = useState<ShareableItemPayload | null>(null);
   const modalDocInputRef = useRef<HTMLInputElement | null>(null);
@@ -771,6 +778,28 @@ export function ArticlesView({
       await downloadShareableItem(buildDocumentSharePayload(docItem));
     } finally {
       setDownloadingDocId(null);
+    }
+  }
+
+  async function handleChangeArticleDocType(
+    docItem: HomeDocumentRecord,
+    articleId: string,
+    nextType: ArticleAttachmentType
+  ) {
+    if (readOnly || !onUpdateArticleDocumentType) return;
+    setUpdatingDocTypeId(docItem.id);
+    setActionError('');
+    try {
+      await onUpdateArticleDocumentType(docItem.id, articleId, nextType);
+      setActionNotice(
+        `Tipo allegato aggiornato a "${ATTACHMENT_TYPE_META[nextType].label}".`
+      );
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : 'Errore durante l’aggiornamento del tipo allegato.'
+      );
+    } finally {
+      setUpdatingDocTypeId(null);
     }
   }
 
@@ -1732,13 +1761,25 @@ export function ArticlesView({
                       key={att.id}
                       className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-[11px]"
                     >
-                      <span
-                        className={`px-1.5 py-0.5 text-[10px] rounded border ${
+                      <select
+                        value={att.docType}
+                        aria-label={`Tipo per ${att.file.name}`}
+                        onChange={(e) => {
+                          const nextType = e.target.value as ArticleAttachmentType;
+                          setQueuedAttachments((prev) =>
+                            prev.map((x) => (x.id === att.id ? { ...x, docType: nextType } : x))
+                          );
+                        }}
+                        className={`px-1.5 py-0.5 text-[10px] rounded border cursor-pointer [color-scheme:dark] ${
                           ATTACHMENT_TYPE_META[att.docType].badgeClass
                         }`}
                       >
-                        {ATTACHMENT_TYPE_META[att.docType].label}
-                      </span>
+                        {(Object.keys(ATTACHMENT_TYPE_META) as ArticleAttachmentType[]).map((key) => (
+                          <option key={key} value={key} className="bg-slate-900 text-slate-100">
+                            {ATTACHMENT_TYPE_META[key].label}
+                          </option>
+                        ))}
+                      </select>
                       <span className="text-slate-200 truncate max-w-[180px]">{att.file.name}</span>
                       <button
                         type="button"
@@ -2502,11 +2543,34 @@ export function ArticlesView({
                       >
                         <div className="min-w-0 space-y-0.5">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span
-                              className={`px-1.5 py-0.5 text-[10px] rounded border ${typeMeta.badgeClass}`}
-                            >
-                              {typeMeta.label}
-                            </span>
+                            {!readOnly && onUpdateArticleDocumentType && parsedRef?.articleId ? (
+                              <select
+                                value={parsedRef.docType || 'altro'}
+                                disabled={updatingDocTypeId === docItem.id}
+                                title="Modifica tipo allegato"
+                                aria-label={`Modifica tipo per ${docItem.title}`}
+                                onChange={(e) =>
+                                  void handleChangeArticleDocType(
+                                    docItem,
+                                    parsedRef.articleId,
+                                    e.target.value as ArticleAttachmentType
+                                  )
+                                }
+                                className={`px-1.5 py-0.5 text-[10px] rounded border cursor-pointer focus:outline-none focus:ring-1 focus:ring-sky-500/60 disabled:opacity-50 [color-scheme:dark] ${typeMeta.badgeClass}`}
+                              >
+                                {(Object.keys(ATTACHMENT_TYPE_META) as ArticleAttachmentType[]).map((key) => (
+                                  <option key={key} value={key} className="bg-slate-900 text-slate-100">
+                                    {ATTACHMENT_TYPE_META[key].label}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span
+                                className={`px-1.5 py-0.5 text-[10px] rounded border ${typeMeta.badgeClass}`}
+                              >
+                                {typeMeta.label}
+                              </span>
+                            )}
                             <span className="font-semibold text-slate-100 truncate">
                               {docItem.title}
                             </span>

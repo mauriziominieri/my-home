@@ -70,6 +70,12 @@ import {
 import { AccessUnlockBanner } from './AccessUnlockBanner';
 import { ShareSheetModal } from './ShareSheetModal';
 
+interface InspectedDocumentLink {
+  title: string;
+  url: string;
+  kind?: 'manuale' | 'scheda' | 'bim_3d' | 'certificato';
+}
+
 interface ResearchesViewProps {
   researches: ProductResearchRecord[];
   researchDocuments: HomeDocumentRecord[];
@@ -89,6 +95,19 @@ interface ResearchesViewProps {
     title: string,
     provider: string,
     file: File
+  ) => Promise<void>;
+  onAddResearchDocumentLink?: (
+    researchId: string,
+    docType: ArticleAttachmentType,
+    title: string,
+    provider: string,
+    cloudUrl: string,
+    noteText?: string
+  ) => Promise<void>;
+  onUpdateResearchDocumentType?: (
+    docId: string,
+    researchId: string,
+    docType: ArticleAttachmentType
   ) => Promise<void>;
   onDeleteResearchDocument: (docId: string) => Promise<void>;
   onMoveToArticles?: (item: ProductResearchRecord) => Promise<void>;
@@ -646,7 +665,7 @@ function parseSpecLines(specs?: string): { label?: string; value: string; isBull
         return { value: line.replace(/^[•-]\s*/, '').trim(), isBullet: true };
       }
       const colonIdx = line.indexOf(':');
-      if (colonIdx > 1 && colonIdx < 42) {
+      if (colonIdx > 1 && colonIdx < 42 && !/^https?:/i.test(line)) {
         return {
           label: line.slice(0, colonIdx).trim(),
           value: line.slice(colonIdx + 1).trim(),
@@ -657,14 +676,58 @@ function parseSpecLines(specs?: string): { label?: string; value: string; isBull
     .filter((entry) => Boolean(entry.value));
 }
 
+function splitSpecsAndInfo(raw?: string): { techSpecs: string; infoText: string } {
+  if (!raw) return { techSpecs: '', infoText: '' };
+  const techLines: string[] = [];
+  const infoLines: string[] = [];
+  for (const rawLine of raw.split(/\n+/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (line.startsWith('•') || line.startsWith('- ')) {
+      const cleaned = line.replace(/^[•-]\s*/, '').trim();
+      if (cleaned) infoLines.push(`• ${cleaned}`);
+      continue;
+    }
+    const colonIdx = line.indexOf(':');
+    if (colonIdx > 1 && colonIdx < 42 && !/^https?:/i.test(line)) {
+      techLines.push(line);
+    } else {
+      infoLines.push(`• ${line}`);
+    }
+  }
+  return {
+    techSpecs: techLines.join('\n'),
+    infoText: infoLines.join('\n'),
+  };
+}
+
+function joinSpecsAndInfo(techSpecs: string, infoText: string): string {
+  const techLines = techSpecs
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const infoLines = infoText
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const cleaned = l.replace(/^[•-]\s*/, '').trim();
+      return cleaned ? `• ${cleaned}` : '';
+    })
+    .filter(Boolean);
+  const combined = [...techLines, ...infoLines].join('\n').trim();
+  if (combined.length <= 2000) return combined;
+  return combined.slice(0, 2000).trim();
+}
+
 function buildResearchSharePayload(item: ProductResearchRecord): ShareableItemPayload {
   const statusLabel = getStatusMeta(item.status).label;
   const roomLabel = getResearchRoomLabel(item.room);
   const resolvedBrand = inferProductBrand(item);
-  const priceText = typeof item.priceEur === 'number' ? `€ ${item.priceEur.toFixed(2)}` : 'Non indicato';
+  const priceText = typeof item.priceEur === 'number' ? formatEuroIt(item.priceEur) : 'Non indicato';
   const paidText =
     item.status === 'acquistato' && typeof item.paidPriceEur === 'number'
-      ? `€ ${item.paidPriceEur.toFixed(2)}`
+      ? formatEuroIt(item.paidPriceEur)
       : '';
   const lines = [
     item.title,
@@ -704,6 +767,8 @@ export function ResearchesView({
   onUpdateResearch,
   onDeleteResearch,
   onUploadResearchDocument,
+  onAddResearchDocumentLink,
+  onUpdateResearchDocumentType,
   onDeleteResearchDocument,
   onMoveToArticles,
 }: ResearchesViewProps) {
@@ -737,9 +802,11 @@ export function ResearchesView({
   const [draftPrice, setDraftPrice] = useState('');
   const [draftPaidPrice, setDraftPaidPrice] = useState('');
   const [draftImageUrl, setDraftImageUrl] = useState('');
-  const [draftSpecs, setDraftSpecs] = useState('');
+  const [draftTechSpecs, setDraftTechSpecs] = useState('');
+  const [draftInfoText, setDraftInfoText] = useState('');
   const [draftNotes, setDraftNotes] = useState('');
   const [draftAttachments, setDraftAttachments] = useState<QueuedDraftAttachment[]>([]);
+  const [draftFoundDocuments, setDraftFoundDocuments] = useState<InspectedDocumentLink[]>([]);
   const [draftAttachmentType, setDraftAttachmentType] =
     useState<ArticleAttachmentType>('scontrino_fattura');
 
@@ -788,7 +855,8 @@ export function ResearchesView({
   const [editPrice, setEditPrice] = useState('');
   const [editPaidPrice, setEditPaidPrice] = useState('');
   const [editImageUrl, setEditImageUrl] = useState('');
-  const [editSpecs, setEditSpecs] = useState('');
+  const [editTechSpecs, setEditTechSpecs] = useState('');
+  const [editInfoText, setEditInfoText] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [editSizePrices, setEditSizePrices] = useState<Record<string, number> | undefined>(
     undefined
@@ -833,6 +901,7 @@ export function ResearchesView({
   const [cardAttachType, setCardAttachType] = useState<Record<string, ArticleAttachmentType>>({});
   const [uploadingResearchId, setUploadingResearchId] = useState<string | null>(null);
   const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
+  const [updatingDocTypeId, setUpdatingDocTypeId] = useState<string | null>(null);
   const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
   const cardFileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadTargetItemRef = useRef<ProductResearchRecord | null>(null);
@@ -840,6 +909,12 @@ export function ResearchesView({
 
   const [pendingDelete, setPendingDelete] = useState<ProductResearchRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [pendingDeleteDoc, setPendingDeleteDoc] = useState<{
+    doc: HomeDocumentRecord;
+    productTitle: string;
+  } | null>(null);
+  const [openingDocId, setOpeningDocId] = useState<string | null>(null);
+  const [vaultDocUrls, setVaultDocUrls] = useState<Record<string, string>>({});
   const [pendingRefresh, setPendingRefresh] = useState<ProductResearchRecord | null>(null);
   const [pendingEditSave, setPendingEditSave] = useState<{
     item: ProductResearchRecord;
@@ -852,6 +927,66 @@ export function ResearchesView({
   const [movingId, setMovingId] = useState<string | null>(null);
   const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
   const [attachedThumbnails, setAttachedThumbnails] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const createdUrls: string[] = [];
+
+    async function hydrateVaultDocUrls() {
+      const next: Record<string, string> = {};
+      for (const docItem of researchDocuments) {
+        const isLinkOnlyDoc = !docItem.fileSize && Boolean(docItem.cloudUrl);
+        if (isLinkOnlyDoc || !docItem.attachmentKey) continue;
+        try {
+          const stored = await getVaultFile(docItem.attachmentKey);
+          if (cancelled || !stored?.blob) continue;
+          const fileName = stored.fileName || docItem.fileName || docItem.title;
+          const rawMime = (
+            stored.mimeType ||
+            docItem.fileMime ||
+            stored.blob.type ||
+            ''
+          ).toLowerCase();
+          const isPdf = rawMime.includes('pdf') || /\.pdf$/i.test(fileName);
+          const normalizedMime = isPdf
+            ? 'application/pdf'
+            : rawMime || 'application/octet-stream';
+          const typedBlob =
+            stored.blob.type === normalizedMime
+              ? stored.blob
+              : new Blob([stored.blob], { type: normalizedMime });
+          const objUrl = URL.createObjectURL(typedBlob);
+          createdUrls.push(objUrl);
+          next[docItem.id] = objUrl;
+        } catch {
+          // fallback to on-demand fetch when user clicks
+        }
+      }
+      if (!cancelled) {
+        setVaultDocUrls(next);
+      } else {
+        createdUrls.forEach((u) => URL.revokeObjectURL(u));
+      }
+    }
+
+    void hydrateVaultDocUrls();
+
+    return () => {
+      cancelled = true;
+      createdUrls.forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, [researchDocuments]);
+
+  useEffect(() => {
+    if (!pendingDeleteDoc) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape' && deletingDocId !== pendingDeleteDoc?.doc.id) {
+        setPendingDeleteDoc(null);
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [pendingDeleteDoc, deletingDocId]);
 
   useEffect(() => {
     if (!roomMenuOpen) return;
@@ -933,6 +1068,7 @@ export function ResearchesView({
     model?: string;
     specs?: string;
     notes?: string;
+    documents?: InspectedDocumentLink[];
     extractedFrom?: 'page-meta' | 'url-slug';
     blockedBySite?: boolean;
   }> {
@@ -961,6 +1097,7 @@ export function ResearchesView({
           model?: string;
           specs?: string;
           notes?: string;
+          documents?: Array<{ title?: string; url?: string; kind?: string }>;
           extractedFrom?: 'page-meta' | 'url-slug';
           blockedBySite?: boolean;
         };
@@ -974,6 +1111,31 @@ export function ResearchesView({
           const cleanSizes = Array.isArray(data.availableSizes)
             ? data.availableSizes.map((s) => String(s).trim()).filter(Boolean).slice(0, 24)
             : [];
+          const cleanDocs: InspectedDocumentLink[] = [];
+          const seenDocUrls = new Set<string>();
+          if (Array.isArray(data.documents)) {
+            for (const d of data.documents) {
+              const dUrl = typeof d?.url === 'string' ? d.url.trim() : '';
+              const dTitle = typeof d?.title === 'string' ? d.title.trim() : '';
+              if (!dUrl || !/^https?:\/\/.+/.test(dUrl) || !dTitle) continue;
+              const norm = dUrl.split('#')[0].toLowerCase();
+              if (seenDocUrls.has(norm)) continue;
+              seenDocUrls.add(norm);
+              const kind =
+                d.kind === 'scheda' ||
+                d.kind === 'bim_3d' ||
+                d.kind === 'certificato' ||
+                d.kind === 'manuale'
+                  ? d.kind
+                  : 'manuale';
+              cleanDocs.push({
+                title: dTitle.slice(0, 80),
+                url: dUrl.slice(0, 1000),
+                kind,
+              });
+              if (cleanDocs.length >= 8) break;
+            }
+          }
           const cleanColorImages = sanitizeColorImagesMap(data.colorImages);
           const cleanSizePrices = sanitizeSizePricesMap(data.sizePrices);
           if (cleanSizePrices) {
@@ -1009,6 +1171,7 @@ export function ResearchesView({
             model: data.model || undefined,
             specs: data.specs || undefined,
             notes: data.notes || undefined,
+            documents: cleanDocs.length > 0 ? cleanDocs : undefined,
             extractedFrom: data.extractedFrom,
             blockedBySite: Boolean(data.blockedBySite),
           };
@@ -1018,6 +1181,141 @@ export function ResearchesView({
       // Fallback to client URL slug parsing below
     }
     return clientFallbackInspectUrl(validUrl);
+  }
+
+  async function autoAttachInspectedDocuments(
+    researchId: string,
+    productTitle: string,
+    provider: string,
+    docs: InspectedDocumentLink[]
+  ): Promise<{ downloaded: number; linked: number }> {
+    if (!researchId || docs.length === 0) return { downloaded: 0, linked: 0 };
+    const existingDocs = getDocumentsForResearch(researchDocuments, researchId);
+    const existingUrlSet = new Set(
+      existingDocs.map((d) => (d.cloudUrl || '').split('#')[0].toLowerCase()).filter(Boolean)
+    );
+    const existingFileNameSet = new Set(
+      existingDocs.map((d) => (d.fileName || '').trim().toLowerCase()).filter(Boolean)
+    );
+    const existingOpaqueTitleSet = new Set(
+      existingDocs
+        .filter((d) => !d.fileName && !d.cloudUrl)
+        .map((d) => d.title.trim().toLowerCase())
+        .filter(Boolean)
+    );
+
+    const extractUniqueUrlFileName = (rawUrl: string): string => {
+      try {
+        const parsed = new URL(rawUrl);
+        if (parsed.search && /[?&](id|file|doc|document|attachment|key)=/i.test(parsed.search)) {
+          return '';
+        }
+        const segment = decodeURIComponent(parsed.pathname.split('/').pop() || '')
+          .trim()
+          .toLowerCase();
+        if (/\.(pdf|zip|dwg|obj|3ds|fbx|rfa|ifc|doc|docx)$/i.test(segment)) {
+          return segment;
+        }
+      } catch {
+        // ignore URL parse errors
+      }
+      return '';
+    };
+
+    let downloaded = 0;
+    let linked = 0;
+
+    for (const docItem of docs.slice(0, 6)) {
+      const normUrl = docItem.url.split('#')[0].toLowerCase();
+      if (existingUrlSet.has(normUrl)) continue;
+      const urlFileName = extractUniqueUrlFileName(docItem.url);
+      if (urlFileName && existingFileNameSet.has(urlFileName)) continue;
+
+      const docType: ArticleAttachmentType =
+        docItem.kind === 'certificato' ? 'garanzia_extra_family' : 'manuale';
+      const cleanDocTitle = docItem.title.trim().slice(0, 48);
+      const cleanProd = productTitle.trim().slice(0, 28);
+      const fullTitle = cleanProd
+        ? `${cleanDocTitle} · ${cleanProd}`.slice(0, 80)
+        : cleanDocTitle.slice(0, 80);
+      if (!urlFileName && existingOpaqueTitleSet.has(fullTitle.toLowerCase())) continue;
+
+      let uploadedOk = false;
+      try {
+        const resp = await fetch('/api/researches/fetch-document', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: docItem.url, title: cleanDocTitle }),
+        });
+        const ct = String(resp.headers.get('content-type') || '').toLowerCase();
+        if (resp.ok && !ct.includes('application/json')) {
+          const blob = await resp.blob();
+          if (blob.size > 0 && blob.size <= MAX_CLOUD_FILE_BYTES) {
+            const rawHeaderName = resp.headers.get('x-document-filename');
+            let fileName = '';
+            if (rawHeaderName) {
+              try {
+                fileName = decodeURIComponent(rawHeaderName).trim();
+              } catch {
+                fileName = rawHeaderName.trim();
+              }
+            }
+            if (!fileName) {
+              const slug = cleanDocTitle.replace(/[^a-zA-Z0-9_-]+/g, '_') || 'documento';
+              fileName = `${slug}.${ct.includes('zip') ? 'zip' : 'pdf'}`;
+            }
+            if (existingFileNameSet.has(fileName.toLowerCase())) {
+              existingUrlSet.add(normUrl);
+              continue;
+            }
+            const file = new File([blob], fileName, {
+              type: blob.type || ct || 'application/pdf',
+            });
+            await onUploadResearchDocument(
+              researchId,
+              docType,
+              fullTitle,
+              provider,
+              file
+            );
+            downloaded += 1;
+            uploadedOk = true;
+            existingFileNameSet.add(fileName.toLowerCase());
+            existingUrlSet.add(normUrl);
+          }
+        }
+      } catch {
+        // Fall through to link-only attachment fallback
+      }
+
+      if (!uploadedOk && onAddResearchDocumentLink && docItem.url.length <= 231) {
+        try {
+          const kindLabel =
+            docItem.kind === 'bim_3d'
+              ? 'File 3D / BIM ufficiale'
+              : docItem.kind === 'scheda'
+                ? 'Scheda tecnica ufficiale'
+                : 'Documento ufficiale';
+          await onAddResearchDocumentLink(
+            researchId,
+            docType,
+            fullTitle,
+            provider,
+            docItem.url,
+            `${kindLabel} da ${provider}`
+          );
+          linked += 1;
+          existingUrlSet.add(normUrl);
+        } catch {
+          // Ignore individual link-save errors
+        }
+      }
+    }
+
+    if (downloaded + linked > 0) {
+      setOpenAttachmentsIds((prev) => ({ ...prev, [researchId]: true }));
+    }
+    return { downloaded, linked };
   }
 
   async function handleQuickAddSubmit(e: React.FormEvent) {
@@ -1048,7 +1346,7 @@ export function ResearchesView({
           specs: inspected.specs,
           category: inspected.category,
         });
-      await onAddResearch({
+      const createdId = await onAddResearch({
         url: inspected.url,
         title: inspected.title,
         store: inspected.store,
@@ -1067,23 +1365,41 @@ export function ResearchesView({
         specs: inspected.specs,
         notes: inspected.notes,
       });
+
+      let docStats = { downloaded: 0, linked: 0 };
+      if (typeof createdId === 'string' && createdId && inspected.documents?.length) {
+        docStats = await autoAttachInspectedDocuments(
+          createdId,
+          inspected.title,
+          resolvedBrand || inspected.store,
+          inspected.documents
+        );
+      }
+
       setLinkInput('');
       setDraftOpen(false);
+      const totalDocs = docStats.downloaded + docStats.linked;
       const foundBits = [
         typeof inspected.priceEur === 'number' ? `€ ${inspected.priceEur.toFixed(2)}` : '',
         resolvedRoom ? `stanza ${getResearchRoomLabel(resolvedRoom)}` : '',
         inspected.color ? `colore ${inspected.color}` : '',
         inspected.size ? `taglia ${inspected.size}` : '',
         inspected.imageUrl ? 'immagine' : '',
-        inspected.specs ? 'specifiche' : '',
+        inspected.specs ? 'dettagli tecnici' : '',
+        docStats.downloaded > 0
+          ? `${docStats.downloaded} ${docStats.downloaded === 1 ? 'documento scaricato' : 'documenti scaricati'}`
+          : '',
+        docStats.linked > 0
+          ? `${docStats.linked} link ${docStats.linked === 1 ? 'allegato' : 'allegati'}`
+          : '',
       ].filter(Boolean);
-      if (inspected.blockedBySite && inspected.extractedFrom !== 'page-meta') {
+      if (inspected.blockedBySite && inspected.extractedFrom !== 'page-meta' && totalDocs === 0 && !inspected.specs) {
         setLinkNotice(
-          `Scheda "${inspected.title}" salvata da ${inspected.store} (${getCategoryLabel(inspected.category)}). Il sito blocca la lettura automatica (protezione anti-bot): prezzo e foto non sono accessibili automaticamente, puoi aggiungerli con «Modifica» o allegare un'immagine sulla scheda.`
+          `Scheda "${inspected.title}" salvata da ${inspected.store} (${getCategoryLabel(inspected.category)}). Il sito blocca la lettura automatica (protezione anti-bot): prezzo, foto e dettagli vanno inseriti manualmente o via allegato.`
         );
       } else {
         setFeedback(
-          inspected.extractedFrom === 'page-meta' && foundBits.length > 0
+          foundBits.length > 0
             ? `Aggiunto "${inspected.title}" da ${inspected.store} su Firestore (${foundBits.join(', ')}).`
             : `Link di ${inspected.store} salvato su Firestore: puoi rifinire dettagli o allegare file direttamente nella scheda.`
         );
@@ -1123,9 +1439,11 @@ export function ResearchesView({
       setDraftPrice('');
       setDraftPaidPrice('');
       setDraftImageUrl('');
-      setDraftSpecs('');
+      setDraftTechSpecs('');
+      setDraftInfoText('');
       setDraftNotes('');
       setDraftAttachments([]);
+      setDraftFoundDocuments([]);
       setDraftOpen(true);
       return;
     }
@@ -1140,6 +1458,7 @@ export function ResearchesView({
     try {
       const inspected = await inspectProductLink(validUrl);
       const resolvedBrand = inferProductBrand(inspected) || '';
+      const split = splitSpecsAndInfo(inspected.specs);
       setDraftUrl(inspected.url);
       setDraftTitle(inspected.title);
       setDraftStore(inspected.store);
@@ -1157,13 +1476,15 @@ export function ResearchesView({
       setDraftPrice(typeof inspected.priceEur === 'number' ? String(inspected.priceEur) : '');
       setDraftPaidPrice('');
       setDraftImageUrl(inspected.imageUrl || '');
-      setDraftSpecs(inspected.specs || '');
+      setDraftTechSpecs(split.techSpecs);
+      setDraftInfoText(split.infoText);
       setDraftNotes(inspected.notes || '');
       setDraftAttachments([]);
+      setDraftFoundDocuments(inspected.documents || []);
       setDraftOpen(true);
-      if (inspected.blockedBySite && inspected.extractedFrom !== 'page-meta') {
+      if (inspected.blockedBySite && inspected.extractedFrom !== 'page-meta' && !inspected.specs) {
         setLinkNotice(
-          `${inspected.store} usa una protezione anti-bot: titolo, negozio, codice articolo e dettagli dal link sono già precompilati; completa prezzo/URL foto oppure allega uno screenshot.`
+          `${inspected.store} usa una protezione anti-bot: titolo, negozio e codice articolo dal link sono già precompilati; completa prezzo/foto o dettagli manualmente.`
         );
       }
     } finally {
@@ -1218,6 +1539,7 @@ export function ResearchesView({
       draftImageUrl.trim() && /^https?:\/\/.+/.test(draftImageUrl.trim())
         ? draftImageUrl.trim().slice(0, 1000)
         : undefined;
+    const combinedSpecs = joinSpecsAndInfo(draftTechSpecs, draftInfoText);
 
     setSavingNew(true);
     try {
@@ -1238,10 +1560,11 @@ export function ResearchesView({
         size: draftSize.trim() ? draftSize.trim().slice(0, 60) : undefined,
         availableSizes: draftAvailableSizes.length > 0 ? draftAvailableSizes : undefined,
         model: draftModel.trim() ? draftModel.trim().slice(0, 80) : undefined,
-        specs: draftSpecs.trim() ? draftSpecs.trim().slice(0, 2000) : undefined,
+        specs: combinedSpecs || undefined,
         notes: draftNotes.trim() ? draftNotes.trim().slice(0, 400) : undefined,
       });
 
+      let attachedTotal = 0;
       if (typeof createdId === 'string' && createdId && draftAttachments.length > 0) {
         for (const att of draftAttachments) {
           await onUploadResearchDocument(
@@ -1251,8 +1574,18 @@ export function ResearchesView({
             draftBrand.trim() || cleanStore,
             att.file
           );
+          attachedTotal += 1;
         }
         setOpenAttachmentsIds((prev) => ({ ...prev, [createdId]: true }));
+      }
+      if (typeof createdId === 'string' && createdId && draftFoundDocuments.length > 0) {
+        const autoStats = await autoAttachInspectedDocuments(
+          createdId,
+          cleanTitle,
+          draftBrand.trim() || cleanStore,
+          draftFoundDocuments
+        );
+        attachedTotal += autoStats.downloaded + autoStats.linked;
       }
 
       setLinkInput('');
@@ -1264,11 +1597,14 @@ export function ResearchesView({
       setDraftSize('');
       setDraftAvailableSizes([]);
       setDraftSizePrices(undefined);
+      setDraftTechSpecs('');
+      setDraftInfoText('');
       setDraftAttachments([]);
+      setDraftFoundDocuments([]);
       setFeedback(
         `Prodotto "${cleanTitle}" salvato su Firestore${
-          draftAttachments.length > 0
-            ? ` con ${draftAttachments.length} ${draftAttachments.length === 1 ? 'allegato' : 'allegati'}`
+          attachedTotal > 0
+            ? ` con ${attachedTotal} ${attachedTotal === 1 ? 'allegato' : 'allegati'}`
             : ''
         }.`
       );
@@ -1281,6 +1617,7 @@ export function ResearchesView({
 
   function startEditItem(item: ProductResearchRecord) {
     const effective = getEffectiveItem(item);
+    const split = splitSpecsAndInfo(effective.specs);
     setInlinePaidEditId(null);
     setEditingId(item.id);
     setEditUrl(effective.url);
@@ -1302,7 +1639,8 @@ export function ResearchesView({
       typeof effective.paidPriceEur === 'number' ? String(effective.paidPriceEur) : ''
     );
     setEditImageUrl(effective.imageUrl || '');
-    setEditSpecs(effective.specs || '');
+    setEditTechSpecs(split.techSpecs);
+    setEditInfoText(split.infoText);
     setEditNotes(effective.notes || '');
   }
 
@@ -1329,6 +1667,7 @@ export function ResearchesView({
       editImageUrl.trim() && /^https?:\/\/.+/.test(editImageUrl.trim())
         ? editImageUrl.trim().slice(0, 1000)
         : undefined;
+    const combinedSpecs = joinSpecsAndInfo(editTechSpecs, editInfoText);
 
     setPendingEditSave({
       item,
@@ -1349,7 +1688,7 @@ export function ResearchesView({
         size: editSize.trim() ? editSize.trim().slice(0, 60) : undefined,
         availableSizes: editAvailableSizes.length > 0 ? editAvailableSizes : undefined,
         model: editModel.trim() ? editModel.trim().slice(0, 80) : undefined,
-        specs: editSpecs.trim() ? editSpecs.trim().slice(0, 2000) : undefined,
+        specs: combinedSpecs || undefined,
         notes: editNotes.trim() ? editNotes.trim().slice(0, 400) : undefined,
       },
     });
@@ -1429,6 +1768,17 @@ export function ResearchesView({
         specs: nextSpecs,
         notes: item.notes || inspected.notes,
       });
+
+      let docStats = { downloaded: 0, linked: 0 };
+      if (inspected.documents?.length) {
+        docStats = await autoAttachInspectedDocuments(
+          item.id,
+          nextTitle,
+          nextBrand || nextStore,
+          inspected.documents
+        );
+      }
+
       if (inspected.colorImages) {
         setLazyColorImages((prev) => ({ ...prev, [item.id]: inspected.colorImages! }));
       }
@@ -1443,12 +1793,23 @@ export function ResearchesView({
         delete next[item.id];
         return next;
       });
-      if (inspected.blockedBySite && inspected.extractedFrom !== 'page-meta') {
+      const totalDocs = docStats.downloaded + docStats.linked;
+      if (inspected.blockedBySite && inspected.extractedFrom !== 'page-meta' && totalDocs === 0 && !inspected.specs) {
         setLinkNotice(
-          `Scheda "${inspected.title || item.title}" aggiornata dai dati del link, ma ${inspected.store || item.store} blocca l'accesso automatico (anti-bot): eventuali foto o prezzi vanno inseriti manualmente o via allegato.`
+          `Scheda "${inspected.title || item.title}" aggiornata dai dati del link, ma ${inspected.store || item.store} blocca l'accesso automatico (anti-bot): eventuali foto, prezzi o documenti vanno inseriti manualmente.`
         );
       } else {
-        setFeedback(`Scheda "${inspected.title || item.title}" aggiornata dal sito e salvata su Firestore.`);
+        const docSummaryParts = [
+          docStats.downloaded > 0
+            ? `${docStats.downloaded} ${docStats.downloaded === 1 ? 'allegato scaricato' : 'allegati scaricati'}`
+            : '',
+          docStats.linked > 0 ? `${docStats.linked} link aggiunti` : '',
+        ].filter(Boolean);
+        setFeedback(
+          `Scheda "${inspected.title || item.title}" aggiornata dal sito${
+            docSummaryParts.length > 0 ? ` (${docSummaryParts.join(', ')})` : ''
+          } e salvata su Firestore.`
+        );
       }
     } catch (err) {
       setLinkError(
@@ -1741,12 +2102,18 @@ export function ResearchesView({
               return copy;
             });
           }
+          const nextAvailColors =
+            inspected.availableColors &&
+            inspected.availableColors.length > (item.availableColors?.length || 0)
+              ? inspected.availableColors
+              : undefined;
           setPendingCardEdits((prev) => {
             if (!prev[item.id]) return prev;
             return {
               ...prev,
               [item.id]: {
                 ...prev[item.id],
+                ...(nextAvailColors ? { availableColors: nextAvailColors } : {}),
                 colorImages: inspected.colorImages,
                 ...(fetchedVariantImg ? { imageUrl: fetchedVariantImg } : {}),
               },
@@ -1906,6 +2273,53 @@ export function ResearchesView({
     }
   }
 
+  async function handleOpenDocInNewTab(docItem: HomeDocumentRecord) {
+    const existingUrl = vaultDocUrls[docItem.id];
+    if (existingUrl) {
+      const link = document.createElement('a');
+      link.href = existingUrl;
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      return;
+    }
+    if (!docItem.attachmentKey) return;
+    setOpeningDocId(docItem.id);
+    setLinkError(null);
+    try {
+      const stored = await getVaultFile(docItem.attachmentKey);
+      if (!stored) {
+        setLinkError('File allegato non disponibile nel vault locale o su Firestore.');
+        return;
+      }
+      const fileName = stored.fileName || docItem.fileName || docItem.title;
+      const rawMime = (stored.mimeType || docItem.fileMime || stored.blob.type || '').toLowerCase();
+      const isPdf = rawMime.includes('pdf') || /\.pdf$/i.test(fileName);
+      const normalizedMime = isPdf
+        ? 'application/pdf'
+        : rawMime || 'application/octet-stream';
+      const typedBlob =
+        stored.blob.type === normalizedMime
+          ? stored.blob
+          : new Blob([stored.blob], { type: normalizedMime });
+      const objectUrl = URL.createObjectURL(typedBlob);
+      setVaultDocUrls((prev) => ({ ...prev, [docItem.id]: objectUrl }));
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err) {
+      setLinkError(err instanceof Error ? err.message : 'Impossibile aprire il file allegato.');
+    } finally {
+      setOpeningDocId(null);
+    }
+  }
+
   async function handleDownloadDoc(docItem: HomeDocumentRecord) {
     setDownloadingDocId(docItem.id);
     setLinkError(null);
@@ -1915,6 +2329,28 @@ export function ResearchesView({
       setLinkError(err instanceof Error ? err.message : 'Impossibile scaricare il file allegato.');
     } finally {
       setDownloadingDocId(null);
+    }
+  }
+
+  async function handleChangeDocType(
+    docItem: HomeDocumentRecord,
+    researchId: string,
+    nextType: ArticleAttachmentType
+  ) {
+    if (readOnly || !onUpdateResearchDocumentType) return;
+    setUpdatingDocTypeId(docItem.id);
+    setLinkError(null);
+    try {
+      await onUpdateResearchDocumentType(docItem.id, researchId, nextType);
+      setFeedback(
+        `Tipo allegato aggiornato a "${getAttachmentTypeMeta(nextType).label}".`
+      );
+    } catch (err) {
+      setLinkError(
+        err instanceof Error ? err.message : 'Impossibile aggiornare il tipo dell’allegato.'
+      );
+    } finally {
+      setUpdatingDocTypeId(null);
     }
   }
 
@@ -1929,6 +2365,13 @@ export function ResearchesView({
     } finally {
       setDeletingDocId(null);
     }
+  }
+
+  async function confirmDeleteDoc() {
+    if (!pendingDeleteDoc || readOnly) return;
+    const targetDoc = pendingDeleteDoc.doc;
+    await handleDeleteDoc(targetDoc);
+    setPendingDeleteDoc(null);
   }
 
   async function confirmDeleteResearch() {
@@ -2485,10 +2928,10 @@ export function ResearchesView({
                     {draftTitle || 'Anteprima immagine trovata dal sito'}
                   </div>
                   <div className="text-[11px] text-slate-400 mt-0.5 flex flex-wrap items-center gap-2">
-                    <span>{draftPrice ? `€ ${draftPrice}` : 'Prezzo non rilevato'}</span>
+                    <span>{draftPrice ? `${draftPrice} €` : 'Prezzo non rilevato'}</span>
                     {draftStatus === 'acquistato' && draftPaidPrice && (
                       <span className="text-emerald-300 font-medium">
-                        · Pagato € {draftPaidPrice}
+                        · Pagato {draftPaidPrice} €
                       </span>
                     )}
                     {draftColor && (
@@ -2703,18 +3146,43 @@ export function ResearchesView({
                 />
               </div>
 
-              <div className="sm:col-span-2 lg:col-span-3 space-y-1">
-                <label className="block text-slate-400">
-                  Specifiche &amp; Info utili dal sito (una per riga)
-                </label>
-                <textarea
-                  rows={3}
-                  maxLength={2000}
-                  value={draftSpecs}
-                  onChange={(e) => setDraftSpecs(e.target.value)}
-                  placeholder="Es. Materiale: TechWoven&#10;Modelli compatibili: iPhone 18 Pro Max&#10;Dimensioni: 19,8 x 9,6 x 2,1 cm"
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500 resize-y"
-                />
+              <div className="sm:col-span-2 lg:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block text-slate-400">
+                    Specifiche tecniche (Etichetta: Valore, una per riga)
+                  </label>
+                  <textarea
+                    rows={5}
+                    value={draftTechSpecs}
+                    onChange={(e) => setDraftTechSpecs(e.target.value)}
+                    placeholder="Es. Sistema operativo: iOS&#10;Capacità della memoria: 1 TB&#10;Materiale: Polipropilene fiberglass&#10;Altezza schienale: 90 cm"
+                    className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500 resize-y"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-slate-400">
+                      Informazioni &amp; Punti chiave (descrizioni dal sito)
+                    </label>
+                    <span
+                      className={`text-[10px] font-mono tabular-nums ${
+                        joinSpecsAndInfo(draftTechSpecs, draftInfoText).length > 1900
+                          ? 'text-amber-300'
+                          : 'text-slate-500'
+                      }`}
+                    >
+                      {joinSpecsAndInfo(draftTechSpecs, draftInfoText).length}/2000
+                    </span>
+                  </div>
+                  <textarea
+                    rows={5}
+                    value={draftInfoText}
+                    onChange={(e) => setDraftInfoText(e.target.value)}
+                    placeholder="Es. • DESIGN UNIBODY — In alluminio forgiato a caldo...&#10;• CUSCINI — Sfoderabili con zip, piedini antiscivolo"
+                    className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500 resize-y"
+                  />
+                </div>
               </div>
 
               <div className="sm:col-span-2 lg:col-span-3 space-y-1">
@@ -2730,7 +3198,7 @@ export function ResearchesView({
               </div>
             </div>
 
-            {/* Draft Attachments Queue */}
+            {/* Draft Attachments Queue & Detected Official Documents */}
             <div className="border-t border-slate-800 pt-3 space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-medium text-slate-300 flex items-center gap-1.5">
@@ -2762,27 +3230,86 @@ export function ResearchesView({
                   </label>
                 </div>
               </div>
+              {draftFoundDocuments.length > 0 && (
+                <div className="space-y-1">
+                  <div className="text-[11px] text-emerald-300 font-medium">
+                    Documenti ufficiali rilevati dal sito (verranno scaricati/allegati al salvataggio):
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {draftFoundDocuments.map((docLink) => (
+                      <span
+                        key={docLink.url}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-[11px] text-emerald-200"
+                      >
+                        <FileText className="w-3 h-3 text-emerald-400 shrink-0" />
+                        <a
+                          href={docLink.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="truncate max-w-[200px] hover:underline"
+                        >
+                          {docLink.title}
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDraftFoundDocuments((prev) =>
+                              prev.filter((d) => d.url !== docLink.url)
+                            )
+                          }
+                          title="Non allegare questo documento"
+                          className="text-emerald-300/70 hover:text-rose-400"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               {draftAttachments.length > 0 && (
                 <div className="flex flex-wrap gap-2">
-                  {draftAttachments.map((att) => (
-                    <span
-                      key={att.id}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-900 border border-slate-800 rounded-lg text-[11px] text-slate-200"
-                    >
-                      <FileText className="w-3 h-3 text-sky-400" />
-                      <span className="truncate max-w-[160px]">{att.file.name}</span>
-                      <span className="text-slate-500">({formatFileSize(att.file.size)})</span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDraftAttachments((prev) => prev.filter((x) => x.id !== att.id))
-                        }
-                        className="text-slate-400 hover:text-rose-400"
+                  {draftAttachments.map((att) => {
+                    const attMeta = getAttachmentTypeMeta(att.docType);
+                    return (
+                      <span
+                        key={att.id}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-900 border border-slate-800 rounded-lg text-[11px] text-slate-200"
                       >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
+                        <FileText className="w-3 h-3 text-sky-400 shrink-0" />
+                        <span className="truncate max-w-[140px]">{att.file.name}</span>
+                        <select
+                          value={att.docType}
+                          aria-label={`Tipo per ${att.file.name}`}
+                          onChange={(e) => {
+                            const nextType = e.target.value as ArticleAttachmentType;
+                            setDraftAttachments((prev) =>
+                              prev.map((x) =>
+                                x.id === att.id ? { ...x, docType: nextType } : x
+                              )
+                            );
+                          }}
+                          className={`px-1.5 py-0.5 rounded border text-[10px] font-medium cursor-pointer [color-scheme:dark] ${attMeta.badgeClass}`}
+                        >
+                          {ATTACHMENT_TYPE_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value} className="bg-slate-900 text-slate-100">
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                        <span className="text-slate-500">({formatFileSize(att.file.size)})</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDraftAttachments((prev) => prev.filter((x) => x.id !== att.id))
+                          }
+                          className="text-slate-400 hover:text-rose-400"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -3518,6 +4045,7 @@ export function ResearchesView({
                 editStatus === 'acquistato' ? parseOptionalPriceInput(editPaidPrice) : undefined;
               const normalizedEditUrl = normalizeUrlInput(editUrl) || editUrl.trim();
               const normalizedOrigUrl = normalizeUrlInput(item.url) || item.url.trim();
+              const origSplit = splitSpecsAndInfo(item.specs);
               const isEditFormDirty =
                 editTitle.trim() !== item.title.trim() ||
                 normalizedEditUrl !== normalizedOrigUrl ||
@@ -3532,7 +4060,8 @@ export function ResearchesView({
                 nextPrice !== origPrice ||
                 nextPaid !== origPaid ||
                 editImageUrl.trim() !== (item.imageUrl || '').trim() ||
-                editSpecs.trim() !== (item.specs || '').trim() ||
+                editTechSpecs.trim() !== origSplit.techSpecs.trim() ||
+                editInfoText.trim() !== origSplit.infoText.trim() ||
                 editNotes.trim() !== (item.notes || '').trim();
 
               return (
@@ -3745,15 +4274,42 @@ export function ResearchesView({
                       compact
                     />
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-slate-400">Specifiche &amp; Info dal sito</label>
-                    <textarea
-                      rows={3}
-                      maxLength={2000}
-                      value={editSpecs}
-                      onChange={(e) => setEditSpecs(e.target.value)}
-                      className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 resize-y"
-                    />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                    <div className="space-y-1">
+                      <label className="text-slate-400">
+                        Specifiche tecniche (Etichetta: Valore)
+                      </label>
+                      <textarea
+                        rows={5}
+                        value={editTechSpecs}
+                        onChange={(e) => setEditTechSpecs(e.target.value)}
+                        placeholder="Es. Sistema operativo: iOS&#10;Capacità della memoria: 1 TB&#10;Dimensioni schermo: 6,9 Pollici"
+                        className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500 resize-y"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <label className="text-slate-400">
+                          Informazioni &amp; Punti chiave
+                        </label>
+                        <span
+                          className={`text-[10px] font-mono tabular-nums ${
+                            joinSpecsAndInfo(editTechSpecs, editInfoText).length > 1900
+                              ? 'text-amber-300'
+                              : 'text-slate-500'
+                          }`}
+                        >
+                          {joinSpecsAndInfo(editTechSpecs, editInfoText).length}/2000
+                        </span>
+                      </div>
+                      <textarea
+                        rows={5}
+                        value={editInfoText}
+                        onChange={(e) => setEditInfoText(e.target.value)}
+                        placeholder="Es. • DESIGN UNIBODY — Il design unibody in alluminio..."
+                        className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500 resize-y"
+                      />
+                    </div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-slate-400">Note personali (opzionale)</label>
@@ -3869,8 +4425,11 @@ export function ResearchesView({
                 </div>
               ) : typeof effectiveItem.paidPriceEur === 'number' ? (
                 readOnly ? (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-mono font-semibold text-emerald-400 whitespace-nowrap">
-                    Pagato: € {effectiveItem.paidPriceEur.toFixed(2)}
+                  <span className="inline-flex items-center gap-1 text-xs sm:text-sm font-semibold text-emerald-400 whitespace-nowrap">
+                    <span>Pagato:</span>
+                    <span className="font-mono tabular-nums">
+                      {formatEuroIt(effectiveItem.paidPriceEur)}
+                    </span>
                   </span>
                 ) : (
                   <button
@@ -3880,10 +4439,13 @@ export function ResearchesView({
                       setInlinePaidValue(String(effectiveItem.paidPriceEur));
                     }}
                     title="Modifica prezzo pagato all'acquisto"
-                    className="inline-flex items-center gap-1 text-[11px] font-mono font-semibold text-emerald-400 hover:text-emerald-300 whitespace-nowrap"
+                    className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-emerald-400 hover:text-emerald-300 whitespace-nowrap"
                   >
-                    <span>Pagato: € {effectiveItem.paidPriceEur.toFixed(2)}</span>
-                    <Pencil className="w-2.5 h-2.5 opacity-70" />
+                    <span>Pagato:</span>
+                    <span className="font-mono tabular-nums">
+                      {formatEuroIt(effectiveItem.paidPriceEur)}
+                    </span>
+                    <Pencil className="w-3.5 h-3.5 opacity-75 shrink-0" />
                   </button>
                 )
               ) : !readOnly ? (
@@ -3897,18 +4459,57 @@ export function ResearchesView({
                         : ''
                     );
                   }}
-                  className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-400 hover:text-emerald-300 whitespace-nowrap"
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-emerald-300 whitespace-nowrap"
                 >
-                  <Plus className="w-2.5 h-2.5" />
+                  <Plus className="w-3 h-3" />
                   <span>Prezzo pagato</span>
                 </button>
               ) : null;
             };
 
-            const renderStatusControl = () =>
+            const renderPriceBlock = (alignRightOnDesktop: boolean) => {
+              const hasListPrice = typeof effectiveItem.priceEur === 'number';
+              const stackAlignClass = alignRightOnDesktop
+                ? 'items-start md:items-end'
+                : 'items-start';
+
+              return (
+                <div className={`flex flex-col ${stackAlignClass} gap-1 min-w-0`}>
+                  {hasListPrice ? (
+                    <span
+                      className={`inline-flex items-center gap-1.5 font-mono ${
+                        alignRightOnDesktop
+                          ? 'text-base sm:text-lg md:text-xl'
+                          : 'text-lg sm:text-xl'
+                      } font-bold text-white tabular-nums leading-none`}
+                    >
+                      <span>{formatEuroIt(effectiveItem.priceEur!)}</span>
+                      {lazySizePriceLoadingIds[item.id] && (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-400" />
+                      )}
+                    </span>
+                  ) : (
+                    <span
+                      className={
+                        alignRightOnDesktop
+                          ? 'text-[11px] sm:text-xs text-slate-500'
+                          : 'text-xs text-slate-500'
+                      }
+                    >
+                      Prezzo non rilevato
+                    </span>
+                  )}
+                  {renderPaidPriceControl()}
+                </div>
+              );
+            };
+
+            const renderStatusControl = (compact = false) =>
               readOnly ? (
                 <span
-                  className={`px-2 py-0.5 text-[11px] font-semibold rounded-md border whitespace-nowrap ${statusMeta.badgeClass}`}
+                  className={`${
+                    compact ? 'px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-[11px]' : 'px-2 py-0.5 text-[11px]'
+                  } font-semibold rounded-md border whitespace-nowrap ${statusMeta.badgeClass}`}
                 >
                   {statusMeta.label}
                 </span>
@@ -3919,7 +4520,11 @@ export function ResearchesView({
                   onChange={(e) =>
                     handleQuickStatusChange(item, e.target.value as ProductResearchStatus)
                   }
-                  className={`px-2 py-1 text-[11px] font-semibold rounded-md border [color-scheme:dark] focus:outline-none ${statusMeta.badgeClass}`}
+                  className={`${
+                    compact
+                      ? 'px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-[11px]'
+                      : 'px-2 py-1 text-[11px]'
+                  } font-semibold rounded-md border [color-scheme:dark] focus:outline-none ${statusMeta.badgeClass}`}
                 >
                   {STATUS_OPTIONS.map((st) => (
                     <option
@@ -4194,10 +4799,10 @@ export function ResearchesView({
                     }
                   >
                   {isList ? (
-                    /* LIST MODE HEADER: Meta + Title + Room on left, Price + Paid + Status compactly on right */
+                    /* LIST MODE HEADER: Meta + Room + Status + Title on left, Price + Paid cleanly on right */
                     <div className="flex flex-col md:flex-row md:items-start justify-between gap-1.5 sm:gap-2 pb-1.5 sm:pb-2 border-b border-slate-800/80">
                       <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex flex-wrap items-center gap-x-1.5 sm:gap-x-2 gap-y-0.5 text-[10px] sm:text-[11px] font-medium text-slate-400">
+                        <div className="flex flex-wrap items-center gap-x-1.5 sm:gap-x-2 gap-y-1 text-[10px] sm:text-[11px] font-medium text-slate-400">
                           {effectiveBrand && (
                             <span
                               className="inline-flex items-center gap-1 text-sky-300 font-semibold"
@@ -4224,7 +4829,10 @@ export function ResearchesView({
                           <span className="text-slate-700 hidden sm:inline" aria-hidden="true">
                             |
                           </span>
-                          {renderRoomControl()}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {renderRoomControl()}
+                            {renderStatusControl(true)}
+                          </div>
                         </div>
 
                         <a
@@ -4237,21 +4845,8 @@ export function ResearchesView({
                         </a>
                       </div>
 
-                      <div className="flex flex-wrap items-center md:flex-col md:items-end justify-between gap-1.5 shrink-0 md:border-l md:border-slate-800/80 md:pl-3">
-                        <div className="flex flex-wrap items-baseline md:justify-end gap-x-2 gap-y-0.5">
-                          {typeof effectiveItem.priceEur === 'number' ? (
-                            <span className="inline-flex items-center gap-1.5 font-mono text-sm sm:text-base md:text-lg font-bold text-white tabular-nums leading-none">
-                              <span>€ {effectiveItem.priceEur.toFixed(2)}</span>
-                              {lazySizePriceLoadingIds[item.id] && (
-                                <Loader2 className="w-3 h-3 animate-spin text-sky-400" />
-                              )}
-                            </span>
-                          ) : (
-                            <span className="text-[11px] sm:text-xs text-slate-500">Prezzo non rilevato</span>
-                          )}
-                          {renderPaidPriceControl()}
-                        </div>
-                        {renderStatusControl()}
+                      <div className="flex flex-col items-start md:items-end justify-center shrink-0 md:border-l md:border-slate-800/80 md:pl-3">
+                        {renderPriceBlock(true)}
                       </div>
                     </div>
                   ) : (
@@ -4300,7 +4895,7 @@ export function ResearchesView({
 
                   {/* 3. Product Colors + Sizes + Model Code (inline wrap in list mode for compact height) */}
                   {(effectiveItem.color ||
-                    (item.availableColors && item.availableColors.length > 0) ||
+                    (effectiveItem.availableColors && effectiveItem.availableColors.length > 0) ||
                     effectiveItem.size ||
                     (item.availableSizes && item.availableSizes.length > 0) ||
                     item.model) && (
@@ -4311,12 +4906,12 @@ export function ResearchesView({
                           : 'space-y-1.5 text-xs text-slate-400'
                       }
                     >
-                      {item.availableColors && item.availableColors.length > 0 ? (
+                      {effectiveItem.availableColors && effectiveItem.availableColors.length > 0 ? (
                         <div className="flex flex-wrap items-center gap-1">
                           <span className="text-[10px] uppercase tracking-wide text-slate-500 mr-0.5">
                             Colori:
                           </span>
-                          {item.availableColors.map((colOpt) => {
+                          {effectiveItem.availableColors.map((colOpt) => {
                             const isActive =
                               effectiveItem.color?.trim().toLowerCase() ===
                               colOpt.trim().toLowerCase();
@@ -4374,7 +4969,7 @@ export function ResearchesView({
                             const optPrice = findSizePrice(effectiveItem.sizePrices, sizeOpt);
                             const sizeTooltip =
                               typeof optPrice === 'number'
-                                ? `Seleziona taglia ${sizeOpt} · € ${optPrice.toFixed(2)}`
+                                ? `Seleziona taglia ${sizeOpt} · ${formatEuroIt(optPrice)}`
                                 : `Seleziona taglia ${sizeOpt}`;
                             return readOnly ? (
                               <span
@@ -4424,19 +5019,7 @@ export function ResearchesView({
                   {/* 4. Grid Mode Price + Paid Price + Status Row */}
                   {!isList && (
                     <div className="flex flex-wrap items-center justify-between gap-2 py-2.5 border-y border-slate-800/80">
-                      <div className="flex flex-col gap-1 min-w-0">
-                        {typeof effectiveItem.priceEur === 'number' ? (
-                          <span className="inline-flex items-center gap-1.5 font-mono text-lg font-bold text-white tabular-nums leading-none">
-                            <span>€ {effectiveItem.priceEur.toFixed(2)}</span>
-                            {lazySizePriceLoadingIds[item.id] && (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-400" />
-                            )}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-slate-500">Prezzo non rilevato</span>
-                        )}
-                        {renderPaidPriceControl()}
-                      </div>
+                      {renderPriceBlock(false)}
 
                       {renderStatusControl()}
                     </div>
@@ -4500,17 +5083,18 @@ export function ResearchesView({
                         <ul
                           className={
                             isList
-                              ? `${isSpecsExpanded ? 'grid' : 'hidden sm:grid'} ${
+                              ? `${isSpecsExpanded ? 'block' : 'hidden sm:block'} ${
                                   visibleTechSpecs.length > 0
                                     ? 'pt-2 mt-1.5 border-t border-slate-800/70 '
                                     : ''
-                                }grid-cols-1 ${
-                                  visibleDescriptiveSpecs.length === 2
-                                    ? 'md:grid-cols-2'
+                                }columns-1 ${
+                                  visibleDescriptiveSpecs.length === 2 ||
+                                  visibleDescriptiveSpecs.length === 4
+                                    ? 'md:columns-2'
                                     : visibleDescriptiveSpecs.length >= 3
-                                      ? 'md:grid-cols-3'
+                                      ? 'md:columns-2 xl:columns-3'
                                       : ''
-                                } gap-x-4 gap-y-1.5 text-[11px] text-slate-300 leading-snug`
+                                } gap-x-5 text-[11px] text-slate-300 leading-snug`
                               : `${
                                   visibleTechSpecs.length > 0
                                     ? 'pt-1.5 mt-1.5 border-t border-slate-800/70 '
@@ -4522,22 +5106,31 @@ export function ResearchesView({
                             const dashIdx = entry.value.indexOf(' — ');
                             const hasLeadHeadline = dashIdx > 2 && dashIdx <= 90;
                             return (
-                              <li key={`desc-${idx}`} className="flex items-start gap-1.5 min-w-0">
-                                <span className="text-sky-400 shrink-0">·</span>
-                                <span className="min-w-0 break-words">
-                                  {hasLeadHeadline ? (
-                                    <>
-                                      <span className="text-slate-100 font-semibold">
-                                        {entry.value.slice(0, dashIdx)}
-                                      </span>
-                                      <span className="text-slate-300">
-                                        {entry.value.slice(dashIdx)}
-                                      </span>
-                                    </>
-                                  ) : (
-                                    <span>{entry.value}</span>
-                                  )}
-                                </span>
+                              <li
+                                key={`desc-${idx}`}
+                                className={
+                                  isList
+                                    ? 'break-inside-avoid mb-1.5 last:mb-0'
+                                    : 'flex items-start gap-1.5 min-w-0'
+                                }
+                              >
+                                <div className="flex items-start gap-1.5 min-w-0">
+                                  <span className="text-sky-400 shrink-0">·</span>
+                                  <span className="min-w-0 break-words">
+                                    {hasLeadHeadline ? (
+                                      <>
+                                        <span className="text-slate-100 font-semibold">
+                                          {entry.value.slice(0, dashIdx)}
+                                        </span>
+                                        <span className="text-slate-300">
+                                          {entry.value.slice(dashIdx)}
+                                        </span>
+                                      </>
+                                    ) : (
+                                      <span>{entry.value}</span>
+                                    )}
+                                  </span>
+                                </div>
                               </li>
                             );
                           })}
@@ -4694,6 +5287,10 @@ export function ResearchesView({
                               const parsedRef = parseResearchDocumentRef(docItem.referenceCode);
                               const docMeta = getAttachmentTypeMeta(parsedRef?.docType);
                               const isImg = docItem.fileMime?.startsWith('image/');
+                              const isLinkOnlyDoc = !docItem.fileSize && Boolean(docItem.cloudUrl);
+                              const openTabHref = isLinkOnlyDoc
+                                ? docItem.cloudUrl
+                                : vaultDocUrls[docItem.id];
                               return (
                                 <div
                                   key={docItem.id}
@@ -4702,48 +5299,126 @@ export function ResearchesView({
                                   <div className="min-w-0 flex items-center gap-1.5">
                                     {isImg ? (
                                       <ImageIcon className="w-3.5 h-3.5 text-violet-300 shrink-0" />
+                                    ) : isLinkOnlyDoc ? (
+                                      <Link2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
                                     ) : (
                                       <FileText className="w-3.5 h-3.5 text-sky-400 shrink-0" />
                                     )}
                                     <div className="min-w-0">
-                                      <div
-                                        className="text-slate-200 font-medium truncate"
-                                        title={docItem.fileName || docItem.title}
-                                      >
-                                        {docItem.fileName || docItem.title}
-                                      </div>
-                                      <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
-                                        <span
-                                          className={`px-1.5 py-0.2 rounded border ${docMeta.badgeClass}`}
+                                      {openTabHref ? (
+                                        <a
+                                          href={openTabHref}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="block text-slate-200 hover:text-sky-300 font-medium truncate transition-colors"
+                                          title={`Apri in nuova scheda: ${docItem.fileName || docItem.title}`}
                                         >
-                                          {docMeta.label}
-                                        </span>
+                                          {docItem.fileName || docItem.title}
+                                        </a>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          disabled={openingDocId === docItem.id}
+                                          onClick={() => void handleOpenDocInNewTab(docItem)}
+                                          className="block w-full text-left text-slate-200 hover:text-sky-300 font-medium truncate transition-colors disabled:opacity-50"
+                                          title={`Apri in nuova scheda: ${docItem.fileName || docItem.title}`}
+                                        >
+                                          {docItem.fileName || docItem.title}
+                                        </button>
+                                      )}
+                                      <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400">
+                                        {!readOnly && onUpdateResearchDocumentType ? (
+                                          <select
+                                            value={parsedRef?.docType || 'altro'}
+                                            disabled={updatingDocTypeId === docItem.id}
+                                            title="Modifica tipo allegato"
+                                            aria-label={`Modifica tipo per ${docItem.fileName || docItem.title}`}
+                                            onChange={(e) =>
+                                              void handleChangeDocType(
+                                                docItem,
+                                                parsedRef?.researchId || item.id,
+                                                e.target.value as ArticleAttachmentType
+                                              )
+                                            }
+                                            className={`px-1.5 py-0.5 rounded border text-[10px] font-medium cursor-pointer focus:outline-none focus:ring-1 focus:ring-sky-500/60 disabled:opacity-50 [color-scheme:dark] ${docMeta.badgeClass}`}
+                                          >
+                                            {ATTACHMENT_TYPE_OPTIONS.map((opt) => (
+                                              <option
+                                                key={opt.value}
+                                                value={opt.value}
+                                                className="bg-slate-900 text-slate-100"
+                                              >
+                                                {opt.label}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        ) : (
+                                          <span
+                                            className={`px-1.5 py-0.2 rounded border ${docMeta.badgeClass}`}
+                                          >
+                                            {docMeta.label}
+                                          </span>
+                                        )}
                                         {docItem.fileSize ? (
                                           <span>{formatFileSize(docItem.fileSize)}</span>
+                                        ) : isLinkOnlyDoc ? (
+                                          <span>Link diretto</span>
                                         ) : null}
                                       </div>
                                     </div>
                                   </div>
 
                                   <div className="flex items-center gap-1 shrink-0">
-                                    <button
-                                      type="button"
-                                      disabled={downloadingDocId === docItem.id}
-                                      onClick={() => void handleDownloadDoc(docItem)}
-                                      title="Scarica allegato"
-                                      className="p-1 text-emerald-300 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
-                                    >
-                                      {downloadingDocId === docItem.id ? (
-                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                      ) : (
-                                        <Download className="w-3.5 h-3.5" />
-                                      )}
-                                    </button>
+                                    {openTabHref ? (
+                                      <a
+                                        href={openTabHref}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        title="Apri in nuova scheda"
+                                        className="p-1 text-sky-300 hover:bg-slate-800 rounded transition-colors"
+                                      >
+                                        <ExternalLink className="w-3.5 h-3.5" />
+                                      </a>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        disabled={openingDocId === docItem.id}
+                                        onClick={() => void handleOpenDocInNewTab(docItem)}
+                                        title="Apri in nuova scheda"
+                                        className="p-1 text-sky-300 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                                      >
+                                        {openingDocId === docItem.id ? (
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        ) : (
+                                          <ExternalLink className="w-3.5 h-3.5" />
+                                        )}
+                                      </button>
+                                    )}
+                                    {!isLinkOnlyDoc && (
+                                      <button
+                                        type="button"
+                                        disabled={downloadingDocId === docItem.id}
+                                        onClick={() => void handleDownloadDoc(docItem)}
+                                        title="Scarica allegato"
+                                        className="p-1 text-emerald-300 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                                      >
+                                        {downloadingDocId === docItem.id ? (
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        ) : (
+                                          <Download className="w-3.5 h-3.5" />
+                                        )}
+                                      </button>
+                                    )}
                                     {!readOnly && (
                                       <button
                                         type="button"
                                         disabled={deletingDocId === docItem.id}
-                                        onClick={() => void handleDeleteDoc(docItem)}
+                                        onClick={() =>
+                                          setPendingDeleteDoc({
+                                            doc: docItem,
+                                            productTitle: effectiveItem.title,
+                                          })
+                                        }
                                         title="Rimuovi allegato"
                                         className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
                                       >
@@ -4884,6 +5559,52 @@ export function ResearchesView({
                 className="px-3.5 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition-colors"
               >
                 {deleting ? 'Eliminazione...' : 'Elimina'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingDeleteDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-rose-500/15 text-rose-400 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1 min-w-0">
+                <h3 className="text-sm font-semibold text-slate-100">
+                  Eliminare questo allegato?
+                </h3>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Vuoi davvero rimuovere{' '}
+                  <span className="font-semibold text-slate-100 break-words">
+                    {pendingDeleteDoc.doc.fileName || pendingDeleteDoc.doc.title}
+                  </span>{' '}
+                  da{' '}
+                  <span className="font-semibold text-slate-100">
+                    {pendingDeleteDoc.productTitle}
+                  </span>{' '}
+                  su Firestore?
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                disabled={deletingDocId === pendingDeleteDoc.doc.id}
+                onClick={() => setPendingDeleteDoc(null)}
+                className="px-3.5 py-2 text-xs font-medium text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                disabled={deletingDocId === pendingDeleteDoc.doc.id}
+                onClick={() => void confirmDeleteDoc()}
+                className="px-3.5 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition-colors"
+              >
+                {deletingDocId === pendingDeleteDoc.doc.id ? 'Eliminazione...' : 'Elimina'}
               </button>
             </div>
           </div>

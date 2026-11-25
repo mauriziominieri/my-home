@@ -940,11 +940,17 @@ async function startServer() {
     let slug = best.replace(/\.(html?|php|aspx?)$/i, '').trim();
     let extractedModel: string | undefined;
 
-    // Extract trailing catalog SKU / article number (e.g., Maisons du Monde -173485, IKEA -80275885 / -s19123456)
-    const skuMatch = slug.match(/^(.+?)[-_](?:id[-_]?|p[-_]?)?(s?\d{5,10})$/i);
-    if (skuMatch && skuMatch[1].length >= 4) {
-      slug = skuMatch[1];
-      extractedModel = skuMatch[2].toUpperCase();
+    // Extract trailing multi-segment numeric catalog IDs (e.g., Nardi _211_300) or single SKU/article number
+    const multiNumMatch = slug.match(/^(.+?)[-_](\d{2,6}(?:[-_]\d{2,6})+)$/);
+    if (multiNumMatch && multiNumMatch[1].length >= 4) {
+      slug = multiNumMatch[1];
+      extractedModel = multiNumMatch[2];
+    } else {
+      const skuMatch = slug.match(/^(.+?)[-_](?:id[-_]?|p[-_]?)?(s?\d{5,10})$/i);
+      if (skuMatch && skuMatch[1].length >= 4) {
+        slug = skuMatch[1];
+        extractedModel = skuMatch[2].toUpperCase();
+      }
     }
 
     const rawTokens = slug
@@ -1497,6 +1503,7 @@ async function startServer() {
     imageUrl?: string;
     priceEur?: number;
     description?: string;
+    specsList?: string[];
   } {
     const scriptRegex = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
     let match: RegExpExecArray | null;
@@ -1530,12 +1537,18 @@ async function startServer() {
             brand = decodeHtmlEntities(String((obj.brand as Record<string, unknown>).name));
           }
 
+          const variantColors: string[] = [];
           const color =
             typeof obj.color === 'string' ? decodeHtmlEntities(obj.color).slice(0, 60) : undefined;
+          if (Array.isArray(obj.color)) {
+            for (const c of obj.color) {
+              if (typeof c === 'string' && c.trim()) {
+                variantColors.push(decodeHtmlEntities(c).trim());
+              }
+            }
+          }
           const size =
             typeof obj.size === 'string' ? decodeHtmlEntities(obj.size).slice(0, 60) : undefined;
-
-          const variantColors: string[] = [];
           const variantSizes: string[] = [];
           const variantColorImages: Record<string, string> = {};
           const variantSizePrices: Record<string, number> = {};
@@ -1603,7 +1616,50 @@ async function startServer() {
           }
           const description =
             typeof obj.description === 'string' ? decodeHtmlEntities(obj.description) : undefined;
-          if (title || priceEur || imageUrl) {
+
+          const specsList: string[] = [];
+          const seenLdLabels = new Set<string>();
+          const pushLdSpec = (label: string, val: unknown) => {
+            if (!label || specsList.length >= 16) return;
+            let textVal = '';
+            if (typeof val === 'string' || typeof val === 'number') {
+              textVal = stripHtmlTags(String(val)).replace(/\s+/g, ' ').trim();
+            } else if (val && typeof val === 'object' && !Array.isArray(val)) {
+              const vo = val as Record<string, unknown>;
+              const qVal = vo.value ?? vo.name;
+              const qUnit = vo.unitText ?? vo.unitCode;
+              if (qVal !== undefined && qVal !== null) {
+                textVal = `${stripHtmlTags(String(qVal)).trim()}${
+                  typeof qUnit === 'string' && qUnit.trim() ? ` ${qUnit.trim()}` : ''
+                }`.trim();
+              }
+            }
+            if (!textVal || textVal.length > 180) return;
+            const cleanLabel = stripHtmlTags(label).replace(/:$/, '').trim();
+            if (!cleanLabel || cleanLabel.length > 50) return;
+            const low = cleanLabel.toLowerCase();
+            if (seenLdLabels.has(low)) return;
+            seenLdLabels.add(low);
+            specsList.push(`${cleanLabel}: ${textVal}`);
+          };
+
+          if (obj.material) pushLdSpec('Materiale', obj.material);
+          if (obj.pattern) pushLdSpec('Finitura', obj.pattern);
+          if (obj.width) pushLdSpec('Larghezza', obj.width);
+          if (obj.height) pushLdSpec('Altezza', obj.height);
+          if (obj.depth) pushLdSpec('Profondità', obj.depth);
+          if (obj.weight) pushLdSpec('Peso', obj.weight);
+          if (Array.isArray(obj.additionalProperty)) {
+            for (const prop of obj.additionalProperty) {
+              if (!prop || typeof prop !== 'object') continue;
+              const po = prop as Record<string, unknown>;
+              if (typeof po.name === 'string') {
+                pushLdSpec(po.name, po.value !== undefined ? po : po.valueText);
+              }
+            }
+          }
+
+          if (title || priceEur || imageUrl || specsList.length > 0) {
             return {
               title,
               brand,
@@ -1619,6 +1675,7 @@ async function startServer() {
               imageUrl,
               priceEur,
               description,
+              specsList: specsList.length > 0 ? specsList : undefined,
             };
           }
         }
@@ -1868,7 +1925,9 @@ async function startServer() {
           lowLabel === 'capacità di memoria' ||
           lowLabel === 'dimensione memoria'
         ) {
-          if (!overviewSize) overviewSize = value.slice(0, 60);
+          const isMultiCapacityList =
+            /\b\d+(?:[.,]\d+)?\s*(?:gb|tb|mb)\b.*\b\d+(?:[.,]\d+)?\s*(?:gb|tb|mb)\b/i.test(value);
+          if (!overviewSize && !isMultiCapacityList) overviewSize = value.slice(0, 60);
         }
         if (
           lowLabel.includes('nome modello') ||
@@ -1913,7 +1972,9 @@ async function startServer() {
           lowLabel === 'capacità' ||
           lowLabel === 'capacità memoria'
         ) {
-          if (!overviewSize) overviewSize = value.slice(0, 60);
+          const isMultiCapacityList =
+            /\b\d+(?:[.,]\d+)?\s*(?:gb|tb|mb)\b.*\b\d+(?:[.,]\d+)?\s*(?:gb|tb|mb)\b/i.test(value);
+          if (!overviewSize && !isMultiCapacityList) overviewSize = value.slice(0, 60);
         }
         if (lowLabel.includes('numero modello') || lowLabel.includes('modello')) {
           if (!overviewModel) overviewModel = value.slice(0, 80);
@@ -2308,12 +2369,513 @@ async function startServer() {
     };
   }
 
+  interface InspectedDocumentDto {
+    title: string;
+    url: string;
+    kind: 'manuale' | 'scheda' | 'bim_3d' | 'certificato';
+  }
+
+  function inferDocumentKind(text: string, url: string): InspectedDocumentDto['kind'] {
+    const hay = `${text} ${url}`.toLowerCase();
+    if (/(bim|3d|cad|dwg|dxf|rfa|ifc|step|stp|obj|modello\s*3d)/.test(hay)) return 'bim_3d';
+    if (/(certificat|garanzia|etichetta|energy|energetic|conformit|ce\b)/.test(hay)) {
+      return 'certificato';
+    }
+    if (/(scheda\s*(?:prodotto|tecnica)|datasheet|data\s*sheet|brochure)/.test(hay)) {
+      return 'scheda';
+    }
+    return 'manuale';
+  }
+
+  function extractDocumentLinksFromHtml(html: string, baseUrl: string): InspectedDocumentDto[] {
+    const out: InspectedDocumentDto[] = [];
+    const seenUrls = new Set<string>();
+    const mainHtml = html
+      .replace(/<header[\s\S]*?<\/header>/gi, ' ')
+      .replace(/<nav[\s\S]*?<\/nav>/gi, ' ')
+      .replace(/<footer[\s\S]*?<\/footer>/gi, ' ');
+
+    const addCandidate = (rawHref: string, rawText: string) => {
+      if (out.length >= 8) return;
+      const trimmed = (rawHref || '').trim();
+      if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('javascript:') || trimmed.startsWith('mailto:')) {
+        return;
+      }
+      let resolvedUrl: string;
+      try {
+        const u = new URL(decodeHtmlEntities(trimmed), baseUrl);
+        if (u.protocol !== 'https:' && u.protocol !== 'http:') return;
+        if (isPrivateOrLocalHostname(u.hostname)) return;
+        resolvedUrl = u.toString().slice(0, 1000);
+      } catch {
+        return;
+      }
+      const normKey = resolvedUrl.split('#')[0].toLowerCase();
+      if (seenUrls.has(normKey)) return;
+
+      const cleanText = stripHtmlTags(rawText || '').replace(/\s+/g, ' ').trim();
+      const lowerUrl = resolvedUrl.toLowerCase();
+      const lowerText = cleanText.toLowerCase();
+
+      const hasDocExt = /\.(?:pdf|zip|dwg|dxf|rfa|ifc|step|stp|obj|doc|docx)(?:[?#]|$)/i.test(
+        lowerUrl
+      );
+      const hasDocKeyword =
+        /(?:scheda\s*(?:prodotto|tecnica)|istruzioni(?:\s+di\s+montaggio)?|manutenzione|manuale|libretto|bim|file\s*3d|3d\s*[-–/]\s*bim|cad|etichetta\s+energetica|certificat|dichiarazione|technical\s*sheet|datasheet|assembly\s*instructions|maintenance|user\s*guide|download)/i.test(
+          `${lowerText} ${lowerUrl}`
+        );
+
+      if (!hasDocExt && !hasDocKeyword) return;
+      // If it doesn't have a clear file extension, require explicit download path or strong product doc text
+      if (
+        !hasDocExt &&
+        !/(?:download|allegat|pdf|scheda|manual|istruzion|manutenzion|bim|3d|cad|datasheet)/i.test(
+          `${lowerText} ${new URL(resolvedUrl).pathname.toLowerCase()}`
+        )
+      ) {
+        return;
+      }
+
+      if (
+        /(?:privacy|cookie|gdpr|termini|condizioni|terms|policy|newsletter|catalogo[-_ ]generale|listino[-_ ]prezzi|press[-_ ]kit|bilancio|sostenibilit)/i.test(
+          `${lowerText} ${lowerUrl}`
+        )
+      ) {
+        return;
+      }
+
+      // Skip links that just point back to the HTML page itself or generic page routes without file hints
+      const baseNoHash = baseUrl.split('#')[0].toLowerCase();
+      if (normKey === baseNoHash) return;
+
+      let title = cleanText;
+      if (!title || /^(download|scarica|apri|pdf|clicca qui|vai)$/i.test(title)) {
+        const lastSeg = decodeURIComponent(new URL(resolvedUrl).pathname.split('/').pop() || '');
+        title = lastSeg.replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[-_+]+/g, ' ').trim();
+      }
+      if (!title || title.length < 3) title = 'Documento prodotto';
+      title = title.slice(0, 80);
+
+      seenUrls.add(normKey);
+      out.push({
+        title,
+        url: resolvedUrl,
+        kind: inferDocumentKind(title, resolvedUrl),
+      });
+    };
+
+    const anchorRe = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = anchorRe.exec(mainHtml)) !== null) {
+      const attrs = m[1] || '';
+      const inner = m[2] || '';
+      const hrefM = attrs.match(/\b(?:href|data-href|data-url|data-file)=["']([^"']+)["']/i);
+      const titleM = attrs.match(/\b(?:title|aria-label)=["']([^"']+)["']/i);
+      if (!hrefM?.[1]) continue;
+
+      const cleanInner = stripHtmlTags(inner).replace(/\s+/g, ' ').trim();
+      let cleanAttrLabel = titleM?.[1]
+        ? decodeHtmlEntities(titleM[1])
+            .replace(/\s*\((?:si\s+apre\s+in\s+una\s+nuova\s+scheda|opens\s+in\s+(?:a\s+)?new\s+tab|pdf[^)]*)\)\s*$/i, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+        : '';
+
+      // If aria-label has "Product Name - Document Type", keep the descriptive Document Type
+      if (cleanAttrLabel && cleanInner) {
+        const dashSplit = cleanAttrLabel.split(/\s+[-–|]\s+/);
+        if (dashSplit.length >= 2 && dashSplit[dashSplit.length - 1].length >= 4) {
+          cleanAttrLabel = dashSplit[dashSplit.length - 1].trim();
+        }
+      }
+
+      // Check immediately preceding heading (e.g. <h4>Istruzioni di montaggio</h4>)
+      const beforeSlice = mainHtml.slice(Math.max(0, m.index - 450), m.index);
+      const headingBeforeM = beforeSlice.match(/<h[2-5][^>]*>([\s\S]{3,160})<\/h[2-5]>\s*$/i);
+      const headingLabel = headingBeforeM?.[1]
+        ? stripHtmlTags(headingBeforeM[1]).replace(/\s+/g, ' ').trim()
+        : '';
+
+      let textHint = cleanAttrLabel || headingLabel || cleanInner;
+      if (
+        cleanInner &&
+        cleanAttrLabel &&
+        cleanInner.length < 40 &&
+        !cleanAttrLabel.toLowerCase().includes(cleanInner.toLowerCase())
+      ) {
+        textHint = `${cleanAttrLabel} (${cleanInner})`;
+      } else if (
+        headingLabel &&
+        !cleanAttrLabel &&
+        cleanInner &&
+        !headingLabel.toLowerCase().includes(cleanInner.toLowerCase()) &&
+        cleanInner.length < 36
+      ) {
+        textHint = `${headingLabel} · ${cleanInner}`;
+      }
+      addCandidate(hrefM[1], textHint);
+    }
+
+    // Also inspect direct PDF/BIM URLs embedded inside data attributes or JSON scripts in main body
+    const rawDocUrlRe = /["'](https?:\/\/[^"'\s<>]+\.(?:pdf|zip|dwg|dxf|rfa|ifc|step|stp)(?:\?[^"'\s<>]*)?)["']/gi;
+    while ((m = rawDocUrlRe.exec(mainHtml)) !== null) {
+      addCandidate(m[1], '');
+    }
+
+    return out;
+  }
+
+  function extractGenericDomDetails(
+    html: string,
+    finalUrl: string,
+    knownColors: string[] = []
+  ): {
+    specsList: string[];
+    bullets: string[];
+    documents: InspectedDocumentDto[];
+    availableColors: string[];
+    colorImages: Record<string, string>;
+  } {
+    const bodyOnly = html
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<svg[\s\S]*?<\/svg>/gi, ' ')
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+      .replace(/<header[\s\S]*?<\/header>/gi, ' ')
+      .replace(/<nav[\s\S]*?<\/nav>/gi, ' ')
+      .replace(/<footer[\s\S]*?<\/footer>/gi, ' ');
+
+    const specsList: string[] = [];
+    const bullets: string[] = [];
+    const seenLabels = new Set<string>();
+    const seenBullets = new Set<string>();
+
+    const ignoredLabels = new Set([
+      'condividi',
+      'share',
+      'quantità',
+      'qty',
+      'prezzo',
+      'price',
+      'totale',
+      'total',
+      'menu',
+      'cerca',
+      'search',
+      'cookie',
+      'privacy',
+      'login',
+      'accedi',
+      'registrati',
+      'carrello',
+      'cart',
+      'recensione',
+      'recensioni',
+      'valutazione',
+      'rating',
+    ]);
+
+    const addSpecPair = (rawLabel: string, rawVal: string) => {
+      if (specsList.length >= 16) return;
+      const label = stripHtmlTags(rawLabel).replace(/\s+/g, ' ').replace(/[:：]+$/, '').trim();
+      const val = stripHtmlTags(rawVal).replace(/\s+/g, ' ').trim();
+      if (!label || !val) return;
+      if (label.length < 2 || label.length > 52 || val.length > 240) return;
+      if (ignoredLabels.has(label.toLowerCase())) return;
+      const key = label.toLowerCase();
+      if (seenLabels.has(key)) return;
+      seenLabels.add(key);
+      specsList.push(`${label}: ${val}`);
+    };
+
+    const addBulletText = (rawText: string) => {
+      if (bullets.length >= 6) return;
+      const text = stripHtmlTags(rawText).replace(/\s+/g, ' ').trim();
+      if (text.length < 18 || text.length > 480) return;
+      if (/(?:cookie|privacy|newsletter|iscriviti|aggiungi al carrello|spedizione gratuita|diritto di recesso|accedi|registrati)/i.test(text)) {
+        return;
+      }
+      const key = text.slice(0, 60).toLowerCase();
+      if (seenBullets.has(key)) return;
+      seenBullets.add(key);
+      bullets.push(truncateAtWordBoundary(text, 440));
+    };
+
+    // 1. Definition lists (<dl><dt>...</dt><dd>...</dd></dl>)
+    for (const dlMatch of bodyOnly.matchAll(/<dl\b[\s\S]*?<\/dl>/gi)) {
+      const pairs = [
+        ...dlMatch[0].matchAll(/<dt\b[^>]*>([\s\S]*?)<\/dt>\s*<dd\b[^>]*>([\s\S]*?)<\/dd>/gi),
+      ];
+      for (const p of pairs) {
+        addSpecPair(p[1], p[2]);
+      }
+    }
+
+    // 2. HTML Tables (two-cell rows: th+td or td+td)
+    for (const tableMatch of bodyOnly.matchAll(/<table\b[\s\S]*?<\/table>/gi)) {
+      const rows = [...tableMatch[0].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)];
+      for (const r of rows) {
+        const cells = [...r[1].matchAll(/<(?:th|td)\b[^>]*>([\s\S]*?)<\/(?:th|td)>/gi)];
+        if (cells.length >= 2) {
+          addSpecPair(cells[0][1], cells[1][1]);
+        }
+      }
+    }
+
+    // 3. Technical detail / specification sections (headings & containers)
+    const sectionHeadingRe =
+      /<(?:h[1-6]|div|section|button|summary|p|strong|span)[^>]*(?:id|class)=["'][^"']*(?:spec|tech|detail|dettagl|caratterist|scheda|dimension|misur|feature|descri|info|tab|accordion|product-info)[^"']*["'][^>]*>[\s\S]{0,12000}/gi;
+    const textHeadingRe =
+      /(?:dettagli\s+tecnici|specifiche\s+tecniche|caratteristiche(?:\s+tecniche)?|scheda\s+tecnica|informazioni\s+prodotto|dimensioni\s+e\s+peso|technical\s+details|specifications)/i;
+
+    const candidateBlocks: string[] = [];
+    let hm: RegExpExecArray | null;
+    while ((hm = sectionHeadingRe.exec(bodyOnly)) !== null) {
+      candidateBlocks.push(hm[0].slice(0, 12000));
+      if (candidateBlocks.length >= 8) break;
+    }
+
+    const headingMatch = textHeadingRe.exec(bodyOnly);
+    if (headingMatch && typeof headingMatch.index === 'number') {
+      candidateBlocks.push(bodyOnly.slice(headingMatch.index, headingMatch.index + 14000));
+    }
+
+    for (const block of candidateBlocks) {
+      // List items inside technical blocks
+      for (const liM of block.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)) {
+        const liText = stripHtmlTags(liM[1]).replace(/\s+/g, ' ').trim();
+        if (!liText) continue;
+        const colonIdx = liText.indexOf(':');
+        if (colonIdx > 1 && colonIdx < 45 && liText.length < 180) {
+          addSpecPair(liText.slice(0, colonIdx), liText.slice(colonIdx + 1));
+        } else {
+          addBulletText(liText);
+        }
+      }
+
+      // Nested Label/Value blocks (e.g. <div class="name|description">Altezza in cm</div><div class="value">90</div>)
+      for (const pairM of block.matchAll(
+        /<div\b[^>]*class=["'][^"']*\b(?:name|description|label|spec-label)\b[^"']*["'][^>]*>([\s\S]{2,260}?)<\/div>\s*<div\b[^>]*class=["'][^"']*\b(?:value|spec-value)\b[^"']*["'][^>]*>([\s\S]{1,220}?)<\/div>/gi
+      )) {
+        let lbl = stripHtmlTags(pairM[1].replace(/<br\s*\/?>/gi, ' '))
+          .replace(/\s+/g, ' ')
+          .trim();
+        let val = stripHtmlTags(pairM[2].replace(/<br\s*\/?>/gi, ' · '))
+          .replace(/\s+/g, ' ')
+          .trim();
+        const inUnitM = lbl.match(/^(.+?)\s+in\s+(cm|mm|m|kg|g|mc|litri|l)\b$/i);
+        if (inUnitM && /^\d+(?:[.,]\d+)?(?:\s*\/\s*\d+(?:[.,]\d+)?)?$/.test(val)) {
+          lbl = inUnitM[1].trim();
+          val = `${val} ${inUnitM[2].toLowerCase()}`;
+        }
+        addSpecPair(lbl, val);
+      }
+
+      // Label/Value pairs inside child divs/spans/p (e.g. <span>Altezza</span><span>90 cm</span>)
+      for (const pairM of block.matchAll(
+        /<(?:div|p|span|strong|b|td|th)\b[^>]*>([^<]{2,50})<\/(?:div|p|span|strong|b|td|th)>\s*<(?:div|p|span|strong|b|td|dd)\b[^>]*>([^<]{1,140})<\/(?:div|p|span|strong|b|td|dd)>/gi
+      )) {
+        addSpecPair(pairM[1], pairM[2]);
+      }
+
+      // Technical description blocks separated by <br> (e.g. "STRUTTURA: ... <br> CUSCINI: ...")
+      for (const descM of block.matchAll(
+        /<div\b[^>]*class=["'][^"']*\bdescription\b[^"']*["'][^>]*>([\s\S]{12,1200}?)<\/div>/gi
+      )) {
+        const lines = descM[1]
+          .replace(/<br\s*\/?>/gi, '\n')
+          .split(/\n+/)
+          .map((l) => stripHtmlTags(l).replace(/\s+/g, ' ').trim())
+          .filter(Boolean);
+        for (const line of lines) {
+          const colonIdx = line.indexOf(':');
+          if (colonIdx > 1 && colonIdx < 36 && line.length < 280) {
+            const rawLbl = line.slice(0, colonIdx).trim();
+            const niceLbl =
+              rawLbl === rawLbl.toUpperCase() && rawLbl.length > 2
+                ? rawLbl.charAt(0).toUpperCase() + rawLbl.slice(1).toLowerCase()
+                : rawLbl;
+            addSpecPair(niceLbl, line.slice(colonIdx + 1));
+          } else if (line.length >= 24 && !seenLabels.has(line.toLowerCase())) {
+            addBulletText(line);
+          }
+        }
+      }
+
+      // Informative paragraphs inside technical details section
+      for (const pM of block.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)) {
+        const pText = stripHtmlTags(pM[1]).replace(/\s+/g, ' ').trim();
+        if (pText.length >= 24 && pText.length <= 420) {
+          addBulletText(pText);
+        }
+      }
+    }
+
+    // 4. General <li> Key: Value fallback if nothing was found inside targeted sections
+    if (specsList.length === 0) {
+      for (const liM of bodyOnly.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)) {
+        const liText = stripHtmlTags(liM[1]).replace(/\s+/g, ' ').trim();
+        const colonIdx = liText.indexOf(':');
+        if (colonIdx > 2 && colonIdx < 38 && liText.length < 140) {
+          addSpecPair(liText.slice(0, colonIdx), liText.slice(colonIdx + 1));
+        }
+      }
+    }
+
+    const documents = extractDocumentLinksFromHtml(html, finalUrl);
+
+    // 5. Generic per-color variant images (carousel items, color swatches, alt-matched product images)
+    const domColors: string[] = [];
+    const domColorSeen = new Set<string>();
+    const domColorImages: Record<string, string> = {};
+    const resolveDomVariantImageUrl = (rawImg?: string): string | undefined => {
+      const cleaned = decodeHtmlEntities((rawImg || '').trim());
+      if (
+        !cleaned ||
+        cleaned.startsWith('data:') ||
+        cleaned.startsWith('blob:') ||
+        /\.svg(?:[?#]|$)/i.test(cleaned) ||
+        /(?:placeholder|spinner|loading|blank|spacer|icon_profile)/i.test(cleaned)
+      ) {
+        return undefined;
+      }
+      try {
+        const resolved = new URL(cleaned, finalUrl);
+        if (resolved.protocol !== 'https:' && resolved.protocol !== 'http:') return undefined;
+        return resolved.toString().slice(0, 1000);
+      } catch {
+        return undefined;
+      }
+    };
+    const recordColorVariantImage = (rawColor: string | undefined, rawImg: string | undefined) => {
+      const cleanColor = stripHtmlTags(decodeHtmlEntities(rawColor || ''))
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 60);
+      const cleanImg = resolveDomVariantImageUrl(rawImg);
+      if (!cleanColor || cleanColor.length < 2) return;
+      const colorLow = cleanColor.toLowerCase();
+      if (/^(?:&nbsp;|none|null|undefined|default|cover|main)$/i.test(colorLow)) return;
+      if (!domColorSeen.has(colorLow) && domColors.length < 48) {
+        domColorSeen.add(colorLow);
+        domColors.push(cleanColor);
+      }
+      if (cleanImg && !domColorImages[cleanColor] && Object.keys(domColorImages).length < 48) {
+        domColorImages[cleanColor] = cleanImg;
+      }
+    };
+    const pickBestImgFromTag = (imgTag: string): string | undefined => {
+      const attrM = imgTag.match(
+        /(?:data-zoom-image|data-large_image|data-hi-res|data-src|data-lazy|data-original|src)=["']([^"']+)["']/i
+      );
+      const direct = resolveDomVariantImageUrl(attrM?.[1]);
+      if (direct) return direct;
+      const srcsetM = imgTag.match(/srcset=["']([^"']+)["']/i);
+      if (srcsetM?.[1]) {
+        const candidates = srcsetM[1]
+          .split(',')
+          .map((part) => {
+            const pieces = part.trim().split(/\s+/);
+            const url = pieces[0];
+            const width = parseInt(pieces[1] || '0', 10) || 0;
+            return { url, width };
+          })
+          .filter((c) => Boolean(c.url))
+          .sort((a, b) => b.width - a.width);
+        for (const c of candidates) {
+          const resolved = resolveDomVariantImageUrl(c.url);
+          if (resolved) return resolved;
+        }
+      }
+      return undefined;
+    };
+
+    // 5a. Carousel / variant cards containing an <img> + <div class="color-name">...</div> (e.g. Nardi Outdoor)
+    for (const cardM of bodyOnly.matchAll(
+      /<div\b[^>]*class=["'][^"']*\bcarousel-item\b[^"']*["'][^>]*>([\s\S]{0,1800}?)(?=<div\b[^>]*class=["'][^"']*\bcarousel-item\b|<\/section>|<\/main>|$)/gi
+    )) {
+      const chunk = cardM[1];
+      const imgTag = chunk.match(/<img\b[^>]*>/i)?.[0];
+      if (!imgTag) continue;
+      const imgUrl = pickBestImgFromTag(imgTag);
+      if (!imgUrl) continue;
+      let colorLabel = '';
+      const colorNameM = chunk.match(
+        /<div\b[^>]*class=["'][^"']*\bcolor-name\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i
+      );
+      if (colorNameM?.[1]) {
+        colorLabel = colorNameM[1]
+          .replace(/<span\b[^>]*class=["'][^"']*\bcolor-code\b[^"']*["'][^>]*>[\s\S]*?<\/span>/gi, ' ')
+          .replace(/<br\s*\/?>/gi, ' ');
+      } else {
+        const dataColM = chunk.match(/data-(?:variant-)?color=["']([^"']+)["']/i);
+        if (dataColM?.[1]) colorLabel = dataColM[1];
+      }
+      if (colorLabel) {
+        recordColorVariantImage(colorLabel, imgUrl);
+      }
+    }
+
+    // 5b. Generic swatch links/buttons/items with explicit color + variant image attributes
+    for (const swatchM of bodyOnly.matchAll(
+      /<(?:a|button|li|label|div)\b[^>]*?(?:data-(?:variant-)?color|data-swatch-label)=["']([^"']+)["'][^>]*>([\s\S]{0,400}?<\/(?:a|button|li|label|div)>)/gi
+    )) {
+      const fullTag = swatchM[0];
+      const imgAttrM = fullTag.match(
+        /data-(?:zoom-image|large_image|image|img|src)=["']([^"']+)["']/i
+      );
+      const childImgTag = fullTag.match(/<img\b[^>]*>/i)?.[0];
+      const imgUrl = imgAttrM?.[1] || (childImgTag ? pickBestImgFromTag(childImgTag) : undefined);
+      if (imgUrl) {
+        recordColorVariantImage(swatchM[1], imgUrl);
+      }
+    }
+
+    // 5c. Match remaining knownColors (e.g. from JSON-LD product.color[]) against <img alt="...">
+    const mergedKnownColors = normalizeOptionList([...knownColors, ...domColors], 48);
+    if (mergedKnownColors.length > 0 && Object.keys(domColorImages).length < mergedKnownColors.length) {
+      const sortedKnown = [...mergedKnownColors].sort((a, b) => b.length - a.length);
+      for (const imgM of bodyOnly.matchAll(/<img\b[^>]*>/gi)) {
+        const tag = imgM[0];
+        const altM = tag.match(/alt=["']([^"']+)["']/i);
+        if (!altM?.[1]) continue;
+        const altClean = decodeHtmlEntities(altM[1]).replace(/\s+/g, ' ').trim();
+        if (altClean.length < 3) continue;
+        const altLower = altClean.toLowerCase();
+        const imgUrl = pickBestImgFromTag(tag);
+        if (!imgUrl) continue;
+        for (const cand of sortedKnown) {
+          if (domColorImages[cand]) continue;
+          const candLower = cand.toLowerCase();
+          if (candLower.length < 3) continue;
+          if (
+            altLower === candLower ||
+            altLower.endsWith(` ${candLower}`) ||
+            altLower.includes(` ${candLower} `)
+          ) {
+            recordColorVariantImage(cand, imgUrl);
+            break;
+          }
+        }
+      }
+    }
+
+    return {
+      specsList,
+      bullets,
+      documents,
+      availableColors: mergedKnownColors,
+      colorImages: domColorImages,
+    };
+  }
+
   function isBlockedPageTitle(rawTitle: string): boolean {
     const t = rawTitle.toLowerCase().trim();
     if (!t) return true;
     return (
       t === 'amazon.it' ||
       t === 'amazon.com' ||
+      t.includes('403 forbidden') ||
       t.includes('robot check') ||
       t.includes('captcha') ||
       t.includes('just a moment') ||
@@ -2339,6 +2901,38 @@ async function startServer() {
       sample.includes('px-captcha') ||
       sample.includes('enable javascript and cookies to continue')
     );
+  }
+
+  async function resolveWaybackSnapshotUrl(targetUrl: string): Promise<string | undefined> {
+    try {
+      const apiUrl = `https://archive.org/wayback/available?url=${encodeURIComponent(targetUrl)}`;
+      const resp = await fetch(apiUrl, {
+        method: 'GET',
+        signal: AbortSignal.timeout(5500),
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'MyHomeProductInspector/1.0',
+        },
+      });
+      if (!resp.ok) return undefined;
+      const data = (await resp.json()) as {
+        archived_snapshots?: {
+          closest?: { available?: boolean; status?: string; timestamp?: string; url?: string };
+        };
+      };
+      const closest = data?.archived_snapshots?.closest;
+      if (
+        closest?.available &&
+        closest.status === '200' &&
+        closest.timestamp &&
+        /^\d{8,14}$/.test(closest.timestamp)
+      ) {
+        return `https://web.archive.org/web/${closest.timestamp}id_/${targetUrl}`;
+      }
+    } catch {
+      // ignore Wayback availability lookup failures
+    }
+    return undefined;
   }
 
   app.post('/api/researches/inspect', async (req, res) => {
@@ -2395,6 +2989,7 @@ async function startServer() {
     let priceEur: number | undefined;
     let specs = '';
     let notes = '';
+    let documents: InspectedDocumentDto[] = [];
     let extractedFrom: 'page-meta' | 'url-slug' = 'url-slug';
     let blockedBySite = false;
 
@@ -2472,9 +3067,10 @@ async function startServer() {
       );
     };
 
-    const fetchWithInsecureTlsFallback = async (
+    const fetchViaNodeHttp = async (
       targetUrl: string,
       headers: Record<string, string>,
+      rejectUnauthorized = true,
       hopsLeft = 4
     ): Promise<{ status: number; contentType: string; text: string }> => {
       const u = new URL(targetUrl);
@@ -2486,7 +3082,7 @@ async function startServer() {
             method: 'GET',
             headers,
             timeout: 9500,
-            ...(u.protocol === 'https:' ? { rejectUnauthorized: false } : {}),
+            ...(u.protocol === 'https:' ? { rejectUnauthorized } : {}),
           },
           (resp) => {
             const status = resp.statusCode || 0;
@@ -2496,7 +3092,7 @@ async function startServer() {
               try {
                 const nextUrl = new URL(loc, u).toString();
                 if (!isPrivateOrLocalHostname(new URL(nextUrl).hostname)) {
-                  void fetchWithInsecureTlsFallback(nextUrl, headers, hopsLeft - 1)
+                  void fetchViaNodeHttp(nextUrl, headers, rejectUnauthorized, hopsLeft - 1)
                     .then(resolve)
                     .catch(reject);
                   return;
@@ -2528,6 +3124,19 @@ async function startServer() {
       });
     };
 
+    const parseNodeHttpResult = (res: {
+      status: number;
+      contentType: string;
+      text: string;
+    }): { html: string; blocked: boolean } => {
+      const bodyText = res.contentType.includes('text/html') ? res.text : '';
+      const blocked = isBotChallengeHtml(bodyText, res.status);
+      if (res.status < 200 || res.status >= 400 || !res.contentType.includes('text/html') || blocked) {
+        return { html: '', blocked };
+      }
+      return { html: bodyText, blocked: false };
+    };
+
     const fetchPageHtml = async (
       targetUrl: string,
       userAgentOverride?: string
@@ -2552,27 +3161,25 @@ async function startServer() {
           ? (await response.text()).slice(0, 3_000_000)
           : '';
         const blocked = isBotChallengeHtml(bodyText, response.status);
-        if (!response.ok || !contentType.includes('text/html') || blocked) {
-          return { html: '', blocked };
+        if (response.ok && contentType.includes('text/html') && !blocked) {
+          return { html: bodyText, blocked: false };
         }
-        return { html: bodyText, blocked: false };
+        // Fallback via Node native HTTP/1.1 client when fetch() (undici TLS/ALPN) gets 503/403 bot-challenged
+        if (blocked || response.status === 403 || response.status === 503) {
+          try {
+            const nodeRes = await fetchViaNodeHttp(targetUrl, reqHeaders, true);
+            const parsed = parseNodeHttpResult(nodeRes);
+            if (parsed.html) return parsed;
+          } catch {
+            // fall through
+          }
+        }
+        return { html: '', blocked };
       } catch (err) {
         if (isTlsChainError(err)) {
           try {
-            const fallbackRes = await fetchWithInsecureTlsFallback(targetUrl, reqHeaders);
-            const bodyText = fallbackRes.contentType.includes('text/html')
-              ? fallbackRes.text
-              : '';
-            const blocked = isBotChallengeHtml(bodyText, fallbackRes.status);
-            if (
-              fallbackRes.status < 200 ||
-              fallbackRes.status >= 400 ||
-              !fallbackRes.contentType.includes('text/html') ||
-              blocked
-            ) {
-              return { html: '', blocked };
-            }
-            return { html: bodyText, blocked: false };
+            const fallbackRes = await fetchViaNodeHttp(targetUrl, reqHeaders, false);
+            return parseNodeHttpResult(fallbackRes);
           } catch {
             return { html: '', blocked: false };
           }
@@ -2597,6 +3204,10 @@ async function startServer() {
       if (amazonAsin && !hasUsableProductHtml(html)) {
         const cleanAmazonUrl = `https://${parsedUrl.hostname}/dp/${amazonAsin}?th=1&psc=1`;
         const retryStrategies = [
+          {
+            url: cleanAmazonUrl,
+            ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          },
           { url: cleanAmazonUrl, ua: 'WhatsApp/2.23.20.0' },
           {
             url: cleanAmazonUrl,
@@ -2613,6 +3224,16 @@ async function startServer() {
             html = retryRes.html;
             blockedBySite = false;
             break;
+          }
+        }
+      } else if (!amazonAsin && (blockedBySite || !hasUsableProductHtml(html))) {
+        // Non-Amazon site WAF-blocked datacenter IP (e.g. AWS ELB 403 on manufacturer sites): try Wayback snapshot
+        const wbUrl = await resolveWaybackSnapshotUrl(finalUrl);
+        if (wbUrl) {
+          const wbRes = await fetchPageHtml(wbUrl);
+          if (hasUsableProductHtml(wbRes.html)) {
+            html = wbRes.html;
+            blockedBySite = false;
           }
         }
       }
@@ -2636,7 +3257,10 @@ async function startServer() {
         let mobileDom: ReturnType<typeof extractAmazonDomDetails> | null = null;
         if (
           amazonAsin &&
-          (amazonDom?.priceEur === undefined || !amazonDom?.title || !amazonDom?.imageUrl)
+          (amazonDom?.priceEur === undefined ||
+            !amazonDom?.title ||
+            !amazonDom?.imageUrl ||
+            (amazonDom.availableColors.length === 0 && amazonDom.availableSizes.length === 0))
         ) {
           try {
             const mobileRes = await fetchPageHtml(
@@ -2845,10 +3469,45 @@ async function startServer() {
           model = ld.model;
         }
 
-        const mergedSpecsList =
-          amazonDom?.specsList.length ? amazonDom.specsList : mobileDom?.specsList || [];
-        const mergedBullets =
-          amazonDom?.bullets.length ? amazonDom.bullets : mobileDom?.bullets || [];
+        const isAmazonUrl = parsedUrl.hostname.toLowerCase().includes('amazon.');
+        const genericDom = !isAmazonUrl
+          ? extractGenericDomDetails(html, finalUrl, availableColors)
+          : null;
+
+        if (
+          !isAmazonUrl &&
+          genericDom?.availableColors &&
+          genericDom.availableColors.length > availableColors.length
+        ) {
+          availableColors = genericDom.availableColors;
+        }
+        if (
+          !isAmazonUrl &&
+          genericDom?.colorImages &&
+          Object.keys(genericDom.colorImages).length > 0
+        ) {
+          colorImages = sanitizeColorImagesMap({
+            ...(colorImages || {}),
+            ...genericDom.colorImages,
+          });
+        }
+
+        const mergedSpecsList = amazonDom?.specsList.length
+          ? amazonDom.specsList
+          : mobileDom?.specsList.length
+            ? mobileDom.specsList
+            : genericDom?.specsList.length
+              ? genericDom.specsList
+              : ld.specsList || [];
+        const mergedBullets = amazonDom?.bullets.length
+          ? amazonDom.bullets
+          : mobileDom?.bullets.length
+            ? mobileDom.bullets
+            : genericDom?.bullets || [];
+
+        if (genericDom?.documents && genericDom.documents.length > 0) {
+          documents = genericDom.documents;
+        }
 
         const metaDesc =
           ld.description ||
@@ -2856,7 +3515,11 @@ async function startServer() {
           extractMetaContent(html, 'name', 'description');
 
         if (mergedSpecsList.length > 0 || mergedBullets.length > 0) {
-          specs = buildBoundedSpecsText(mergedSpecsList, mergedBullets, 1850);
+          const descBullet =
+            mergedBullets.length === 0 && metaDesc && metaDesc.length > 35
+              ? [truncateAtWordBoundary(metaDesc, 380)]
+              : mergedBullets;
+          specs = buildBoundedSpecsText(mergedSpecsList, descBullet, 1850);
         } else if (metaDesc && !isBlockedPageTitle(candidateTitle)) {
           specs = truncateAtWordBoundary(metaDesc, 1850);
         }
@@ -2867,42 +3530,71 @@ async function startServer() {
 
     let aiSuggestedRoom: ResearchRoomIdServer | undefined;
 
-    // Online grounding fallback via Gemini when page blocked / JS-rendered / sparse
+    const specsLookSparse = !specs || (!specs.includes('\n') && specs.length < 130);
+    // Online grounding fallback via Gemini when page blocked / JS-rendered / sparse specs / missing docs
     if (
-      (extractedFrom !== 'page-meta' || (!priceEur && !specs && !color)) &&
+      (blockedBySite ||
+        extractedFrom !== 'page-meta' ||
+        specsLookSparse ||
+        (!priceEur && !color) ||
+        documents.length === 0) &&
       getGeminiClient()
     ) {
       try {
         const ai = getGeminiClient();
         if (ai) {
+          const cleanQueryBrand =
+            brand ||
+            inferProductBrandServer({
+              title: title || urlDetails.title,
+              url: finalUrl,
+              store,
+              specs,
+            }) ||
+            store;
+          const cleanQueryTitle = (title || urlDetails.title).trim();
           const searchPrompt = [
-            `Cerca informazioni reali e verificabili sul prodotto a questo URL: ${finalUrl}`,
+            `Cerca informazioni reali, dettagli tecnici completi e documenti scaricabili ufficiali sul prodotto:`,
+            `URL: ${finalUrl}`,
             amazonAsin ? `ASIN Amazon: ${amazonAsin}` : '',
-            urlDetails.title ? `Parole chiave dall'URL: ${urlDetails.title}` : '',
-            'Usa Google Search e restituisci SOLO un oggetto JSON valido con i soli campi realmente trovati nelle fonti (ometti o lascia stringa vuota/null ciò che non trovi):',
+            cleanQueryTitle ? `Prodotto: ${cleanQueryBrand} ${cleanQueryTitle}`.trim() : '',
+            'Usa Google Search (e URL Context se accessibile) e restituisci SOLO un oggetto JSON valido con i campi reali trovati nelle fonti ufficiali/rivenditori (ometti o lascia stringa vuota/null ciò che non trovi):',
             '- title: nome completo del prodotto in italiano (max 160 caratteri)',
             '- brand: marca ufficiale (max 60 caratteri)',
             '- color: colore o finitura selezionata in italiano (max 60 caratteri)',
-            '- availableColors: array JSON dei soli colori disponibili per questo prodotto se elencati nella pagina (es. ["Borgogna", "Argento", "Glacier", "Nero"])',
-            '- size: taglia, taglio memoria o capacità selezionata (es. "256 GB", "M", "42", max 60 caratteri)',
-            '- availableSizes: array JSON delle sole taglie o capacità disponibili per questo prodotto (es. ["256 GB", "512 GB", "1 TB", "2 TB"])',
-            '- sizePrices: oggetto JSON mappa taglia/capacità -> prezzo in EUR se nella fonte sono presenti prezzi diversi per taglia (es. {"256 GB": 1579, "512 GB": 1889, "1 TB": 2389, "2 TB": 3139})',
+            '- availableColors: array JSON dei soli colori disponibili per questo prodotto se elencati (es. ["Bianco", "Antracite", "Tortora"])',
+            '- size: taglia, taglio memoria o capacità selezionata (max 60 caratteri)',
+            '- availableSizes: array JSON delle sole taglie o capacità disponibili',
+            '- sizePrices: oggetto JSON mappa taglia -> prezzo in EUR se presenti prezzi diversi per taglia',
             '- model: codice modello o ASIN (max 80 caratteri)',
-            '- priceEur: numero prezzo attuale in EUR se chiaramente presente nella fonte (altrimenti null)',
-            '- specs: 3-5 righe sintetiche con specifiche utili dal sito: compatibilità, materiale, dimensioni, caratteristiche principali (max 1600 caratteri)',
+            '- priceEur: numero prezzo attuale in EUR se chiaramente presente (altrimenti null)',
+            '- specs: stringa multilinea (max 1750 caratteri) separando con a capo:\\n  1) prima le specifiche tecniche strutturate nel formato "Etichetta: Valore" (es. Struttura: ..., Materiale: ..., Altezza schienale: 90 cm, Altezza seduta: 49 cm, Larghezza: 292,5 cm, Profondità: 78/152,5 cm, Peso prodotto: 60,3/67,3 kg, Imballo: ...)\\n  2) poi eventuali informazioni descrittive/punti chiave iniziando ogni riga con "• "',
+            '- documents: array JSON (max 6 elementi) dei soli file ufficiali scaricabili trovati sul sito del produttore per questo prodotto (es. Scheda prodotto, Istruzioni di montaggio, Manutenzione prodotto, Manuale d\'uso, File 3D - BIM), ciascuno come {"title":"Scheda prodotto","url":"https://...pdf","kind":"scheda"|"manuale"|"bim_3d"|"certificato"}. Inserisci SOLO URL reali diretti trovati nelle fonti.',
             '- imageUrl: URL pubblico diretto dell\'immagine principale del prodotto se trovato nella fonte (altrimenti null)',
-            '- room: ID stanza della casa solo se è evidente e univoca ("cucina", "salone", "bagno1", "bagno2", "stanza_matrimoniale", "stanza_maurizio", "stanza_roberta", "terrazza_ovest", "terrazza_est"), altrimenti null per articoli personali, portatili o senza stanza specifica (es. smartphone, tablet, portatili, cuffie, abbigliamento, auto)',
+            '- room: ID stanza della casa solo se è evidente e univoca ("cucina", "salone", "bagno1", "bagno2", "stanza_matrimoniale", "stanza_maurizio", "stanza_roberta", "terrazza_ovest", "terrazza_est"), altrimenti null',
           ]
             .filter(Boolean)
             .join('\n');
 
-          const aiRes = await ai.models.generateContent({
-            model: 'gemini-4-hydrogen',
-            contents: searchPrompt,
-            config: {
-              tools: [{ googleSearch: {} }],
-            },
-          });
+          let aiRes;
+          try {
+            aiRes = await ai.models.generateContent({
+              model: 'gemini-4-hydrogen',
+              contents: searchPrompt,
+              config: {
+                tools: [{ googleSearch: {} }, { urlContext: {} }],
+              },
+            });
+          } catch (comboErr) {
+            if (isQuotaOrRateError(comboErr)) throw comboErr;
+            aiRes = await ai.models.generateContent({
+              model: 'gemini-4-hydrogen',
+              contents: searchPrompt,
+              config: {
+                tools: [{ googleSearch: {} }],
+              },
+            });
+          }
 
           const enriched = extractJsonFromText<{
             title?: string;
@@ -2916,8 +3608,9 @@ async function startServer() {
             priceEur?: number | string | null;
             imageUrl?: string | null;
             specs?: string;
+            documents?: Array<{ title?: string; url?: string; kind?: string }>;
             room?: string | null;
-          }>(aiRes.text || '');
+          }>(aiRes?.text || '');
 
           if (enriched) {
             if (!title && typeof enriched.title === 'string' && enriched.title.trim()) {
@@ -2954,8 +3647,46 @@ async function startServer() {
                 imageUrl = resolvedAiImg;
               }
             }
-            if (!specs && typeof enriched.specs === 'string' && enriched.specs.trim()) {
-              specs = truncateAtWordBoundary(enriched.specs.trim(), 1850);
+            if (typeof enriched.specs === 'string' && enriched.specs.trim()) {
+              const aiSpecs = truncateAtWordBoundary(enriched.specs.trim(), 1850);
+              if (!specs || (specsLookSparse && aiSpecs.length > specs.length)) {
+                specs = aiSpecs;
+                if (title) extractedFrom = 'page-meta';
+              }
+            }
+            if (documents.length === 0 && Array.isArray(enriched.documents)) {
+              const seenDocUrls = new Set<string>();
+              const validAiDocs: InspectedDocumentDto[] = [];
+              for (const d of enriched.documents) {
+                if (!d || typeof d.url !== 'string') continue;
+                try {
+                  const u = new URL(d.url.trim());
+                  if (u.protocol !== 'https:' && u.protocol !== 'http:') continue;
+                  if (isPrivateOrLocalHostname(u.hostname)) continue;
+                  const cleanDocUrl = u.toString().slice(0, 1000);
+                  const low = cleanDocUrl.toLowerCase();
+                  if (seenDocUrls.has(low)) continue;
+                  seenDocUrls.add(low);
+                  const docTitle =
+                    typeof d.title === 'string' && d.title.trim()
+                      ? d.title.trim().slice(0, 80)
+                      : 'Documento prodotto';
+                  const kind =
+                    d.kind === 'scheda' ||
+                    d.kind === 'manuale' ||
+                    d.kind === 'bim_3d' ||
+                    d.kind === 'certificato'
+                      ? d.kind
+                      : inferDocumentKind(docTitle, cleanDocUrl);
+                  validAiDocs.push({ title: docTitle, url: cleanDocUrl, kind });
+                  if (validAiDocs.length >= 6) break;
+                } catch {
+                  // skip invalid document URL
+                }
+              }
+              if (validAiDocs.length > 0) {
+                documents = validAiDocs;
+              }
             }
             if (typeof enriched.room === 'string' && enriched.room.trim()) {
               aiSuggestedRoom = normalizeResearchRoomServer(enriched.room);
@@ -3018,6 +3749,7 @@ async function startServer() {
       model: model || undefined,
       specs: specs || undefined,
       notes: notes || undefined,
+      documents: documents.length > 0 ? documents.slice(0, 8) : undefined,
       extractedFrom,
       blockedBySite,
     };
@@ -3027,6 +3759,238 @@ async function startServer() {
     }
 
     res.json(payload);
+  });
+
+  app.post('/api/researches/fetch-document', async (req, res) => {
+    const rawDocUrl = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+    const fallbackTitle = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    if (!rawDocUrl || rawDocUrl.length > 1000) {
+      res.status(400).json({ ok: false, reason: 'invalid', error: 'URL documento non valido.' });
+      return;
+    }
+    let parsedDocUrl: URL;
+    try {
+      parsedDocUrl = new URL(rawDocUrl);
+    } catch {
+      res.status(400).json({ ok: false, reason: 'invalid', error: 'URL documento malformato.' });
+      return;
+    }
+    if (
+      (parsedDocUrl.protocol !== 'https:' && parsedDocUrl.protocol !== 'http:') ||
+      isPrivateOrLocalHostname(parsedDocUrl.hostname)
+    ) {
+      res.status(400).json({ ok: false, reason: 'invalid', error: 'URL non consentito.' });
+      return;
+    }
+
+    const MAX_DOC_BYTES = 6_000_000;
+    const reqHeaders: Record<string, string> = {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      Accept: 'application/pdf,application/zip,application/octet-stream,*/*;q=0.8',
+      'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+    };
+
+    const fetchBinaryWithTlsFallback = async (
+      targetUrl: string,
+      hopsLeft = 4
+    ): Promise<{
+      status: number;
+      contentType: string;
+      contentDisposition: string;
+      buffer: Buffer;
+      tooLarge: boolean;
+    }> => {
+      try {
+        const resp = await fetch(targetUrl, {
+          method: 'GET',
+          redirect: 'follow',
+          signal: AbortSignal.timeout(12000),
+          headers: reqHeaders,
+        });
+        const contentLen = Number(resp.headers.get('content-length') || 0);
+        if (Number.isFinite(contentLen) && contentLen > MAX_DOC_BYTES) {
+          return {
+            status: resp.status,
+            contentType: String(resp.headers.get('content-type') || '').toLowerCase(),
+            contentDisposition: String(resp.headers.get('content-disposition') || ''),
+            buffer: Buffer.alloc(0),
+            tooLarge: true,
+          };
+        }
+        const ab = await resp.arrayBuffer();
+        const buf = Buffer.from(ab);
+        return {
+          status: resp.status,
+          contentType: String(resp.headers.get('content-type') || '').toLowerCase(),
+          contentDisposition: String(resp.headers.get('content-disposition') || ''),
+          buffer: buf,
+          tooLarge: buf.length > MAX_DOC_BYTES,
+        };
+      } catch (err) {
+        const code =
+          (err as { cause?: { code?: string }; code?: string })?.cause?.code ||
+          (err as { code?: string })?.code ||
+          '';
+        if (
+          code !== 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' &&
+          code !== 'SELF_SIGNED_CERT_IN_CHAIN' &&
+          code !== 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY' &&
+          code !== 'CERT_UNTRUSTED'
+        ) {
+          throw err;
+        }
+        return new Promise((resolve, reject) => {
+          const u = new URL(targetUrl);
+          const client = u.protocol === 'https:' ? https : http;
+          const r = client.request(
+            u,
+            {
+              method: 'GET',
+              headers: reqHeaders,
+              timeout: 12000,
+              ...(u.protocol === 'https:' ? { rejectUnauthorized: false } : {}),
+            },
+            (resp) => {
+              const status = resp.statusCode || 0;
+              const loc = resp.headers.location;
+              if (status >= 300 && status < 400 && loc && hopsLeft > 0) {
+                resp.resume();
+                try {
+                  const nextUrl = new URL(loc, u).toString();
+                  if (!isPrivateOrLocalHostname(new URL(nextUrl).hostname)) {
+                    void fetchBinaryWithTlsFallback(nextUrl, hopsLeft - 1)
+                      .then(resolve)
+                      .catch(reject);
+                    return;
+                  }
+                } catch {
+                  // fall through
+                }
+              }
+              const chunks: Buffer[] = [];
+              let total = 0;
+              let tooLarge = false;
+              resp.on('data', (chunk: Buffer) => {
+                total += chunk.length;
+                if (total > MAX_DOC_BYTES) {
+                  tooLarge = true;
+                  resp.destroy();
+                  return;
+                }
+                chunks.push(chunk);
+              });
+              resp.on('end', () => {
+                resolve({
+                  status,
+                  contentType: String(resp.headers['content-type'] || '').toLowerCase(),
+                  contentDisposition: String(resp.headers['content-disposition'] || ''),
+                  buffer: tooLarge ? Buffer.alloc(0) : Buffer.concat(chunks),
+                  tooLarge,
+                });
+              });
+              resp.on('close', () => {
+                if (tooLarge) {
+                  resolve({
+                    status,
+                    contentType: String(resp.headers['content-type'] || '').toLowerCase(),
+                    contentDisposition: String(resp.headers['content-disposition'] || ''),
+                    buffer: Buffer.alloc(0),
+                    tooLarge: true,
+                  });
+                }
+              });
+            }
+          );
+          r.on('timeout', () => r.destroy(new Error('Document fetch timeout')));
+          r.on('error', reject);
+          r.end();
+        });
+      }
+    };
+
+    try {
+      let result = await fetchBinaryWithTlsFallback(parsedDocUrl.toString());
+      if (result.tooLarge) {
+        res.status(200).json({ ok: false, reason: 'too_large', url: parsedDocUrl.toString() });
+        return;
+      }
+
+      const isHtmlResult = (r: typeof result): boolean => {
+        const ct = r.contentType.split(';')[0].trim();
+        const head = r.buffer.slice(0, 512).toString('utf8').toLowerCase();
+        return ct.includes('text/html') || head.includes('<!doctype html') || head.includes('<html');
+      };
+
+      if (
+        result.status === 403 ||
+        result.status === 503 ||
+        result.status === 429 ||
+        result.buffer.length === 0 ||
+        isHtmlResult(result)
+      ) {
+        const wbDocUrl = await resolveWaybackSnapshotUrl(parsedDocUrl.toString());
+        if (wbDocUrl) {
+          const wbResult = await fetchBinaryWithTlsFallback(wbDocUrl);
+          if (wbResult.tooLarge) {
+            res.status(200).json({ ok: false, reason: 'too_large', url: parsedDocUrl.toString() });
+            return;
+          }
+          if (
+            wbResult.status >= 200 &&
+            wbResult.status < 400 &&
+            wbResult.buffer.length > 0 &&
+            !isHtmlResult(wbResult)
+          ) {
+            result = wbResult;
+          }
+        }
+      }
+
+      if (result.status < 200 || result.status >= 400 || result.buffer.length === 0) {
+        res.status(200).json({
+          ok: false,
+          reason: 'blocked',
+          status: result.status,
+          url: parsedDocUrl.toString(),
+        });
+        return;
+      }
+
+      const cleanContentType = result.contentType.split(';')[0].trim() || 'application/octet-stream';
+      if (isHtmlResult(result)) {
+        res.status(200).json({ ok: false, reason: 'html_page', url: parsedDocUrl.toString() });
+        return;
+      }
+
+      let fileName = '';
+      const dispMatch = result.contentDisposition.match(
+        /filename\*?=(?:UTF-8''|["']?)([^"';\r\n]+)["']?/i
+      );
+      if (dispMatch?.[1]) {
+        try {
+          fileName = decodeURIComponent(dispMatch[1]).trim();
+        } catch {
+          fileName = dispMatch[1].trim();
+        }
+      }
+      if (!fileName) {
+        const seg = decodeURIComponent(parsedDocUrl.pathname.split('/').pop() || '').trim();
+        fileName = seg || `${fallbackTitle.replace(/[^a-zA-Z0-9_-]+/g, '_') || 'documento'}`;
+      }
+      if (!/\.[a-z0-9]{2,5}$/i.test(fileName)) {
+        if (cleanContentType === 'application/pdf') fileName += '.pdf';
+        else if (cleanContentType.includes('zip')) fileName += '.zip';
+      }
+      fileName = fileName.replace(/["\r\n\\/:*?<>|]+/g, '_').slice(0, 120);
+
+      res.setHeader('Content-Type', cleanContentType);
+      res.setHeader('X-Document-Filename', encodeURIComponent(fileName));
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(result.buffer);
+    } catch {
+      res.status(200).json({ ok: false, reason: 'network_error', url: parsedDocUrl.toString() });
+    }
   });
 
   const httpServer = http.createServer(app);

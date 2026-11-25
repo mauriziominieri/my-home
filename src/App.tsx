@@ -2814,6 +2814,65 @@ export default function App() {
     );
   }
 
+  async function handleAddResearchDocumentLink(
+    researchId: string,
+    docType: ArticleAttachmentType,
+    title: string,
+    provider: string,
+    cloudUrl: string,
+    noteText?: string
+  ) {
+    const todayIt = new Date().toLocaleDateString('it-IT');
+    await handleAddDocument({
+      title: title.slice(0, 80),
+      category: docType === 'garanzia_extra_family' ? 'Assicurazioni' : 'Altro',
+      provider: (provider || 'Ricerche').slice(0, 80),
+      referenceCode: buildResearchDocumentRef(researchId, docType),
+      issueDate: todayIt,
+      pinned: docType === 'scontrino_fattura' || docType === 'garanzia_extra_family',
+      cloudUrl: cloudUrl.trim(),
+      notes: noteText || `Documento ufficiale collegato (${docType})`,
+    });
+  }
+
+  async function handleUpdateResearchDocumentType(
+    docId: string,
+    researchId: string,
+    docType: ArticleAttachmentType
+  ) {
+    if (!user || !/^[a-zA-Z0-9_-]+$/.test(docId)) return;
+    const existingDoc = homeDocuments.find((d) => d.id === docId);
+    if (!existingDoc) return;
+    const { id: _ignoredId, ...rest } = existingDoc;
+    const isLinkOnlyDoc = !existingDoc.fileSize && Boolean(existingDoc.cloudUrl);
+    await handleUpdateDocument(docId, {
+      ...rest,
+      attachmentKey: isLinkOnlyDoc ? undefined : existingDoc.attachmentKey,
+      category: docType === 'garanzia_extra_family' ? 'Assicurazioni' : 'Altro',
+      referenceCode: buildResearchDocumentRef(researchId, docType),
+      pinned: docType === 'scontrino_fattura' || docType === 'garanzia_extra_family',
+    });
+  }
+
+  async function handleUpdateArticleDocumentType(
+    docId: string,
+    articleId: string,
+    docType: ArticleAttachmentType
+  ) {
+    if (!user || !/^[a-zA-Z0-9_-]+$/.test(docId)) return;
+    const existingDoc = homeDocuments.find((d) => d.id === docId);
+    if (!existingDoc) return;
+    const { id: _ignoredId, ...rest } = existingDoc;
+    const isLinkOnlyDoc = !existingDoc.fileSize && Boolean(existingDoc.cloudUrl);
+    await handleUpdateDocument(docId, {
+      ...rest,
+      attachmentKey: isLinkOnlyDoc ? undefined : existingDoc.attachmentKey,
+      category: docType === 'garanzia_extra_family' ? 'Assicurazioni' : 'Altro',
+      referenceCode: buildArticleDocumentRef(articleId, docType),
+      pinned: docType === 'garanzia_extra_family' || docType === 'scontrino_fattura',
+    });
+  }
+
   const migrationCompleted = useMemo(
     () => homeArticles.some((a) => a.id === MIGRATION_DONE_DOC_ID),
     [homeArticles]
@@ -3761,6 +3820,7 @@ export default function App() {
               onDeleteArticle={handleDeleteArticle}
               onDownloadManual={handleDownloadArticleManual}
               onUploadArticleDocument={handleUploadArticleDocument}
+              onUpdateArticleDocumentType={handleUpdateArticleDocumentType}
               onDeleteArticleDocument={handleDeleteLinkedDocument}
             />
           )}
@@ -3775,6 +3835,8 @@ export default function App() {
               onUpdateResearch={handleUpdateProductResearch}
               onDeleteResearch={handleDeleteProductResearch}
               onUploadResearchDocument={handleUploadResearchDocument}
+              onAddResearchDocumentLink={handleAddResearchDocumentLink}
+              onUpdateResearchDocumentType={handleUpdateResearchDocumentType}
               onDeleteResearchDocument={handleDeleteLinkedDocument}
               onMoveToArticles={async (item) => {
                 const resolvedBrand = (inferProductBrand(item) || item.store).slice(0, 60);
@@ -3817,20 +3879,40 @@ export default function App() {
                 if (newArticleId && user) {
                   const linkedDocs = getDocumentsForResearch(researchDocuments, item.id);
                   for (const linkedDoc of linkedDocs) {
-                    if (!linkedDoc.attachmentKey) continue;
-                    const stored = await getVaultFile(linkedDoc.attachmentKey, user.uid);
-                    if (!stored) continue;
                     const parsedRef = parseResearchDocumentRef(linkedDoc.referenceCode);
-                    const fileCopy = new File([stored.blob], stored.fileName, {
-                      type: stored.mimeType || 'application/octet-stream',
-                    });
-                    await handleUploadArticleDocument(
-                      newArticleId,
-                      parsedRef?.docType || 'altro',
-                      linkedDoc.title,
-                      resolvedBrand,
-                      fileCopy
-                    );
+                    const stored =
+                      linkedDoc.attachmentKey && linkedDoc.fileSize
+                        ? await getVaultFile(linkedDoc.attachmentKey, user.uid)
+                        : null;
+                    if (stored) {
+                      const fileCopy = new File([stored.blob], stored.fileName, {
+                        type: stored.mimeType || 'application/octet-stream',
+                      });
+                      await handleUploadArticleDocument(
+                        newArticleId,
+                        parsedRef?.docType || 'altro',
+                        linkedDoc.title,
+                        resolvedBrand,
+                        fileCopy
+                      );
+                    } else if (linkedDoc.cloudUrl) {
+                      await handleAddDocument({
+                        title: linkedDoc.title.slice(0, 80),
+                        category:
+                          parsedRef?.docType === 'garanzia_extra_family'
+                            ? 'Assicurazioni'
+                            : 'Altro',
+                        provider: resolvedBrand.slice(0, 80),
+                        referenceCode: buildArticleDocumentRef(
+                          newArticleId,
+                          parsedRef?.docType || 'manuale'
+                        ),
+                        issueDate: linkedDoc.issueDate || new Date().toLocaleDateString('it-IT'),
+                        pinned: Boolean(linkedDoc.pinned),
+                        cloudUrl: linkedDoc.cloudUrl,
+                        notes: linkedDoc.notes,
+                      });
+                    }
                   }
                 }
               }}
