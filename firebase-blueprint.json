@@ -71,10 +71,25 @@
         "endTime": { "type": "string", "maxLength": 10 },
         "targetTemp": { "type": "number" },
         "rooms": { "type": "array" },
+        "timeSlots": { "type": "array" },
+        "vmcMax": { "type": "boolean" },
         "notes": { "type": "string", "maxLength": 240 },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["ownerId", "date", "mode", "startTime", "endTime", "targetTemp", "rooms", "createdAt"]
+    },
+    "VmcDay": {
+      "title": "VmcDay",
+      "description": "Stato giornaliero VMC (Ventilazione Meccanica Controllata) accesa al massimo.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "enabled": { "type": "boolean" },
+        "note": { "type": "string", "maxLength": 240 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "date", "enabled", "createdAt"]
     },
     "ElectricityBill": {
       "title": "ElectricityBill",
@@ -202,6 +217,50 @@
         "ownerId", "name", "brand", "model", "category", "room", "familyWarranty", "createdAt"
       ]
     },
+    "ProductResearch": {
+      "title": "ProductResearch",
+      "description": "Link e schede di prodotti salvati nella pagina Ricerche.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "url": { "type": "string", "maxLength": 1000, "pattern": "^https?://.+" },
+        "title": { "type": "string", "maxLength": 160 },
+        "store": { "type": "string", "maxLength": 60 },
+        "category": {
+          "type": "string",
+          "enum": ["elettrodomestici", "elettronica", "casa_arredo", "fai_da_te", "auto", "abbigliamento", "altro"],
+          "maxLength": 32
+        },
+        "status": {
+          "type": "string",
+          "enum": ["da_valutare", "preferito", "da_acquistare", "acquistato", "scartato"],
+          "maxLength": 24
+        },
+        "room": {
+          "type": "string",
+          "enum": [
+            "salone",
+            "cucina",
+            "bagno1",
+            "bagno2",
+            "stanza_maurizio",
+            "stanza_roberta",
+            "stanza_matrimoniale"
+          ],
+          "maxLength": 40,
+          "description": "Stanza di destinazione opzionale"
+        },
+        "priceEur": { "type": "number" },
+        "imageUrl": { "type": "string", "maxLength": 1000, "pattern": "^https?://.+" },
+        "brand": { "type": "string", "maxLength": 60 },
+        "color": { "type": "string", "maxLength": 60 },
+        "model": { "type": "string", "maxLength": 80 },
+        "specs": { "type": "string", "maxLength": 800 },
+        "notes": { "type": "string", "maxLength": 400 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "url", "title", "store", "category", "status", "createdAt"]
+    },
     "VaultFile": {
       "title": "VaultFile",
       "description": "Metadati di un PDF o documento archiviato su Firestore per sincronizzazione multi-dispositivo.",
@@ -276,6 +335,10 @@
       "schema": { "$ref": "#/entities/ClimateSession" },
       "description": "Registro accensioni riscaldamento e raffrescamento NeaSmart per stanza e fascia oraria"
     },
+    "/users/{userId}/vmcDays/{dayId}": {
+      "schema": { "$ref": "#/entities/VmcDay" },
+      "description": "Giorni con Ventilazione Meccanica Controllata (VMC) accesa al massimo"
+    },
     "/users/{userId}/electricityBills/{billId}": {
       "schema": { "$ref": "#/entities/ElectricityBill" },
       "description": "Storico bollette elettriche salvate su Firestore"
@@ -295,6 +358,10 @@
     "/users/{userId}/homeArticles/{articleId}": {
       "schema": { "$ref": "#/entities/HomeArticle" },
       "description": "Dispositivi ed elettrodomestici di casa con stato garanzie"
+    },
+    "/users/{userId}/productResearches/{researchId}": {
+      "schema": { "$ref": "#/entities/ProductResearch" },
+      "description": "Link e prodotti salvati nella pagina Ricerche"
     },
     "/users/{userId}/vaultFiles/{fileId}": {
       "schema": { "$ref": "#/entities/VaultFile" },

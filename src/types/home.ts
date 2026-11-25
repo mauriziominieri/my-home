@@ -10,6 +10,7 @@ export type NavSection =
   | 'consumi'
   | 'bollette'
   | 'articoli'
+  | 'ricerche'
   | 'documenti'
   | 'macchina'
   | 'spesa'
@@ -148,6 +149,11 @@ export const HOME_ROOMS: { id: RoomId; label: string }[] = [
   { id: 'maurizio', label: 'Maurizio' },
 ];
 
+export interface ClimateTimeSlot {
+  startTime: string; // e.g. "09:00"
+  endTime: string; // e.g. "12:00"
+}
+
 export interface ClimateSession {
   id: string;
   ownerId: string;
@@ -155,9 +161,19 @@ export interface ClimateSession {
   mode: ClimateMode;
   startTime: string; // e.g. "09:00"
   endTime: string; // e.g. "20:00" (or "24:00" / "00:00" when all day)
+  timeSlots?: string[]; // e.g. ["09:00-12:00", "15:00-20:00"]
+  vmcMax?: boolean;
   targetTemp: number; // °C
   rooms: RoomId[];
   notes?: string;
+}
+
+export interface VmcDayRecord {
+  id: string;
+  ownerId: string;
+  date: string; // YYYY-MM-DD
+  enabled: boolean;
+  note?: string;
 }
 
 export interface EnergyReading {
@@ -352,10 +368,47 @@ export interface ClimateAutopilotConfig {
   mode: ClimateMode;
   startTime: string;
   endTime: string;
+  timeSlots?: ClimateTimeSlot[];
+  vmcMax?: boolean;
   targetTemp: number;
   rooms: RoomId[];
   startDate: string; // YYYY-MM-DD
   lastAppliedDate: string; // YYYY-MM-DD
   notes?: string;
+}
+
+export type ProductResearchCategory =
+  | 'elettrodomestici'
+  | 'elettronica'
+  | 'casa_arredo'
+  | 'fai_da_te'
+  | 'auto'
+  | 'abbigliamento'
+  | 'altro';
+
+export type ProductResearchStatus =
+  | 'da_valutare'
+  | 'preferito'
+  | 'da_acquistare'
+  | 'acquistato'
+  | 'scartato';
+
+export interface ProductResearchRecord {
+  id: string;
+  ownerId: string;
+  url: string;
+  title: string;
+  store: string;
+  category: ProductResearchCategory;
+  status: ProductResearchStatus;
+  room?: string;
+  priceEur?: number;
+  imageUrl?: string;
+  brand?: string;
+  color?: string;
+  model?: string;
+  specs?: string;
+  notes?: string;
+  createdAtMs?: number;
 }
 

@@ -28,6 +28,7 @@ import {
   Trash2,
   Trophy,
   Wind,
+  X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -35,6 +36,7 @@ import {
   ClimateAutopilotConfig,
   ClimateMode,
   ClimateSession,
+  ClimateTimeSlot,
   EnergyReading,
   HOME_ROOMS,
   HomeSystemConfig,
@@ -45,6 +47,7 @@ import {
   ClimateAutopilotCard,
   ClimateAutopilotInput,
 } from './ClimateAutopilotCard';
+import { getLocalTodayIso } from '../utils/climateAutopilot';
 import {
   formatReadingDate,
   getDaysInMonth,
@@ -55,10 +58,16 @@ import {
 import {
   computeLiveClimateStatus,
   formatDurationCompact,
-  getComboKey,
-  getSessionDurationHours,
-  isAllDaySession,
-  isVmcAnomalyDate,
+  formatSlotsCompact,
+  formatSlotsSummary,
+  formatTimeSlotString,
+  getDayComboKey,
+  getDayEffectiveSlots,
+  getSessionTimeSlots,
+  getTotalSlotsDurationHours,
+  isAllDaySlots,
+  isVmcMaxForDate,
+  normalizeTimeSlots,
 } from '../utils/climateTime';
 import {
   compareSortValues,
@@ -91,6 +100,7 @@ const ZOOM_CLASS_MAP: Record<ZoomStep, string> = {
 interface EnergyDatabaseViewProps {
   readings: EnergyReading[];
   climateLogs: ClimateSession[];
+  vmcDaysMap?: Map<string, boolean>;
   climateAutopilot?: ClimateAutopilotConfig | null;
   homeConfig?: HomeSystemConfig;
   selectedYear: number;
@@ -111,6 +121,7 @@ interface EnergyDatabaseViewProps {
     session: Omit<ClimateSession, 'id' | 'ownerId'>
   ) => Promise<void>;
   onDeleteClimateLog: (id: string) => Promise<void>;
+  onToggleVmcDays?: (dates: string[], enabled: boolean) => Promise<void>;
   onNavigate: (section: NavSection) => void;
 }
 
@@ -131,6 +142,7 @@ function getDefaultModeForIso(iso: string): ClimateMode {
 export function EnergyDatabaseView({
   readings,
   climateLogs,
+  vmcDaysMap,
   climateAutopilot = null,
   homeConfig,
   selectedYear,
@@ -146,6 +158,7 @@ export function EnergyDatabaseView({
   onAddClimateLog,
   onUpdateClimateLog,
   onDeleteClimateLog,
+  onToggleVmcDays,
   onNavigate,
 }: EnergyDatabaseViewProps) {
   const now = new Date();
@@ -233,16 +246,27 @@ export function EnergyDatabaseView({
     openSections.dettaglioMensile &&
     openSections.bollette;
 
+  const todayIso = getLocalTodayIso();
+  const todaySessions = useMemo(
+    () => climateLogs.filter((l) => l.date === todayIso),
+    [climateLogs, todayIso]
+  );
+  const todayVmcMax = useMemo(
+    () => isVmcMaxForDate(todayIso, vmcDaysMap, todaySessions),
+    [todayIso, vmcDaysMap, todaySessions]
+  );
+
   // Stato form inline per registrare o modificare accensione NeaSmart sul giorno selezionato
   const [showInlineForm, setShowInlineForm] = useState(false);
   const [editingLogId, setEditingLogId] = useState<string | null>(null);
   const [pendingDeleteLog, setPendingDeleteLog] = useState<ClimateSession | null>(null);
   const [deletingLog, setDeletingLog] = useState(false);
+  const [togglingVmc, setTogglingVmc] = useState(false);
   const [rankingFilter, setRankingFilter] = useState<'all' | ClimateMode>('all');
   const [copiedSession, setCopiedSession] = useState<{
     mode: ClimateMode;
-    startTime: string;
-    endTime: string;
+    timeSlots: ClimateTimeSlot[];
+    vmcMax: boolean;
     targetTemp: number;
     rooms: RoomId[];
     notes?: string;
@@ -250,8 +274,10 @@ export function EnergyDatabaseView({
   } | null>(null);
   const [clipboardNotice, setClipboardNotice] = useState<string | null>(null);
   const [inlineMode, setInlineMode] = useState<ClimateMode>('riscaldamento');
-  const [inlineStartTime, setInlineStartTime] = useState('09:00');
-  const [inlineEndTime, setInlineEndTime] = useState('20:00');
+  const [inlineTimeSlots, setInlineTimeSlots] = useState<ClimateTimeSlot[]>([
+    { startTime: '09:00', endTime: '20:00' },
+  ]);
+  const [inlineVmcMax, setInlineVmcMax] = useState<boolean>(false);
   const [inlineTargetTemp, setInlineTargetTemp] = useState('21.0');
   const [inlineRooms, setInlineRooms] = useState<RoomId[]>([
     'salone',
@@ -307,8 +333,8 @@ export function EnergyDatabaseView({
     const defaultMode = getDefaultModeForIso(iso);
     setEditingLogId(null);
     setInlineMode(defaultMode);
-    setInlineStartTime('09:00');
-    setInlineEndTime('20:00');
+    setInlineTimeSlots([{ startTime: '09:00', endTime: '20:00' }]);
+    setInlineVmcMax(isVmcMaxForDate(iso, vmcDaysMap, climateByDate.get(iso)));
     setInlineTargetTemp(defaultMode === 'raffrescamento' ? '25.0' : '21.0');
     setInlineRooms(['salone', 'roberta', 'matrimoniale', 'maurizio']);
     setInlineNotes('');
@@ -318,12 +344,33 @@ export function EnergyDatabaseView({
   function openEditInlineForm(log: ClimateSession) {
     setEditingLogId(log.id);
     setInlineMode(log.mode);
-    setInlineStartTime(log.startTime);
-    setInlineEndTime(log.endTime);
+    setInlineTimeSlots(getSessionTimeSlots(log));
+    setInlineVmcMax(isVmcMaxForDate(log.date, vmcDaysMap, [log]));
     setInlineTargetTemp(log.targetTemp > 0 ? log.targetTemp.toFixed(1) : '0');
     setInlineRooms([...log.rooms]);
     setInlineNotes(log.notes || '');
     setShowInlineForm(true);
+  }
+
+  function updateInlineSlot(idx: number, patch: Partial<ClimateTimeSlot>) {
+    setInlineTimeSlots((prev) =>
+      prev.map((slot, i) => (i === idx ? { ...slot, ...patch } : slot))
+    );
+  }
+
+  function addInlineExtraSlot() {
+    setInlineTimeSlots((prev) => {
+      if (prev.length >= 6) return prev;
+      const last = prev[prev.length - 1];
+      const nextStart = last?.endTime && last.endTime < '22:00' ? '15:00' : '18:00';
+      return [...prev, { startTime: nextStart, endTime: '20:00' }];
+    });
+  }
+
+  function removeInlineSlot(idx: number) {
+    setInlineTimeSlots((prev) =>
+      prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)
+    );
   }
 
   function toggleInlineRoom(roomId: RoomId) {
@@ -337,13 +384,22 @@ export function EnergyDatabaseView({
   async function handleSaveInlineClimate(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedDayIso || inlineRooms.length === 0) return;
+    const cleanedSlots = normalizeTimeSlots(inlineTimeSlots);
+    if (cleanedSlots.length === 0) return;
+    const first = cleanedSlots[0];
+    const last = cleanedSlots[cleanedSlots.length - 1];
     setInlineSaving(true);
     try {
-      const payload = {
+      const payload: Omit<ClimateSession, 'id' | 'ownerId'> = {
         date: selectedDayIso,
         mode: inlineMode,
-        startTime: inlineStartTime,
-        endTime: inlineEndTime,
+        startTime: first.startTime,
+        endTime: last.endTime,
+        timeSlots:
+          cleanedSlots.length > 1
+            ? cleanedSlots.map(formatTimeSlotString)
+            : undefined,
+        vmcMax: inlineVmcMax,
         targetTemp:
           inlineTargetTemp === '0'
             ? 0
@@ -361,6 +417,16 @@ export function EnergyDatabaseView({
       setInlineNotes('');
     } finally {
       setInlineSaving(false);
+    }
+  }
+
+  async function handleToggleVmcForDates(dates: string[], enabled: boolean) {
+    if (!onToggleVmcDays || dates.length === 0) return;
+    setTogglingVmc(true);
+    try {
+      await onToggleVmcDays(dates, enabled);
+    } finally {
+      setTogglingVmc(false);
     }
   }
 
@@ -390,8 +456,8 @@ export function EnergyDatabaseView({
   function copySessionFromLog(log: ClimateSession) {
     setCopiedSession({
       mode: log.mode,
-      startTime: log.startTime,
-      endTime: log.endTime,
+      timeSlots: getSessionTimeSlots(log),
+      vmcMax: isVmcMaxForDate(log.date, vmcDaysMap, [log]),
       targetTemp: log.targetTemp,
       rooms: [...log.rooms],
       notes: log.notes,
@@ -404,13 +470,21 @@ export function EnergyDatabaseView({
 
   async function pasteSessionToDays(targetIsos: string[]) {
     if (!copiedSession || targetIsos.length === 0) return;
+    const cleanedSlots = normalizeTimeSlots(copiedSession.timeSlots);
+    const first = cleanedSlots[0] || { startTime: '09:00', endTime: '20:00' };
+    const last = cleanedSlots[cleanedSlots.length - 1] || first;
     for (const targetIso of targetIsos) {
       const existingLogs = climateByDate.get(targetIso) || [];
-      const payload = {
+      const payload: Omit<ClimateSession, 'id' | 'ownerId'> = {
         date: targetIso,
         mode: copiedSession.mode,
-        startTime: copiedSession.startTime,
-        endTime: copiedSession.endTime,
+        startTime: first.startTime,
+        endTime: last.endTime,
+        timeSlots:
+          cleanedSlots.length > 1
+            ? cleanedSlots.map(formatTimeSlotString)
+            : undefined,
+        vmcMax: copiedSession.vmcMax,
         targetTemp: copiedSession.targetTemp,
         rooms: [...copiedSession.rooms],
         notes: copiedSession.notes,
@@ -610,7 +684,7 @@ export function EnergyDatabaseView({
     return { kwh, count, avg: count > 0 ? kwh / count : null };
   }, [yearReadings, phaseByDate]);
 
-  // Statistiche da Spento (OFF) annuali con distinzione per 20-30 Agosto (MVC/VMC accesa al max)
+  // Statistiche da Spento (OFF) annuali con distinzione per giorni con VMC al massimo
   const offDaySummary = useMemo(() => {
     let allKwh = 0;
     let allCost = 0;
@@ -632,7 +706,7 @@ export function EnergyDatabaseView({
       const mLabel = MONTHS_SHORT_IT[mIdx] || '';
       if (mLabel) monthsSet.add(mLabel);
 
-      if (isVmcAnomalyDate(r.date)) {
+      if (isVmcMaxForDate(r.date, vmcDaysMap)) {
         vmcKwh += r.totalKwh;
         vmcCost += r.estimatedCostEur;
         vmcCount += 1;
@@ -655,13 +729,14 @@ export function EnergyDatabaseView({
       vmcAvgCostEur: vmcCount > 0 ? vmcCost / vmcCount : null,
       monthsList: Array.from(monthsSet),
     };
-  }, [yearReadings, climateByDate]);
+  }, [yearReadings, climateByDate, vmcDaysMap]);
 
   // Classifica combinazioni NeaSmart ordinate per Media Realistica (a regime, senza 1° giorno e assestamento)
   const combinationRanking = useMemo(() => {
     interface ComboBucket {
       key: string;
       mode: ClimateMode;
+      slots: ClimateTimeSlot[];
       startTime: string;
       endTime: string;
       isAllDay: boolean;
@@ -679,18 +754,22 @@ export function EnergyDatabaseView({
 
     const buckets = new Map<string, ComboBucket>();
 
-    for (const log of climateLogs) {
-      if (!log.date.startsWith(`${selectedYear}-`)) continue;
-      if (rankingFilter !== 'all' && log.mode !== rankingFilter) continue;
-      const reading = readingsByDate.get(log.date);
+    for (const [date, dayLogs] of climateByDate.entries()) {
+      if (!date.startsWith(`${selectedYear}-`) || dayLogs.length === 0) continue;
+      const primary = dayLogs[0];
+      if (rankingFilter !== 'all' && primary.mode !== rankingFilter) continue;
+      const reading = readingsByDate.get(date);
       if (!reading) continue;
 
-      const sortedRooms = [...log.rooms].sort();
-      const key = getComboKey(log);
-      const allDay = isAllDaySession(log.startTime, log.endTime);
-      const mIdx = Number(log.date.slice(5, 7)) - 1;
+      const sortedRooms = Array.from(new Set(dayLogs.flatMap((l) => l.rooms))).sort();
+      const slots = getDayEffectiveSlots(dayLogs);
+      const first = slots[0] || { startTime: primary.startTime, endTime: primary.endTime };
+      const last = slots[slots.length - 1] || first;
+      const key = getDayComboKey(dayLogs);
+      const allDay = isAllDaySlots(slots);
+      const mIdx = Number(date.slice(5, 7)) - 1;
       const mLabel = MONTHS_SHORT_IT[mIdx] || '';
-      const phase = phaseByDate.get(log.date);
+      const phase = phaseByDate.get(date);
       const isRealistic = phase === 'a_regime';
 
       const existing = buckets.get(key);
@@ -704,15 +783,16 @@ export function EnergyDatabaseView({
           existing.realisticDaysCount += 1;
         }
         if (mLabel) existing.months.add(mLabel);
-        if (log.date > existing.sampleDate) existing.sampleDate = log.date;
+        if (date > existing.sampleDate) existing.sampleDate = date;
       } else {
         buckets.set(key, {
           key,
-          mode: log.mode,
-          startTime: log.startTime,
-          endTime: log.endTime,
+          mode: primary.mode,
+          slots,
+          startTime: first.startTime,
+          endTime: last.endTime,
           isAllDay: allDay,
-          targetTemp: log.targetTemp,
+          targetTemp: primary.targetTemp,
           rooms: sortedRooms,
           totalKwh: reading.totalKwh,
           totalCostEur: reading.estimatedCostEur,
@@ -721,7 +801,7 @@ export function EnergyDatabaseView({
           realisticTotalCostEur: isRealistic ? reading.estimatedCostEur : 0,
           realisticDaysCount: isRealistic ? 1 : 0,
           months: new Set(mLabel ? [mLabel] : []),
-          sampleDate: log.date,
+          sampleDate: date,
         });
       }
     }
@@ -754,7 +834,7 @@ export function EnergyDatabaseView({
         ...item,
         rank: idx + 1,
       }));
-  }, [climateLogs, selectedYear, rankingFilter, readingsByDate, phaseByDate]);
+  }, [climateByDate, selectedYear, rankingFilter, readingsByDate, phaseByDate]);
 
   const sortedCombinationRanking = useMemo(() => {
     if (!comboSort) return combinationRanking;
@@ -766,8 +846,8 @@ export function EnergyDatabaseView({
           return compareSortValues(a.mode, b.mode, comboSort.dir);
         case 'time':
           return compareSortValues(
-            a.isAllDay ? '00:00-24:00' : `${a.startTime}-${a.endTime}`,
-            b.isAllDay ? '00:00-24:00' : `${b.startTime}-${b.endTime}`,
+            a.isAllDay ? '00:00-24:00' : formatSlotsCompact(a.slots),
+            b.isAllDay ? '00:00-24:00' : formatSlotsCompact(b.slots),
             comboSort.dir
           );
         case 'targetTemp':
@@ -807,14 +887,16 @@ export function EnergyDatabaseView({
   const comboMetaByKey = useMemo(() => {
     const map = new Map<string, { code: string; badgeClass: string }>();
     const entries: { key: string; mode: ClimateMode }[] = [];
-    const sortedYearLogs = climateLogs
-      .filter((log) => log.date.startsWith(`${selectedYear}-`))
-      .sort((a, b) => a.date.localeCompare(b.date));
+    const sortedYearDates = Array.from(climateByDate.entries())
+      .filter(([date]) => date.startsWith(`${selectedYear}-`))
+      .sort(([a], [b]) => a.localeCompare(b));
 
-    for (const log of sortedYearLogs) {
-      const k = getComboKey(log);
+    for (const [, dayLogs] of sortedYearDates) {
+      const primary = dayLogs[0];
+      if (!primary) continue;
+      const k = getDayComboKey(dayLogs);
       if (!entries.some((e) => e.key === k)) {
-        entries.push({ key: k, mode: log.mode });
+        entries.push({ key: k, mode: primary.mode });
       }
     }
     entries.forEach((entry, idx) => {
@@ -826,7 +908,7 @@ export function EnergyDatabaseView({
       map.set(entry.key, { code, badgeClass });
     });
     return map;
-  }, [climateLogs, selectedYear]);
+  }, [climateByDate, selectedYear]);
 
   const monthDays = useMemo(() => {
     const totalDays = getDaysInMonth(selectedYear, selectedMonth);
@@ -844,6 +926,8 @@ export function EnergyDatabaseView({
     return [...monthDays].sort((a, b) => {
       const aLog = climateByDate.get(a.iso)?.[0];
       const bLog = climateByDate.get(b.iso)?.[0];
+      const aSlots = aLog ? getSessionTimeSlots(aLog) : [];
+      const bSlots = bLog ? getSessionTimeSlots(bLog) : [];
       switch (monthDaySort.key) {
         case 'iso':
           return compareSortValues(a.iso, b.iso, monthDaySort.dir);
@@ -865,8 +949,8 @@ export function EnergyDatabaseView({
           );
         case 'climate':
           return compareSortValues(
-            aLog ? `${aLog.mode} ${aLog.startTime}` : null,
-            bLog ? `${bLog.mode} ${bLog.startTime}` : null,
+            aLog ? `${aLog.mode} ${aSlots[0]?.startTime || aLog.startTime}` : null,
+            bLog ? `${bLog.mode} ${bSlots[0]?.startTime || bLog.startTime}` : null,
             monthDaySort.dir
           );
       }
@@ -884,6 +968,8 @@ export function EnergyDatabaseView({
     return climateLogs
       .filter((l) => l.date.startsWith(`${selectedYear}-`))
       .sort((a, b) => {
+        const aSlots = getSessionTimeSlots(a);
+        const bSlots = getSessionTimeSlots(b);
         switch (logSort.key) {
           case 'date':
             return compareSortValues(a.date, b.date, logSort.dir);
@@ -891,8 +977,8 @@ export function EnergyDatabaseView({
             return compareSortValues(a.mode, b.mode, logSort.dir);
           case 'time':
             return compareSortValues(
-              isAllDaySession(a.startTime, a.endTime) ? '00:00-24:00' : `${a.startTime}-${a.endTime}`,
-              isAllDaySession(b.startTime, b.endTime) ? '00:00-24:00' : `${b.startTime}-${b.endTime}`,
+              isAllDaySlots(aSlots) ? '00:00-24:00' : formatSlotsCompact(aSlots),
+              isAllDaySlots(bSlots) ? '00:00-24:00' : formatSlotsCompact(bSlots),
               logSort.dir
             );
           case 'targetTemp':
@@ -995,9 +1081,7 @@ export function EnergyDatabaseView({
     for (const iso of targetDays) {
       const dayLogs = climateByDate.get(iso);
       if (dayLogs && dayLogs.length > 0) {
-        for (const log of dayLogs) {
-          keys.add(getComboKey(log));
-        }
+        keys.add(getDayComboKey(dayLogs));
       } else if (readingsByDate.has(iso)) {
         keys.add('__OFF__');
       }
@@ -1082,7 +1166,7 @@ export function EnergyDatabaseView({
     if (!row) return null;
     const dayLogs = climateByDate.get(row.iso) || [];
     const tot = row.total > 0 ? row.total : row.F1 + row.F2 + row.F3;
-    const comboCode = dayLogs[0] ? comboMetaByKey.get(getComboKey(dayLogs[0]))?.code : undefined;
+    const comboCode = dayLogs.length > 0 ? comboMetaByKey.get(getDayComboKey(dayLogs))?.code : undefined;
     return (
       <div className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs shadow-xl space-y-1 min-w-[210px]">
         <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-1">
@@ -1289,6 +1373,8 @@ export function EnergyDatabaseView({
       {onActivateAutopilot && onTurnOffAutopilot && (
         <ClimateAutopilotCard
           autopilot={climateAutopilot}
+          todaySessions={todaySessions}
+          todayVmcMax={todayVmcMax}
           readOnly={readOnly}
           onActivateAutopilot={onActivateAutopilot}
           onTurnOffAutopilot={onTurnOffAutopilot}
@@ -1374,9 +1460,11 @@ export function EnergyDatabaseView({
             </span>
             <span
               className="inline-flex items-center gap-1.5 text-fuchsia-300 font-medium"
-              title="VMC Max: climatizzazione spenta ma Ventilazione Meccanica Controllata (ricambio d'aria) accesa al massimo"
+              title="VMC Max: Ventilazione Meccanica Controllata (ricambio d'aria) accesa al massimo"
             >
-              <span className="relative w-3 h-3 rounded-xs bg-slate-800 border-2 border-dashed border-fuchsia-400" />
+              <span className="relative w-3 h-3 rounded-xs bg-slate-800 border-2 border-dashed border-fuchsia-400">
+                <span className="absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-fuchsia-400" />
+              </span>
               VMC Max
             </span>
             <span className="text-slate-700">|</span>
@@ -1446,11 +1534,7 @@ export function EnergyDatabaseView({
                             const dayClimate = climateByDate.get(entry.iso);
                             const hasClimate = Boolean(dayClimate && dayClimate.length > 0);
                             return hasClimate
-                              ? Boolean(
-                                  dayClimate?.some((l) =>
-                                    highlightedComboKeys.includes(getComboKey(l))
-                                  )
-                                )
+                              ? highlightedComboKeys.includes(getDayComboKey(dayClimate!))
                               : entry.hasData && highlightedComboKeys.includes('__OFF__');
                           })
                         );
@@ -1679,11 +1763,7 @@ export function EnergyDatabaseView({
                             const matches =
                               highlightedComboKeys.length === 0 ||
                               (hasClimate
-                                ? Boolean(
-                                    dayClimate?.some((l) =>
-                                      highlightedComboKeys.includes(getComboKey(l))
-                                    )
-                                  )
+                                ? highlightedComboKeys.includes(getDayComboKey(dayClimate!))
                                 : entry.hasData && highlightedComboKeys.includes('__OFF__'));
                             return (
                               <Cell
@@ -1707,11 +1787,7 @@ export function EnergyDatabaseView({
                             const matches =
                               highlightedComboKeys.length === 0 ||
                               (hasClimate
-                                ? Boolean(
-                                    dayClimate?.some((l) =>
-                                      highlightedComboKeys.includes(getComboKey(l))
-                                    )
-                                  )
+                                ? highlightedComboKeys.includes(getDayComboKey(dayClimate!))
                                 : entry.hasData && highlightedComboKeys.includes('__OFF__'));
                             return (
                               <Cell
@@ -1736,11 +1812,7 @@ export function EnergyDatabaseView({
                             const matches =
                               highlightedComboKeys.length === 0 ||
                               (hasClimate
-                                ? Boolean(
-                                    dayClimate?.some((l) =>
-                                      highlightedComboKeys.includes(getComboKey(l))
-                                    )
-                                  )
+                                ? highlightedComboKeys.includes(getDayComboKey(dayClimate!))
                                 : entry.hasData && highlightedComboKeys.includes('__OFF__'));
                             return (
                               <Cell
@@ -1848,18 +1920,21 @@ export function EnergyDatabaseView({
                     const hasClimate = Boolean(dayClimate && dayClimate.length > 0);
                     const climateMode = dayClimate?.[0]?.mode;
                     const dayPhase = phaseByDate.get(iso);
-                    const dayComboKey = dayClimate?.[0]
-                      ? getComboKey(dayClimate[0])
-                      : undefined;
+                    const dayComboKey =
+                      dayClimate && dayClimate.length > 0
+                        ? getDayComboKey(dayClimate)
+                        : undefined;
                     const comboMeta = dayComboKey
                       ? comboMetaByKey.get(dayComboKey)
                       : undefined;
-                    const isVmcAug = !hasClimate && Boolean(r) && isVmcAnomalyDate(iso);
-                    const hasData = Boolean(r) || hasClimate;
+                    const dayVmcMax = isVmcMaxForDate(iso, vmcDaysMap, dayClimate);
+                    const isVmcOnlyOff = !hasClimate && dayVmcMax;
+                    const isVmcWithClimate = hasClimate && dayVmcMax;
+                    const hasData = Boolean(r) || hasClimate || dayVmcMax;
                     const matchesHighlightedCombo =
                       highlightedComboKeys.length > 0 &&
                       (hasClimate
-                        ? Boolean(dayClimate?.some((l) => highlightedComboKeys.includes(getComboKey(l))))
+                        ? Boolean(dayComboKey && highlightedComboKeys.includes(dayComboKey))
                         : Boolean(r) && highlightedComboKeys.includes('__OFF__'));
                     const dimmedByComboHighlight =
                       highlightedComboKeys.length > 0 && !matchesHighlightedCombo;
@@ -1871,6 +1946,10 @@ export function EnergyDatabaseView({
                           : dayPhase === 'a_regime'
                             ? ' · A regime'
                             : '';
+                    const slotsCompact =
+                      hasClimate && dayClimate
+                        ? formatSlotsCompact(getDayEffectiveSlots(dayClimate))
+                        : '';
 
                     return (
                       <button
@@ -1880,8 +1959,12 @@ export function EnergyDatabaseView({
                         data-day-cell={hasData ? 'true' : undefined}
                         title={
                           r
-                            ? `${formatReadingDate(iso)}: ${r.totalKwh.toFixed(2)} kWh (€ ${r.estimatedCostEur.toFixed(2)})${hasClimate ? ` · ${climateMode === 'riscaldamento' ? 'Riscaldamento ON' : 'Raffrescamento ON'}${comboMeta ? ` [Combo ${comboMeta.code}]` : ''}${phaseLabel}` : isVmcAug ? ' · Impianto OFF ma MVC/VMC accesa al massimo (20–30 Ago)' : ' · Impianto Spento (OFF)'}`
-                            : `${formatReadingDate(iso)}: nessun dato`
+                            ? `${formatReadingDate(iso)}: ${r.totalKwh.toFixed(2)} kWh (€ ${r.estimatedCostEur.toFixed(2)})${hasClimate ? ` · ${climateMode === 'riscaldamento' ? 'Riscaldamento ON' : 'Raffrescamento ON'} (${slotsCompact})${comboMeta ? ` [Combo ${comboMeta.code}]` : ''}${dayVmcMax ? ' · VMC Max' : ''}${phaseLabel}` : isVmcOnlyOff ? ' · Impianto OFF ma VMC accesa al massimo' : ' · Impianto Spento (OFF)'}`
+                            : hasClimate
+                              ? `${formatReadingDate(iso)}: ${climateMode === 'riscaldamento' ? 'Riscaldamento ON' : 'Raffrescamento ON'} (${slotsCompact})${dayVmcMax ? ' · VMC Max' : ''}`
+                              : dayVmcMax
+                                ? `${formatReadingDate(iso)}: VMC al massimo`
+                                : `${formatReadingDate(iso)}: nessun dato`
                         }
                         onMouseDown={(e) => {
                           if (!hasData || e.button !== 0) return;
@@ -1948,7 +2031,7 @@ export function EnergyDatabaseView({
                                   ? 'border-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.45)]'
                                   : 'border-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.45)]'
                               }`
-                            : isVmcAug
+                            : isVmcOnlyOff
                               ? 'border-2 border-dashed border-fuchsia-400/80 shadow-[0_0_8px_rgba(232,121,249,0.28)]'
                               : 'border border-transparent'
                         } ${
@@ -1967,10 +2050,16 @@ export function EnergyDatabaseView({
                             {comboMeta.code}
                           </span>
                         )}
-                        {isVmcAug && (
+                        {isVmcOnlyOff && (
                           <span
                             className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-fuchsia-400 ring-2 ring-slate-900"
-                            title="MVC/VMC accesa al massimo (20–30 Ago)"
+                            title="VMC accesa al massimo"
+                          />
+                        )}
+                        {isVmcWithClimate && (
+                          <span
+                            className="absolute -bottom-1 -right-1 w-2.5 h-2.5 rounded-full bg-fuchsia-400 ring-2 ring-slate-900"
+                            title="VMC accesa al massimo"
                           />
                         )}
                         {hasClimate && dayPhase === 'prima_accensione' && (
@@ -2088,13 +2177,70 @@ export function EnergyDatabaseView({
                         Incolla su {selectedDayIsos.length} giorni (Ctrl+V)
                       </button>
                     )}
+                    {!readOnly && onToggleVmcDays && (
+                      <>
+                        <button
+                          type="button"
+                          disabled={togglingVmc}
+                          onClick={() => void handleToggleVmcForDates(selectedDayIsos, true)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-fuchsia-500/20 border border-fuchsia-400/40 text-fuchsia-200 hover:bg-fuchsia-500/30 font-medium transition-colors disabled:opacity-50"
+                        >
+                          <Wind className="w-3 h-3" />
+                          VMC Max ON ({selectedDayIsos.length}g)
+                        </button>
+                        <button
+                          type="button"
+                          disabled={togglingVmc}
+                          onClick={() => void handleToggleVmcForDates(selectedDayIsos, false)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 hover:text-slate-100 font-medium transition-colors disabled:opacity-50"
+                        >
+                          VMC Max OFF
+                        </button>
+                      </>
+                    )}
                   </>
                 ) : (
                   <>
-                    Giorno selezionato:{' '}
-                    <span className="font-mono font-semibold text-slate-100">
-                      {formatReadingDate(selectedDayIso)}
+                    <span>
+                      Giorno selezionato:{' '}
+                      <span className="font-mono font-semibold text-slate-100">
+                        {formatReadingDate(selectedDayIso)}
+                      </span>
                     </span>
+                    {isVmcMaxForDate(
+                      selectedDayIso,
+                      vmcDaysMap,
+                      climateByDate.get(selectedDayIso)
+                    ) && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-fuchsia-500/20 border border-fuchsia-400/50 text-fuchsia-200 text-[11px] font-semibold">
+                        <Wind className="w-3 h-3" />
+                        VMC al massimo
+                      </span>
+                    )}
+                    {!readOnly && onToggleVmcDays && (() => {
+                      const activeVmc = isVmcMaxForDate(
+                        selectedDayIso,
+                        vmcDaysMap,
+                        climateByDate.get(selectedDayIso)
+                      );
+                      return (
+                        <button
+                          type="button"
+                          disabled={togglingVmc}
+                          onClick={() =>
+                            void handleToggleVmcForDates([selectedDayIso], !activeVmc)
+                          }
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-medium transition-colors disabled:opacity-50 ${
+                            activeVmc
+                              ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-slate-100'
+                              : 'bg-fuchsia-500/15 border-fuchsia-400/40 text-fuchsia-200 hover:bg-fuchsia-500/25'
+                          }`}
+                        >
+                          <Wind className="w-3 h-3" />
+                          {activeVmc ? 'Disattiva VMC Max' : 'Imposta VMC al massimo'}
+                        </button>
+                      );
+                    })()}
                   </>
                 )}
               </div>
@@ -2119,6 +2265,7 @@ export function EnergyDatabaseView({
             </div>
 
             {(() => {
+              const allDayInline = isAllDaySlots(inlineTimeSlots);
               const inlineFormElement = (
                 <form
                   onSubmit={handleSaveInlineClimate}
@@ -2158,60 +2305,6 @@ export function EnergyDatabaseView({
                     </div>
 
                     <div className="space-y-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <label className="block text-[11px] text-slate-400">
-                          Fascia Oraria
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (isAllDaySession(inlineStartTime, inlineEndTime)) {
-                              setInlineStartTime('09:00');
-                              setInlineEndTime('20:00');
-                            } else {
-                              setInlineStartTime('00:00');
-                              setInlineEndTime('24:00');
-                            }
-                          }}
-                          className={`px-2 py-0.5 text-[10px] rounded border font-medium transition-colors ${
-                            isAllDaySession(inlineStartTime, inlineEndTime)
-                              ? 'bg-sky-500/20 border-sky-400 text-sky-300'
-                              : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
-                          }`}
-                        >
-                          {isAllDaySession(inlineStartTime, inlineEndTime)
-                            ? '✓ Tutto il giorno (24h)'
-                            : 'Tutto il giorno (24h)'}
-                        </button>
-                      </div>
-
-                      {isAllDaySession(inlineStartTime, inlineEndTime) ? (
-                        <div className="flex items-center gap-2 bg-sky-500/10 border border-sky-500/30 rounded-lg px-3 py-1.5 text-xs font-medium text-sky-300">
-                          <Clock className="w-3.5 h-3.5 shrink-0" />
-                          <span>Acceso tutto il giorno (24h)</span>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="time"
-                            value={inlineStartTime}
-                            onChange={(e) => setInlineStartTime(e.target.value)}
-                            required
-                            className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
-                          />
-                          <span className="text-slate-500">→</span>
-                          <input
-                            type="time"
-                            value={inlineEndTime}
-                            onChange={(e) => setInlineEndTime(e.target.value)}
-                            required
-                            className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
-                          />
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="space-y-1">
                       <label className="block text-[11px] text-slate-400">
                         Temp. (°C)
                       </label>
@@ -2232,6 +2325,24 @@ export function EnergyDatabaseView({
                       </select>
                     </div>
 
+                    <div className="space-y-1">
+                      <label className="block text-[11px] text-slate-400">
+                        VMC (Ricambio Aria)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setInlineVmcMax((v) => !v)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+                          inlineVmcMax
+                            ? 'bg-fuchsia-500/20 border-fuchsia-400 text-fuchsia-200'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <Wind className="w-3.5 h-3.5" />
+                        {inlineVmcMax ? 'VMC al massimo: SÌ' : 'VMC normale'}
+                      </button>
+                    </div>
+
                     <div className="flex-1 min-w-[160px] space-y-1">
                       <label className="block text-[11px] text-slate-400">
                         Note (opzionale)
@@ -2244,6 +2355,95 @@ export function EnergyDatabaseView({
                         className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-500"
                       />
                     </div>
+                  </div>
+
+                  {/* Multi-slot fasce orarie */}
+                  <div className="space-y-2 bg-slate-900/60 border border-slate-800 rounded-lg p-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <label className="text-[11px] text-slate-400">
+                        Fasce Orarie (aggiungi più fasce se l&apos;impianto è stato acceso in momenti diversi, es. 09:00–12:00 e 15:00–20:00)
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (allDayInline) {
+                              setInlineTimeSlots([{ startTime: '09:00', endTime: '20:00' }]);
+                            } else {
+                              setInlineTimeSlots([{ startTime: '00:00', endTime: '24:00' }]);
+                            }
+                          }}
+                          className={`px-2 py-0.5 text-[10px] rounded border font-medium transition-colors ${
+                            allDayInline
+                              ? 'bg-sky-500/20 border-sky-400 text-sky-300'
+                              : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          {allDayInline
+                            ? '✓ Tutto il giorno (24h)'
+                            : 'Tutto il giorno (24h)'}
+                        </button>
+                        {!allDayInline && inlineTimeSlots.length < 6 && (
+                          <button
+                            type="button"
+                            onClick={addInlineExtraSlot}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded border bg-sky-500/15 border-sky-400/40 text-sky-300 hover:bg-sky-500/25 font-medium"
+                          >
+                            <Plus className="w-3 h-3" />
+                            Aggiungi fascia
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {allDayInline ? (
+                      <div className="flex items-center gap-2 bg-sky-500/10 border border-sky-500/30 rounded-lg px-3 py-1.5 text-xs font-medium text-sky-300">
+                        <Clock className="w-3.5 h-3.5 shrink-0" />
+                        <span>Acceso tutto il giorno (24h)</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {inlineTimeSlots.map((slot, idx) => (
+                          <div
+                            key={idx}
+                            className="inline-flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1"
+                          >
+                            <span className="text-[10px] font-mono text-slate-500">
+                              #{idx + 1}
+                            </span>
+                            <input
+                              type="time"
+                              value={slot.startTime}
+                              onChange={(e) =>
+                                updateInlineSlot(idx, { startTime: e.target.value })
+                              }
+                              required
+                              className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                            />
+                            <span className="text-slate-500">→</span>
+                            <input
+                              type="time"
+                              value={slot.endTime}
+                              onChange={(e) =>
+                                updateInlineSlot(idx, { endTime: e.target.value })
+                              }
+                              required
+                              className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                            />
+                            {inlineTimeSlots.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => removeInlineSlot(idx)}
+                                aria-label={`Rimuovi fascia ${idx + 1}`}
+                                className="p-0.5 text-slate-500 hover:text-rose-400"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
@@ -2316,8 +2516,17 @@ export function EnergyDatabaseView({
                 <>
                   {(climateByDate.get(selectedDayIso) || []).length > 0 ? (
                     <div className="space-y-2">
-                      {(climateByDate.get(selectedDayIso) || []).map((log) =>
-                        showInlineForm && editingLogId === log.id ? (
+                      {(climateByDate.get(selectedDayIso) || []).map((log) => {
+                        const slots = getSessionTimeSlots(log);
+                        const durationStr = formatDurationCompact(
+                          getTotalSlotsDurationHours(slots)
+                        );
+                        const rowVmcMax = isVmcMaxForDate(
+                          selectedDayIso,
+                          vmcDaysMap,
+                          [log]
+                        );
+                        return showInlineForm && editingLogId === log.id ? (
                           <div key={log.id}>{inlineFormElement}</div>
                         ) : (
                           <div
@@ -2336,19 +2545,17 @@ export function EnergyDatabaseView({
                                   Raffrescamento
                                 </span>
                               )}
-                              {isAllDaySession(log.startTime, log.endTime) ? (
+                              {isAllDaySlots(slots) ? (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[11px] font-medium">
                                   <Clock className="w-3 h-3" />
                                   Tutto il giorno · 24h
                                 </span>
                               ) : (
                                 <span className="inline-flex items-center gap-1.5 font-mono text-slate-200">
-                                  <span>
-                                    {log.startTime} → {log.endTime}
-                                  </span>
-                                  {formatDurationCompact(getSessionDurationHours(log.startTime, log.endTime)) && (
+                                  <span>{formatSlotsSummary(slots)}</span>
+                                  {durationStr && (
                                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
-                                      {formatDurationCompact(getSessionDurationHours(log.startTime, log.endTime))}
+                                      {durationStr}
                                     </span>
                                   )}
                                 </span>
@@ -2357,6 +2564,12 @@ export function EnergyDatabaseView({
                               <span className="font-mono font-semibold text-slate-100">
                                 {formatTargetTemp(log.targetTemp)}
                               </span>
+                              {rowVmcMax && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-fuchsia-500/20 border border-fuchsia-400/50 text-fuchsia-200 text-[10px] font-semibold">
+                                  <Wind className="w-3 h-3" />
+                                  VMC Max
+                                </span>
+                              )}
                               <span className="text-slate-600">·</span>
                               <span className="text-slate-300">
                                 {log.rooms.map((r) => ROOM_LABELS[r] || r).join(', ')}
@@ -2404,8 +2617,8 @@ export function EnergyDatabaseView({
                             </div>
                             )}
                           </div>
-                        )
-                      )}
+                        );
+                      })}
                     </div>
                   ) : (
                     !showInlineForm && (
@@ -2415,10 +2628,10 @@ export function EnergyDatabaseView({
                             Nessuna accensione NeaSmart registrata per il{' '}
                             {formatReadingDate(selectedDayIso)} (impianto climatizzazione spento).
                           </span>
-                          {isVmcAnomalyDate(selectedDayIso) && (
+                          {isVmcMaxForDate(selectedDayIso, vmcDaysMap) && (
                             <div className="flex items-center gap-1.5 text-[11px] text-fuchsia-300 font-medium">
                               <Wind className="w-3.5 h-3.5 shrink-0" />
-                              20–30 Agosto: climatizzazione spenta ma MVC/VMC dimenticata accesa al massimo.
+                              Climatizzazione spenta ma Ventilazione Meccanica (VMC) impostata al massimo su questa giornata.
                             </div>
                           )}
                         </div>
@@ -2647,7 +2860,7 @@ export function EnergyDatabaseView({
                         title="VMC = Ventilazione Meccanica Controllata (ricambio d'aria continuo con recupero di calore). Se lasciata alla velocità massima consuma molto di più anche a clima spento."
                       >
                         <Wind className="w-3 h-3 shrink-0" />
-                        20–30 Ago ({offDaySummary.vmcCount}g): VMC (ricambio aria) al massimo ·{' '}
+                        VMC al massimo ({offDaySummary.vmcCount}g):{' '}
                         <span className="font-mono font-semibold">
                           {offDaySummary.vmcAvgKwh!.toFixed(2)} kWh/g
                         </span>
@@ -2681,10 +2894,10 @@ export function EnergyDatabaseView({
                   </td>
                   <td className="py-3 px-4 text-right font-mono tabular-nums whitespace-nowrap text-slate-400">
                     {offDaySummary.vmcCount > 0 && offDaySummary.allAvgKwh !== null ? (
-                      <span title="Media includendo i giorni 20–30 Agosto con MVC/VMC al massimo">
+                      <span title="Media includendo i giorni con VMC al massimo">
                         {offDaySummary.allAvgKwh.toFixed(2)} kWh/g
                         <span className="block text-[10px] font-sans text-fuchsia-300/80">
-                          incl. VMC 20–30 Ago
+                          incl. {offDaySummary.vmcCount}g VMC max
                         </span>
                       </span>
                     ) : (
@@ -2710,7 +2923,7 @@ export function EnergyDatabaseView({
                   const diffKwh = currentMetric - bestMetric;
                   const isRowHighlighted = effectiveHighlightedComboKeys.includes(combo.key);
                   const durationLabel = formatDurationCompact(
-                    getSessionDurationHours(combo.startTime, combo.endTime)
+                    getTotalSlotsDurationHours(combo.slots)
                   );
                   const averagesMatch =
                     combo.realisticAvgKwh !== null &&
@@ -2776,9 +2989,7 @@ export function EnergyDatabaseView({
                         ) : (
                           <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-slate-950/80 border border-slate-800 text-slate-200 font-mono text-[11px] tabular-nums">
                             <Clock className="w-3 h-3 text-slate-500 shrink-0" />
-                            <span>
-                              {combo.startTime} → {combo.endTime}
-                            </span>
+                            <span>{formatSlotsSummary(combo.slots)}</span>
                             {durationLabel && (
                               <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px]">
                                 {durationLabel}
@@ -2966,6 +3177,8 @@ export function EnergyDatabaseView({
                 sortedYearClimateLogs.map((log) => {
                     const dayReading = readingsByDate.get(log.date);
                     const phase = phaseByDate.get(log.date);
+                    const slots = getSessionTimeSlots(log);
+                    const rowVmcMax = isVmcMaxForDate(log.date, vmcDaysMap, [log]);
                     return (
                       <tr
                         key={log.id}
@@ -2989,15 +3202,23 @@ export function EnergyDatabaseView({
                           )}
                         </td>
                         <td className="py-2.5 px-4 whitespace-nowrap">
-                          {isAllDaySession(log.startTime, log.endTime) ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[11px] font-medium">
-                              Tutto il giorno · 24h
-                            </span>
-                          ) : (
-                            <span className="font-mono text-slate-300 tabular-nums">
-                              {log.startTime} → {log.endTime}
-                            </span>
-                          )}
+                          <div className="inline-flex items-center gap-1.5">
+                            {isAllDaySlots(slots) ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[11px] font-medium">
+                                Tutto il giorno · 24h
+                              </span>
+                            ) : (
+                              <span className="font-mono text-slate-300 tabular-nums">
+                                {formatSlotsSummary(slots)}
+                              </span>
+                            )}
+                            {rowVmcMax && (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-fuchsia-500/20 border border-fuchsia-400/50 text-fuchsia-200 text-[10px] font-semibold">
+                                <Wind className="w-2.5 h-2.5" />
+                                VMC Max
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="py-2.5 px-4 text-right font-mono font-semibold text-slate-100 tabular-nums">
                           {formatTargetTemp(log.targetTemp)}
@@ -3385,6 +3606,7 @@ export function EnergyDatabaseView({
             <tbody className="divide-y divide-slate-800/70 text-xs">
               {sortedMonthDays.map(({ iso, reading }) => {
                 const dayLogs = climateByDate.get(iso) || [];
+                const dayVmc = isVmcMaxForDate(iso, vmcDaysMap, dayLogs);
                 return (
                   <tr
                     key={iso}
@@ -3419,39 +3641,53 @@ export function EnergyDatabaseView({
                     <td className="py-2 px-4 text-slate-300">
                       {dayLogs.length > 0 ? (
                         <div className="space-y-0.5">
-                          {dayLogs.map((log) => (
-                            <div key={log.id} className="flex items-center gap-1.5 whitespace-nowrap">
-                              {log.mode === 'riscaldamento' ? (
-                                <Flame className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                              ) : (
-                                <Snowflake className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                              )}
-                              <span className="font-mono text-slate-200">
-                                {isAllDaySession(log.startTime, log.endTime)
-                                  ? '24h (Tutto il giorno)'
-                                  : `${log.startTime} → ${log.endTime}`}
-                              </span>
-                              <span className="text-slate-500">·</span>
-                              <span className="font-mono font-medium text-slate-100">
-                                {formatTargetTemp(log.targetTemp, true)}
-                              </span>
-                              <span className="text-slate-500">·</span>
-                              <span className="text-slate-400 truncate max-w-[200px]">
-                                {log.rooms.map((r) => ROOM_LABELS[r] || r).join(', ')}
-                              </span>
-                              {phaseByDate.get(iso) && (
-                                <span className="text-[11px] text-emerald-400">
-                                  ·{' '}
-                                  {phaseByDate.get(iso) === 'prima_accensione'
-                                    ? 'Prima accensione'
-                                    : phaseByDate.get(iso) === 'assestamento'
-                                      ? 'Assestamento'
-                                      : 'A regime'}
+                          {dayLogs.map((log) => {
+                            const slots = getSessionTimeSlots(log);
+                            return (
+                              <div key={log.id} className="flex items-center gap-1.5 whitespace-nowrap">
+                                {log.mode === 'riscaldamento' ? (
+                                  <Flame className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                ) : (
+                                  <Snowflake className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                                )}
+                                <span className="font-mono text-slate-200">
+                                  {isAllDaySlots(slots)
+                                    ? '24h (Tutto il giorno)'
+                                    : formatSlotsSummary(slots)}
                                 </span>
-                              )}
-                            </div>
-                          ))}
+                                <span className="text-slate-500">·</span>
+                                <span className="font-mono font-medium text-slate-100">
+                                  {formatTargetTemp(log.targetTemp, true)}
+                                </span>
+                                {dayVmc && (
+                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-fuchsia-500/20 border border-fuchsia-400/50 text-fuchsia-200 text-[10px] font-semibold">
+                                    <Wind className="w-2.5 h-2.5" />
+                                    VMC Max
+                                  </span>
+                                )}
+                                <span className="text-slate-500">·</span>
+                                <span className="text-slate-400 truncate max-w-[200px]">
+                                  {log.rooms.map((r) => ROOM_LABELS[r] || r).join(', ')}
+                                </span>
+                                {phaseByDate.get(iso) && (
+                                  <span className="text-[11px] text-emerald-400">
+                                    ·{' '}
+                                    {phaseByDate.get(iso) === 'prima_accensione'
+                                      ? 'Prima accensione'
+                                      : phaseByDate.get(iso) === 'assestamento'
+                                        ? 'Assestamento'
+                                        : 'A regime'}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
+                      ) : dayVmc ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-fuchsia-500/20 border border-fuchsia-400/50 text-fuchsia-200 text-[11px] font-semibold">
+                          <Wind className="w-3 h-3" />
+                          Clima OFF · VMC Max
+                        </span>
                       ) : (
                         <span className="text-slate-600">—</span>
                       )}
@@ -3497,7 +3733,7 @@ export function EnergyDatabaseView({
                   <span className="font-mono font-semibold text-slate-100">
                     {formatReadingDate(pendingDeleteLog.date)}
                   </span>{' '}
-                  ({pendingDeleteLog.startTime}–{pendingDeleteLog.endTime} ·{' '}
+                  ({formatSlotsSummary(getSessionTimeSlots(pendingDeleteLog))} ·{' '}
                   {formatTargetTemp(pendingDeleteLog.targetTemp)})?
                 </p>
               </div>

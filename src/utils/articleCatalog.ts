@@ -1,13 +1,15 @@
 import { HomeArticleCategory, HomeArticleRecord } from '../types/home';
 
 export const ARTICLE_ROOM_PRESETS: string[] = [
-  'Cucina',
+  'Nessuna stanza',
   'Salone',
-  'Stanza Maurizio',
-  'Stanza Roberta',
-  'Matrimoniale',
+  'Cucina',
   'Bagno 1',
   'Bagno 2',
+  'Stanza Maurizio',
+  'Stanza Roberta',
+  'Stanza Matrimoniale',
+  'Matrimoniale',
   'Locale Tecnico / Esterno',
   'Casa / Ingresso',
 ];

@@ -210,6 +210,35 @@ export function getDocumentsForArticle(
   return documents.filter((d) => parseArticleDocumentRef(d.referenceCode)?.articleId === articleId);
 }
 
+export function buildResearchDocumentRef(
+  researchId: string,
+  docType: ArticleAttachmentType = 'altro'
+): string {
+  const cleanId = researchId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 48);
+  return `RES:${cleanId}:${docType}`.slice(0, 80);
+}
+
+export function parseResearchDocumentRef(
+  referenceCode?: string
+): { researchId: string; docType: ArticleAttachmentType } | null {
+  if (!referenceCode) return null;
+  const match = referenceCode.match(/^RES:([a-zA-Z0-9_-]+):([a-z0-9_]+)$/);
+  if (!match) return null;
+  return {
+    researchId: match[1],
+    docType: match[2] as ArticleAttachmentType,
+  };
+}
+
+export function getDocumentsForResearch(
+  documents: HomeDocumentRecord[],
+  researchId: string
+): HomeDocumentRecord[] {
+  return documents.filter(
+    (d) => parseResearchDocumentRef(d.referenceCode)?.researchId === researchId
+  );
+}
+
 function sanitizeToken(val: string | undefined): string {
   return (val || '').replace(/[|\r\n]/g, ' ').trim();
 }

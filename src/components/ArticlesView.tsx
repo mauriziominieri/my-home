@@ -1,6 +1,8 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowDownWideNarrow,
+  ArrowUpNarrowWide,
   BookOpen,
   Check,
   Copy,
@@ -13,6 +15,7 @@ import {
   Globe,
   Home,
   LayoutGrid,
+  List,
   Package,
   Paperclip,
   Pencil,
@@ -181,11 +184,15 @@ export function ArticlesView({
 }: ArticlesViewProps) {
   const [viewTab, setViewTab] = useState<'casa' | 'catalogo'>('casa');
 
-  // House inventory filters
+  // House inventory filters & sorting
   const [selectedCategory, setSelectedCategory] = useState<'all' | HomeArticleCategory>('all');
   const [selectedRoom, setSelectedRoom] = useState<string>('all');
+  const [selectedBrand, setSelectedBrand] = useState<string>('all');
   const [onlyExtraFamily, setOnlyExtraFamily] = useState(false);
   const [groupByRoom, setGroupByRoom] = useState<boolean>(true);
+  const [layoutMode, setLayoutMode] = useState<'grid' | 'list'>('grid');
+  const [sortField, setSortField] = useState<'name' | 'brand' | 'room' | 'warranty'>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Form states
@@ -854,11 +861,25 @@ export function ArticlesView({
     return Array.from(counts.entries());
   }, [articles]);
 
+  const availableBrandsInHouse = useMemo(() => {
+    const set = new Set<string>();
+    for (const a of articles) {
+      if (a.brand?.trim()) set.add(a.brand.trim());
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'it'));
+  }, [articles]);
+
   const filteredArticles = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return articles.filter((a) => {
+    const filtered = articles.filter((a) => {
       if (onlyExtraFamily && !a.familyWarranty) return false;
       if (selectedRoom !== 'all' && a.room.trim().toLowerCase() !== selectedRoom.toLowerCase()) {
+        return false;
+      }
+      if (
+        selectedBrand !== 'all' &&
+        (a.brand || '').trim().toLowerCase() !== selectedBrand.toLowerCase()
+      ) {
         return false;
       }
       if (selectedCategory !== 'all' && a.category !== selectedCategory) return false;
@@ -867,7 +888,53 @@ export function ArticlesView({
         .filter(Boolean)
         .some((field) => String(field).toLowerCase().includes(q));
     });
-  }, [articles, onlyExtraFamily, selectedRoom, selectedCategory, searchQuery]);
+
+    const dir = sortDirection === 'asc' ? 1 : -1;
+    const compareNames = (a: HomeArticleRecord, b: HomeArticleRecord) =>
+      a.name.localeCompare(b.name, 'it', { numeric: true, sensitivity: 'base' });
+    const parseItDate = (raw?: string) => {
+      if (!raw) return Number.NaN;
+      const m = raw.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1])).getTime();
+      const iso = Date.parse(raw);
+      return Number.isFinite(iso) ? iso : Number.NaN;
+    };
+
+    return [...filtered].sort((a, b) => {
+      switch (sortField) {
+        case 'brand': {
+          const diff = a.brand.localeCompare(b.brand, 'it', { sensitivity: 'base' }) * dir;
+          return diff !== 0 ? diff : compareNames(a, b);
+        }
+        case 'room': {
+          const diff = a.room.localeCompare(b.room, 'it', { sensitivity: 'base' }) * dir;
+          return diff !== 0 ? diff : compareNames(a, b);
+        }
+        case 'warranty': {
+          const da = parseItDate(a.warrantyEnd);
+          const db = parseItDate(b.warrantyEnd);
+          const aHas = !Number.isNaN(da);
+          const bHas = !Number.isNaN(db);
+          if (aHas !== bHas) return aHas ? -1 : 1;
+          if (!aHas && !bHas) return compareNames(a, b);
+          const diff = (da - db) * dir;
+          return diff !== 0 ? diff : compareNames(a, b);
+        }
+        case 'name':
+        default:
+          return compareNames(a, b) * dir;
+      }
+    });
+  }, [
+    articles,
+    onlyExtraFamily,
+    selectedRoom,
+    selectedBrand,
+    selectedCategory,
+    searchQuery,
+    sortField,
+    sortDirection,
+  ]);
 
   const groupedByRoom = useMemo(() => {
     const map = new Map<string, HomeArticleRecord[]>();
@@ -950,7 +1017,11 @@ export function ArticlesView({
     return (
       <article
         key={item.id}
-        className="bg-slate-900/75 border border-slate-800 rounded-xl p-4 flex flex-col justify-between gap-3 hover:border-slate-700 transition-colors"
+        className={
+          layoutMode === 'list'
+            ? 'bg-slate-900/75 border border-slate-800 rounded-xl p-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 hover:border-slate-700 transition-colors'
+            : 'bg-slate-900/75 border border-slate-800 rounded-xl p-4 flex flex-col justify-between gap-3 hover:border-slate-700 transition-colors'
+        }
       >
         <div className="space-y-2.5">
           <div className="flex items-start justify-between gap-2">
@@ -981,7 +1052,13 @@ export function ArticlesView({
           {userNotes && <p className="text-[11px] text-slate-500 italic">{userNotes}</p>}
         </div>
 
-        <div className="pt-2.5 border-t border-slate-800/80 space-y-2">
+        <div
+          className={
+            layoutMode === 'list'
+              ? 'pt-2.5 lg:pt-0 lg:pl-4 border-t lg:border-t-0 lg:border-l border-slate-800/80 space-y-2 lg:min-w-[300px] shrink-0'
+              : 'pt-2.5 border-t border-slate-800/80 space-y-2'
+          }
+        >
           <div className="flex flex-wrap items-center gap-2 text-[11px]">
             {item.familyWarranty ? (
               <button
@@ -2000,18 +2077,53 @@ export function ArticlesView({
                 Stanze di Casa
               </div>
 
-              <button
-                type="button"
-                onClick={() => setGroupByRoom((v) => !v)}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors ${
-                  groupByRoom
-                    ? 'bg-sky-500/15 text-sky-300 border-sky-500/35'
-                    : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200'
-                }`}
-              >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                {groupByRoom ? 'Vista divisa per stanze: Attiva' : 'Vista griglia unica'}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <div
+                  role="group"
+                  aria-label="Formato elenco o griglia"
+                  className="inline-flex items-center p-0.5 bg-slate-950 border border-slate-800 rounded-md"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setLayoutMode('grid')}
+                    aria-pressed={layoutMode === 'grid'}
+                    className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded transition-colors ${
+                      layoutMode === 'grid'
+                        ? 'bg-sky-500 text-slate-950 font-semibold'
+                        : 'text-slate-400 hover:text-slate-100'
+                    }`}
+                  >
+                    <LayoutGrid className="w-3 h-3" />
+                    <span>Griglia</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLayoutMode('list')}
+                    aria-pressed={layoutMode === 'list'}
+                    className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded transition-colors ${
+                      layoutMode === 'list'
+                        ? 'bg-sky-500 text-slate-950 font-semibold'
+                        : 'text-slate-400 hover:text-slate-100'
+                    }`}
+                  >
+                    <List className="w-3 h-3" />
+                    <span>Elenco</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setGroupByRoom((v) => !v)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors ${
+                    groupByRoom
+                      ? 'bg-sky-500/15 text-sky-300 border-sky-500/35'
+                      : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200'
+                  }`}
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  {groupByRoom ? 'Vista divisa per stanze: Attiva' : 'Vista unica'}
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5">
@@ -2045,8 +2157,8 @@ export function ArticlesView({
             </div>
           </div>
 
-          {/* Filtri Categoria e Ricerca */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          {/* Filtri Categoria, Marca, Ordinamento e Ricerca */}
+          <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-900 border border-slate-800 rounded-lg">
               <button
                 type="button"
@@ -2079,15 +2191,72 @@ export function ArticlesView({
               })}
             </div>
 
-            <div className="relative w-full sm:w-72">
-              <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Cerca nei miei articoli (modello, PNC, stanza...)"
-                className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
-              />
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Cerca nei miei articoli (nome, marca, modello, PNC, stanza...)"
+                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+                />
+              </div>
+
+              <select
+                value={selectedBrand}
+                onChange={(e) => setSelectedBrand(e.target.value)}
+                aria-label="Filtra articoli per marca"
+                className="px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-slate-200 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+              >
+                <option value="all">Tutte le marche</option>
+                {availableBrandsInHouse.map((br) => (
+                  <option key={br} value={br}>
+                    {br}
+                  </option>
+                ))}
+              </select>
+
+              <div className="inline-flex items-center gap-1 shrink-0">
+                <select
+                  value={sortField}
+                  onChange={(e) =>
+                    setSortField(e.target.value as 'name' | 'brand' | 'room' | 'warranty')
+                  }
+                  aria-label="Ordina articoli di casa per"
+                  className="px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-slate-200 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                >
+                  <option value="name">Ordina: Nome</option>
+                  <option value="brand">Ordina: Marca</option>
+                  <option value="room">Ordina: Stanza</option>
+                  <option value="warranty">Ordina: Scad. garanzia</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+                  }
+                  title={
+                    sortDirection === 'asc'
+                      ? 'Ordine crescente — clicca per invertire in decrescente'
+                      : 'Ordine decrescente — clicca per invertire in crescente'
+                  }
+                  aria-label="Inverti ordine articoli"
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-200 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-lg transition-colors whitespace-nowrap"
+                >
+                  {sortDirection === 'asc' ? (
+                    <>
+                      <ArrowUpNarrowWide className="w-3.5 h-3.5 text-sky-400" />
+                      <span>Crescente</span>
+                    </>
+                  ) : (
+                    <>
+                      <ArrowDownWideNarrow className="w-3.5 h-3.5 text-sky-400" />
+                      <span>Decrescente</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -2147,14 +2316,26 @@ export function ArticlesView({
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  <div
+                    className={
+                      layoutMode === 'list'
+                        ? 'flex flex-col gap-3'
+                        : 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4'
+                    }
+                  >
                     {list.map((item) => renderArticleCard(item))}
                   </div>
                 </section>
               ))}
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            <div
+              className={
+                layoutMode === 'list'
+                  ? 'flex flex-col gap-3'
+                  : 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4'
+              }
+            >
               {filteredArticles.map((item) => renderArticleCard(item))}
             </div>
           )}

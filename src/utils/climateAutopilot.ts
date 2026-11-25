@@ -2,11 +2,21 @@ import {
   ClimateAutopilotConfig,
   ClimateMode,
   ClimateSession,
+  ClimateTimeSlot,
   HOME_ROOMS,
   HomeArticleRecord,
   RoomId,
 } from '../types/home';
-import { formatDurationCompact, getSessionDurationHours, isAllDaySession } from './climateTime';
+import {
+  formatDurationCompact,
+  formatSlotsCompact,
+  formatSlotsSummary,
+  formatTimeSlotString,
+  getTotalSlotsDurationHours,
+  isAllDaySlots,
+  normalizeTimeSlots,
+  parseTimeSlotString,
+} from './climateTime';
 
 export const SYSTEM_ROOM_CLIMATE_AUTO = '__clima_auto__';
 export const CLIMATE_AUTOPILOT_DOC_ID = 'climate_autopilot_state';
@@ -55,15 +65,54 @@ export function getAutoClimateDocId(dateIso: string): string {
   return `auto_${dateIso.replace(/[^0-9]/g, '')}`;
 }
 
+export function getAutopilotSlots(cfg: {
+  startTime: string;
+  endTime: string;
+  timeSlots?: ClimateTimeSlot[];
+}): ClimateTimeSlot[] {
+  if (Array.isArray(cfg.timeSlots) && cfg.timeSlots.length > 0) {
+    const clean = normalizeTimeSlots(cfg.timeSlots);
+    if (clean.length > 0) return clean;
+  }
+  return [{ startTime: cfg.startTime || '09:00', endTime: cfg.endTime || '20:00' }];
+}
+
 export function articleToClimateAutopilot(
   article?: HomeArticleRecord
 ): ClimateAutopilotConfig | null {
   if (!article) return null;
   const mode: ClimateMode =
     article.brand === 'raffrescamento' ? 'raffrescamento' : 'riscaldamento';
-  const [rawStart, rawEnd, rawTemp] = (article.model || '09:00|20:00|21').split('|');
-  const startTime = /^\d{2}:\d{2}$/.test(rawStart || '') ? rawStart : '09:00';
-  const endTime = /^\d{2}:\d{2}$/.test(rawEnd || '') ? rawEnd : '20:00';
+
+  const parts = (article.model || '09:00|20:00|21').split('|');
+  let slots: ClimateTimeSlot[] = [];
+  let rawTemp = '21';
+  let vmcMax = false;
+
+  // Format v2: "09:00-12:00,15:00-20:00|20.0" or "09:00-12:00,15:00-20:00|20.0|vmc"
+  if (parts[0]?.includes('-')) {
+    slots = parts[0]
+      .split(',')
+      .map(parseTimeSlotString)
+      .filter((s): s is ClimateTimeSlot => Boolean(s));
+    rawTemp = parts[1] || '21';
+    vmcMax = parts[2] === 'vmc';
+  } else {
+    // Legacy v1: "09:00|20:00|21.0" (+ optional "|vmc")
+    const rawStart = parts[0];
+    const rawEnd = parts[1];
+    rawTemp = parts[2] || '21';
+    vmcMax = parts[3] === 'vmc';
+    const startTime = /^\d{2}:\d{2}$/.test(rawStart || '') ? rawStart : '09:00';
+    const endTime = /^\d{2}:\d{2}$/.test(rawEnd || '') ? rawEnd : '20:00';
+    slots = [{ startTime, endTime }];
+  }
+
+  const normalizedSlots =
+    slots.length > 0 ? normalizeTimeSlots(slots) : [{ startTime: '09:00', endTime: '20:00' }];
+  const startTime = normalizedSlots[0].startTime;
+  const endTime = normalizedSlots[normalizedSlots.length - 1].endTime;
+
   const parsedTemp = Number.parseFloat(rawTemp || '21');
   const targetTemp =
     Number.isFinite(parsedTemp) && (parsedTemp === 0 || (parsedTemp >= 14 && parsedTemp <= 30))
@@ -89,6 +138,8 @@ export function articleToClimateAutopilot(
     mode,
     startTime,
     endTime,
+    timeSlots: normalizedSlots,
+    vmcMax,
     targetTemp,
     rooms,
     startDate,
@@ -101,7 +152,11 @@ export function climateAutopilotToArticlePayload(
   cfg: ClimateAutopilotConfig
 ): Omit<HomeArticleRecord, 'id'> {
   const modeLabel = cfg.mode === 'riscaldamento' ? 'Riscaldamento' : 'Raffrescamento';
-  const scheduleStr = `${cfg.startTime}|${cfg.endTime}|${cfg.targetTemp.toFixed(1)}`;
+  const slots = getAutopilotSlots(cfg);
+  const slotsEncoded = slots.map(formatTimeSlotString).join(',');
+  const scheduleStr = cfg.vmcMax
+    ? `${slotsEncoded}|${cfg.targetTemp.toFixed(1)}|vmc`
+    : `${slotsEncoded}|${cfg.targetTemp.toFixed(1)}`;
   const roomsStr = cfg.rooms.join(',');
   return {
     name: cfg.active ? `Clima Attivo (${modeLabel})` : 'Clima Spento',
@@ -113,9 +168,9 @@ export function climateAutopilotToArticlePayload(
     purchaseDate: cfg.startDate.slice(0, 20),
     warrantyEnd: cfg.lastAppliedDate.slice(0, 20),
     serialNumber: roomsStr.slice(0, 80),
-    specs: `${modeLabel} · ${
-      isAllDaySession(cfg.startTime, cfg.endTime) ? '24h' : `${cfg.startTime}-${cfg.endTime}`
-    } · ${cfg.targetTemp.toFixed(1)}°C`.slice(0, 240),
+    specs: `${modeLabel} · ${formatSlotsCompact(slots)} · ${cfg.targetTemp.toFixed(1)}°C${
+      cfg.vmcMax ? ' · VMC Max' : ''
+    }`.slice(0, 240),
     notes: cfg.notes ? cfg.notes.trim().slice(0, 240) : undefined,
   };
 }
@@ -125,13 +180,18 @@ export function buildAutopilotSessionForDate(
   cfg: ClimateAutopilotConfig,
   ownerId: string
 ): ClimateSession {
+  const slots = getAutopilotSlots(cfg);
+  const first = slots[0];
+  const last = slots[slots.length - 1];
   return {
     id: getAutoClimateDocId(dateIso),
     ownerId,
     date: dateIso,
     mode: cfg.mode,
-    startTime: cfg.startTime,
-    endTime: cfg.endTime,
+    startTime: first.startTime,
+    endTime: last.endTime,
+    timeSlots: slots.length > 1 ? slots.map(formatTimeSlotString) : undefined,
+    vmcMax: Boolean(cfg.vmcMax),
     targetTemp: cfg.targetTemp,
     rooms: [...cfg.rooms],
     notes: cfg.notes
@@ -142,13 +202,12 @@ export function buildAutopilotSessionForDate(
 
 export function formatAutopilotSummary(cfg: ClimateAutopilotConfig): string {
   const modeStr = cfg.mode === 'riscaldamento' ? 'Riscaldamento' : 'Raffrescamento';
-  const timeStr = isAllDaySession(cfg.startTime, cfg.endTime)
+  const slots = getAutopilotSlots(cfg);
+  const durationLabel = formatDurationCompact(getTotalSlotsDurationHours(slots));
+  const timeStr = isAllDaySlots(slots)
     ? 'Tutto il giorno (24h)'
-    : `${cfg.startTime} → ${cfg.endTime}${
-        formatDurationCompact(getSessionDurationHours(cfg.startTime, cfg.endTime))
-          ? ` (${formatDurationCompact(getSessionDurationHours(cfg.startTime, cfg.endTime))})`
-          : ''
-      }`;
+    : `${formatSlotsSummary(slots)}${durationLabel ? ` (${durationLabel})` : ''}`;
   const tempStr = cfg.targetTemp > 0 ? `${cfg.targetTemp.toFixed(1)} °C` : 'Temp. auto';
-  return `${modeStr} · ${timeStr} · ${tempStr}`;
+  const vmcStr = cfg.vmcMax ? ' · VMC Max' : '';
+  return `${modeStr} · ${timeStr} · ${tempStr}${vmcStr}`;
 }

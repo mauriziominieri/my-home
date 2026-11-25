@@ -11,6 +11,8 @@ import {
   Snowflake,
   Thermometer,
   Trash2,
+  Wind,
+  X,
 } from 'lucide-react';
 import {
   AristonMode,
@@ -18,6 +20,7 @@ import {
   ClimateAutopilotConfig,
   ClimateMode,
   ClimateSession,
+  ClimateTimeSlot,
   EnergyReading,
   HOME_ROOMS,
   HomeSystemConfig,
@@ -28,11 +31,18 @@ import {
   ClimateAutopilotCard,
   ClimateAutopilotInput,
 } from './ClimateAutopilotCard';
+import { getLocalTodayIso } from '../utils/climateAutopilot';
 import { formatReadingDate } from '../utils/edistribuzioneCsv';
 import {
   formatDurationCompact,
-  getSessionDurationHours,
-  isAllDaySession,
+  formatSlotsCompact,
+  formatSlotsSummary,
+  formatTimeSlotString,
+  getSessionTimeSlots,
+  getTotalSlotsDurationHours,
+  isAllDaySlots,
+  isVmcMaxForDate,
+  normalizeTimeSlots,
 } from '../utils/climateTime';
 import {
   compareSortValues,
@@ -46,6 +56,7 @@ interface DomoticsViewProps {
   config: HomeSystemConfig;
   readings: EnergyReading[];
   climateLogs: ClimateSession[];
+  vmcDaysMap?: Map<string, boolean>;
   climateAutopilot?: ClimateAutopilotConfig | null;
   readOnly?: boolean;
   onSignIn?: () => void;
@@ -95,6 +106,7 @@ export function DomoticsView({
   config,
   readings,
   climateLogs,
+  vmcDaysMap,
   climateAutopilot = null,
   readOnly = false,
   onSignIn,
@@ -108,11 +120,23 @@ export function DomoticsView({
   const [saving, setSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
 
+  const todayIso = getLocalTodayIso();
+  const todaySessions = useMemo(
+    () => climateLogs.filter((l) => l.date === todayIso),
+    [climateLogs, todayIso]
+  );
+  const todayVmcMax = useMemo(
+    () => isVmcMaxForDate(todayIso, vmcDaysMap, todaySessions),
+    [todayIso, vmcDaysMap, todaySessions]
+  );
+
   // NeaSmart session form state
-  const [date, setDate] = useState('2026-11-18');
+  const [date, setDate] = useState(todayIso);
   const [mode, setMode] = useState<ClimateMode>('riscaldamento');
-  const [startTime, setStartTime] = useState('09:00');
-  const [endTime, setEndTime] = useState('20:00');
+  const [timeSlots, setTimeSlots] = useState<ClimateTimeSlot[]>([
+    { startTime: '09:00', endTime: '20:00' },
+  ]);
+  const [vmcMax, setVmcMax] = useState(false);
   const [targetTemp, setTargetTemp] = useState('21');
   const [selectedRooms, setSelectedRooms] = useState<RoomId[]>([
     'salone',
@@ -127,8 +151,10 @@ export function DomoticsView({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDate, setEditDate] = useState('');
   const [editMode, setEditMode] = useState<ClimateMode>('riscaldamento');
-  const [editStartTime, setEditStartTime] = useState('09:00');
-  const [editEndTime, setEditEndTime] = useState('20:00');
+  const [editTimeSlots, setEditTimeSlots] = useState<ClimateTimeSlot[]>([
+    { startTime: '09:00', endTime: '20:00' },
+  ]);
+  const [editVmcMax, setEditVmcMax] = useState(false);
   const [editTemp, setEditTemp] = useState('21.0');
   const [editRooms, setEditRooms] = useState<RoomId[]>([]);
   const [editNotes, setEditNotes] = useState('');
@@ -152,6 +178,8 @@ export function DomoticsView({
 
   const sortedLogs = useMemo(() => {
     return [...climateLogs].sort((a, b) => {
+      const aSlots = getSessionTimeSlots(a);
+      const bSlots = getSessionTimeSlots(b);
       switch (domoticsSort.key) {
         case 'date':
           return compareSortValues(a.date, b.date, domoticsSort.dir);
@@ -159,8 +187,8 @@ export function DomoticsView({
           return compareSortValues(a.mode, b.mode, domoticsSort.dir);
         case 'time':
           return compareSortValues(
-            isAllDaySession(a.startTime, a.endTime) ? '00:00-24:00' : `${a.startTime}-${a.endTime}`,
-            isAllDaySession(b.startTime, b.endTime) ? '00:00-24:00' : `${b.startTime}-${b.endTime}`,
+            isAllDaySlots(aSlots) ? '00:00-24:00' : formatSlotsCompact(aSlots),
+            isAllDaySlots(bSlots) ? '00:00-24:00' : formatSlotsCompact(bSlots),
             domoticsSort.dir
           );
         case 'targetTemp':
@@ -204,19 +232,71 @@ export function DomoticsView({
     );
   }
 
+  function updateSlot(idx: number, patch: Partial<ClimateTimeSlot>) {
+    setTimeSlots((prev) =>
+      prev.map((slot, i) => (i === idx ? { ...slot, ...patch } : slot))
+    );
+  }
+
+  function addExtraSlot() {
+    setTimeSlots((prev) => {
+      if (prev.length >= 6) return prev;
+      const last = prev[prev.length - 1];
+      const nextStart = last?.endTime && last.endTime < '22:00' ? '15:00' : '18:00';
+      return [...prev, { startTime: nextStart, endTime: '20:00' }];
+    });
+  }
+
+  function removeSlot(idx: number) {
+    setTimeSlots((prev) =>
+      prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)
+    );
+  }
+
+  function updateEditSlot(idx: number, patch: Partial<ClimateTimeSlot>) {
+    setEditTimeSlots((prev) =>
+      prev.map((slot, i) => (i === idx ? { ...slot, ...patch } : slot))
+    );
+  }
+
+  function addEditExtraSlot() {
+    setEditTimeSlots((prev) => {
+      if (prev.length >= 6) return prev;
+      const last = prev[prev.length - 1];
+      const nextStart = last?.endTime && last.endTime < '22:00' ? '15:00' : '18:00';
+      return [...prev, { startTime: nextStart, endTime: '20:00' }];
+    });
+  }
+
+  function removeEditSlot(idx: number) {
+    setEditTimeSlots((prev) =>
+      prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)
+    );
+  }
+
   async function handleSaveSession(e: React.FormEvent) {
     e.preventDefault();
     if (selectedRooms.length === 0 || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    const cleanedSlots = normalizeTimeSlots(timeSlots);
+    if (cleanedSlots.length === 0) return;
     const tempNum = Number.parseFloat(targetTemp.replace(',', '.'));
     if (!Number.isFinite(tempNum) || tempNum < 14 || tempNum > 30) return;
+
+    const first = cleanedSlots[0];
+    const last = cleanedSlots[cleanedSlots.length - 1];
 
     setSubmittingLog(true);
     try {
       await onAddClimateLog({
         date,
         mode,
-        startTime,
-        endTime,
+        startTime: first.startTime,
+        endTime: last.endTime,
+        timeSlots:
+          cleanedSlots.length > 1
+            ? cleanedSlots.map(formatTimeSlotString)
+            : undefined,
+        vmcMax,
         targetTemp: Math.round(tempNum * 10) / 10,
         rooms: selectedRooms,
         notes: notes.trim().slice(0, 240) || undefined,
@@ -231,8 +311,8 @@ export function DomoticsView({
     setEditingId(log.id);
     setEditDate(log.date);
     setEditMode(log.mode);
-    setEditStartTime(log.startTime);
-    setEditEndTime(log.endTime);
+    setEditTimeSlots(getSessionTimeSlots(log));
+    setEditVmcMax(isVmcMaxForDate(log.date, vmcDaysMap, [log]));
     setEditTemp(log.targetTemp.toFixed(1));
     setEditRooms([...log.rooms]);
     setEditNotes(log.notes || '');
@@ -248,15 +328,26 @@ export function DomoticsView({
 
   async function saveEditRow(logId: string) {
     if (editRooms.length === 0 || !/^\d{4}-\d{2}-\d{2}$/.test(editDate)) return;
+    const cleanedSlots = normalizeTimeSlots(editTimeSlots);
+    if (cleanedSlots.length === 0) return;
     const tempNum = Number.parseFloat(editTemp.replace(',', '.'));
     if (!Number.isFinite(tempNum) || tempNum < 14 || tempNum > 30) return;
+
+    const first = cleanedSlots[0];
+    const last = cleanedSlots[cleanedSlots.length - 1];
+
     setSavingEdit(true);
     try {
       await onUpdateClimateLog(logId, {
         date: editDate,
         mode: editMode,
-        startTime: editStartTime,
-        endTime: editEndTime,
+        startTime: first.startTime,
+        endTime: last.endTime,
+        timeSlots:
+          cleanedSlots.length > 1
+            ? cleanedSlots.map(formatTimeSlotString)
+            : undefined,
+        vmcMax: editVmcMax,
         targetTemp: Math.round(tempNum * 10) / 10,
         rooms: editRooms,
         notes: editNotes.trim().slice(0, 240) || undefined,
@@ -313,6 +404,8 @@ export function DomoticsView({
       {onActivateAutopilot && onTurnOffAutopilot && (
         <ClimateAutopilotCard
           autopilot={climateAutopilot}
+          todaySessions={todaySessions}
+          todayVmcMax={todayVmcMax}
           readOnly={readOnly}
           onActivateAutopilot={onActivateAutopilot}
           onTurnOffAutopilot={onTurnOffAutopilot}
@@ -358,9 +451,11 @@ export function DomoticsView({
           </div>
         </div>
 
-        {!readOnly && (
+        {!readOnly && (() => {
+          const allDayForm = isAllDaySlots(timeSlots);
+          return (
         <form onSubmit={handleSaveSession} className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="space-y-1">
               <label className="block text-xs font-medium text-slate-300">
                 Data
@@ -372,72 +467,6 @@ export function DomoticsView({
                 onChange={(e) => setDate(e.target.value)}
                 className="w-full px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
               />
-            </div>
-
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-medium text-slate-300">
-                  Dalle (ora)
-                </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (isAllDaySession(startTime, endTime)) {
-                      setStartTime('09:00');
-                      setEndTime('20:00');
-                    } else {
-                      setStartTime('00:00');
-                      setEndTime('24:00');
-                    }
-                  }}
-                  className={`text-[10px] px-1.5 py-0.5 rounded border font-medium transition-colors ${
-                    isAllDaySession(startTime, endTime)
-                      ? 'bg-sky-500/20 border-sky-400 text-sky-300'
-                      : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {isAllDaySession(startTime, endTime) ? '✓ 24h Attivo' : 'Tutto il giorno (24h)'}
-                </button>
-              </div>
-              {isAllDaySession(startTime, endTime) ? (
-                <div className="w-full px-3 py-2 text-xs font-medium text-sky-300 bg-sky-500/10 border border-sky-500/30 rounded-lg text-center">
-                  Tutto il giorno (24h)
-                </div>
-              ) : (
-                <input
-                  type="time"
-                  required
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  className="w-full px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
-                />
-              )}
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-300">
-                Alle (ora)
-              </label>
-              {isAllDaySession(startTime, endTime) ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStartTime('09:00');
-                    setEndTime('20:00');
-                  }}
-                  className="w-full px-3 py-2 text-xs text-slate-400 hover:text-slate-200 bg-slate-950 border border-slate-800 rounded-lg"
-                >
-                  Imposta orario specifico
-                </button>
-              ) : (
-                <input
-                  type="time"
-                  required
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                  className="w-full px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
-                />
-              )}
             </div>
 
             <div className="space-y-1">
@@ -455,6 +484,106 @@ export function DomoticsView({
                 className="w-full px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
               />
             </div>
+
+            <div className="space-y-1">
+              <label className="block text-xs font-medium text-slate-300">
+                Ventilazione Meccanica (VMC)
+              </label>
+              <button
+                type="button"
+                onClick={() => setVmcMax((v) => !v)}
+                className={`w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors ${
+                  vmcMax
+                    ? 'bg-fuchsia-500/20 border-fuchsia-400 text-fuchsia-200'
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Wind className="w-3.5 h-3.5" />
+                {vmcMax ? 'VMC al massimo: ATTIVA' : 'VMC normale (clicca per Max)'}
+              </button>
+            </div>
+          </div>
+
+          {/* Multi-slot fasce orarie */}
+          <div className="space-y-2 bg-slate-950/60 border border-slate-800 rounded-lg p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className="text-xs font-medium text-slate-300">
+                Fasce Orarie (aggiungi più fasce se hai interrotto e riacceso, es. 09:00–12:00 e 15:00–20:00)
+              </label>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (allDayForm) {
+                      setTimeSlots([{ startTime: '09:00', endTime: '20:00' }]);
+                    } else {
+                      setTimeSlots([{ startTime: '00:00', endTime: '24:00' }]);
+                    }
+                  }}
+                  className={`text-[10px] px-2 py-1 rounded border font-medium transition-colors ${
+                    allDayForm
+                      ? 'bg-sky-500/20 border-sky-400 text-sky-300'
+                      : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {allDayForm ? '✓ 24h Attivo' : 'Tutto il giorno (24h)'}
+                </button>
+                {!allDayForm && timeSlots.length < 6 && (
+                  <button
+                    type="button"
+                    onClick={addExtraSlot}
+                    className="inline-flex items-center gap-1 text-[10px] px-2.5 py-1 rounded border bg-sky-500/15 border-sky-400/40 text-sky-300 hover:bg-sky-500/25 font-medium"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Aggiungi fascia
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {allDayForm ? (
+              <div className="w-full px-3 py-2 text-xs font-medium text-sky-300 bg-sky-500/10 border border-sky-500/30 rounded-lg text-center">
+                Tutto il giorno (24h)
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {timeSlots.map((slot, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5"
+                  >
+                    <span className="text-[10px] font-mono text-slate-500 shrink-0">
+                      #{idx + 1}
+                    </span>
+                    <input
+                      type="time"
+                      required
+                      value={slot.startTime}
+                      onChange={(e) => updateSlot(idx, { startTime: e.target.value })}
+                      className="flex-1 min-w-0 px-1.5 py-1 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                    />
+                    <span className="text-slate-500">→</span>
+                    <input
+                      type="time"
+                      required
+                      value={slot.endTime}
+                      onChange={(e) => updateSlot(idx, { endTime: e.target.value })}
+                      className="flex-1 min-w-0 px-1.5 py-1 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                    />
+                    {timeSlots.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeSlot(idx)}
+                        aria-label={`Rimuovi fascia ${idx + 1}`}
+                        className="p-1 text-slate-500 hover:text-rose-400"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* 6 Rooms Selector */}
@@ -521,7 +650,8 @@ export function DomoticsView({
             </button>
           </div>
         </form>
-        )}
+          );
+        })()}
 
         {/* Sessions Table correlated with real e-distribuzione kWh */}
         <div className="pt-4 border-t border-slate-800 overflow-x-auto">
@@ -591,7 +721,13 @@ export function DomoticsView({
               ) : (
                 sortedLogs.map((log) => {
                   const dayReading = readingsByDate.get(log.date);
+                  const slots = getSessionTimeSlots(log);
+                  const durationStr = formatDurationCompact(
+                    getTotalSlotsDurationHours(slots)
+                  );
+                  const rowVmcMax = isVmcMaxForDate(log.date, vmcDaysMap, [log]);
                   if (editingId === log.id) {
+                    const allDayEdit = isAllDaySlots(editTimeSlots);
                     return (
                       <tr key={log.id} className="bg-slate-950/90">
                         <td colSpan={7} className="p-3">
@@ -629,42 +765,6 @@ export function DomoticsView({
                                   Raffr.
                                 </button>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (isAllDaySession(editStartTime, editEndTime)) {
-                                    setEditStartTime('09:00');
-                                    setEditEndTime('20:00');
-                                  } else {
-                                    setEditStartTime('00:00');
-                                    setEditEndTime('24:00');
-                                  }
-                                }}
-                                className={`px-2 py-1 text-xs rounded-lg border font-medium transition-colors ${
-                                  isAllDaySession(editStartTime, editEndTime)
-                                    ? 'bg-sky-500/20 border-sky-400 text-sky-300'
-                                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-                                }`}
-                              >
-                                Tutto il giorno (24h)
-                              </button>
-                              {!isAllDaySession(editStartTime, editEndTime) && (
-                                <>
-                                  <input
-                                    type="time"
-                                    value={editStartTime}
-                                    onChange={(e) => setEditStartTime(e.target.value)}
-                                    className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
-                                  />
-                                  <span className="text-slate-500">–</span>
-                                  <input
-                                    type="time"
-                                    value={editEndTime}
-                                    onChange={(e) => setEditEndTime(e.target.value)}
-                                    className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
-                                  />
-                                </>
-                              )}
                               <div className="inline-flex items-center gap-1">
                                 <input
                                   type="number"
@@ -677,6 +777,18 @@ export function DomoticsView({
                                 />
                                 <span className="text-slate-400 font-mono">°C</span>
                               </div>
+                              <button
+                                type="button"
+                                onClick={() => setEditVmcMax((v) => !v)}
+                                className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border font-semibold transition-colors ${
+                                  editVmcMax
+                                    ? 'bg-fuchsia-500/20 border-fuchsia-400 text-fuchsia-200'
+                                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                <Wind className="w-3.5 h-3.5" />
+                                {editVmcMax ? 'VMC Max: SÌ' : 'VMC normale'}
+                              </button>
                               <input
                                 type="text"
                                 value={editNotes}
@@ -702,6 +814,75 @@ export function DomoticsView({
                                 </button>
                               </div>
                             </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (allDayEdit) {
+                                    setEditTimeSlots([{ startTime: '09:00', endTime: '20:00' }]);
+                                  } else {
+                                    setEditTimeSlots([{ startTime: '00:00', endTime: '24:00' }]);
+                                  }
+                                }}
+                                className={`px-2 py-1 text-xs rounded-lg border font-medium transition-colors ${
+                                  allDayEdit
+                                    ? 'bg-sky-500/20 border-sky-400 text-sky-300'
+                                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                Tutto il giorno (24h)
+                              </button>
+                              {!allDayEdit &&
+                                editTimeSlots.map((slot, idx) => (
+                                  <div
+                                    key={idx}
+                                    className="inline-flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1"
+                                  >
+                                    <span className="text-[10px] font-mono text-slate-500">
+                                      #{idx + 1}
+                                    </span>
+                                    <input
+                                      type="time"
+                                      value={slot.startTime}
+                                      onChange={(e) =>
+                                        updateEditSlot(idx, { startTime: e.target.value })
+                                      }
+                                      className="bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                                    />
+                                    <span className="text-slate-500">–</span>
+                                    <input
+                                      type="time"
+                                      value={slot.endTime}
+                                      onChange={(e) =>
+                                        updateEditSlot(idx, { endTime: e.target.value })
+                                      }
+                                      className="bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                                    />
+                                    {editTimeSlots.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => removeEditSlot(idx)}
+                                        aria-label={`Rimuovi fascia ${idx + 1}`}
+                                        className="p-0.5 text-slate-500 hover:text-rose-400"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                              {!allDayEdit && editTimeSlots.length < 6 && (
+                                <button
+                                  type="button"
+                                  onClick={addEditExtraSlot}
+                                  className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-lg border bg-sky-500/15 border-sky-400/40 text-sky-300 hover:bg-sky-500/25 font-medium"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  Aggiungi fascia
+                                </button>
+                              )}
+                            </div>
+
                             <div className="flex flex-wrap items-center gap-1.5">
                               <span className="text-[11px] text-slate-400 mr-1">
                                 Stanze:
@@ -748,24 +929,30 @@ export function DomoticsView({
                         )}
                       </td>
                       <td className="py-2.5 px-3 text-slate-300 whitespace-nowrap">
-                        {isAllDaySession(log.startTime, log.endTime) ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[11px] font-medium">
-                            <Clock className="w-3 h-3" />
-                            Tutto il giorno · 24h
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 font-mono">
-                            <Clock className="w-3 h-3 text-slate-500" />
-                            <span>
-                              {log.startTime} → {log.endTime}
+                        <div className="inline-flex items-center gap-1.5">
+                          {isAllDaySlots(slots) ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[11px] font-medium">
+                              <Clock className="w-3 h-3" />
+                              Tutto il giorno · 24h
                             </span>
-                            {formatDurationCompact(getSessionDurationHours(log.startTime, log.endTime)) && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
-                                {formatDurationCompact(getSessionDurationHours(log.startTime, log.endTime))}
-                              </span>
-                            )}
-                          </span>
-                        )}
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 font-mono">
+                              <Clock className="w-3 h-3 text-slate-500" />
+                              <span>{formatSlotsSummary(slots)}</span>
+                              {durationStr && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                                  {durationStr}
+                                </span>
+                              )}
+                            </span>
+                          )}
+                          {rowVmcMax && (
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-fuchsia-500/20 border border-fuchsia-400/50 text-fuchsia-200 text-[10px] font-semibold">
+                              <Wind className="w-2.5 h-2.5" />
+                              VMC Max
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-100 tabular-nums">
                         {log.targetTemp > 0 ? `${log.targetTemp.toFixed(1)} °C` : '? °C'}
@@ -1086,7 +1273,7 @@ export function DomoticsView({
                   <span className="font-mono font-semibold text-slate-100">
                     {formatReadingDate(pendingDeleteLog.date)}
                   </span>{' '}
-                  ({pendingDeleteLog.startTime}–{pendingDeleteLog.endTime} ·{' '}
+                  ({formatSlotsSummary(getSessionTimeSlots(pendingDeleteLog))} ·{' '}
                   {pendingDeleteLog.targetTemp.toFixed(1)} °C)?
                 </p>
               </div>

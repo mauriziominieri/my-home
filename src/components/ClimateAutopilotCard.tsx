@@ -1,25 +1,36 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   CheckCircle2,
   Flame,
   Pencil,
+  Plus,
   Power,
   PowerOff,
   Repeat,
   Snowflake,
+  Wind,
+  X,
 } from 'lucide-react';
 import {
   ClimateAutopilotConfig,
   ClimateMode,
+  ClimateSession,
+  ClimateTimeSlot,
   HOME_ROOMS,
   RoomId,
 } from '../types/home';
 import {
   formatAutopilotSummary,
+  getAutopilotSlots,
   getLocalTodayIso,
 } from '../utils/climateAutopilot';
 import { formatReadingDate } from '../utils/edistribuzioneCsv';
-import { isAllDaySession } from '../utils/climateTime';
+import {
+  formatSlotsCompact,
+  getDayEffectiveSlots,
+  isAllDaySlots,
+  normalizeTimeSlots,
+} from '../utils/climateTime';
 
 const ROOM_LABELS: Record<RoomId, string> = {
   salone: 'Salone',
@@ -34,6 +45,8 @@ export interface ClimateAutopilotInput {
   mode: ClimateMode;
   startTime: string;
   endTime: string;
+  timeSlots: ClimateTimeSlot[];
+  vmcMax: boolean;
   targetTemp: number;
   rooms: RoomId[];
   startDate: string;
@@ -42,6 +55,8 @@ export interface ClimateAutopilotInput {
 
 interface ClimateAutopilotCardProps {
   autopilot: ClimateAutopilotConfig | null;
+  todaySessions?: ClimateSession[];
+  todayVmcMax?: boolean;
   readOnly?: boolean;
   onActivateAutopilot: (input: ClimateAutopilotInput) => Promise<void>;
   onTurnOffAutopilot: (removeTodayAutoSession: boolean) => Promise<void>;
@@ -49,6 +64,8 @@ interface ClimateAutopilotCardProps {
 
 export function ClimateAutopilotCard({
   autopilot,
+  todaySessions = [],
+  todayVmcMax = false,
   readOnly = false,
   onActivateAutopilot,
   onTurnOffAutopilot,
@@ -56,37 +73,79 @@ export function ClimateAutopilotCard({
   const todayIso = getLocalTodayIso();
   const isActive = Boolean(autopilot?.active);
 
+  // Derive today's real active combination (so manual edits to today's log are reflected accurately in the banner)
+  const effectiveTodayConfig = useMemo<ClimateAutopilotConfig | null>(() => {
+    if (!autopilot) return null;
+    if (!isActive || todaySessions.length === 0) return autopilot;
+    const primary = todaySessions[0];
+    const slots = getDayEffectiveSlots(todaySessions);
+    const mergedRooms = Array.from(new Set(todaySessions.flatMap((s) => s.rooms)));
+    const firstSlot = slots[0] || { startTime: primary.startTime, endTime: primary.endTime };
+    const lastSlot = slots[slots.length - 1] || firstSlot;
+    return {
+      ...autopilot,
+      mode: primary.mode,
+      startTime: firstSlot.startTime,
+      endTime: lastSlot.endTime,
+      timeSlots: slots,
+      vmcMax: Boolean(todayVmcMax || todaySessions.some((s) => s.vmcMax)),
+      targetTemp: primary.targetTemp,
+      rooms: mergedRooms.length > 0 ? mergedRooms : autopilot.rooms,
+    };
+  }, [autopilot, isActive, todaySessions, todayVmcMax]);
+
+  const hasTodayMismatch = useMemo(() => {
+    if (!isActive || !autopilot || !effectiveTodayConfig || todaySessions.length === 0) {
+      return false;
+    }
+    const autoSlots = formatSlotsCompact(getAutopilotSlots(autopilot));
+    const todaySlots = formatSlotsCompact(getAutopilotSlots(effectiveTodayConfig));
+    const autoRooms = [...autopilot.rooms].sort().join(',');
+    const todayRooms = [...effectiveTodayConfig.rooms].sort().join(',');
+    return (
+      autopilot.mode !== effectiveTodayConfig.mode ||
+      autoSlots !== todaySlots ||
+      Math.abs(autopilot.targetTemp - effectiveTodayConfig.targetTemp) >= 0.05 ||
+      autoRooms !== todayRooms ||
+      Boolean(autopilot.vmcMax) !== Boolean(effectiveTodayConfig.vmcMax)
+    );
+  }, [isActive, autopilot, effectiveTodayConfig, todaySessions.length]);
+
+  const displayCfg = effectiveTodayConfig ?? autopilot;
+
   const [showEditor, setShowEditor] = useState(false);
-  const [mode, setMode] = useState<ClimateMode>(autopilot?.mode || 'riscaldamento');
+  const [mode, setMode] = useState<ClimateMode>(displayCfg?.mode || 'riscaldamento');
   const [startDate, setStartDate] = useState<string>(todayIso);
-  const [startTime, setStartTime] = useState<string>(autopilot?.startTime || '09:00');
-  const [endTime, setEndTime] = useState<string>(autopilot?.endTime || '20:00');
+  const [timeSlots, setTimeSlots] = useState<ClimateTimeSlot[]>(
+    displayCfg ? getAutopilotSlots(displayCfg) : [{ startTime: '09:00', endTime: '20:00' }]
+  );
+  const [vmcMax, setVmcMax] = useState<boolean>(Boolean(displayCfg?.vmcMax));
   const [targetTemp, setTargetTemp] = useState<string>(
-    autopilot ? autopilot.targetTemp.toFixed(1) : '21.0'
+    displayCfg ? displayCfg.targetTemp.toFixed(1) : '20.0'
   );
   const [rooms, setRooms] = useState<RoomId[]>(
-    autopilot?.rooms?.length
-      ? autopilot.rooms
+    displayCfg?.rooms?.length
+      ? displayCfg.rooms
       : ['salone', 'roberta', 'matrimoniale', 'maurizio']
   );
-  const [notes, setNotes] = useState<string>(autopilot?.notes || '');
+  const [notes, setNotes] = useState<string>(displayCfg?.notes || '');
   const [saving, setSaving] = useState(false);
   const [turningOff, setTurningOff] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!showEditor && autopilot) {
-      setMode(autopilot.mode);
-      setStartTime(autopilot.startTime);
-      setEndTime(autopilot.endTime);
-      setTargetTemp(autopilot.targetTemp.toFixed(1));
-      setRooms(autopilot.rooms);
-      setNotes(autopilot.notes || '');
+    if (!showEditor && displayCfg) {
+      setMode(displayCfg.mode);
+      setTimeSlots(getAutopilotSlots(displayCfg));
+      setVmcMax(Boolean(displayCfg.vmcMax));
+      setTargetTemp(displayCfg.targetTemp.toFixed(1));
+      setRooms(displayCfg.rooms);
+      setNotes(displayCfg.notes || '');
     }
-  }, [autopilot, showEditor]);
+  }, [displayCfg, showEditor]);
 
   function openEditorForActivateOrEdit() {
-    const base = autopilot;
+    const base = displayCfg;
     const defaultMode: ClimateMode =
       base?.mode ||
       (new Date().getMonth() + 1 >= 5 && new Date().getMonth() + 1 <= 9
@@ -94,10 +153,12 @@ export function ClimateAutopilotCard({
         : 'riscaldamento');
     setMode(defaultMode);
     setStartDate(todayIso);
-    setStartTime(base?.startTime || '09:00');
-    setEndTime(base?.endTime || '20:00');
+    setTimeSlots(
+      base ? getAutopilotSlots(base) : [{ startTime: '09:00', endTime: '20:00' }]
+    );
+    setVmcMax(Boolean(base?.vmcMax));
     setTargetTemp(
-      base ? base.targetTemp.toFixed(1) : defaultMode === 'raffrescamento' ? '25.0' : '21.0'
+      base ? base.targetTemp.toFixed(1) : defaultMode === 'raffrescamento' ? '25.0' : '20.0'
     );
     setRooms(
       base?.rooms?.length ? base.rooms : ['salone', 'roberta', 'matrimoniale', 'maurizio']
@@ -113,19 +174,45 @@ export function ClimateAutopilotCard({
     );
   }
 
+  function updateSlot(index: number, patch: Partial<ClimateTimeSlot>) {
+    setTimeSlots((prev) =>
+      prev.map((slot, i) => (i === index ? { ...slot, ...patch } : slot))
+    );
+  }
+
+  function addExtraSlot() {
+    setTimeSlots((prev) => {
+      if (prev.length >= 6) return prev;
+      const last = prev[prev.length - 1];
+      const nextStart = last?.endTime && last.endTime < '22:00' ? '15:00' : '18:00';
+      return [...prev, { startTime: nextStart, endTime: '20:00' }];
+    });
+  }
+
+  function removeSlot(index: number) {
+    setTimeSlots((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)));
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (rooms.length === 0 || !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) return;
+    const cleanedSlots = normalizeTimeSlots(timeSlots);
+    if (cleanedSlots.length === 0) return;
     const tempNum = Number.parseFloat(targetTemp.replace(',', '.'));
     if (!Number.isFinite(tempNum) || tempNum < 14 || tempNum > 30) return;
+
+    const first = cleanedSlots[0];
+    const last = cleanedSlots[cleanedSlots.length - 1];
 
     setSaving(true);
     setFeedback(null);
     try {
       await onActivateAutopilot({
         mode,
-        startTime,
-        endTime,
+        startTime: first.startTime,
+        endTime: last.endTime,
+        timeSlots: cleanedSlots,
+        vmcMax,
         targetTemp: Math.round(tempNum * 10) / 10,
         rooms,
         startDate,
@@ -140,15 +227,41 @@ export function ClimateAutopilotCard({
     }
   }
 
+  async function handleSyncTodayToAutopilot() {
+    if (!effectiveTodayConfig) return;
+    const slots = getAutopilotSlots(effectiveTodayConfig);
+    setSaving(true);
+    setFeedback(null);
+    try {
+      await onActivateAutopilot({
+        mode: effectiveTodayConfig.mode,
+        startTime: slots[0].startTime,
+        endTime: slots[slots.length - 1].endTime,
+        timeSlots: slots,
+        vmcMax: Boolean(effectiveTodayConfig.vmcMax),
+        targetTemp: effectiveTodayConfig.targetTemp,
+        rooms: effectiveTodayConfig.rooms,
+        startDate: todayIso,
+        notes: effectiveTodayConfig.notes,
+      });
+      setFeedback('Combinazione di oggi sincronizzata anche per tutti i giorni successivi.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleQuickReenable() {
     if (!autopilot) return;
+    const slots = getAutopilotSlots(autopilot);
     setSaving(true);
     setFeedback(null);
     try {
       await onActivateAutopilot({
         mode: autopilot.mode,
-        startTime: autopilot.startTime,
-        endTime: autopilot.endTime,
+        startTime: slots[0].startTime,
+        endTime: slots[slots.length - 1].endTime,
+        timeSlots: slots,
+        vmcMax: Boolean(autopilot.vmcMax),
         targetTemp: autopilot.targetTemp,
         rooms: autopilot.rooms,
         startDate: todayIso,
@@ -178,11 +291,13 @@ export function ClimateAutopilotCard({
     }
   }
 
+  const allDayActive = isAllDaySlots(timeSlots);
+
   return (
     <section
       className={`rounded-xl border p-4 sm:p-5 space-y-4 transition-colors ${
         isActive
-          ? autopilot?.mode === 'raffrescamento'
+          ? displayCfg?.mode === 'raffrescamento'
             ? 'bg-sky-500/10 border-sky-500/40'
             : 'bg-amber-500/10 border-amber-500/40'
           : 'bg-slate-900/75 border-slate-800'
@@ -191,15 +306,15 @@ export function ClimateAutopilotCard({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            {isActive && autopilot ? (
+            {isActive && displayCfg ? (
               <span
                 className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide rounded-md border ${
-                  autopilot.mode === 'raffrescamento'
+                  displayCfg.mode === 'raffrescamento'
                     ? 'bg-sky-500/20 text-sky-200 border-sky-400/50'
                     : 'bg-amber-500/20 text-amber-200 border-amber-400/50'
                 }`}
               >
-                {autopilot.mode === 'raffrescamento' ? (
+                {displayCfg.mode === 'raffrescamento' ? (
                   <Snowflake className="w-3.5 h-3.5" />
                 ) : (
                   <Flame className="w-3.5 h-3.5" />
@@ -219,30 +334,51 @@ export function ClimateAutopilotCard({
             </span>
           </div>
 
-          {isActive && autopilot ? (
-            <div className="space-y-0.5 pt-1">
-              <div className="text-sm font-semibold text-slate-100">
-                {formatAutopilotSummary(autopilot)}
+          {isActive && displayCfg ? (
+            <div className="space-y-1 pt-1">
+              <div className="text-sm font-semibold text-slate-100 flex flex-wrap items-center gap-2">
+                <span>{formatAutopilotSummary(displayCfg)}</span>
+                {displayCfg.vmcMax && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-fuchsia-500/20 border border-fuchsia-400/50 text-fuchsia-200 rounded-md">
+                    <Wind className="w-3 h-3" />
+                    VMC al massimo
+                  </span>
+                )}
               </div>
               <div className="text-xs text-slate-300">
                 Stanze:{' '}
                 <span className="text-slate-100 font-medium">
-                  {autopilot.rooms.map((r) => ROOM_LABELS[r] || r).join(', ')}
+                  {displayCfg.rooms.map((r) => ROOM_LABELS[r] || r).join(', ')}
                 </span>{' '}
                 · Attivo dal{' '}
                 <span className="font-mono text-slate-200">
-                  {formatReadingDate(autopilot.startDate)}
+                  {formatReadingDate(displayCfg.startDate)}
                 </span>{' '}
                 (applicato fino al{' '}
                 <span className="font-mono text-emerald-300">
-                  {formatReadingDate(autopilot.lastAppliedDate)}
+                  {formatReadingDate(displayCfg.lastAppliedDate)}
                 </span>
                 )
               </div>
+              {hasTodayMismatch && !readOnly && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <span className="text-[11px] text-amber-200">
+                    Oggi ({formatReadingDate(todayIso)}) modificato rispetto alla copia automatica salvata ({autopilot?.targetTemp.toFixed(1)} °C):
+                  </span>
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => void handleSyncTodayToAutopilot()}
+                    className="px-2 py-0.5 text-[11px] font-semibold bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-200 rounded-md"
+                  >
+                    Copia quella di oggi anche da domani
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-xs text-slate-400 pt-0.5">
-              Imposta qui se hai acceso l&apos;impianto con una combinazione (orario, temperatura, stanze): verrà salvata oggi e copiata automaticamente ogni giorno successivo finché non la spegni o la modifichi.
+              Imposta qui se hai acceso l&apos;impianto con una combinazione (orari singoli o multipli, temperatura, VMC Max, stanze): verrà salvata oggi e copiata automaticamente ogni giorno successivo finché non la spegni o la modifichi.
             </p>
           )}
         </div>
@@ -291,7 +427,7 @@ export function ClimateAutopilotCard({
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-200 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 rounded-lg"
                   >
                     <Power className="w-3.5 h-3.5" />
-                    Riaccendi ultima ({autopilot.startTime}–{autopilot.endTime},{' '}
+                    Riaccendi ultima ({formatSlotsCompact(getAutopilotSlots(autopilot))},{' '}
                     {autopilot.targetTemp.toFixed(0)}°C)
                   </button>
                 )}
@@ -333,7 +469,7 @@ export function ClimateAutopilotCard({
                 type="button"
                 onClick={() => {
                   setMode('riscaldamento');
-                  if (Number.parseFloat(targetTemp) > 23) setTargetTemp('21.0');
+                  if (Number.parseFloat(targetTemp) > 23) setTargetTemp('20.0');
                 }}
                 className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium ${
                   mode === 'riscaldamento'
@@ -362,7 +498,7 @@ export function ClimateAutopilotCard({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="space-y-1">
               <label className="block text-slate-400">Dal giorno (data inizio)</label>
               <input
@@ -373,68 +509,6 @@ export function ClimateAutopilotCard({
                 onChange={(e) => setStartDate(e.target.value)}
                 className="w-full px-3 py-2 font-mono text-slate-100 bg-slate-900 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
               />
-            </div>
-
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <label className="block text-slate-400">Dalle (ora)</label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (isAllDaySession(startTime, endTime)) {
-                      setStartTime('09:00');
-                      setEndTime('20:00');
-                    } else {
-                      setStartTime('00:00');
-                      setEndTime('24:00');
-                    }
-                  }}
-                  className={`text-[10px] px-1.5 py-0.5 rounded border ${
-                    isAllDaySession(startTime, endTime)
-                      ? 'bg-sky-500/20 border-sky-400 text-sky-300'
-                      : 'bg-slate-900 border-slate-700 text-slate-400'
-                  }`}
-                >
-                  {isAllDaySession(startTime, endTime) ? '✓ 24h' : '24h'}
-                </button>
-              </div>
-              {isAllDaySession(startTime, endTime) ? (
-                <div className="w-full px-3 py-2 text-center text-sky-300 bg-sky-500/10 border border-sky-500/30 rounded-lg">
-                  Tutto il giorno (24h)
-                </div>
-              ) : (
-                <input
-                  type="time"
-                  required
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  className="w-full px-3 py-2 font-mono text-slate-100 bg-slate-900 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
-                />
-              )}
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-slate-400">Alle (ora)</label>
-              {isAllDaySession(startTime, endTime) ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStartTime('09:00');
-                    setEndTime('20:00');
-                  }}
-                  className="w-full px-3 py-2 text-slate-400 bg-slate-900 border border-slate-800 rounded-lg"
-                >
-                  Imposta fascia oraria
-                </button>
-              ) : (
-                <input
-                  type="time"
-                  required
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                  className="w-full px-3 py-2 font-mono text-slate-100 bg-slate-900 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
-                />
-              )}
             </div>
 
             <div className="space-y-1">
@@ -450,6 +524,104 @@ export function ClimateAutopilotCard({
                 className="w-full px-3 py-2 font-mono text-slate-100 bg-slate-900 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
               />
             </div>
+
+            <div className="space-y-1">
+              <label className="block text-slate-400">Ventilazione Meccanica (VMC)</label>
+              <button
+                type="button"
+                onClick={() => setVmcMax((v) => !v)}
+                className={`w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border font-semibold transition-colors ${
+                  vmcMax
+                    ? 'bg-fuchsia-500/20 border-fuchsia-400 text-fuchsia-200'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Wind className="w-3.5 h-3.5" />
+                {vmcMax ? 'VMC al massimo: ATTIVA' : 'VMC normale (clicca per Max)'}
+              </button>
+            </div>
+          </div>
+
+          {/* Multi-slot fasce orarie */}
+          <div className="space-y-2 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-slate-300 font-medium">
+                Fasce orarie giornaliere (puoi aggiungere più accensioni interrotte, es. 09:00–12:00 e 15:00–20:00)
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (allDayActive) {
+                      setTimeSlots([{ startTime: '09:00', endTime: '20:00' }]);
+                    } else {
+                      setTimeSlots([{ startTime: '00:00', endTime: '24:00' }]);
+                    }
+                  }}
+                  className={`text-[11px] px-2 py-1 rounded border font-medium ${
+                    allDayActive
+                      ? 'bg-sky-500/20 border-sky-400 text-sky-300'
+                      : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {allDayActive ? '✓ Tutto il giorno (24h)' : 'Tutto il giorno (24h)'}
+                </button>
+                {!allDayActive && timeSlots.length < 6 && (
+                  <button
+                    type="button"
+                    onClick={addExtraSlot}
+                    className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded border bg-sky-500/15 border-sky-400/40 text-sky-300 hover:bg-sky-500/25 font-medium"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Aggiungi fascia
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {allDayActive ? (
+              <div className="px-3 py-2 text-center text-sky-300 bg-sky-500/10 border border-sky-500/30 rounded-lg font-medium">
+                Impianto acceso tutto il giorno (24h)
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {timeSlots.map((slot, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5"
+                  >
+                    <span className="text-[10px] font-mono text-slate-500 shrink-0">
+                      #{idx + 1}
+                    </span>
+                    <input
+                      type="time"
+                      required
+                      value={slot.startTime}
+                      onChange={(e) => updateSlot(idx, { startTime: e.target.value })}
+                      className="flex-1 min-w-0 px-1.5 py-1 font-mono text-slate-100 bg-slate-900 border border-slate-800 rounded [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                    />
+                    <span className="text-slate-500">→</span>
+                    <input
+                      type="time"
+                      required
+                      value={slot.endTime}
+                      onChange={(e) => updateSlot(idx, { endTime: e.target.value })}
+                      className="flex-1 min-w-0 px-1.5 py-1 font-mono text-slate-100 bg-slate-900 border border-slate-800 rounded [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                    />
+                    {timeSlots.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeSlot(idx)}
+                        aria-label={`Rimuovi fascia ${idx + 1}`}
+                        className="p-1 text-slate-500 hover:text-rose-400"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="space-y-1.5">

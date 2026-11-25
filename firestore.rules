@@ -180,7 +180,7 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'ownerId', 'date', 'mode', 'startTime', 'endTime',
-          'targetTemp', 'rooms', 'notes', 'createdAt'
+          'targetTemp', 'rooms', 'timeSlots', 'vmcMax', 'notes', 'createdAt'
         ])
         && data.ownerId is string && data.ownerId == userId && data.ownerId.size() <= 128
         && data.date is string && data.date.size() == 10 && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
@@ -190,6 +190,8 @@ service cloud.firestore {
         && data.targetTemp is number && (data.targetTemp == 0 || (data.targetTemp >= 14 && data.targetTemp <= 30))
         && data.rooms is list && data.rooms.size() >= 1 && data.rooms.size() <= 6
         && data.rooms[0] is string
+        && (!('timeSlots' in data) || (data.timeSlots is list && data.timeSlots.size() >= 1 && data.timeSlots.size() <= 6 && data.timeSlots[0] is string))
+        && (!('vmcMax' in data) || data.vmcMax is bool)
         && (!('notes' in data) || (data.notes is string && data.notes.size() <= 240))
         && data.createdAt is timestamp;
     }
@@ -209,9 +211,39 @@ service cloud.firestore {
         && incoming().ownerId == existing().ownerId
         && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
         && incoming().diff(existing()).affectedKeys().hasOnly([
-          'date', 'mode', 'startTime', 'endTime', 'targetTemp', 'rooms', 'notes', 'createdAt'
+          'date', 'mode', 'startTime', 'endTime', 'targetTemp', 'rooms', 'timeSlots', 'vmcMax', 'notes', 'createdAt'
         ]);
       allow delete: if isOwner(userId) && isValidId(logId);
+    }
+
+    function isValidVmcDay(data, userId) {
+      return data.keys().hasAll(['ownerId', 'date', 'enabled', 'createdAt'])
+        && data.keys().hasOnly(['ownerId', 'date', 'enabled', 'note', 'createdAt'])
+        && data.ownerId is string && data.ownerId == userId && data.ownerId.size() <= 128
+        && data.date is string && data.date.size() == 10 && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.enabled is bool
+        && (!('note' in data) || (data.note is string && data.note.size() <= 240))
+        && data.createdAt is timestamp;
+    }
+
+    match /users/{userId}/vmcDays/{dayId} {
+      allow get: if isValidId(dayId)
+        && (isOwner(userId) || isPublicDataOwner(userId));
+      allow list: if (isOwner(userId) || isPublicDataOwner(userId))
+        && existing().ownerId == userId;
+      allow create: if isOwner(userId)
+        && isValidId(dayId)
+        && isValidVmcDay(incoming(), userId)
+        && incoming().createdAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(dayId)
+        && isValidVmcDay(incoming(), userId)
+        && incoming().ownerId == existing().ownerId
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'date', 'enabled', 'note', 'createdAt'
+        ]);
+      allow delete: if isOwner(userId) && isValidId(dayId);
     }
 
     function isValidElectricityBill(data, userId) {
@@ -466,6 +498,58 @@ service cloud.firestore {
           'specs', 'notes', 'manualFileKey', 'manualFileName', 'manualExtractText', 'createdAt'
         ]);
       allow delete: if isOwner(userId) && isValidId(articleId);
+    }
+
+    function isValidProductResearch(data, userId) {
+      return data.keys().hasAll([
+          'ownerId', 'url', 'title', 'store', 'category', 'status', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'url', 'title', 'store', 'category', 'status', 'room',
+          'priceEur', 'imageUrl', 'brand', 'color', 'model', 'specs', 'notes', 'createdAt'
+        ])
+        && data.ownerId is string && data.ownerId == userId && data.ownerId.size() <= 128
+        && data.url is string && data.url.size() >= 8 && data.url.size() <= 1000 && data.url.matches('^https?://.+')
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 160
+        && data.store is string && data.store.size() >= 1 && data.store.size() <= 60
+        && data.category is string && data.category.size() <= 32
+        && data.category in ['elettrodomestici', 'elettronica', 'casa_arredo', 'fai_da_te', 'auto', 'abbigliamento', 'altro']
+        && data.status is string && data.status.size() <= 24
+        && data.status in ['da_valutare', 'preferito', 'da_acquistare', 'acquistato', 'scartato']
+        && (!('room' in data) || (
+          data.room is string
+          && data.room.size() <= 40
+          && data.room in ['salone', 'cucina', 'bagno1', 'bagno2', 'stanza_maurizio', 'stanza_roberta', 'stanza_matrimoniale']
+        ))
+        && (!('priceEur' in data) || (data.priceEur is number && data.priceEur >= 0 && data.priceEur <= 1000000))
+        && (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 1000 && data.imageUrl.matches('^https?://.+')))
+        && (!('brand' in data) || (data.brand is string && data.brand.size() <= 60))
+        && (!('color' in data) || (data.color is string && data.color.size() <= 60))
+        && (!('model' in data) || (data.model is string && data.model.size() <= 80))
+        && (!('specs' in data) || (data.specs is string && data.specs.size() <= 800))
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 400))
+        && data.createdAt is timestamp;
+    }
+
+    match /users/{userId}/productResearches/{researchId} {
+      allow get: if isValidId(researchId)
+        && (isOwner(userId) || isPublicDataOwner(userId));
+      allow list: if (isOwner(userId) || isPublicDataOwner(userId))
+        && existing().ownerId == userId;
+      allow create: if isOwner(userId)
+        && isValidId(researchId)
+        && isValidProductResearch(incoming(), userId)
+        && incoming().createdAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(researchId)
+        && isValidProductResearch(incoming(), userId)
+        && incoming().ownerId == existing().ownerId
+        && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'url', 'title', 'store', 'category', 'status', 'room',
+          'priceEur', 'imageUrl', 'brand', 'color', 'model', 'specs', 'notes', 'createdAt'
+        ]);
+      allow delete: if isOwner(userId) && isValidId(researchId);
     }
 
     function isValidVaultFile(data, userId) {

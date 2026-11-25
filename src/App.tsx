@@ -3,6 +3,7 @@ import { signOut, User } from 'firebase/auth';
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -27,6 +28,7 @@ import {
   Package,
   Receipt,
   RefreshCw,
+  Search,
   ShoppingCart,
   Thermometer,
   Trash2,
@@ -65,9 +67,13 @@ import {
   HomeDocumentRecord,
   HomeSystemConfig,
   NavSection,
+  ProductResearchCategory,
+  ProductResearchRecord,
+  ProductResearchStatus,
   ReadingSource,
   RoomId,
   TariBillRecord,
+  VmcDayRecord,
   WaterBillRecord,
 } from './types/home';
 import { ParsedReadingInput } from './utils/edistribuzioneCsv';
@@ -83,15 +89,18 @@ import {
   articleToCarProfile,
   articleToGroceryProduct,
   buildArticleDocumentRef,
+  buildResearchDocumentRef,
   CAR_POLICY_ID,
   CAR_PROFILE_ID,
   carInsuranceToArticlePayload,
   carLogToArticlePayload,
   carProfileToArticlePayload,
   DEFAULT_CONTE_POLICY_OWNER,
+  getDocumentsForResearch,
   groceryProductToArticlePayload,
   isCarLinkedDocument,
   parseArticleDocumentRef,
+  parseResearchDocumentRef,
   SYSTEM_ROOM_CAR,
   SYSTEM_ROOM_GROCERY,
   SYSTEM_ROOM_GROCERY_META,
@@ -120,20 +129,28 @@ import {
   CLIMATE_AUTOPILOT_DOC_ID,
   climateAutopilotToArticlePayload,
   enumerateIsoDatesInclusive,
+  getAutopilotSlots,
   getAutoClimateDocId,
   getLocalTodayIso,
   SYSTEM_ROOM_CLIMATE_AUTO,
 } from './utils/climateAutopilot';
+import { formatTimeSlotString } from './utils/climateTime';
 import {
   MIGRATION_DONE_DOC_ID,
   migrateFromLegacyProject,
   SYSTEM_ROOM_MIGRATION_META,
 } from './utils/legacyMigration';
+import {
+  getResearchRoomLabel,
+  inferProductBrand,
+  normalizeResearchRoom,
+} from './utils/researchHelpers';
 import { OverviewView } from './components/OverviewView';
 import { DomoticsView } from './components/DomoticsView';
 import { EnergyDatabaseView } from './components/EnergyDatabaseView';
 import { BillsView } from './components/BillsView';
 import { ArticlesView } from './components/ArticlesView';
+import { ResearchesView } from './components/ResearchesView';
 import { CarView } from './components/CarView';
 import { GroceryView } from './components/GroceryView';
 import { DocumentsView } from './components/DocumentsView';
@@ -147,11 +164,33 @@ const NAV_ITEMS: { id: NavSection; label: string; icon: typeof LayoutDashboard }
   { id: 'domotica', label: 'Clima & Domotica', icon: Thermometer },
   { id: 'bollette', label: 'Bollette', icon: Receipt },
   { id: 'articoli', label: 'Articoli', icon: Package },
+  { id: 'ricerche', label: 'Ricerche', icon: Search },
   { id: 'documenti', label: 'Documenti', icon: FolderOpen },
   { id: 'macchina', label: 'Macchina', icon: Car },
   { id: 'spesa', label: 'Spesa', icon: ShoppingCart },
   { id: 'info', label: 'Info Utili', icon: BookOpen },
 ];
+
+const VALID_NAV_SECTIONS = new Set<NavSection>(NAV_ITEMS.map((item) => item.id));
+const ACTIVE_NAV_STORAGE_KEY = 'myhome_active_nav';
+
+function resolveInitialNavSection(): NavSection {
+  if (typeof window !== 'undefined') {
+    const hashRaw = window.location.hash.replace(/^#\/?/, '').trim().toLowerCase() as NavSection;
+    if (VALID_NAV_SECTIONS.has(hashRaw)) {
+      return hashRaw;
+    }
+    try {
+      const saved = window.localStorage.getItem(ACTIVE_NAV_STORAGE_KEY) as NavSection | null;
+      if (saved && VALID_NAV_SECTIONS.has(saved)) {
+        return saved;
+      }
+    } catch {
+      // ignore storage access issues
+    }
+  }
+  return 'consumi';
+}
 
 function isResilientFirestoreOutage(error: unknown): boolean {
   const raw =
@@ -188,13 +227,50 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [activeNav, setActiveNav] = useState<NavSection>('consumi');
+  const [activeNav, setActiveNav] = useState<NavSection>(() => resolveInitialNavSection());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const navigateToSection = useCallback((section: NavSection) => {
+    setActiveNav(section);
+    try {
+      window.localStorage.setItem(ACTIVE_NAV_STORAGE_KEY, section);
+    } catch {
+      // ignore storage errors
+    }
+    if (typeof window !== 'undefined' && window.location.hash !== `#${section}`) {
+      window.location.hash = `#${section}`;
+    }
+  }, []);
+
+  useEffect(() => {
+    const syncFromHash = () => {
+      const hashRaw = window.location.hash.replace(/^#\/?/, '').trim().toLowerCase() as NavSection;
+      if (VALID_NAV_SECTIONS.has(hashRaw)) {
+        setActiveNav(hashRaw);
+        try {
+          window.localStorage.setItem(ACTIVE_NAV_STORAGE_KEY, hashRaw);
+        } catch {
+          // ignore
+        }
+      }
+    };
+    if (!window.location.hash) {
+      try {
+        window.history.replaceState(null, '', `#${activeNav}`);
+      } catch {
+        // ignore
+      }
+    }
+    window.addEventListener('hashchange', syncFromHash);
+    return () => window.removeEventListener('hashchange', syncFromHash);
+  }, []);
 
   const [selectedYear, setSelectedYear] = useState<number>(CURRENT_YEAR);
 
   const [firestoreReadings, setFirestoreReadings] = useState<EnergyReading[]>([]);
   const [climateLogs, setClimateLogs] = useState<ClimateSession[]>([]);
+  const [vmcDays, setVmcDays] = useState<VmcDayRecord[]>([]);
+  const [productResearches, setProductResearches] = useState<ProductResearchRecord[]>([]);
   const [publicOwnerUid, setPublicOwnerUid] = useState<string | null>(null);
   const [publicClimateAutopilot, setPublicClimateAutopilot] =
     useState<ClimateAutopilotConfig | null>(null);
@@ -304,6 +380,8 @@ export default function App() {
     if (!activeUid) {
       setFirestoreReadings([]);
       setClimateLogs([]);
+      setVmcDays([]);
+      setProductResearches([]);
       setPublicClimateAutopilot(null);
       setHomeConfig({ ownerId: '', ...DEFAULT_HOME_CONFIG });
       setHomeArticlesLoaded(false);
@@ -446,6 +524,10 @@ export default function App() {
             mode: (data.mode as ClimateMode) || 'riscaldamento',
             startTime: String(data.startTime || '09:00'),
             endTime: String(data.endTime || '20:00'),
+            timeSlots: Array.isArray(data.timeSlots)
+              ? data.timeSlots.map((s) => String(s))
+              : undefined,
+            vmcMax: typeof data.vmcMax === 'boolean' ? data.vmcMax : undefined,
             targetTemp: typeof data.targetTemp === 'number' ? data.targetTemp : 21,
             rooms: Array.isArray(data.rooms) ? (data.rooms as RoomId[]) : [],
             notes: data.notes ? String(data.notes) : undefined,
@@ -740,6 +822,93 @@ export default function App() {
       }
     );
 
+    const vmcPath = `users/${activeUid}/vmcDays`;
+    const vmcQuery = query(collection(db, vmcPath), where('ownerId', '==', activeUid));
+    const unsubVmcDays = onSnapshot(
+      vmcQuery,
+      (snap) => {
+        const list: VmcDayRecord[] = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            ownerId: String(data.ownerId || activeUid),
+            date: String(data.date || ''),
+            enabled: Boolean(data.enabled),
+            note: data.note ? String(data.note) : undefined,
+          };
+        });
+        setVmcDays(list);
+        try {
+          localStorage.setItem(`myhome_vmc_cache_${activeUid}`, JSON.stringify(list));
+        } catch {
+          // ignore
+        }
+      },
+      (error) => {
+        if (isResilientFirestoreOutage(error)) {
+          try {
+            const cached = localStorage.getItem(`myhome_vmc_cache_${activeUid}`);
+            if (cached) setVmcDays(JSON.parse(cached) as VmcDayRecord[]);
+          } catch {
+            // ignore
+          }
+          return;
+        }
+        handleFirestoreError(error, OperationType.LIST, vmcPath);
+      }
+    );
+
+    const researchesPath = `users/${activeUid}/productResearches`;
+    const researchesQuery = query(
+      collection(db, researchesPath),
+      where('ownerId', '==', activeUid)
+    );
+    const unsubResearches = onSnapshot(
+      researchesQuery,
+      (snap) => {
+        const list: ProductResearchRecord[] = snap.docs.map((d) => {
+          const data = d.data();
+          const createdTs = data.createdAt as { toMillis?: () => number } | undefined;
+          return {
+            id: d.id,
+            ownerId: String(data.ownerId || activeUid),
+            url: String(data.url || ''),
+            title: String(data.title || ''),
+            store: String(data.store || ''),
+            category: (data.category as ProductResearchCategory) || 'altro',
+            status: (data.status as ProductResearchStatus) || 'da_valutare',
+            room: normalizeResearchRoom(data.room ? String(data.room) : undefined),
+            priceEur: typeof data.priceEur === 'number' ? Number(data.priceEur) : undefined,
+            imageUrl: data.imageUrl ? String(data.imageUrl) : undefined,
+            brand: data.brand ? String(data.brand) : undefined,
+            color: data.color ? String(data.color) : undefined,
+            model: data.model ? String(data.model) : undefined,
+            specs: data.specs ? String(data.specs) : undefined,
+            notes: data.notes ? String(data.notes) : undefined,
+            createdAtMs: typeof createdTs?.toMillis === 'function' ? createdTs.toMillis() : 0,
+          };
+        });
+        setProductResearches(list);
+        try {
+          localStorage.setItem(`myhome_ricerche_cache_${activeUid}`, JSON.stringify(list));
+        } catch {
+          // ignore
+        }
+      },
+      (error) => {
+        if (isResilientFirestoreOutage(error)) {
+          try {
+            const cached = localStorage.getItem(`myhome_ricerche_cache_${activeUid}`);
+            if (cached) setProductResearches(JSON.parse(cached) as ProductResearchRecord[]);
+          } catch {
+            // ignore
+          }
+          return;
+        }
+        handleFirestoreError(error, OperationType.LIST, researchesPath);
+      }
+    );
+
     return () => {
       unsubReadings();
       unsubConfig();
@@ -749,6 +918,8 @@ export default function App() {
       unsubTariBills();
       unsubGse();
       unsubArticles();
+      unsubVmcDays();
+      unsubResearches();
     };
   }, [authReady, activeUid, user]);
 
@@ -809,6 +980,10 @@ export default function App() {
             mode: (data.mode as ClimateMode) || 'riscaldamento',
             startTime: String(data.startTime || '09:00'),
             endTime: String(data.endTime || '20:00'),
+            timeSlots: Array.isArray(data.timeSlots)
+              ? data.timeSlots.map((s) => String(s))
+              : undefined,
+            vmcMax: typeof data.vmcMax === 'boolean' ? data.vmcMax : undefined,
             targetTemp: typeof data.targetTemp === 'number' ? data.targetTemp : 21,
             rooms: Array.isArray(data.rooms) ? (data.rooms as RoomId[]) : [],
             notes: data.notes ? String(data.notes) : undefined,
@@ -1003,6 +1178,70 @@ export default function App() {
       }
     );
 
+    const publicVmcPath = `users/${publicOwnerUid}/vmcDays`;
+    const publicVmcQuery = query(
+      collection(db, publicVmcPath),
+      where('ownerId', '==', publicOwnerUid)
+    );
+    const unsubPublicVmcDays = onSnapshot(
+      publicVmcQuery,
+      (snap) => {
+        setVmcDays(
+          snap.docs.map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              ownerId: String(data.ownerId || publicOwnerUid),
+              date: String(data.date || ''),
+              enabled: Boolean(data.enabled),
+              note: data.note ? String(data.note) : undefined,
+            };
+          })
+        );
+      },
+      (error) => {
+        console.warn('Public vmcDays listener warning:', error);
+      }
+    );
+
+    const publicResearchesPath = `users/${publicOwnerUid}/productResearches`;
+    const publicResearchesQuery = query(
+      collection(db, publicResearchesPath),
+      where('ownerId', '==', publicOwnerUid)
+    );
+    const unsubPublicResearches = onSnapshot(
+      publicResearchesQuery,
+      (snap) => {
+        setProductResearches(
+          snap.docs.map((d) => {
+            const data = d.data();
+            const createdTs = data.createdAt as { toMillis?: () => number } | undefined;
+            return {
+              id: d.id,
+              ownerId: String(data.ownerId || publicOwnerUid),
+              url: String(data.url || ''),
+              title: String(data.title || ''),
+              store: String(data.store || ''),
+              category: (data.category as ProductResearchCategory) || 'altro',
+              status: (data.status as ProductResearchStatus) || 'da_valutare',
+              room: normalizeResearchRoom(data.room ? String(data.room) : undefined),
+              priceEur: typeof data.priceEur === 'number' ? Number(data.priceEur) : undefined,
+              imageUrl: data.imageUrl ? String(data.imageUrl) : undefined,
+              brand: data.brand ? String(data.brand) : undefined,
+              color: data.color ? String(data.color) : undefined,
+              model: data.model ? String(data.model) : undefined,
+              specs: data.specs ? String(data.specs) : undefined,
+              notes: data.notes ? String(data.notes) : undefined,
+              createdAtMs: typeof createdTs?.toMillis === 'function' ? createdTs.toMillis() : 0,
+            };
+          })
+        );
+      },
+      (error) => {
+        console.warn('Public productResearches listener warning:', error);
+      }
+    );
+
     return () => {
       unsubReadings();
       unsubClimate();
@@ -1011,6 +1250,8 @@ export default function App() {
       unsubPublicElectricityBills();
       unsubPublicWaterBills();
       unsubPublicTariBills();
+      unsubPublicVmcDays();
+      unsubPublicResearches();
     };
   }, [authReady, activeUid, publicOwnerUid]);
 
@@ -1467,15 +1708,30 @@ export default function App() {
       mode: session.mode,
       startTime: session.startTime,
       endTime: session.endTime,
+      vmcMax: Boolean(session.vmcMax),
       targetTemp: session.targetTemp,
       rooms: session.rooms,
       createdAt: serverTimestamp(),
     };
+    if (Array.isArray(session.timeSlots) && session.timeSlots.length > 1) {
+      payload.timeSlots = session.timeSlots.slice(0, 6);
+    }
     if (session.notes) {
       payload.notes = session.notes.slice(0, 240);
     }
     try {
-      await setDoc(doc(db, basePath, docId), payload);
+      const batch = writeBatch(db);
+      batch.set(doc(db, basePath, docId), payload);
+      if (typeof session.vmcMax === 'boolean') {
+        const vmcDocId = `vmc_${session.date.replace(/-/g, '')}`;
+        batch.set(doc(db, `users/${user.uid}/vmcDays`, vmcDocId), {
+          ownerId: user.uid,
+          date: session.date,
+          enabled: Boolean(session.vmcMax),
+          createdAt: serverTimestamp(),
+        });
+      }
+      await batch.commit();
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
     }
@@ -1493,12 +1749,28 @@ export default function App() {
       mode: session.mode,
       startTime: session.startTime,
       endTime: session.endTime,
+      timeSlots:
+        Array.isArray(session.timeSlots) && session.timeSlots.length > 1
+          ? session.timeSlots.slice(0, 6)
+          : deleteField(),
+      vmcMax: Boolean(session.vmcMax),
       targetTemp: session.targetTemp,
       rooms: session.rooms,
       notes: session.notes ? session.notes.slice(0, 240) : '',
     };
     try {
-      await setDoc(doc(db, path), payload, { merge: true });
+      const batch = writeBatch(db);
+      batch.set(doc(db, path), payload, { merge: true });
+      if (typeof session.vmcMax === 'boolean') {
+        const vmcDocId = `vmc_${session.date.replace(/-/g, '')}`;
+        batch.set(doc(db, `users/${user.uid}/vmcDays`, vmcDocId), {
+          ownerId: user.uid,
+          date: session.date,
+          enabled: Boolean(session.vmcMax),
+          createdAt: serverTimestamp(),
+        });
+      }
+      await batch.commit();
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
     }
@@ -1511,6 +1783,151 @@ export default function App() {
       await deleteDoc(doc(db, path));
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
+    }
+  }
+
+  async function handleToggleVmcDays(dates: string[], enabled: boolean) {
+    if (!user || dates.length === 0) return;
+    const validDates = Array.from(
+      new Set(dates.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))
+    );
+    if (validDates.length === 0) return;
+    const vmcPath = `users/${user.uid}/vmcDays`;
+    try {
+      const batch = writeBatch(db);
+      for (const dateIso of validDates) {
+        const docId = `vmc_${dateIso.replace(/-/g, '')}`;
+        batch.set(doc(db, vmcPath, docId), {
+          ownerId: user.uid,
+          date: dateIso,
+          enabled: Boolean(enabled),
+          createdAt: serverTimestamp(),
+        });
+        for (const log of climateLogs.filter((l) => l.date === dateIso)) {
+          batch.set(
+            doc(db, `users/${user.uid}/climateLogs`, log.id),
+            { vmcMax: Boolean(enabled) },
+            { merge: true }
+          );
+        }
+      }
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, vmcPath);
+    }
+  }
+
+  async function handleAddProductResearch(
+    item: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'>
+  ): Promise<string> {
+    if (!user) throw new Error('Accedi con Google per salvare le ricerche.');
+    const urlTrim = item.url.trim().slice(0, 1000);
+    if (!/^https?:\/\/.+/.test(urlTrim)) {
+      throw new Error('Link non valido: deve iniziare con http:// o https://.');
+    }
+    const basePath = `users/${user.uid}/productResearches`;
+    const docId = `res_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const normalizedRoom = normalizeResearchRoom(item.room);
+    const payload: Record<string, unknown> = {
+      ownerId: user.uid,
+      url: urlTrim,
+      title: item.title.trim().slice(0, 160),
+      store: item.store.trim().slice(0, 60),
+      category: item.category,
+      status: item.status,
+      createdAt: serverTimestamp(),
+    };
+    if (normalizedRoom) {
+      payload.room = normalizedRoom;
+    }
+    if (typeof item.priceEur === 'number' && Number.isFinite(item.priceEur) && item.priceEur >= 0) {
+      payload.priceEur = Math.min(1000000, Math.round(item.priceEur * 100) / 100);
+    }
+    if (item.imageUrl && /^https?:\/\/.+/.test(item.imageUrl.trim())) {
+      payload.imageUrl = item.imageUrl.trim().slice(0, 1000);
+    }
+    if (item.brand && item.brand.trim()) {
+      payload.brand = item.brand.trim().slice(0, 60);
+    }
+    if (item.color && item.color.trim()) {
+      payload.color = item.color.trim().slice(0, 60);
+    }
+    if (item.model && item.model.trim()) {
+      payload.model = item.model.trim().slice(0, 80);
+    }
+    if (item.specs && item.specs.trim()) {
+      payload.specs = item.specs.trim().slice(0, 800);
+    }
+    if (item.notes && item.notes.trim()) {
+      payload.notes = item.notes.trim().slice(0, 400);
+    }
+    try {
+      await setDoc(doc(db, basePath, docId), payload);
+      return docId;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
+      throw error;
+    }
+  }
+
+  async function handleUpdateProductResearch(
+    id: string,
+    item: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'>
+  ) {
+    if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
+    const urlTrim = item.url.trim().slice(0, 1000);
+    if (!/^https?:\/\/.+/.test(urlTrim)) return;
+    const path = `users/${user.uid}/productResearches/${id}`;
+    const normalizedRoom = normalizeResearchRoom(item.room);
+    const payload: Record<string, unknown> = {
+      ownerId: user.uid,
+      url: urlTrim,
+      title: item.title.trim().slice(0, 160),
+      store: item.store.trim().slice(0, 60),
+      category: item.category,
+      status: item.status,
+      room: normalizedRoom ? normalizedRoom : deleteField(),
+      priceEur:
+        typeof item.priceEur === 'number' && Number.isFinite(item.priceEur) && item.priceEur >= 0
+          ? Math.min(1000000, Math.round(item.priceEur * 100) / 100)
+          : deleteField(),
+      imageUrl:
+        item.imageUrl && /^https?:\/\/.+/.test(item.imageUrl.trim())
+          ? item.imageUrl.trim().slice(0, 1000)
+          : deleteField(),
+      brand: item.brand && item.brand.trim() ? item.brand.trim().slice(0, 60) : deleteField(),
+      color: item.color && item.color.trim() ? item.color.trim().slice(0, 60) : deleteField(),
+      model: item.model && item.model.trim() ? item.model.trim().slice(0, 80) : deleteField(),
+      specs: item.specs && item.specs.trim() ? item.specs.trim().slice(0, 800) : deleteField(),
+      notes: item.notes && item.notes.trim() ? item.notes.trim().slice(0, 400) : deleteField(),
+    };
+    try {
+      await setDoc(doc(db, path), payload, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+      throw error;
+    }
+  }
+
+  async function handleDeleteProductResearch(id: string) {
+    if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
+    const path = `users/${user.uid}/productResearches/${id}`;
+    const linkedDocs = getDocumentsForResearch(homeDocuments, id);
+    try {
+      await deleteDoc(doc(db, path));
+      const keysToDelete: string[] = [];
+      for (const linked of linkedDocs) {
+        if (/^[a-zA-Z0-9_-]+$/.test(linked.id)) {
+          await deleteDoc(doc(db, `users/${user.uid}/homeArticles/${linked.id}`));
+        }
+        if (linked.attachmentKey) keysToDelete.push(linked.attachmentKey);
+      }
+      if (keysToDelete.length > 0) {
+        await deleteVaultFiles(keysToDelete, user.uid);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, path);
+      throw error;
     }
   }
 
@@ -2130,6 +2547,28 @@ export default function App() {
     );
   }
 
+  async function handleUploadResearchDocument(
+    researchId: string,
+    docType: ArticleAttachmentType,
+    title: string,
+    provider: string,
+    file: File
+  ) {
+    const todayIt = new Date().toLocaleDateString('it-IT');
+    await handleUploadLinkedDocument(
+      {
+        title: title.slice(0, 80),
+        category: docType === 'garanzia_extra_family' ? 'Assicurazioni' : 'Altro',
+        provider: (provider || 'Ricerche').slice(0, 80),
+        referenceCode: buildResearchDocumentRef(researchId, docType),
+        issueDate: todayIt,
+        pinned: docType === 'scontrino_fattura' || docType === 'garanzia_extra_family',
+        notes: `File allegato a prodotto ricercato (${docType})`,
+      },
+      file
+    );
+  }
+
   const migrationCompleted = useMemo(
     () => homeArticles.some((a) => a.id === MIGRATION_DONE_DOC_ID),
     [homeArticles]
@@ -2202,6 +2641,11 @@ export default function App() {
     [homeDocuments]
   );
 
+  const researchDocuments = useMemo(
+    () => homeDocuments.filter((d) => Boolean(parseResearchDocumentRef(d.referenceCode))),
+    [homeDocuments]
+  );
+
   // Auto-seed ConTe.it car policy once for owner if not yet persisted
   useEffect(() => {
     if (!user || !homeArticlesLoaded || carPolicySeededRef.current) return;
@@ -2236,6 +2680,14 @@ export default function App() {
     );
   }, [user, homeArticlesLoaded, homeArticles]);
 
+  const vmcDaysMap = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const v of vmcDays) {
+      if (v.date) map.set(v.date, Boolean(v.enabled));
+    }
+    return map;
+  }, [vmcDays]);
+
   const climateAutopilot = useMemo<ClimateAutopilotConfig | null>(
     () =>
       articleToClimateAutopilot(
@@ -2247,11 +2699,11 @@ export default function App() {
   const effectiveClimateLogs = useMemo(() => {
     const logsOwnerUid = activeUid ?? publicOwnerUid;
     if (!climateAutopilot?.active || !logsOwnerUid) return climateLogs;
-    const existingIds = new Set(climateLogs.map((l) => l.id));
+    const existingDates = new Set(climateLogs.map((l) => l.date));
     const dates = enumerateIsoDatesInclusive(climateAutopilot.startDate, todayIso);
     if (dates.length === 0) return climateLogs;
     const missing = dates
-      .filter((d) => !existingIds.has(getAutoClimateDocId(d)))
+      .filter((d) => !existingDates.has(d))
       .map((d) => buildAutopilotSessionForDate(d, climateAutopilot, logsOwnerUid));
     if (missing.length === 0) return climateLogs;
     return [...climateLogs, ...missing];
@@ -2269,6 +2721,8 @@ export default function App() {
       mode: input.mode,
       startTime: input.startTime,
       endTime: input.endTime,
+      timeSlots: input.timeSlots,
+      vmcMax: input.vmcMax,
       targetTemp: input.targetTemp,
       rooms: input.rooms,
       startDate: input.startDate,
@@ -2278,6 +2732,7 @@ export default function App() {
 
     const batch = writeBatch(db);
     const logsPath = `users/${user.uid}/climateLogs`;
+    const applyDateSet = new Set(datesToApply);
     for (const dateIso of datesToApply) {
       const session = buildAutopilotSessionForDate(dateIso, nextCfg, user.uid);
       const logPayload: Record<string, unknown> = {
@@ -2286,14 +2741,34 @@ export default function App() {
         mode: session.mode,
         startTime: session.startTime,
         endTime: session.endTime,
+        vmcMax: Boolean(session.vmcMax),
         targetTemp: session.targetTemp,
         rooms: session.rooms,
         createdAt: serverTimestamp(),
       };
+      if (Array.isArray(session.timeSlots) && session.timeSlots.length > 1) {
+        logPayload.timeSlots = session.timeSlots.slice(0, 6);
+      }
       if (session.notes) {
         logPayload.notes = session.notes.slice(0, 240);
       }
       batch.set(doc(db, logsPath, session.id), logPayload);
+
+      if (vmcDaysMap.has(dateIso) || nextCfg.vmcMax) {
+        batch.set(doc(db, `users/${user.uid}/vmcDays`, `vmc_${dateIso.replace(/-/g, '')}`), {
+          ownerId: user.uid,
+          date: dateIso,
+          enabled: Boolean(nextCfg.vmcMax),
+          createdAt: serverTimestamp(),
+        });
+      }
+    }
+
+    // Remove older manual/duplicate logs on explicitly applied autopilot dates so the banner and table stay 1:1
+    for (const existing of climateLogs) {
+      if (applyDateSet.has(existing.date) && existing.id !== getAutoClimateDocId(existing.date)) {
+        batch.delete(doc(db, logsPath, existing.id));
+      }
     }
 
     const artPayload = climateAutopilotToArticlePayload(nextCfg);
@@ -2316,8 +2791,9 @@ export default function App() {
     const statePath = `users/${user.uid}/homeArticles/${CLIMATE_AUTOPILOT_DOC_ID}`;
     batch.set(doc(db, statePath), statePayload);
 
+    const slotsKey = getAutopilotSlots(nextCfg).map(formatTimeSlotString).join(',');
     try {
-      lastAutopilotSyncKeyRef.current = `${user.uid}:${todayIso}:${nextCfg.startDate}:${nextCfg.mode}:${nextCfg.startTime}:${nextCfg.endTime}:${nextCfg.targetTemp}`;
+      lastAutopilotSyncKeyRef.current = `${user.uid}:${todayIso}:${nextCfg.startDate}:${nextCfg.mode}:${slotsKey}:${nextCfg.vmcMax ? 1 : 0}:${nextCfg.targetTemp}`;
       await batch.commit();
     } catch (error) {
       if (!isResilientFirestoreOutage(error)) {
@@ -2354,6 +2830,9 @@ export default function App() {
     batch.set(doc(db, statePath), statePayload);
 
     if (removeTodayAutoSession) {
+      for (const log of climateLogs.filter((l) => l.date === todayIso)) {
+        batch.delete(doc(db, `users/${user.uid}/climateLogs/${log.id}`));
+      }
       const todayDocId = getAutoClimateDocId(todayIso);
       batch.delete(doc(db, `users/${user.uid}/climateLogs/${todayDocId}`));
     }
@@ -2373,14 +2852,15 @@ export default function App() {
     if (climateAutopilot.startDate > todayIso) return;
     if (autopilotSyncInFlightRef.current) return;
 
-    const existingIds = new Set(climateLogs.map((l) => l.id));
+    const existingDates = new Set(climateLogs.map((l) => l.date));
     const dates = enumerateIsoDatesInclusive(climateAutopilot.startDate, todayIso);
-    const missingDates = dates.filter((d) => !existingIds.has(getAutoClimateDocId(d)));
+    const missingDates = dates.filter((d) => !existingDates.has(d));
     const needsStateAdvance = climateAutopilot.lastAppliedDate < todayIso;
 
     if (missingDates.length === 0 && !needsStateAdvance) return;
 
-    const syncKey = `${user.uid}:${todayIso}:${climateAutopilot.startDate}:${missingDates.length}:${climateAutopilot.mode}:${climateAutopilot.startTime}:${climateAutopilot.endTime}:${climateAutopilot.targetTemp}`;
+    const slotsKey = getAutopilotSlots(climateAutopilot).map(formatTimeSlotString).join(',');
+    const syncKey = `${user.uid}:${todayIso}:${climateAutopilot.startDate}:${missingDates.length}:${climateAutopilot.mode}:${slotsKey}:${climateAutopilot.vmcMax ? 1 : 0}:${climateAutopilot.targetTemp}`;
     if (lastAutopilotSyncKeyRef.current === syncKey) return;
     lastAutopilotSyncKeyRef.current = syncKey;
     autopilotSyncInFlightRef.current = true;
@@ -2400,10 +2880,14 @@ export default function App() {
         mode: session.mode,
         startTime: session.startTime,
         endTime: session.endTime,
+        vmcMax: Boolean(session.vmcMax),
         targetTemp: session.targetTemp,
         rooms: session.rooms,
         createdAt: serverTimestamp(),
       };
+      if (Array.isArray(session.timeSlots) && session.timeSlots.length > 1) {
+        logPayload.timeSlots = session.timeSlots.slice(0, 6);
+      }
       if (session.notes) {
         logPayload.notes = session.notes.slice(0, 240);
       }
@@ -2572,7 +3056,7 @@ export default function App() {
         <div className="h-14 px-3.5 flex items-center border-b border-slate-800">
           <button
             type="button"
-            onClick={() => setActiveNav('panoramica')}
+            onClick={() => navigateToSection('panoramica')}
             className="inline-flex items-center gap-3 text-slate-100 font-bold tracking-tight text-base whitespace-nowrap"
           >
             <Home className="w-5 h-5 text-sky-400 shrink-0" />
@@ -2591,7 +3075,7 @@ export default function App() {
                 key={item.id}
                 type="button"
                 title={item.label}
-                onClick={() => setActiveNav(item.id)}
+                onClick={() => navigateToSection(item.id)}
                 className={`w-full flex items-center gap-3 px-2.5 py-2.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
                   active
                     ? 'bg-sky-500 text-slate-950'
@@ -2669,7 +3153,7 @@ export default function App() {
                     key={item.id}
                     type="button"
                     onClick={() => {
-                      setActiveNav(item.id);
+                      navigateToSection(item.id);
                       setMobileMenuOpen(false);
                     }}
                     className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg ${
@@ -2940,7 +3424,7 @@ export default function App() {
               onSelectYear={setSelectedYear}
               availableYears={AVAILABLE_YEARS}
               loading={readingsLoading}
-              onNavigate={setActiveNav}
+              onNavigate={navigateToSection}
             />
           )}
 
@@ -2948,6 +3432,7 @@ export default function App() {
             <EnergyDatabaseView
               readings={readings}
               climateLogs={effectiveClimateLogs}
+              vmcDaysMap={vmcDaysMap}
               climateAutopilot={climateAutopilot}
               homeConfig={homeConfig}
               selectedYear={selectedYear}
@@ -2963,7 +3448,8 @@ export default function App() {
               onAddClimateLog={handleAddClimateLog}
               onUpdateClimateLog={handleUpdateClimateLog}
               onDeleteClimateLog={handleDeleteClimateLog}
-              onNavigate={setActiveNav}
+              onToggleVmcDays={handleToggleVmcDays}
+              onNavigate={navigateToSection}
             />
           )}
 
@@ -2972,6 +3458,7 @@ export default function App() {
               config={homeConfig}
               readings={readings}
               climateLogs={effectiveClimateLogs}
+              vmcDaysMap={vmcDaysMap}
               climateAutopilot={climateAutopilot}
               readOnly={!canEdit}
               onSignIn={handleSignIn}
@@ -3020,6 +3507,66 @@ export default function App() {
               onDownloadManual={handleDownloadArticleManual}
               onUploadArticleDocument={handleUploadArticleDocument}
               onDeleteArticleDocument={handleDeleteLinkedDocument}
+            />
+          )}
+
+          {activeNav === 'ricerche' && (
+            <ResearchesView
+              researches={productResearches}
+              researchDocuments={researchDocuments}
+              readOnly={!canEdit}
+              onSignIn={handleSignIn}
+              onAddResearch={handleAddProductResearch}
+              onUpdateResearch={handleUpdateProductResearch}
+              onDeleteResearch={handleDeleteProductResearch}
+              onUploadResearchDocument={handleUploadResearchDocument}
+              onDeleteResearchDocument={handleDeleteLinkedDocument}
+              onMoveToArticles={async (item) => {
+                const resolvedBrand = (inferProductBrand(item) || item.store).slice(0, 60);
+                const mappedCategory: HomeArticleCategory =
+                  item.category === 'elettrodomestici' || item.category === 'elettronica'
+                    ? item.category
+                    : 'altro';
+                const specsParts = [
+                  typeof item.priceEur === 'number' ? `Prezzo: € ${item.priceEur.toFixed(2)}` : '',
+                  item.color ? `Colore: ${item.color}` : '',
+                  item.specs ? item.specs.replace(/\n+/g, ' · ') : '',
+                  `Negozio: ${item.store}`,
+                ].filter(Boolean);
+                const newArticleId = await handleAddArticle(
+                  {
+                    name: item.title.slice(0, 80),
+                    brand: resolvedBrand,
+                    model: (item.model || item.store).slice(0, 80),
+                    category: mappedCategory,
+                    room: getResearchRoomLabel(item.room),
+                    familyWarranty: false,
+                    specs: specsParts.join(' · ').slice(0, 240),
+                    notes: (item.notes || item.url).slice(0, 240),
+                    manualExtractText: item.specs ? `${item.specs}\nFonte: ${item.url}`.slice(0, 12_000) : undefined,
+                  },
+                  'art'
+                );
+                if (newArticleId && user) {
+                  const linkedDocs = getDocumentsForResearch(researchDocuments, item.id);
+                  for (const linkedDoc of linkedDocs) {
+                    if (!linkedDoc.attachmentKey) continue;
+                    const stored = await getVaultFile(linkedDoc.attachmentKey, user.uid);
+                    if (!stored) continue;
+                    const parsedRef = parseResearchDocumentRef(linkedDoc.referenceCode);
+                    const fileCopy = new File([stored.blob], stored.fileName, {
+                      type: stored.mimeType || 'application/octet-stream',
+                    });
+                    await handleUploadArticleDocument(
+                      newArticleId,
+                      parsedRef?.docType || 'altro',
+                      linkedDoc.title,
+                      resolvedBrand,
+                      fileCopy
+                    );
+                  }
+                }
+              }}
             />
           )}
 
