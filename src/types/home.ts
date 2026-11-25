@@ -93,6 +93,7 @@ export interface HomeArticleRecord {
   category: HomeArticleCategory;
   room: string;
   purchaseDate?: string;
+  purchasePriceEur?: number;
   warrantyEnd?: string;
   familyWarranty: boolean;
   serialNumber?: string;
@@ -388,10 +389,8 @@ export type ProductResearchCategory =
 
 export type ProductResearchStatus =
   | 'da_valutare'
-  | 'preferito'
   | 'da_acquistare'
-  | 'acquistato'
-  | 'scartato';
+  | 'acquistato';
 
 export interface ProductResearchRecord {
   id: string;
@@ -403,9 +402,14 @@ export interface ProductResearchRecord {
   status: ProductResearchStatus;
   room?: string;
   priceEur?: number;
+  paidPriceEur?: number;
   imageUrl?: string;
   brand?: string;
   color?: string;
+  availableColors?: string[];
+  colorImages?: Record<string, string>;
+  size?: string;
+  availableSizes?: string[];
   model?: string;
   specs?: string;
   notes?: string;

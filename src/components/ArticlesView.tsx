@@ -208,6 +208,7 @@ export function ArticlesView({
   const [category, setCategory] = useState<HomeArticleCategory>('elettrodomestici');
   const [room, setRoom] = useState('Cucina');
   const [purchaseDate, setPurchaseDate] = useState('');
+  const [purchasePriceEur, setPurchasePriceEur] = useState('');
   const [warrantyEnd, setWarrantyEnd] = useState('');
   const [familyWarranty, setFamilyWarranty] = useState(false);
   const [serialNumber, setSerialNumber] = useState('');
@@ -322,6 +323,7 @@ export function ArticlesView({
     setCategory('elettrodomestici');
     setRoom(presetRoom);
     setPurchaseDate('');
+    setPurchasePriceEur('');
     setWarrantyEnd('');
     setFamilyWarranty(false);
     setSerialNumber('');
@@ -350,6 +352,9 @@ export function ArticlesView({
     setCategory(item.category);
     setRoom(item.room);
     setPurchaseDate(item.purchaseDate || '');
+    setPurchasePriceEur(
+      typeof item.purchasePriceEur === 'number' ? String(item.purchasePriceEur) : ''
+    );
     setWarrantyEnd(item.warrantyEnd || '');
     setFamilyWarranty(Boolean(item.familyWarranty));
     setSerialNumber(item.serialNumber || '');
@@ -466,6 +471,12 @@ export function ArticlesView({
       const existingArticle = editingId
         ? articles.find((article) => article.id === editingId)
         : undefined;
+      const rawPrice = purchasePriceEur.trim().replace(',', '.');
+      const numericPrice = rawPrice ? Number.parseFloat(rawPrice) : Number.NaN;
+      const parsedPurchasePriceEur =
+        Number.isFinite(numericPrice) && numericPrice >= 0 && numericPrice <= 1_000_000
+          ? Math.round(numericPrice * 100) / 100
+          : undefined;
       const payload: Omit<HomeArticleRecord, 'id'> = {
         name: name.trim().slice(0, 80),
         brand: brand.trim().slice(0, 60),
@@ -474,6 +485,7 @@ export function ArticlesView({
         room: room.trim().slice(0, 60),
         familyWarranty,
         purchaseDate: purchaseDate.trim().slice(0, 20) || undefined,
+        purchasePriceEur: parsedPurchasePriceEur,
         warrantyEnd: warrantyEnd.trim().slice(0, 20) || undefined,
         serialNumber: serialNumber.trim().slice(0, 80) || undefined,
         specs: specs.trim().slice(0, 240) || undefined,
@@ -1088,6 +1100,11 @@ export function ArticlesView({
                 </button>
               )
             )}
+            {typeof item.purchasePriceEur === 'number' && (
+              <span className="font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/25 text-emerald-300">
+                Pagato € {item.purchasePriceEur.toFixed(2)}
+              </span>
+            )}
             {item.warrantyEnd && (
               <span className="font-mono text-slate-400">Scad. {item.warrantyEnd}</span>
             )}
@@ -1565,6 +1582,20 @@ export function ArticlesView({
                 value={purchaseDate}
                 onChange={(e) => setPurchaseDate(e.target.value)}
                 placeholder="GG/MM/AAAA"
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100 focus:outline-none focus:border-sky-500"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="block text-slate-400">Prezzo pagato (€ opz.)</label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                max="1000000"
+                value={purchasePriceEur}
+                onChange={(e) => setPurchasePriceEur(e.target.value)}
+                placeholder="Es. 649.00"
                 className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
@@ -2584,14 +2615,21 @@ export function ArticlesView({
                       <li key={i}>{spec}</li>
                     ))}
                   </ul>
-                  {(activeSheetArticle.purchaseDate || activeSheetArticle.warrantyEnd) && (
-                    <div className="pt-2 border-t border-slate-800/80 text-[11px] text-slate-400 font-mono">
-                      {activeSheetArticle.purchaseDate
-                        ? `Acquisto: ${activeSheetArticle.purchaseDate} · `
-                        : ''}
-                      {activeSheetArticle.warrantyEnd
-                        ? `Garanzia fino al ${activeSheetArticle.warrantyEnd}`
-                        : ''}
+                  {(activeSheetArticle.purchaseDate ||
+                    typeof activeSheetArticle.purchasePriceEur === 'number' ||
+                    activeSheetArticle.warrantyEnd) && (
+                    <div className="pt-2 border-t border-slate-800/80 text-[11px] text-slate-400 font-mono flex flex-wrap gap-x-3 gap-y-1">
+                      {activeSheetArticle.purchaseDate && (
+                        <span>Acquisto: {activeSheetArticle.purchaseDate}</span>
+                      )}
+                      {typeof activeSheetArticle.purchasePriceEur === 'number' && (
+                        <span className="text-emerald-300">
+                          Pagato: € {activeSheetArticle.purchasePriceEur.toFixed(2)}
+                        </span>
+                      )}
+                      {activeSheetArticle.warrantyEnd && (
+                        <span>Garanzia fino al {activeSheetArticle.warrantyEnd}</span>
+                      )}
                     </div>
                   )}
                 </div>

@@ -95,6 +95,7 @@ const COLOR_KEYWORDS: [RegExp, string][] = [
   [/verde\s*salvia|salvia|sage/i, '#7d9b76'],
   [/verde\s*oliva|oliva|olive/i, '#556b2f'],
   [/verde\s*bosco|smeraldo|emerald|forest/i, '#15803d'],
+  [/glacier|ice\s*blue|blu\s*ghiaccio/i, '#93c5fd'],
   [/azzurro|celeste|sky|ciano|cyan|ghiaccio/i, '#0ea5e9'],
   [/turchese|ottanio|petrolio|teal/i, '#0f766e'],
   [/borgogna|bordeaux|burgundy|vinaccia|amaranto|vino|wine/i, '#7f1d1d'],
@@ -388,3 +389,205 @@ export function inferProductBrand(input: {
   return undefined;
 }
 
+function escapeRegExpChars(raw: string): string {
+  return raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function formatVariantReplacement(matched: string, nextValue: string): string {
+  const cleanNext = nextValue.trim();
+  if (!cleanNext) return matched;
+  if (
+    /^\p{Lu}/u.test(matched) &&
+    /^\p{Ll}/u.test(cleanNext)
+  ) {
+    return cleanNext.charAt(0).toUpperCase() + cleanNext.slice(1);
+  }
+  return cleanNext;
+}
+
+const FALLBACK_TITLE_COLORS: string[] = [
+  'Arancione cosmico',
+  'Blu profondo',
+  'Blu notte',
+  'Verde salvia',
+  'Oro rosa',
+  'Titanio naturale',
+  'Titanio sabbia',
+  'Titanio bianco',
+  'Titanio nero',
+  'Galassia',
+  'Mezzanotte',
+  'Starlight',
+  'Midnight',
+  'Borgogna',
+  'Bordeaux',
+  'Glacier',
+  'Argento',
+  'Antracite',
+  'Azzurro',
+  'Arancione',
+  'Tortora',
+  'Corallo',
+  'Lavanda',
+  'Siderale',
+  'Grafite',
+  'Nero',
+  'Bianco',
+  'Rosso',
+  'Giallo',
+  'Viola',
+  'Verde',
+  'Beige',
+  'Bronzo',
+  'Grigio',
+  'Salvia',
+  'Blu',
+  'Rosa',
+  'Oro',
+];
+
+export function replaceColorInTitle(
+  title: string,
+  nextColor: string,
+  prevColor?: string,
+  availableColors?: string[]
+): string {
+  const cleanTitle = title.trim();
+  const cleanNext = nextColor.trim();
+  if (!cleanTitle || !cleanNext) return title;
+
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const pushCandidate = (val?: string) => {
+    const trimmed = (val || '').trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(trimmed);
+  };
+
+  pushCandidate(prevColor);
+  const sortedAvailable = [...(availableColors || [])]
+    .map((c) => c.trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  for (const col of sortedAvailable) pushCandidate(col);
+  for (const col of FALLBACK_TITLE_COLORS) pushCandidate(col);
+
+  for (const cand of candidates) {
+    const re = new RegExp(
+      `(^|[^\\p{L}\\p{N}])(${escapeRegExpChars(cand)})(?=$|[^\\p{L}\\p{N}])`,
+      'iu'
+    );
+    if (re.test(cleanTitle)) {
+      return cleanTitle.replace(
+        re,
+        (_full, prefix: string, matched: string) =>
+          `${prefix}${formatVariantReplacement(matched, cleanNext)}`
+      );
+    }
+  }
+
+  return title;
+}
+
+export function replaceSizeInTitle(
+  title: string,
+  nextSize: string,
+  prevSize?: string,
+  availableSizes?: string[]
+): string {
+  const cleanTitle = title.trim();
+  const cleanNext = nextSize.trim();
+  if (!cleanTitle || !cleanNext) return title;
+
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const pushCandidate = (val?: string) => {
+    const trimmed = (val || '').trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase().replace(/\s+/g, '');
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(trimmed);
+  };
+
+  pushCandidate(prevSize);
+  const sortedAvailable = [...(availableSizes || [])]
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  for (const sz of sortedAvailable) pushCandidate(sz);
+
+  for (const cand of candidates) {
+    const pattern = escapeRegExpChars(cand)
+      .replace(/\\?\s+/g, '\\s*')
+      .replace(/(\d)([a-zA-Z])/g, '$1\\s*$2');
+    const re = new RegExp(
+      `(^|[^\\p{L}\\p{N}])(${pattern})(?=$|[^\\p{L}\\p{N}])`,
+      'iu'
+    );
+    if (re.test(cleanTitle)) {
+      return cleanTitle.replace(re, (_full, prefix: string) => `${prefix}${cleanNext}`);
+    }
+  }
+
+  // Unit-family fallback (e.g. title has "128GB" and user switches to "256 GB" without prior size)
+  if (/^\d+(?:[.,]\d+)?\s*(?:tb|gb|mb)$/i.test(cleanNext)) {
+    const storageRe = /(^|[^\p{L}\p{N}])(\d+(?:[.,]\d+)?\s*(?:TB|GB|MB))(?=$|[^\p{L}\p{N}])/iu;
+    if (storageRe.test(cleanTitle)) {
+      return cleanTitle.replace(storageRe, (_full, prefix: string) => `${prefix}${cleanNext}`);
+    }
+  } else if (/^\d+(?:[.,]\d+)?\s*(?:cm|mm)$/i.test(cleanNext)) {
+    const lenRe = /(^|[^\p{L}\p{N}])(\d+(?:[.,]\d+)?\s*(?:cm|mm))(?=$|[^\p{L}\p{N}])/iu;
+    if (lenRe.test(cleanTitle)) {
+      return cleanTitle.replace(lenRe, (_full, prefix: string) => `${prefix}${cleanNext}`);
+    }
+  } else if (/^\d+(?:[.,]\d+)?\s*(?:kg|gr|g)$/i.test(cleanNext)) {
+    const weightRe = /(^|[^\p{L}\p{N}])(\d+(?:[.,]\d+)?\s*(?:kg|gr|g))(?=$|[^\p{L}\p{N}])/iu;
+    if (weightRe.test(cleanTitle)) {
+      return cleanTitle.replace(weightRe, (_full, prefix: string) => `${prefix}${cleanNext}`);
+    }
+  } else if (/^\d+(?:[.,]\d+)?\s*(?:ml|lt|l)$/i.test(cleanNext)) {
+    const volRe = /(^|[^\p{L}\p{N}])(\d+(?:[.,]\d+)?\s*(?:ml|lt|l))(?=$|[^\p{L}\p{N}])/iu;
+    if (volRe.test(cleanTitle)) {
+      return cleanTitle.replace(volRe, (_full, prefix: string) => `${prefix}${cleanNext}`);
+    }
+  }
+
+  return title;
+}
+
+export function sanitizeColorImagesMap(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (Object.keys(out).length >= 24) break;
+    const cleanKey = String(k).replace(/\s+/g, ' ').trim().slice(0, 60);
+    const cleanVal = typeof v === 'string' ? v.trim().slice(0, 1000) : '';
+    if (!cleanKey || !/^https?:\/\/.+/.test(cleanVal)) continue;
+    out[cleanKey] = cleanVal;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+export function findColorImageUrl(
+  colorImages: Record<string, string> | undefined,
+  color?: string
+): string | undefined {
+  if (!colorImages || !color) return undefined;
+  const target = color.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!target) return undefined;
+  const entries = Object.entries(colorImages).filter(
+    ([k, v]) => Boolean(k.trim()) && typeof v === 'string' && /^https?:\/\/.+/.test(v.trim())
+  );
+  if (entries.length === 0) return undefined;
+  const exact = entries.find(([k]) => k.trim().toLowerCase().replace(/\s+/g, ' ') === target);
+  if (exact) return exact[1].trim();
+  const partial = entries.find(([k]) => {
+    const kNorm = k.trim().toLowerCase().replace(/\s+/g, ' ');
+    return kNorm.includes(target) || target.includes(kNorm);
+  });
+  return partial ? partial[1].trim() : undefined;
+}

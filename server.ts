@@ -1057,7 +1057,7 @@ async function startServer() {
       title,
       model: extractedModel,
       color: extractedColor,
-      specs: specsLines.length > 0 ? specsLines.join('\n').slice(0, 780) : undefined,
+      specs: specsLines.length > 0 ? truncateAtWordBoundary(specsLines.join('\n'), 1850) : undefined,
     };
   }
 
@@ -1133,10 +1133,198 @@ async function startServer() {
     );
   }
 
+  function truncateAtWordBoundary(raw: string, maxLen: number): string {
+    const clean = raw
+      .split('\n')
+      .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+      .filter(Boolean)
+      .join('\n');
+    if (clean.length <= maxLen) return clean;
+    const slice = clean.slice(0, maxLen).trimEnd();
+    const minSentenceCut = Math.min(45, Math.floor(maxLen * 0.25));
+    let lastSentenceEnd = -1;
+    const sentenceEndRe = /[.!?](?=\s|$)/g;
+    let match: RegExpExecArray | null;
+    while ((match = sentenceEndRe.exec(slice)) !== null) {
+      if (match.index >= minSentenceCut) {
+        lastSentenceEnd = match.index;
+      }
+    }
+    if (lastSentenceEnd >= minSentenceCut) {
+      return slice.slice(0, lastSentenceEnd + 1).trim();
+    }
+    const lastBreak = Math.max(slice.lastIndexOf(' '), slice.lastIndexOf('\n'));
+    const cut = lastBreak > Math.floor(maxLen * 0.35) ? slice.slice(0, lastBreak) : slice;
+    return `${cut.replace(/[,:;—–-]+$/, '').trim()}…`;
+  }
+
+  function buildBoundedSpecsText(
+    specsList: string[],
+    bullets: string[],
+    maxLen = 1850
+  ): string {
+    const lines: string[] = [];
+    let currentLen = 0;
+
+    for (const specLine of specsList) {
+      const cleanSpec = specLine.replace(/\s+/g, ' ').trim();
+      if (!cleanSpec) continue;
+      const addedLen = (lines.length > 0 ? 1 : 0) + cleanSpec.length;
+      if (currentLen + addedLen > maxLen) break;
+      lines.push(cleanSpec);
+      currentLen += addedLen;
+    }
+
+    const selectedBullets = bullets.slice(0, 4);
+    for (let i = 0; i < selectedBullets.length; i += 1) {
+      const remaining = maxLen - currentLen - (lines.length > 0 ? 1 : 0);
+      if (remaining < 75) break;
+      const remainingBullets = selectedBullets.length - i;
+      const fairBudget = Math.max(
+        240,
+        Math.min(450, Math.floor((remaining - (remainingBullets - 1) * 3) / remainingBullets))
+      );
+      const bulletBudget = Math.min(remaining - 2, fairBudget);
+      if (bulletBudget < 65) break;
+      const trimmedBullet = truncateAtWordBoundary(selectedBullets[i], bulletBudget);
+      const formatted = `• ${trimmedBullet}`;
+      lines.push(formatted);
+      currentLen += (lines.length > 1 ? 1 : 0) + formatted.length;
+    }
+
+    return lines.join('\n');
+  }
+
+  function extractBalancedJsonLiteral<T>(
+    source: string,
+    openChar: '{' | '[',
+    closeChar: '}' | ']',
+    startIndex: number
+  ): T | undefined {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = startIndex; i < source.length && i < startIndex + 250_000; i += 1) {
+      const ch = source[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === openChar) {
+        depth += 1;
+      } else if (ch === closeChar) {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            return JSON.parse(source.slice(startIndex, i + 1)) as T;
+          } catch {
+            return undefined;
+          }
+        }
+      }
+    }
+    return undefined;
+  }
+
+  function extractAllJsonAfterKey<T>(
+    source: string,
+    keyName: string,
+    openChar: '{' | '[',
+    closeChar: '}' | ']'
+  ): T[] {
+    const escapedKey = keyName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(?:["']${escapedKey}["']|\\b${escapedKey})\\s*:\\s*\\${openChar}`, 'g');
+    const results: T[] = [];
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(source)) !== null) {
+      const braceIdx = match.index + match[0].length - 1;
+      const parsed = extractBalancedJsonLiteral<T>(source, openChar, closeChar, braceIdx);
+      if (parsed !== undefined) results.push(parsed);
+    }
+    return results;
+  }
+
+  function extractJsonAfterKey<T>(
+    source: string,
+    keyName: string,
+    openChar: '{' | '[',
+    closeChar: '}' | ']'
+  ): T | undefined {
+    return extractAllJsonAfterKey<T>(source, keyName, openChar, closeChar)[0];
+  }
+
+  function extractBestAmazonMediaUrl(entry: {
+    hiRes?: unknown;
+    large?: unknown;
+    main?: unknown;
+  }): string | undefined {
+    if (typeof entry.hiRes === 'string' && /^https?:\/\//i.test(entry.hiRes)) {
+      return entry.hiRes.slice(0, 1000);
+    }
+    if (entry.main && typeof entry.main === 'object' && !Array.isArray(entry.main)) {
+      const bestMain = Object.entries(entry.main as Record<string, unknown>)
+        .filter(([u, dims]) => /^https?:\/\//i.test(u) && Array.isArray(dims))
+        .sort(([, a], [, b]) => {
+          const da = a as number[];
+          const db = b as number[];
+          return (db[0] || 0) * (db[1] || 0) - (da[0] || 0) * (da[1] || 0);
+        });
+      if (bestMain[0]?.[0]) return bestMain[0][0].slice(0, 1000);
+    }
+    if (typeof entry.large === 'string' && /^https?:\/\//i.test(entry.large)) {
+      return entry.large.slice(0, 1000);
+    }
+    return undefined;
+  }
+
+  function sanitizeColorImagesMap(raw: unknown): Record<string, string> | undefined {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (Object.keys(out).length >= 24) break;
+      const cleanKey = stripHtmlTags(String(k)).replace(/\s+/g, ' ').trim().slice(0, 60);
+      const cleanVal = typeof v === 'string' ? v.trim().slice(0, 1000) : '';
+      if (!cleanKey || !/^https?:\/\/.+/.test(cleanVal)) continue;
+      out[cleanKey] = cleanVal;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  }
+
+  function normalizeOptionList(rawList: unknown, maxItems = 24): string[] {
+    if (!Array.isArray(rawList)) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const entry of rawList) {
+      if (typeof entry !== 'string' && typeof entry !== 'number') continue;
+      const clean = stripHtmlTags(String(entry)).replace(/\s+/g, ' ').trim().slice(0, 60);
+      if (!clean) continue;
+      const key = clean.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(clean);
+      if (out.length >= maxItems) break;
+    }
+    return out;
+  }
+
   function extractProductFromJsonLd(html: string): {
     title?: string;
     brand?: string;
     color?: string;
+    availableColors?: string[];
+    colorImages?: Record<string, string>;
+    size?: string;
+    availableSizes?: string[];
     model?: string;
     imageUrl?: string;
     priceEur?: number;
@@ -1176,24 +1364,50 @@ async function startServer() {
 
           const color =
             typeof obj.color === 'string' ? decodeHtmlEntities(obj.color).slice(0, 60) : undefined;
+          const size =
+            typeof obj.size === 'string' ? decodeHtmlEntities(obj.size).slice(0, 60) : undefined;
+
+          const variantColors: string[] = [];
+          const variantSizes: string[] = [];
+          const variantColorImages: Record<string, string> = {};
+          const readLdImg = (rawImg: unknown): string | undefined => {
+            if (typeof rawImg === 'string' && /^https?:\/\//i.test(rawImg)) return rawImg.slice(0, 1000);
+            if (Array.isArray(rawImg)) {
+              const first = rawImg.find((x) => typeof x === 'string' && /^https?:\/\//i.test(x));
+              if (typeof first === 'string') return first.slice(0, 1000);
+            } else if (
+              rawImg &&
+              typeof rawImg === 'object' &&
+              typeof (rawImg as Record<string, unknown>).url === 'string'
+            ) {
+              const u = String((rawImg as Record<string, unknown>).url);
+              if (/^https?:\/\//i.test(u)) return u.slice(0, 1000);
+            }
+            return undefined;
+          };
+          if (Array.isArray(obj.hasVariant)) {
+            for (const v of obj.hasVariant) {
+              if (!v || typeof v !== 'object') continue;
+              const vo = v as Record<string, unknown>;
+              if (typeof vo.color === 'string') {
+                variantColors.push(vo.color);
+                const vCol = stripHtmlTags(vo.color).replace(/\s+/g, ' ').trim().slice(0, 60);
+                const vImg = readLdImg(vo.image);
+                if (vCol && vImg && !variantColorImages[vCol] && Object.keys(variantColorImages).length < 24) {
+                  variantColorImages[vCol] = vImg;
+                }
+              }
+              if (typeof vo.size === 'string') variantSizes.push(vo.size);
+            }
+          }
+          const availableColors = normalizeOptionList(variantColors);
+          const availableSizes = normalizeOptionList(variantSizes);
+
           const rawModel = obj.model ?? obj.mpn ?? obj.sku;
           const model =
             typeof rawModel === 'string' ? decodeHtmlEntities(rawModel).slice(0, 80) : undefined;
 
-          let imageUrl: string | undefined;
-          if (typeof obj.image === 'string' && obj.image.startsWith('http')) {
-            imageUrl = obj.image;
-          } else if (Array.isArray(obj.image)) {
-            const firstImg = obj.image.find((x) => typeof x === 'string' && x.startsWith('http'));
-            if (typeof firstImg === 'string') imageUrl = firstImg;
-          } else if (
-            obj.image &&
-            typeof obj.image === 'object' &&
-            typeof (obj.image as Record<string, unknown>).url === 'string'
-          ) {
-            const u = String((obj.image as Record<string, unknown>).url);
-            if (u.startsWith('http')) imageUrl = u;
-          }
+          const imageUrl = readLdImg(obj.image);
 
           let priceEur: number | undefined;
           const offers = Array.isArray(obj.offers) ? obj.offers[0] : obj.offers;
@@ -1207,7 +1421,20 @@ async function startServer() {
           const description =
             typeof obj.description === 'string' ? decodeHtmlEntities(obj.description) : undefined;
           if (title || priceEur || imageUrl) {
-            return { title, brand, color, model, imageUrl, priceEur, description };
+            return {
+              title,
+              brand,
+              color,
+              availableColors: availableColors.length > 0 ? availableColors : undefined,
+              colorImages:
+                Object.keys(variantColorImages).length > 0 ? variantColorImages : undefined,
+              size,
+              availableSizes: availableSizes.length > 0 ? availableSizes : undefined,
+              model,
+              imageUrl,
+              priceEur,
+              description,
+            };
           }
         }
       } catch {
@@ -1245,6 +1472,10 @@ async function startServer() {
     imageUrl?: string;
     priceEur?: number;
     color?: string;
+    availableColors: string[];
+    colorImages: Record<string, string>;
+    size?: string;
+    availableSizes: string[];
     model?: string;
     specsList: string[];
     bullets: string[];
@@ -1257,36 +1488,90 @@ async function startServer() {
       if (cleaned) title = cleaned.slice(0, 160);
     }
 
-    // 2. High-res Image (#landingImage / data-old-hires / data-a-dynamic-image / hiRes)
+    // 2. High-res Primary Image (#landingImage / #imgBlkFront / #main-image / colorImages.initial[0])
     let imageUrl: string | undefined;
+    let heroImgTag = '';
     const landingIdx = html.search(/id=["'](?:landingImage|imgBlkFront|main-image)["']/i);
     if (landingIdx !== -1) {
-      const tagSlice = html.slice(Math.max(0, landingIdx - 400), landingIdx + 2400);
-      const oldHires = tagSlice.match(/data-old-hires=["'](https?:\/\/[^"']+)["']/i);
+      const imgOpen = html.lastIndexOf('<img', landingIdx);
+      const imgClose = html.indexOf('>', landingIdx);
+      if (imgOpen !== -1 && imgClose !== -1 && imgClose - imgOpen < 8000) {
+        heroImgTag = html.slice(imgOpen, imgClose + 1);
+      }
+    }
+
+    if (heroImgTag) {
+      const oldHires = heroImgTag.match(/data-old-hires=["'](https?:\/\/[^"']+)["']/i);
       if (oldHires?.[1]) {
         imageUrl = decodeHtmlEntities(oldHires[1]);
       }
       if (!imageUrl) {
-        const dynAttr = tagSlice.match(/data-a-dynamic-image=["']([^"']+)["']/i);
-        if (dynAttr?.[1]) {
-          try {
-            const dynJson = JSON.parse(decodeHtmlEntities(dynAttr[1])) as Record<string, [number, number]>;
-            const sorted = Object.entries(dynJson)
-              .filter(([u, dims]) => /^https?:\/\//i.test(u) && Array.isArray(dims))
-              .sort(([, a], [, b]) => (b[0] || 0) * (b[1] || 0) - (a[0] || 0) * (a[1] || 0));
-            if (sorted[0]?.[0]) imageUrl = sorted[0][0];
-          } catch {
-            // ignore
+        const aHires = heroImgTag.match(/data-a-hires=["'](https?:\/\/[^"']+)["']/i);
+        if (aHires?.[1]) {
+          imageUrl = decodeHtmlEntities(aHires[1]);
+        }
+      }
+    }
+
+    if (!imageUrl) {
+      const colorImagesIdx = html.search(/['"]?colorImages['"]?\s*:\s*\{/i);
+      if (colorImagesIdx !== -1) {
+        const ciSlice = html.slice(colorImagesIdx, colorImagesIdx + 60_000);
+        const initialMatch = ciSlice.match(/['"]initial['"]\s*:\s*(?:A\.\$\.parseJSON\(['"])?\[/);
+        if (initialMatch && typeof initialMatch.index === 'number') {
+          const arrStart = initialMatch.index + initialMatch[0].length - 1;
+          const initialArr = extractBalancedJsonLiteral<
+            Array<{
+              hiRes?: string;
+              large?: string;
+              main?: Record<string, [number, number]>;
+            }>
+          >(ciSlice, '[', ']', arrStart);
+          const firstImg = Array.isArray(initialArr) ? initialArr[0] : undefined;
+          if (firstImg) {
+            if (typeof firstImg.hiRes === 'string' && /^https?:\/\//i.test(firstImg.hiRes)) {
+              imageUrl = firstImg.hiRes;
+            } else if (firstImg.main && typeof firstImg.main === 'object') {
+              const bestMain = Object.entries(firstImg.main)
+                .filter(([u, dims]) => /^https?:\/\//i.test(u) && Array.isArray(dims))
+                .sort(([, a], [, b]) => (b[0] || 0) * (b[1] || 0) - (a[0] || 0) * (a[1] || 0));
+              if (bestMain[0]?.[0]) imageUrl = bestMain[0][0];
+            } else if (typeof firstImg.large === 'string' && /^https?:\/\//i.test(firstImg.large)) {
+              imageUrl = firstImg.large;
+            }
           }
         }
       }
+    }
+
+    if (!imageUrl && heroImgTag) {
+      const dynAttr = heroImgTag.match(/data-a-dynamic-image=["']([^"']+)["']/i);
+      if (dynAttr?.[1]) {
+        try {
+          const dynJson = JSON.parse(decodeHtmlEntities(dynAttr[1])) as Record<
+            string,
+            [number, number]
+          >;
+          const sorted = Object.entries(dynJson)
+            .filter(([u, dims]) => /^https?:\/\//i.test(u) && Array.isArray(dims))
+            .sort(([, a], [, b]) => (b[0] || 0) * (b[1] || 0) - (a[0] || 0) * (a[1] || 0));
+          if (sorted[0]?.[0]) imageUrl = sorted[0][0];
+        } catch {
+          // ignore
+        }
+      }
       if (!imageUrl) {
-        const srcAttr = tagSlice.match(/(?:data-a-image-source|\bsrc)=["'](https?:\/\/m\.media-amazon\.com\/images\/I\/[^"']+)["']/i);
+        const srcAttr = heroImgTag.match(
+          /(?:data-a-image-source|\bsrc)=["'](https?:\/\/m\.media-amazon\.com\/images\/I\/[^"']+)["']/i
+        );
         if (srcAttr?.[1]) imageUrl = decodeHtmlEntities(srcAttr[1]);
       }
     }
+
     if (!imageUrl) {
-      const hiResMatch = html.match(/"(?:hiRes|large)"\s*:\s*"(https:\/\/m\.media-amazon\.com\/images\/I\/[^"]+)"/i);
+      const hiResMatch = html.match(
+        /"(?:hiRes|large)"\s*:\s*"(https:\/\/m\.media-amazon\.com\/images\/I\/[^"]+)"/i
+      );
       if (hiResMatch?.[1]) imageUrl = hiResMatch[1];
     }
 
@@ -1362,6 +1647,7 @@ async function startServer() {
     const specsList: string[] = [];
     const seenLabels = new Set<string>();
     let overviewColor: string | undefined;
+    let overviewSize: string | undefined;
     let overviewModel: string | undefined;
 
     const overviewIdx = html.indexOf('id="productOverview_feature_div"');
@@ -1384,6 +1670,16 @@ async function startServer() {
         if (lowLabel === 'colore' || lowLabel === 'color' || lowLabel === 'colour') {
           if (!overviewColor) overviewColor = value.slice(0, 60);
           continue;
+        }
+        if (
+          lowLabel === 'taglia' ||
+          lowLabel === 'size' ||
+          lowLabel === 'capacità' ||
+          lowLabel === 'capacità memoria' ||
+          lowLabel === 'capacità di memoria' ||
+          lowLabel === 'dimensione memoria'
+        ) {
+          if (!overviewSize) overviewSize = value.slice(0, 60);
         }
         if (
           lowLabel.includes('nome modello') ||
@@ -1422,6 +1718,14 @@ async function startServer() {
           if (!overviewColor) overviewColor = value.slice(0, 60);
           continue;
         }
+        if (
+          lowLabel === 'taglia' ||
+          lowLabel === 'size' ||
+          lowLabel === 'capacità' ||
+          lowLabel === 'capacità memoria'
+        ) {
+          if (!overviewSize) overviewSize = value.slice(0, 60);
+        }
         if (lowLabel.includes('numero modello') || lowLabel.includes('modello')) {
           if (!overviewModel) overviewModel = value.slice(0, 80);
         }
@@ -1437,8 +1741,160 @@ async function startServer() {
         ? overviewBrand
         : bylineBrand || overviewBrand;
 
-    // 6. Color from Twister variation widget if not found in overview
-    let color = overviewColor;
+    // 6. Product Variants (Colors & Sizes) from Amazon Twister JSON + DOM fallback
+    const variationValues = extractJsonAfterKey<Record<string, unknown>>(
+      html,
+      'variationValues',
+      '{',
+      '}'
+    );
+    const dimensions = extractJsonAfterKey<string[]>(html, 'dimensions', '[', ']');
+    const dimensionValuesDisplayData = extractJsonAfterKey<Record<string, unknown>>(
+      html,
+      'dimensionValuesDisplayData',
+      '{',
+      '}'
+    );
+
+    let availableColors: string[] = [];
+    let availableSizes: string[] = [];
+    let colorDimKey: string | undefined;
+    let sizeDimKey: string | undefined;
+
+    if (variationValues && typeof variationValues === 'object') {
+      const colorPriority = ['color_name', 'color', 'colour_name', 'colour', 'colore', 'pattern_name'];
+      for (const k of colorPriority) {
+        if (Array.isArray(variationValues[k]) && variationValues[k].length > 0) {
+          colorDimKey = k;
+          availableColors = normalizeOptionList(variationValues[k]);
+          break;
+        }
+      }
+
+      const sizePriority = [
+        'size_name',
+        'size',
+        'memory_storage_capacity',
+        'storage_capacity',
+        'capacity_name',
+        'capacity',
+        'ram_memory_installed_size',
+        'computer_memory_size',
+        'hard_disk_size',
+        'taglia',
+        'dimensione',
+        'format_name',
+        'item_package_quantity',
+      ];
+      for (const k of sizePriority) {
+        if (Array.isArray(variationValues[k]) && variationValues[k].length > 0) {
+          sizeDimKey = k;
+          availableSizes = normalizeOptionList(variationValues[k]);
+          break;
+        }
+      }
+
+      if (availableSizes.length === 0) {
+        for (const [k, v] of Object.entries(variationValues)) {
+          if (
+            k !== colorDimKey &&
+            /(?:size|capacity|memory|storage|taglia|dimension|ram|disk|watt|inch|screen)/i.test(k) &&
+            Array.isArray(v) &&
+            v.length > 0
+          ) {
+            sizeDimKey = k;
+            availableSizes = normalizeOptionList(v);
+            break;
+          }
+        }
+      }
+
+      if (availableSizes.length === 0 && Array.isArray(variationValues.style_name)) {
+        const styleOpts = normalizeOptionList(variationValues.style_name);
+        const looksLikeSizes = styleOpts.some((s) =>
+          /\b\d+(?:[.,]\d+)?\s*(?:gb|tb|mb|cm|mm|m|kg|g|ml|l|lt|w|pollici|")\b|^(?:xxs|xs|s|m|l|xl|xxl|xxxl)$/i.test(
+            s
+          )
+        );
+        if (looksLikeSizes) {
+          sizeDimKey = 'style_name';
+          availableSizes = styleOpts;
+        }
+      }
+    }
+
+    // Extract active color & size for this ASIN from dimensionValuesDisplayData if present
+    let twisterActiveColor: string | undefined;
+    let twisterActiveSize: string | undefined;
+    if (asin && dimensionValuesDisplayData && Array.isArray(dimensions)) {
+      const asinKey = Object.keys(dimensionValuesDisplayData).find(
+        (k) => k.toUpperCase() === asin.toUpperCase()
+      );
+      const activeTuple = asinKey ? dimensionValuesDisplayData[asinKey] : undefined;
+      if (Array.isArray(activeTuple)) {
+        if (colorDimKey) {
+          const cIdx = dimensions.indexOf(colorDimKey);
+          if (cIdx !== -1 && typeof activeTuple[cIdx] === 'string') {
+            twisterActiveColor = stripHtmlTags(activeTuple[cIdx]).slice(0, 60);
+          }
+        }
+        if (sizeDimKey) {
+          const sIdx = dimensions.indexOf(sizeDimKey);
+          if (sIdx !== -1 && typeof activeTuple[sIdx] === 'string') {
+            twisterActiveSize = stripHtmlTags(activeTuple[sIdx]).slice(0, 60);
+          }
+        }
+      }
+    }
+
+    // DOM Twister Fallback for Color list
+    if (availableColors.length === 0) {
+      const colorBlockIdx = html.search(
+        /id=["'](?:variation_color_name|inline-twister-row-color_name|inline-twister-expander-content-color_name)["']/i
+      );
+      if (colorBlockIdx !== -1) {
+        const cSlice = html.slice(colorBlockIdx, colorBlockIdx + 25000);
+        const extracted: string[] = [];
+        for (const m of cSlice.matchAll(
+          /(?:swatch-title-text-display[^>]*>([\s\S]*?)<\/span>|twisterTextDiv[^>]*>([\s\S]*?)<\/div>|<img[^>]*\balt=["']([^"']+)["'][^>]*class=["'][^"']*imgSwatch|aria-label=["']Seleziona\s+([^"']+)["'])/gi
+        )) {
+          const rawVal = m[1] || m[2] || m[3] || m[4] || '';
+          const cleaned = stripHtmlTags(rawVal).replace(/\s+/g, ' ').trim();
+          if (cleaned && !/^(seleziona|clicca|scegli)/i.test(cleaned)) {
+            extracted.push(cleaned);
+          }
+        }
+        availableColors = normalizeOptionList(extracted);
+      }
+    }
+
+    // DOM Twister Fallback for Size list
+    if (availableSizes.length === 0) {
+      const sizeBlockIdx = html.search(
+        /id=["'](?:variation_size_name|variation_memory_storage_capacity|variation_capacity_name|inline-twister-row-size_name|inline-twister-row-memory_storage_capacity|inline-twister-row-capacity_name|inline-twister-expander-content-size_name|inline-twister-expander-content-memory_storage_capacity|inline-twister-expander-content-capacity_name)["']/i
+      );
+      if (sizeBlockIdx !== -1) {
+        const sSlice = html.slice(sizeBlockIdx, sizeBlockIdx + 25000);
+        const extracted: string[] = [];
+        for (const m of sSlice.matchAll(
+          /(?:swatch-title-text-display[^>]*>([\s\S]*?)<\/span>|twisterTextDiv[^>]*>([\s\S]*?)<\/div>|<span[^>]*class=["'][^"']*a-size-base[^"']*["'][^>]*>([\s\S]*?)<\/span>)/gi
+        )) {
+          const rawVal = m[1] || m[2] || m[3] || '';
+          const cleaned = stripHtmlTags(rawVal).replace(/\s+/g, ' ').trim();
+          if (
+            cleaned &&
+            cleaned.length <= 45 &&
+            !/^(seleziona|taglia|capacità|dimensioni|con\s+opzioni|da\s+€|€)/i.test(cleaned)
+          ) {
+            extracted.push(cleaned);
+          }
+        }
+        availableSizes = normalizeOptionList(extracted);
+      }
+    }
+
+    // Active Color from Twister variation widget if not found yet
+    let color = twisterActiveColor || overviewColor;
     if (!color) {
       const twisterAria = html.match(/aria-label=["']La Colore selezionat[ao] è ([^"']+)["']/i);
       if (twisterAria?.[1]) color = stripHtmlTags(twisterAria[1]).slice(0, 60);
@@ -1456,6 +1912,27 @@ async function startServer() {
       if (varColor?.[1]) color = stripHtmlTags(varColor[1]).slice(0, 60);
     }
 
+    // Active Size from Twister variation widget / overview if not found yet
+    let size = twisterActiveSize || overviewSize;
+    if (!size) {
+      const twisterSizeAria = html.match(
+        /aria-label=["']La (?:Taglia|Capacità(?: memoria)?|Dimensione) selezionat[ao] è ([^"']+)["']/i
+      );
+      if (twisterSizeAria?.[1]) size = stripHtmlTags(twisterSizeAria[1]).slice(0, 60);
+    }
+    if (!size) {
+      const twisterSizeDim = html.match(
+        /inline-twister-expander-header-(?:size_name|memory_storage_capacity|capacity_name)[\s\S]{0,1200}?inline-twister-dim-title-value[^>]*>([\s\S]*?)<\/span>/i
+      );
+      if (twisterSizeDim?.[1]) size = stripHtmlTags(twisterSizeDim[1]).slice(0, 60);
+    }
+    if (!size) {
+      const varSize = html.match(
+        /id=["']variation_(?:size_name|memory_storage_capacity|capacity_name)["'][\s\S]{0,1000}?class=["']selection["'][^>]*>([\s\S]*?)<\/span>/i
+      );
+      if (varSize?.[1]) size = stripHtmlTags(varSize[1]).slice(0, 60);
+    }
+
     // 7. Feature bullets (#feature-bullets)
     const bullets: string[] = [];
     const bulletsIdx = html.indexOf('id="feature-bullets"');
@@ -1468,7 +1945,7 @@ async function startServer() {
           if (/id=["']replacementPartsFitmentBullet/i.test(li[0])) continue;
           const text = stripHtmlTags(li[0]);
           if (text && text.length >= 6) {
-            bullets.push(text.slice(0, 220));
+            bullets.push(truncateAtWordBoundary(text, 450));
           }
         }
       }
@@ -1479,12 +1956,99 @@ async function startServer() {
         ? `${overviewModel} (${asin})`.slice(0, 80)
         : (overviewModel || asin || undefined)?.slice(0, 80);
 
+    // 8. Per-color variant images map from ImageBlockATF colorImages + colorToAsin + dimensionValuesDisplayData
+    const colorImages: Record<string, string> = {};
+    const colorToAsinCandidates = extractAllJsonAfterKey<Record<string, unknown>>(
+      html,
+      'colorToAsin',
+      '{',
+      '}'
+    );
+    const colorToAsinMap = colorToAsinCandidates.find((obj) =>
+      Object.values(obj).some(
+        (v) => Boolean(v && typeof v === 'object' && typeof (v as { asin?: unknown }).asin === 'string')
+      )
+    ) as Record<string, { asin?: string }> | undefined;
+
+    const colorImagesCandidates = extractAllJsonAfterKey<Record<string, unknown>>(
+      html,
+      'colorImages',
+      '{',
+      '}'
+    );
+    const variantColorImagesMap = colorImagesCandidates.find((obj) =>
+      Object.entries(obj).some(([k, v]) => k !== 'initial' && Array.isArray(v) && v.length > 0)
+    ) as Record<string, Array<{ variant?: unknown; hiRes?: unknown; large?: unknown; main?: unknown }>> | undefined;
+
+    if (variantColorImagesMap) {
+      const cIdx = colorDimKey && Array.isArray(dimensions) ? dimensions.indexOf(colorDimKey) : -1;
+      const sIdx = sizeDimKey && Array.isArray(dimensions) ? dimensions.indexOf(sizeDimKey) : -1;
+      const sortedAvailColors = [...availableColors].sort((a, b) => b.length - a.length);
+      const activeSizeNorm = size?.trim().toLowerCase().replace(/\s+/g, '') || '';
+
+      for (const [variantKey, imgArr] of Object.entries(variantColorImagesMap)) {
+        if (!Array.isArray(imgArr) || imgArr.length === 0) continue;
+        const mainItem =
+          imgArr.find((entry) => entry && typeof entry === 'object' && entry.variant === 'MAIN') ||
+          imgArr[0];
+        if (!mainItem || typeof mainItem !== 'object') continue;
+        const bestUrl = extractBestAmazonMediaUrl(mainItem);
+        if (!bestUrl) continue;
+
+        let matchedColor: string | undefined;
+        let variantSizeNorm = '';
+
+        const mappedAsin = colorToAsinMap?.[variantKey]?.asin;
+        if (mappedAsin && dimensionValuesDisplayData) {
+          const tuple = dimensionValuesDisplayData[mappedAsin];
+          if (Array.isArray(tuple)) {
+            if (cIdx !== -1 && typeof tuple[cIdx] === 'string') {
+              matchedColor = stripHtmlTags(tuple[cIdx]).replace(/\s+/g, ' ').trim().slice(0, 60);
+            }
+            if (sIdx !== -1 && typeof tuple[sIdx] === 'string') {
+              variantSizeNorm = stripHtmlTags(tuple[sIdx]).trim().toLowerCase().replace(/\s+/g, '');
+            }
+          }
+        }
+
+        if (!matchedColor) {
+          const vKeyClean = variantKey.replace(/\s+/g, ' ').trim();
+          const vKeyLow = vKeyClean.toLowerCase();
+          matchedColor =
+            sortedAvailColors.find((col) => {
+              const colLow = col.toLowerCase();
+              if (vKeyLow === colLow || vKeyLow.startsWith(`${colLow} `) || vKeyLow.endsWith(` ${colLow}`)) {
+                return true;
+              }
+              const escaped = col.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              return new RegExp(`(?:^|[\\s/,-])${escaped}(?=$|[\\s/,-])`, 'i').test(vKeyClean);
+            }) || (availableSizes.length === 0 ? vKeyClean.slice(0, 60) : undefined);
+        }
+
+        if (!matchedColor) continue;
+        if (Object.keys(colorImages).length >= 24 && !colorImages[matchedColor]) continue;
+
+        const matchesActiveSize = Boolean(activeSizeNorm && variantSizeNorm === activeSizeNorm);
+        if (!colorImages[matchedColor] || matchesActiveSize) {
+          colorImages[matchedColor] = bestUrl;
+        }
+      }
+    }
+
+    if (color && imageUrl && !colorImages[color] && Object.keys(colorImages).length < 24) {
+      colorImages[color] = imageUrl;
+    }
+
     return {
       title,
       brand,
       imageUrl,
       priceEur,
       color,
+      availableColors,
+      colorImages,
+      size,
+      availableSizes,
       model,
       specsList,
       bullets,
@@ -1568,6 +2132,10 @@ async function startServer() {
     let title = '';
     let brand = '';
     let color = '';
+    let availableColors: string[] = [];
+    let colorImages: Record<string, string> | undefined;
+    let size = '';
+    let availableSizes: string[] = [];
     let model = amazonAsin || urlDetails.model || '';
     let imageUrl = '';
     let priceEur: number | undefined;
@@ -1674,17 +2242,43 @@ async function startServer() {
           }
         }
 
-        const candidateTitle =
-          amazonDom?.title || mobileDom?.title || ld.title || ogTitle || htmlTitle || h1Title;
-        if (candidateTitle && !isBlockedPageTitle(candidateTitle)) {
-          title = candidateTitle
+        const cleanProductTitle = (rawTitle: string): string => {
+          let t = rawTitle
             .replace(/[\u200B-\u200F\u202A-\u202E\uFEFF]/g, '')
+            .replace(/\s+/g, ' ')
             .replace(
               /\s*[:|-]\s*(?:Amazon\.it|Amazon\.com|eBay|MediaWorld|Unieuro|IKEA Italia|Euronics|Electrolux|AEG|Maisons du Monde|Zara Home|Westwing|Kave Home|Sklum)(?:\s*:\s*[^:|]+)?\s*$/i,
               ''
             )
-            .trim()
-            .slice(0, 160);
+            .trim();
+
+          const colonMatch = t.match(/^(.+?):\s+(.+)$/);
+          if (colonMatch) {
+            const head = colonMatch[1].trim();
+            const tail = colonMatch[2].trim();
+            if (
+              head.length >= 10 &&
+              (tail.length >= 25 ||
+                /(?:display|schermo|pollici|chip|processore|batteria|fotocamera|autonomia|promotion|ghz|mhz|ram|ssd|nvme|oled|qled|4k|8k|hdr|bluetooth|wi-?fi|usb|watt|ricaric|compatibil|sbloccato)/i.test(
+                  tail
+                ))
+            ) {
+              t = head;
+            }
+          }
+
+          const pipeIdx = t.indexOf(' | ');
+          if (pipeIdx >= 12 && t.length - pipeIdx > 25) {
+            t = t.slice(0, pipeIdx).trim();
+          }
+
+          return t.slice(0, 160);
+        };
+
+        const candidateTitle =
+          amazonDom?.title || mobileDom?.title || ld.title || ogTitle || htmlTitle || h1Title;
+        if (candidateTitle && !isBlockedPageTitle(candidateTitle)) {
+          title = cleanProductTitle(candidateTitle);
           extractedFrom = 'page-meta';
           blockedBySite = false;
         } else if (isBlockedPageTitle(candidateTitle)) {
@@ -1734,6 +2328,37 @@ async function startServer() {
           .trim()
           .slice(0, 60);
 
+        availableColors =
+          amazonDom?.availableColors.length
+            ? amazonDom.availableColors
+            : mobileDom?.availableColors.length
+              ? mobileDom.availableColors
+              : ld.availableColors || [];
+
+        const rawColorImages =
+          amazonDom?.colorImages && Object.keys(amazonDom.colorImages).length > 0
+            ? amazonDom.colorImages
+            : mobileDom?.colorImages && Object.keys(mobileDom.colorImages).length > 0
+              ? mobileDom.colorImages
+              : ld.colorImages;
+        colorImages = sanitizeColorImagesMap(rawColorImages);
+
+        size = (
+          amazonDom?.size ||
+          mobileDom?.size ||
+          ld.size ||
+          ''
+        )
+          .trim()
+          .slice(0, 60);
+
+        availableSizes =
+          amazonDom?.availableSizes.length
+            ? amazonDom.availableSizes
+            : mobileDom?.availableSizes.length
+              ? mobileDom.availableSizes
+              : ld.availableSizes || [];
+
         if (amazonDom?.model) {
           model = amazonDom.model;
         } else if (mobileDom?.model) {
@@ -1747,41 +2372,15 @@ async function startServer() {
         const mergedBullets =
           amazonDom?.bullets.length ? amazonDom.bullets : mobileDom?.bullets || [];
 
-        const specsLines: string[] = [];
-        if (mergedSpecsList.length) {
-          specsLines.push(...mergedSpecsList);
-        }
-        if (mergedBullets.length) {
-          for (const b of mergedBullets.slice(0, 4)) {
-            specsLines.push(`• ${b}`);
-          }
-        }
         const metaDesc =
           ld.description ||
           extractMetaContent(html, 'property', 'og:description') ||
           extractMetaContent(html, 'name', 'description');
 
-        if (specsLines.length > 0) {
-          specs = specsLines.join('\n').slice(0, 780);
+        if (mergedSpecsList.length > 0 || mergedBullets.length > 0) {
+          specs = buildBoundedSpecsText(mergedSpecsList, mergedBullets, 1850);
         } else if (metaDesc && !isBlockedPageTitle(candidateTitle)) {
-          specs = metaDesc.slice(0, 780);
-        }
-
-        if (metaDesc && !isBlockedPageTitle(candidateTitle)) {
-          const cleanMeta = metaDesc
-            .replace(/[\u200B-\u200F\u202A-\u202E\uFEFF]/g, '')
-            .replace(/\s+/g, ' ')
-            .trim();
-          const titleHead = title.slice(0, 32).toLowerCase();
-          const isRedundantAmazonTitle =
-            cleanMeta.toLowerCase().includes(': amazon.') ||
-            (titleHead.length >= 10 && cleanMeta.toLowerCase().startsWith(titleHead));
-          if (cleanMeta && !isRedundantAmazonTitle) {
-            notes = cleanMeta.slice(0, 360);
-          }
-        }
-        if (!notes && mergedBullets.length && !specs) {
-          notes = mergedBullets[0].slice(0, 360);
+          specs = truncateAtWordBoundary(metaDesc, 1850);
         }
       }
     } catch {
@@ -1803,10 +2402,13 @@ async function startServer() {
             'Usa Google Search e restituisci SOLO un oggetto JSON valido con i soli campi realmente trovati nelle fonti (ometti o lascia stringa vuota/null ciò che non trovi):',
             '- title: nome completo del prodotto in italiano (max 160 caratteri)',
             '- brand: marca ufficiale (max 60 caratteri)',
-            '- color: colore o finitura del prodotto in italiano (max 60 caratteri)',
+            '- color: colore o finitura selezionata in italiano (max 60 caratteri)',
+            '- availableColors: array JSON dei soli colori disponibili per questo prodotto se elencati nella pagina (es. ["Borgogna", "Argento", "Glacier", "Nero"])',
+            '- size: taglia, taglio memoria o capacità selezionata (es. "256 GB", "M", "42", max 60 caratteri)',
+            '- availableSizes: array JSON delle sole taglie o capacità disponibili per questo prodotto (es. ["256 GB", "512 GB", "1 TB", "2 TB"])',
             '- model: codice modello o ASIN (max 80 caratteri)',
             '- priceEur: numero prezzo attuale in EUR se chiaramente presente nella fonte (altrimenti null)',
-            '- specs: 3-5 righe sintetiche con specifiche utili dal sito: compatibilità, materiale, dimensioni, caratteristiche principali (max 750 caratteri)',
+            '- specs: 3-5 righe sintetiche con specifiche utili dal sito: compatibilità, materiale, dimensioni, caratteristiche principali (max 1600 caratteri)',
           ]
             .filter(Boolean)
             .join('\n');
@@ -1823,6 +2425,9 @@ async function startServer() {
             title?: string;
             brand?: string;
             color?: string;
+            availableColors?: string[];
+            size?: string;
+            availableSizes?: string[];
             model?: string;
             priceEur?: number | string | null;
             specs?: string;
@@ -1839,6 +2444,15 @@ async function startServer() {
             if (!color && typeof enriched.color === 'string' && enriched.color.trim()) {
               color = enriched.color.trim().slice(0, 60);
             }
+            if (availableColors.length === 0 && Array.isArray(enriched.availableColors)) {
+              availableColors = normalizeOptionList(enriched.availableColors);
+            }
+            if (!size && typeof enriched.size === 'string' && enriched.size.trim()) {
+              size = enriched.size.trim().slice(0, 60);
+            }
+            if (availableSizes.length === 0 && Array.isArray(enriched.availableSizes)) {
+              availableSizes = normalizeOptionList(enriched.availableSizes);
+            }
             if (!model && typeof enriched.model === 'string' && enriched.model.trim()) {
               model = enriched.model.trim().slice(0, 80);
             }
@@ -1846,7 +2460,7 @@ async function startServer() {
               priceEur = parsePriceNumber(enriched.priceEur);
             }
             if (!specs && typeof enriched.specs === 'string' && enriched.specs.trim()) {
-              specs = enriched.specs.trim().slice(0, 780);
+              specs = truncateAtWordBoundary(enriched.specs.trim(), 1850);
             }
           }
         }
@@ -1886,6 +2500,10 @@ async function startServer() {
       imageUrl: imageUrl || undefined,
       brand: brand || undefined,
       color: color || undefined,
+      availableColors: availableColors.length > 0 ? availableColors.slice(0, 24) : undefined,
+      colorImages,
+      size: size || undefined,
+      availableSizes: availableSizes.length > 0 ? availableSizes.slice(0, 24) : undefined,
       model: model || undefined,
       specs: specs || undefined,
       notes: notes || undefined,

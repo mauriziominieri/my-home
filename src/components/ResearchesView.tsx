@@ -13,7 +13,6 @@ import {
   ExternalLink,
   FileText,
   Filter,
-  Heart,
   Home,
   Image as ImageIcon,
   ImageOff,
@@ -26,6 +25,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Share2,
   ShoppingBag,
@@ -53,15 +53,18 @@ import {
   ShareableItemPayload,
 } from '../utils/documentVault';
 import {
-  COLOR_PRESETS,
+  findColorImageUrl,
   findColorNameForHex,
   getResearchRoomLabel,
   inferProductBrand,
   normalizeBrandName,
   normalizeResearchRoom,
+  replaceColorInTitle,
+  replaceSizeInTitle,
   RESEARCH_ROOMS,
   ResearchRoomId,
   resolveColorHex,
+  sanitizeColorImagesMap,
 } from '../utils/researchHelpers';
 import { AccessUnlockBanner } from './AccessUnlockBanner';
 import { ShareSheetModal } from './ShareSheetModal';
@@ -156,11 +159,6 @@ const STATUS_OPTIONS: {
     badgeClass: 'bg-slate-800 text-slate-200 border-slate-700',
   },
   {
-    value: 'preferito',
-    label: 'Preferito',
-    badgeClass: 'bg-fuchsia-500/15 text-fuchsia-200 border-fuchsia-400/40',
-  },
-  {
     value: 'da_acquistare',
     label: 'Da acquistare',
     badgeClass: 'bg-sky-500/15 text-sky-200 border-sky-400/40',
@@ -169,11 +167,6 @@ const STATUS_OPTIONS: {
     value: 'acquistato',
     label: 'Acquistato',
     badgeClass: 'bg-emerald-500/15 text-emerald-200 border-emerald-400/40',
-  },
-  {
-    value: 'scartato',
-    label: 'Scartato',
-    badgeClass: 'bg-rose-500/15 text-rose-200 border-rose-400/40',
   },
 ];
 
@@ -212,16 +205,33 @@ function ColorSwatchDot({
   );
 }
 
+function parseOptionalPriceInput(raw: string): number | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number.parseFloat(trimmed.replace(',', '.'));
+  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+  return Math.min(1000000, Math.round(parsed * 100) / 100);
+}
+
 function ColorFieldInput({
   value,
   onChange,
+  onCommit,
+  options,
   compact = false,
 }: {
   value: string;
   onChange: (next: string) => void;
+  onCommit?: (next: string, prev: string) => void;
+  options?: string[];
   compact?: boolean;
 }) {
+  const focusValueRef = useRef(value);
   const pickerHex = resolveColorHex(value || '#94a3b8');
+  const cleanOptions = Array.isArray(options)
+    ? options.map((o) => o.trim()).filter(Boolean)
+    : [];
+
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-1.5">
@@ -234,9 +244,12 @@ function ColorFieldInput({
             type="color"
             value={pickerHex}
             onChange={(e) => {
+              const prev = value;
               const chosen = e.target.value;
               const matchedName = findColorNameForHex(chosen);
-              onChange(matchedName || chosen);
+              const nextVal = matchedName || chosen;
+              onChange(nextVal);
+              onCommit?.(nextVal, prev);
             }}
             aria-label="Seleziona colore dalla tavolozza"
             className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
@@ -246,8 +259,18 @@ function ColorFieldInput({
           type="text"
           maxLength={60}
           value={value}
+          onFocus={() => {
+            focusValueRef.current = value;
+          }}
           onChange={(e) => onChange(e.target.value)}
-          placeholder="Es. Oro, Nero, Arancione Cosmico..."
+          onBlur={(e) => {
+            const nextVal = e.target.value.trim();
+            if (nextVal && nextVal.toLowerCase() !== focusValueRef.current.trim().toLowerCase()) {
+              onCommit?.(nextVal, focusValueRef.current);
+              focusValueRef.current = nextVal;
+            }
+          }}
+          placeholder="Es. Borgogna, Argento, Glacier, Nero..."
           className={`flex-1 min-w-0 px-2.5 ${
             compact ? 'py-1.5 bg-slate-950' : 'py-2 bg-slate-900'
           } border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500`}
@@ -263,25 +286,118 @@ function ColorFieldInput({
           </button>
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-1">
-        {COLOR_PRESETS.slice(0, 16).map((preset) => {
-          const isSelected = value.trim().toLowerCase() === preset.name.toLowerCase();
-          return (
-            <button
-              key={preset.name}
-              type="button"
-              onClick={() => onChange(preset.name)}
-              title={preset.name}
-              aria-label={`Seleziona colore ${preset.name}`}
-              className={`p-0.5 rounded-full transition-transform hover:scale-110 ${
-                isSelected ? 'ring-2 ring-sky-400 bg-slate-800' : 'opacity-85 hover:opacity-100'
-              }`}
-            >
-              <ColorSwatchDot color={preset.hex} size="sm" />
-            </button>
-          );
-        })}
+      {cleanOptions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+          {cleanOptions.map((opt) => {
+            const isSelected = value.trim().toLowerCase() === opt.toLowerCase();
+            return (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => {
+                  const prev = value;
+                  onChange(opt);
+                  onCommit?.(opt, prev);
+                  focusValueRef.current = opt;
+                }}
+                title={opt}
+                className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] rounded-md border transition-colors ${
+                  isSelected
+                    ? 'bg-sky-500/20 border-sky-400 text-slate-100 font-semibold'
+                    : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-600'
+                }`}
+              >
+                <ColorSwatchDot color={opt} size="sm" />
+                <span>{opt}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SizeFieldInput({
+  value,
+  onChange,
+  onCommit,
+  options,
+  compact = false,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  onCommit?: (next: string, prev: string) => void;
+  options?: string[];
+  compact?: boolean;
+}) {
+  const focusValueRef = useRef(value);
+  const cleanOptions = Array.isArray(options)
+    ? options.map((o) => o.trim()).filter(Boolean)
+    : [];
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <input
+          type="text"
+          maxLength={60}
+          value={value}
+          onFocus={() => {
+            focusValueRef.current = value;
+          }}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={(e) => {
+            const nextVal = e.target.value.trim();
+            if (nextVal && nextVal.toLowerCase() !== focusValueRef.current.trim().toLowerCase()) {
+              onCommit?.(nextVal, focusValueRef.current);
+              focusValueRef.current = nextVal;
+            }
+          }}
+          placeholder="Es. 256 GB, 512 GB, 1 TB, M, 42..."
+          className={`flex-1 min-w-0 px-2.5 ${
+            compact ? 'py-1.5 bg-slate-950' : 'py-2 bg-slate-900'
+          } border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500`}
+        />
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            title="Rimuovi taglia"
+            className="p-1.5 text-slate-500 hover:text-slate-200 rounded-lg hover:bg-slate-800 shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
+      {cleanOptions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+          {cleanOptions.map((opt) => {
+            const isSelected =
+              value.trim().toLowerCase().replace(/\s+/g, '') ===
+              opt.toLowerCase().replace(/\s+/g, '');
+            return (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => {
+                  const prev = value;
+                  onChange(opt);
+                  onCommit?.(opt, prev);
+                  focusValueRef.current = opt;
+                }}
+                className={`px-2 py-0.5 text-[11px] font-mono rounded-md border transition-colors ${
+                  isSelected
+                    ? 'bg-sky-500/20 border-sky-400 text-sky-200 font-semibold'
+                    : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-600'
+                }`}
+              >
+                {opt}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -315,6 +431,9 @@ function clientFallbackInspectUrl(validUrl: string): {
   category: ProductResearchCategory;
   brand?: string;
   color?: string;
+  availableColors?: string[];
+  size?: string;
+  availableSizes?: string[];
   model?: string;
   specs?: string;
   blockedBySite?: boolean;
@@ -480,13 +599,17 @@ function buildResearchSharePayload(item: ProductResearchRecord): ShareableItemPa
   const roomLabel = getResearchRoomLabel(item.room);
   const resolvedBrand = inferProductBrand(item);
   const priceText = typeof item.priceEur === 'number' ? `€ ${item.priceEur.toFixed(2)}` : 'Non indicato';
+  const paidText =
+    typeof item.paidPriceEur === 'number' ? `€ ${item.paidPriceEur.toFixed(2)}` : '';
   const lines = [
     item.title,
     resolvedBrand ? `Marca: ${resolvedBrand}` : '',
     `Negozio: ${item.store}`,
     `Prezzo: ${priceText}`,
+    paidText ? `Prezzo pagato: ${paidText}` : '',
     item.room ? `Stanza: ${roomLabel}` : '',
     item.color ? `Colore: ${item.color}` : '',
+    item.size ? `Taglia / Capacità: ${item.size}` : '',
     item.model ? `Modello / Codice: ${item.model}` : '',
     `Categoria: ${getCategoryLabel(item.category)} · Stato: ${statusLabel}`,
     `Link: ${item.url}`,
@@ -495,11 +618,11 @@ function buildResearchSharePayload(item: ProductResearchRecord): ShareableItemPa
   ].filter(Boolean);
 
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const safeHtml = `<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"/><title>${esc(item.title)}</title></head><body style="font-family:sans-serif;padding:24px;background:#0f172a;color:#f1f5f9"><h1>${esc(item.title)}</h1><p>${resolvedBrand ? `<strong>Marca:</strong> ${esc(resolvedBrand)} · ` : ''}<strong>Negozio:</strong> ${esc(item.store)}</p><p><strong>Prezzo:</strong> ${priceText}</p>${item.room ? `<p><strong>Stanza:</strong> ${esc(roomLabel)}</p>` : ''}${item.color ? `<p><strong>Colore:</strong> ${esc(item.color)}</p>` : ''}${item.model ? `<p><strong>Modello / Codice:</strong> ${esc(item.model)}</p>` : ''}<p><strong>Stato:</strong> ${esc(statusLabel)}</p><p><a href="${item.url}" style="color:#38bdf8">${esc(item.url)}</a></p>${item.specs ? `<h3>Informazioni dal sito</h3><pre style="white-space:pre-wrap;font-family:sans-serif;background:#1e293b;padding:12px;border-radius:8px">${esc(item.specs)}</pre>` : ''}${item.notes ? `<p><strong>Note:</strong> ${esc(item.notes)}</p>` : ''}</body></html>`;
+  const safeHtml = `<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"/><title>${esc(item.title)}</title></head><body style="font-family:sans-serif;padding:24px;background:#0f172a;color:#f1f5f9"><h1>${esc(item.title)}</h1><p>${resolvedBrand ? `<strong>Marca:</strong> ${esc(resolvedBrand)} · ` : ''}<strong>Negozio:</strong> ${esc(item.store)}</p><p><strong>Prezzo:</strong> ${priceText}${paidText ? ` · <strong>Pagato:</strong> ${paidText}` : ''}</p>${item.room ? `<p><strong>Stanza:</strong> ${esc(roomLabel)}</p>` : ''}${item.color ? `<p><strong>Colore:</strong> ${esc(item.color)}</p>` : ''}${item.size ? `<p><strong>Taglia / Capacità:</strong> ${esc(item.size)}</p>` : ''}${item.model ? `<p><strong>Modello / Codice:</strong> ${esc(item.model)}</p>` : ''}<p><strong>Stato:</strong> ${esc(statusLabel)}</p><p><a href="${item.url}" style="color:#38bdf8">${esc(item.url)}</a></p>${item.specs ? `<h3>Informazioni dal sito</h3><pre style="white-space:pre-wrap;font-family:sans-serif;background:#1e293b;padding:12px;border-radius:8px">${esc(item.specs)}</pre>` : ''}${item.notes ? `<p><strong>Note:</strong> ${esc(item.notes)}</p>` : ''}</body></html>`;
 
   return {
     title: item.title,
-    subtitle: `${resolvedBrand ? `${resolvedBrand} · ` : ''}${item.store} · ${priceText} · ${statusLabel}`,
+    subtitle: `${resolvedBrand ? `${resolvedBrand} · ` : ''}${item.store} · ${paidText || priceText} · ${statusLabel}`,
     cloudUrl: item.url,
     shareText: lines.join('\n'),
     fallbackFileName: `ricerca-${item.store.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.html`,
@@ -533,11 +656,18 @@ export function ResearchesView({
   const [draftStore, setDraftStore] = useState('');
   const [draftBrand, setDraftBrand] = useState('');
   const [draftColor, setDraftColor] = useState('');
+  const [draftAvailableColors, setDraftAvailableColors] = useState<string[]>([]);
+  const [draftColorImages, setDraftColorImages] = useState<Record<string, string> | undefined>(
+    undefined
+  );
+  const [draftSize, setDraftSize] = useState('');
+  const [draftAvailableSizes, setDraftAvailableSizes] = useState<string[]>([]);
   const [draftModel, setDraftModel] = useState('');
   const [draftCategory, setDraftCategory] = useState<ProductResearchCategory>('altro');
   const [draftStatus, setDraftStatus] = useState<ProductResearchStatus>('da_valutare');
   const [draftRoom, setDraftRoom] = useState<string>('');
   const [draftPrice, setDraftPrice] = useState('');
+  const [draftPaidPrice, setDraftPaidPrice] = useState('');
   const [draftImageUrl, setDraftImageUrl] = useState('');
   const [draftSpecs, setDraftSpecs] = useState('');
   const [draftNotes, setDraftNotes] = useState('');
@@ -569,15 +699,45 @@ export function ResearchesView({
   const [editStore, setEditStore] = useState('');
   const [editBrand, setEditBrand] = useState('');
   const [editColor, setEditColor] = useState('');
+  const [editAvailableColors, setEditAvailableColors] = useState<string[]>([]);
+  const [editColorImages, setEditColorImages] = useState<Record<string, string> | undefined>(
+    undefined
+  );
+  const [editSize, setEditSize] = useState('');
+  const [editAvailableSizes, setEditAvailableSizes] = useState<string[]>([]);
   const [editModel, setEditModel] = useState('');
   const [editCategory, setEditCategory] = useState<ProductResearchCategory>('altro');
   const [editStatus, setEditStatus] = useState<ProductResearchStatus>('da_valutare');
   const [editRoom, setEditRoom] = useState<string>('');
   const [editPrice, setEditPrice] = useState('');
+  const [editPaidPrice, setEditPaidPrice] = useState('');
   const [editImageUrl, setEditImageUrl] = useState('');
   const [editSpecs, setEditSpecs] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
+  const [inlinePaidEditId, setInlinePaidEditId] = useState<string | null>(null);
+  const [inlinePaidValue, setInlinePaidValue] = useState('');
+  const [pendingCardEdits, setPendingCardEdits] = useState<
+    Record<
+      string,
+      {
+        title?: string;
+        color?: string;
+        imageUrl?: string;
+        colorImages?: Record<string, string>;
+        size?: string;
+        room?: string | null;
+        status?: ProductResearchStatus;
+        paidPriceEur?: number | null;
+      }
+    >
+  >({});
+  const [savingPendingId, setSavingPendingId] = useState<string | null>(null);
+  const [lazyColorImages, setLazyColorImages] = useState<
+    Record<string, Record<string, string>>
+  >({});
+  const lazyInspectingIdsRef = useRef<Set<string>>(new Set());
+  const latestQuickColorRef = useRef<Record<string, string>>({});
 
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [expandedSpecsIds, setExpandedSpecsIds] = useState<Record<string, boolean>>({});
@@ -592,6 +752,11 @@ export function ResearchesView({
 
   const [pendingDelete, setPendingDelete] = useState<ProductResearchRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [pendingRefresh, setPendingRefresh] = useState<ProductResearchRecord | null>(null);
+  const [pendingEditSave, setPendingEditSave] = useState<{
+    item: ProductResearchRecord;
+    payload: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'>;
+  } | null>(null);
   const [shareItem, setShareItem] = useState<ShareableItemPayload | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [movedArticleIds, setMovedArticleIds] = useState<Record<string, boolean>>({});
@@ -607,7 +772,8 @@ export function ResearchesView({
     async function hydrateAttachedThumbnails() {
       const next: Record<string, string> = {};
       for (const item of researches) {
-        const hasWorkingExternalImg = Boolean(item.imageUrl) && !brokenImages[item.id];
+        const effectiveImg = pendingCardEdits[item.id]?.imageUrl ?? item.imageUrl;
+        const hasWorkingExternalImg = Boolean(effectiveImg) && !brokenImages[item.id];
         if (hasWorkingExternalImg) continue;
         const itemDocs = getDocumentsForResearch(researchDocuments, item.id);
         const imgDoc = itemDocs.find(
@@ -651,6 +817,10 @@ export function ResearchesView({
     imageUrl?: string;
     brand?: string;
     color?: string;
+    availableColors?: string[];
+    colorImages?: Record<string, string>;
+    size?: string;
+    availableSizes?: string[];
     model?: string;
     specs?: string;
     notes?: string;
@@ -673,6 +843,10 @@ export function ResearchesView({
           imageUrl?: string;
           brand?: string;
           color?: string;
+          availableColors?: string[];
+          colorImages?: Record<string, string>;
+          size?: string;
+          availableSizes?: string[];
           model?: string;
           specs?: string;
           notes?: string;
@@ -683,6 +857,13 @@ export function ResearchesView({
           ? (data.category as ProductResearchCategory)
           : 'altro';
         if (data.url && data.title && data.store) {
+          const cleanColors = Array.isArray(data.availableColors)
+            ? data.availableColors.map((c) => String(c).trim()).filter(Boolean).slice(0, 24)
+            : [];
+          const cleanSizes = Array.isArray(data.availableSizes)
+            ? data.availableSizes.map((s) => String(s).trim()).filter(Boolean).slice(0, 24)
+            : [];
+          const cleanColorImages = sanitizeColorImagesMap(data.colorImages);
           return {
             url: data.url,
             title: data.title,
@@ -695,6 +876,10 @@ export function ResearchesView({
                 : undefined,
             brand: data.brand || undefined,
             color: data.color || undefined,
+            availableColors: cleanColors.length > 0 ? cleanColors : undefined,
+            colorImages: cleanColorImages,
+            size: data.size || undefined,
+            availableSizes: cleanSizes.length > 0 ? cleanSizes : undefined,
             model: data.model || undefined,
             specs: data.specs || undefined,
             notes: data.notes || undefined,
@@ -739,6 +924,10 @@ export function ResearchesView({
         imageUrl: inspected.imageUrl,
         brand: resolvedBrand,
         color: inspected.color,
+        availableColors: inspected.availableColors,
+        colorImages: inspected.colorImages,
+        size: inspected.size,
+        availableSizes: inspected.availableSizes,
         model: inspected.model,
         specs: inspected.specs,
         notes: inspected.notes,
@@ -748,6 +937,7 @@ export function ResearchesView({
       const foundBits = [
         typeof inspected.priceEur === 'number' ? `€ ${inspected.priceEur.toFixed(2)}` : '',
         inspected.color ? `colore ${inspected.color}` : '',
+        inspected.size ? `taglia ${inspected.size}` : '',
         inspected.imageUrl ? 'immagine' : '',
         inspected.specs ? 'specifiche' : '',
       ].filter(Boolean);
@@ -785,11 +975,16 @@ export function ResearchesView({
       setDraftStore('');
       setDraftBrand('');
       setDraftColor('');
+      setDraftAvailableColors([]);
+      setDraftColorImages(undefined);
+      setDraftSize('');
+      setDraftAvailableSizes([]);
       setDraftModel('');
       setDraftCategory('altro');
       setDraftStatus('da_valutare');
       setDraftRoom('');
       setDraftPrice('');
+      setDraftPaidPrice('');
       setDraftImageUrl('');
       setDraftSpecs('');
       setDraftNotes('');
@@ -813,11 +1008,16 @@ export function ResearchesView({
       setDraftStore(inspected.store);
       setDraftBrand(resolvedBrand);
       setDraftColor(inspected.color || '');
+      setDraftAvailableColors(inspected.availableColors || []);
+      setDraftColorImages(inspected.colorImages);
+      setDraftSize(inspected.size || '');
+      setDraftAvailableSizes(inspected.availableSizes || []);
       setDraftModel(inspected.model || '');
       setDraftCategory(inspected.category);
       setDraftStatus('da_valutare');
       setDraftRoom('');
       setDraftPrice(typeof inspected.priceEur === 'number' ? String(inspected.priceEur) : '');
+      setDraftPaidPrice('');
       setDraftImageUrl(inspected.imageUrl || '');
       setDraftSpecs(inspected.specs || '');
       setDraftNotes(inspected.notes || '');
@@ -873,13 +1073,8 @@ export function ResearchesView({
       setLinkError('Titolo prodotto e negozio sono obbligatori.');
       return;
     }
-    const parsedPrice = draftPrice.trim()
-      ? Number.parseFloat(draftPrice.replace(',', '.'))
-      : undefined;
-    const validPrice =
-      parsedPrice !== undefined && Number.isFinite(parsedPrice) && parsedPrice >= 0
-        ? Math.min(1000000, Math.round(parsedPrice * 100) / 100)
-        : undefined;
+    const validPrice = parseOptionalPriceInput(draftPrice);
+    const validPaidPrice = parseOptionalPriceInput(draftPaidPrice);
     const validImg =
       draftImageUrl.trim() && /^https?:\/\/.+/.test(draftImageUrl.trim())
         ? draftImageUrl.trim().slice(0, 1000)
@@ -895,11 +1090,16 @@ export function ResearchesView({
         status: draftStatus,
         room: normalizeResearchRoom(draftRoom),
         priceEur: validPrice,
+        paidPriceEur: validPaidPrice,
         imageUrl: validImg,
         brand: draftBrand.trim() ? draftBrand.trim().slice(0, 60) : undefined,
         color: draftColor.trim() ? draftColor.trim().slice(0, 60) : undefined,
+        availableColors: draftAvailableColors.length > 0 ? draftAvailableColors : undefined,
+        colorImages: sanitizeColorImagesMap(draftColorImages),
+        size: draftSize.trim() ? draftSize.trim().slice(0, 60) : undefined,
+        availableSizes: draftAvailableSizes.length > 0 ? draftAvailableSizes : undefined,
         model: draftModel.trim() ? draftModel.trim().slice(0, 80) : undefined,
-        specs: draftSpecs.trim() ? draftSpecs.trim().slice(0, 800) : undefined,
+        specs: draftSpecs.trim() ? draftSpecs.trim().slice(0, 2000) : undefined,
         notes: draftNotes.trim() ? draftNotes.trim().slice(0, 400) : undefined,
       });
 
@@ -919,6 +1119,11 @@ export function ResearchesView({
       setLinkInput('');
       setDraftOpen(false);
       setDraftRoom('');
+      setDraftPaidPrice('');
+      setDraftAvailableColors([]);
+      setDraftColorImages(undefined);
+      setDraftSize('');
+      setDraftAvailableSizes([]);
       setDraftAttachments([]);
       setFeedback(
         `Prodotto "${cleanTitle}" salvato su Firestore${
@@ -935,63 +1140,103 @@ export function ResearchesView({
   }
 
   function startEditItem(item: ProductResearchRecord) {
+    const effective = getEffectiveItem(item);
+    setInlinePaidEditId(null);
     setEditingId(item.id);
-    setEditUrl(item.url);
-    setEditTitle(item.title);
-    setEditStore(item.store);
-    setEditBrand(normalizeBrandName(item.brand) || inferProductBrand(item) || '');
-    setEditColor(item.color || '');
-    setEditModel(item.model || '');
-    setEditCategory(item.category);
-    setEditStatus(item.status);
-    setEditRoom(normalizeResearchRoom(item.room) || '');
-    setEditPrice(typeof item.priceEur === 'number' ? String(item.priceEur) : '');
-    setEditImageUrl(item.imageUrl || '');
-    setEditSpecs(item.specs || '');
-    setEditNotes(item.notes || '');
+    setEditUrl(effective.url);
+    setEditTitle(effective.title);
+    setEditStore(effective.store);
+    setEditBrand(normalizeBrandName(effective.brand) || inferProductBrand(effective) || '');
+    setEditColor(effective.color || '');
+    setEditAvailableColors(effective.availableColors || []);
+    setEditColorImages(effective.colorImages);
+    setEditSize(effective.size || '');
+    setEditAvailableSizes(effective.availableSizes || []);
+    setEditModel(effective.model || '');
+    setEditCategory(effective.category);
+    setEditStatus(effective.status);
+    setEditRoom(normalizeResearchRoom(effective.room) || '');
+    setEditPrice(typeof effective.priceEur === 'number' ? String(effective.priceEur) : '');
+    setEditPaidPrice(
+      typeof effective.paidPriceEur === 'number' ? String(effective.paidPriceEur) : ''
+    );
+    setEditImageUrl(effective.imageUrl || '');
+    setEditSpecs(effective.specs || '');
+    setEditNotes(effective.notes || '');
   }
 
-  async function handleSaveEdit(e: React.FormEvent, item: ProductResearchRecord) {
+  function handleRequestSaveEdit(e: React.FormEvent, item: ProductResearchRecord) {
     e.preventDefault();
     if (readOnly) return;
+    setLinkError(null);
+    setFeedback(null);
     const validUrl = normalizeUrlInput(editUrl);
-    if (!validUrl || !editTitle.trim() || !editStore.trim()) return;
-    const parsedPrice = editPrice.trim()
-      ? Number.parseFloat(editPrice.replace(',', '.'))
-      : undefined;
-    const validPrice =
-      parsedPrice !== undefined && Number.isFinite(parsedPrice) && parsedPrice >= 0
-        ? Math.min(1000000, Math.round(parsedPrice * 100) / 100)
-        : undefined;
+    if (!validUrl) {
+      setLinkError('Inserisci un link URL valido (es. https://...) prima di salvare.');
+      return;
+    }
+    const cleanTitle = editTitle.trim();
+    const cleanStore = editStore.trim();
+    if (!cleanTitle || !cleanStore) {
+      setLinkError('Titolo prodotto e negozio sono obbligatori.');
+      return;
+    }
+    const validPrice = parseOptionalPriceInput(editPrice);
+    const validPaidPrice = parseOptionalPriceInput(editPaidPrice);
     const validImg =
       editImageUrl.trim() && /^https?:\/\/.+/.test(editImageUrl.trim())
         ? editImageUrl.trim().slice(0, 1000)
         : undefined;
 
-    setSavingEdit(true);
-    try {
-      await onUpdateResearch(item.id, {
+    setPendingEditSave({
+      item,
+      payload: {
         url: validUrl,
-        title: editTitle.trim().slice(0, 160),
-        store: editStore.trim().slice(0, 60),
+        title: cleanTitle.slice(0, 160),
+        store: cleanStore.slice(0, 60),
         category: editCategory,
         status: editStatus,
         room: normalizeResearchRoom(editRoom),
         priceEur: validPrice,
+        paidPriceEur: validPaidPrice,
         imageUrl: validImg,
         brand: editBrand.trim() ? editBrand.trim().slice(0, 60) : undefined,
         color: editColor.trim() ? editColor.trim().slice(0, 60) : undefined,
+        availableColors: editAvailableColors.length > 0 ? editAvailableColors : undefined,
+        colorImages: sanitizeColorImagesMap(editColorImages),
+        size: editSize.trim() ? editSize.trim().slice(0, 60) : undefined,
+        availableSizes: editAvailableSizes.length > 0 ? editAvailableSizes : undefined,
         model: editModel.trim() ? editModel.trim().slice(0, 80) : undefined,
-        specs: editSpecs.trim() ? editSpecs.trim().slice(0, 800) : undefined,
+        specs: editSpecs.trim() ? editSpecs.trim().slice(0, 2000) : undefined,
         notes: editNotes.trim() ? editNotes.trim().slice(0, 400) : undefined,
-      });
-      setEditingId(null);
+      },
+    });
+  }
+
+  async function confirmSaveEdit() {
+    if (!pendingEditSave || readOnly) return;
+    const { item, payload } = pendingEditSave;
+    setSavingEdit(true);
+    setLinkError(null);
+    try {
+      await onUpdateResearch(item.id, payload);
+      setPendingEditSave(null);
+      setEditingId((curr) => (curr === item.id ? null : curr));
+      handleDiscardPendingCardEdit(item.id);
       setBrokenImages((prev) => {
         if (!prev[item.id]) return prev;
         const next = { ...prev };
         delete next[item.id];
         return next;
       });
+      setFeedback(`Prodotto "${payload.title}" aggiornato e salvato su Firestore.`);
+    } catch (err) {
+      setLinkError(
+        err instanceof Error
+          ? err.message
+          : 'Errore durante il salvataggio delle modifiche su Firestore.'
+      );
+      setPendingEditSave(null);
     } finally {
       setSavingEdit(false);
     }
@@ -1015,6 +1260,7 @@ export function ResearchesView({
         brand: inspected.brand || item.brand,
         specs: nextSpecs,
       });
+      const nextColorImages = inspected.colorImages || item.colorImages;
       await onUpdateResearch(item.id, {
         url: item.url,
         title: nextTitle,
@@ -1023,13 +1269,28 @@ export function ResearchesView({
         status: item.status,
         room: normalizeResearchRoom(item.room),
         priceEur: inspected.priceEur ?? item.priceEur,
+        paidPriceEur: item.paidPriceEur,
         imageUrl: inspected.imageUrl || item.imageUrl,
         brand: nextBrand,
         color: inspected.color || item.color,
+        availableColors:
+          inspected.availableColors && inspected.availableColors.length > 0
+            ? inspected.availableColors
+            : item.availableColors,
+        colorImages: sanitizeColorImagesMap(nextColorImages),
+        size: inspected.size || item.size,
+        availableSizes:
+          inspected.availableSizes && inspected.availableSizes.length > 0
+            ? inspected.availableSizes
+            : item.availableSizes,
         model: inspected.model || item.model,
         specs: nextSpecs,
         notes: item.notes || inspected.notes,
       });
+      if (inspected.colorImages) {
+        setLazyColorImages((prev) => ({ ...prev, [item.id]: inspected.colorImages! }));
+      }
+      handleDiscardPendingCardEdit(item.id);
       setBrokenImages((prev) => {
         if (!prev[item.id]) return prev;
         const next = { ...prev };
@@ -1052,45 +1313,281 @@ export function ResearchesView({
     }
   }
 
-  async function handleQuickStatusChange(
+  function buildPreservedUpdatePayload(
     item: ProductResearchRecord,
-    nextStatus: ProductResearchStatus
-  ) {
-    if (readOnly) return;
-    await onUpdateResearch(item.id, {
-      url: item.url,
-      title: item.title,
-      store: item.store,
-      category: item.category,
-      status: nextStatus,
-      room: normalizeResearchRoom(item.room),
-      priceEur: item.priceEur,
-      imageUrl: item.imageUrl,
-      brand: item.brand,
-      color: item.color,
-      model: item.model,
-      specs: item.specs,
-      notes: item.notes,
-    });
-  }
-
-  async function handleQuickRoomChange(item: ProductResearchRecord, nextRoomRaw: string) {
-    if (readOnly) return;
-    await onUpdateResearch(item.id, {
+    overrides: Partial<Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'>>
+  ): Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'> {
+    return {
       url: item.url,
       title: item.title,
       store: item.store,
       category: item.category,
       status: item.status,
-      room: normalizeResearchRoom(nextRoomRaw),
+      room: normalizeResearchRoom(item.room),
       priceEur: item.priceEur,
+      paidPriceEur: item.paidPriceEur,
       imageUrl: item.imageUrl,
       brand: item.brand,
       color: item.color,
+      availableColors: item.availableColors,
+      colorImages: item.colorImages,
+      size: item.size,
+      availableSizes: item.availableSizes,
       model: item.model,
       specs: item.specs,
       notes: item.notes,
+      ...overrides,
+    };
+  }
+
+  function getEffectiveItem(item: ProductResearchRecord): ProductResearchRecord {
+    const pending = pendingCardEdits[item.id];
+    const resolvedColorImages =
+      pending?.colorImages || item.colorImages || lazyColorImages[item.id];
+    if (!pending && !resolvedColorImages) return item;
+    return {
+      ...item,
+      title: pending?.title !== undefined ? pending.title : item.title,
+      color: pending?.color !== undefined ? pending.color : item.color,
+      imageUrl: pending?.imageUrl !== undefined ? pending.imageUrl : item.imageUrl,
+      colorImages: resolvedColorImages,
+      size: pending?.size !== undefined ? pending.size : item.size,
+      room:
+        pending?.room !== undefined
+          ? normalizeResearchRoom(pending.room || undefined)
+          : item.room,
+      status: pending?.status !== undefined ? pending.status : item.status,
+      paidPriceEur:
+        pending?.paidPriceEur !== undefined
+          ? pending.paidPriceEur === null
+            ? undefined
+            : pending.paidPriceEur
+          : item.paidPriceEur,
+    };
+  }
+
+  function stageCardEdit(
+    item: ProductResearchRecord,
+    patch: {
+      title?: string;
+      color?: string;
+      imageUrl?: string;
+      colorImages?: Record<string, string>;
+      size?: string;
+      room?: string | null;
+      status?: ProductResearchStatus;
+      paidPriceEur?: number | null;
+    }
+  ) {
+    setFeedback(null);
+    setLinkError(null);
+    setPendingCardEdits((prev) => {
+      const merged = { ...(prev[item.id] || {}), ...patch };
+      const nextTitle = merged.title !== undefined ? merged.title : item.title;
+      const nextColor = merged.color !== undefined ? merged.color : item.color;
+      const nextImageUrl = merged.imageUrl !== undefined ? merged.imageUrl : item.imageUrl;
+      const nextSize = merged.size !== undefined ? merged.size : item.size;
+      const nextRoom =
+        merged.room !== undefined
+          ? normalizeResearchRoom(merged.room || undefined)
+          : normalizeResearchRoom(item.room);
+      const nextStatus = merged.status !== undefined ? merged.status : item.status;
+      const nextPaid =
+        merged.paidPriceEur !== undefined
+          ? merged.paidPriceEur === null
+            ? undefined
+            : merged.paidPriceEur
+          : item.paidPriceEur;
+
+      const isIdentical =
+        nextTitle === item.title &&
+        nextColor === item.color &&
+        nextImageUrl === item.imageUrl &&
+        nextSize === item.size &&
+        nextRoom === normalizeResearchRoom(item.room) &&
+        nextStatus === item.status &&
+        nextPaid === item.paidPriceEur;
+
+      if (isIdentical) {
+        if (!prev[item.id]) return prev;
+        const copy = { ...prev };
+        delete copy[item.id];
+        return copy;
+      }
+
+      return { ...prev, [item.id]: merged };
     });
+  }
+
+  function handleDiscardPendingCardEdit(itemId: string) {
+    setPendingCardEdits((prev) => {
+      if (!prev[itemId]) return prev;
+      const next = { ...prev };
+      delete next[itemId];
+      return next;
+    });
+    if (inlinePaidEditId === itemId) {
+      setInlinePaidEditId(null);
+      setInlinePaidValue('');
+    }
+  }
+
+  function requestCommitPendingCardEdit(item: ProductResearchRecord) {
+    if (readOnly) return;
+    if (!pendingCardEdits[item.id]) return;
+    setLinkError(null);
+    setFeedback(null);
+    const effective = getEffectiveItem(item);
+    setPendingEditSave({
+      item,
+      payload: buildPreservedUpdatePayload(item, {
+        title: effective.title,
+        color: effective.color,
+        imageUrl: effective.imageUrl,
+        colorImages: effective.colorImages,
+        size: effective.size,
+        room: normalizeResearchRoom(effective.room),
+        status: effective.status,
+        paidPriceEur: effective.paidPriceEur,
+      }),
+    });
+  }
+
+  async function handleCommitPendingCardEdit(item: ProductResearchRecord) {
+    if (readOnly) return;
+    if (!pendingCardEdits[item.id]) return;
+    const effective = getEffectiveItem(item);
+    setSavingPendingId(item.id);
+    setLinkError(null);
+    try {
+      await onUpdateResearch(
+        item.id,
+        buildPreservedUpdatePayload(item, {
+          title: effective.title,
+          color: effective.color,
+          imageUrl: effective.imageUrl,
+          colorImages: effective.colorImages,
+          size: effective.size,
+          room: normalizeResearchRoom(effective.room),
+          status: effective.status,
+          paidPriceEur: effective.paidPriceEur,
+        })
+      );
+      setPendingCardEdits((prev) => {
+        if (!prev[item.id]) return prev;
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
+      setFeedback(`Modifiche a "${effective.title}" salvate su Firestore.`);
+    } catch (err) {
+      setLinkError(
+        err instanceof Error ? err.message : 'Errore durante il salvataggio delle modifiche.'
+      );
+    } finally {
+      setSavingPendingId(null);
+    }
+  }
+
+  function handleQuickStatusChange(
+    item: ProductResearchRecord,
+    nextStatus: ProductResearchStatus
+  ) {
+    if (readOnly) return;
+    stageCardEdit(item, { status: nextStatus });
+  }
+
+  function handleQuickRoomChange(item: ProductResearchRecord, nextRoomRaw: string) {
+    if (readOnly) return;
+    const normalized = normalizeResearchRoom(nextRoomRaw);
+    stageCardEdit(item, { room: normalized ?? null });
+  }
+
+  function handleQuickColorSelect(item: ProductResearchRecord, nextColor: string) {
+    if (readOnly) return;
+    latestQuickColorRef.current[item.id] = nextColor;
+    const effective = getEffectiveItem(item);
+    const nextTitle = replaceColorInTitle(
+      effective.title,
+      nextColor,
+      effective.color,
+      item.availableColors
+    ).slice(0, 160);
+    const knownColorImages = effective.colorImages || lazyColorImages[item.id];
+    const nextVariantImg = findColorImageUrl(knownColorImages, nextColor);
+    if (nextVariantImg) {
+      setBrokenImages((prev) => {
+        if (!prev[item.id]) return prev;
+        const copy = { ...prev };
+        delete copy[item.id];
+        return copy;
+      });
+    }
+    stageCardEdit(item, {
+      color: nextColor,
+      title: nextTitle,
+      ...(nextVariantImg ? { imageUrl: nextVariantImg } : {}),
+    });
+
+    if (
+      (!knownColorImages || Object.keys(knownColorImages).length === 0) &&
+      /^https?:\/\/.+/.test(item.url) &&
+      !lazyInspectingIdsRef.current.has(item.id)
+    ) {
+      lazyInspectingIdsRef.current.add(item.id);
+      void inspectProductLink(item.url)
+        .then((inspected) => {
+          if (!inspected.colorImages || Object.keys(inspected.colorImages).length === 0) return;
+          setLazyColorImages((prev) => ({ ...prev, [item.id]: inspected.colorImages! }));
+          const targetColor = latestQuickColorRef.current[item.id] || nextColor;
+          const fetchedVariantImg = findColorImageUrl(inspected.colorImages, targetColor);
+          if (fetchedVariantImg) {
+            setBrokenImages((prev) => {
+              if (!prev[item.id]) return prev;
+              const copy = { ...prev };
+              delete copy[item.id];
+              return copy;
+            });
+          }
+          setPendingCardEdits((prev) => {
+            if (!prev[item.id]) return prev;
+            return {
+              ...prev,
+              [item.id]: {
+                ...prev[item.id],
+                colorImages: inspected.colorImages,
+                ...(fetchedVariantImg ? { imageUrl: fetchedVariantImg } : {}),
+              },
+            };
+          });
+        })
+        .catch(() => {
+          // ignore lazy variant image lookup failures
+        })
+        .finally(() => {
+          lazyInspectingIdsRef.current.delete(item.id);
+        });
+    }
+  }
+
+  function handleQuickSizeSelect(item: ProductResearchRecord, nextSize: string) {
+    if (readOnly) return;
+    const effective = getEffectiveItem(item);
+    const nextTitle = replaceSizeInTitle(
+      effective.title,
+      nextSize,
+      effective.size,
+      item.availableSizes
+    ).slice(0, 160);
+    stageCardEdit(item, { size: nextSize, title: nextTitle });
+  }
+
+  function handleSaveInlinePaidPrice(item: ProductResearchRecord) {
+    if (readOnly) return;
+    const validPaid = parseOptionalPriceInput(inlinePaidValue);
+    stageCardEdit(item, { paidPriceEur: validPaid ?? null });
+    setInlinePaidEditId(null);
+    setInlinePaidValue('');
   }
 
   function handleChangeViewMode(mode: ResearchViewMode) {
@@ -1184,10 +1681,21 @@ export function ResearchesView({
     try {
       const id = pendingDelete.id;
       if (editingId === id) setEditingId(null);
+      handleDiscardPendingCardEdit(id);
       await onDeleteResearch(id);
       setPendingDelete(null);
     } finally {
       setDeleting(false);
+    }
+  }
+
+  async function confirmRefreshResearch() {
+    if (!pendingRefresh || readOnly) return;
+    try {
+      await handleRefreshFromSite(pendingRefresh);
+      setPendingRefresh(null);
+    } catch {
+      setPendingRefresh(null);
     }
   }
 
@@ -1208,11 +1716,15 @@ export function ResearchesView({
     setMovingId(item.id);
     setLinkError(null);
     try {
-      await onMoveToArticles(item);
+      const effective = getEffectiveItem(item);
+      if (pendingCardEdits[item.id]) {
+        await handleCommitPendingCardEdit(item);
+      }
+      await onMoveToArticles(effective);
       setMovedArticleIds((prev) => ({ ...prev, [item.id]: true }));
       const attachedCount = getDocumentsForResearch(researchDocuments, item.id).length;
       setFeedback(
-        `"${item.title}" aggiunto alla pagina Articoli${
+        `"${effective.title}" aggiunto alla pagina Articoli${
           attachedCount > 0 ? ` con ${attachedCount} file allegati` : ''
         }.`
       );
@@ -1248,27 +1760,30 @@ export function ResearchesView({
   }, [researches]);
 
   const kpis = useMemo(() => {
-    let favorites = 0;
     let toBuy = 0;
     let purchased = 0;
     let pendingBudget = 0;
+    let purchasedSpent = 0;
     for (const r of researches) {
-      if (r.status === 'preferito') favorites += 1;
       if (r.status === 'da_acquistare') toBuy += 1;
-      if (r.status === 'acquistato') purchased += 1;
+      if (r.status === 'acquistato') {
+        purchased += 1;
+        const paidOrListed = typeof r.paidPriceEur === 'number' ? r.paidPriceEur : r.priceEur;
+        if (typeof paidOrListed === 'number') purchasedSpent += paidOrListed;
+      }
       if (
         typeof r.priceEur === 'number' &&
-        (r.status === 'preferito' || r.status === 'da_acquistare' || r.status === 'da_valutare')
+        (r.status === 'da_acquistare' || r.status === 'da_valutare')
       ) {
         pendingBudget += r.priceEur;
       }
     }
     return {
       total: researches.length,
-      favorites,
       toBuy,
       purchased,
       pendingBudget,
+      purchasedSpent,
     };
   }, [researches]);
 
@@ -1302,6 +1817,9 @@ export function ResearchesView({
         item.brand || '',
         item.store,
         item.color || '',
+        ...(item.availableColors || []),
+        item.size || '',
+        ...(item.availableSizes || []),
         item.model || '',
         item.specs || '',
         item.notes || '',
@@ -1564,10 +2082,20 @@ export function ResearchesView({
                   </div>
                   <div className="text-[11px] text-slate-400 mt-0.5 flex flex-wrap items-center gap-2">
                     <span>{draftPrice ? `€ ${draftPrice}` : 'Prezzo non rilevato'}</span>
+                    {draftPaidPrice && (
+                      <span className="text-emerald-300 font-medium">
+                        · Pagato € {draftPaidPrice}
+                      </span>
+                    )}
                     {draftColor && (
                       <span className="inline-flex items-center gap-1" title={`Colore: ${draftColor}`}>
                         <ColorSwatchDot color={draftColor} size="sm" />
                         <span>{draftColor}</span>
+                      </span>
+                    )}
+                    {draftSize && (
+                      <span className="px-1.5 py-0.2 rounded bg-slate-800 text-slate-200 font-mono text-[10px]">
+                        {draftSize}
                       </span>
                     )}
                     {draftBrand && <span>· {draftBrand}</span>}
@@ -1577,7 +2105,7 @@ export function ResearchesView({
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              <div className="sm:col-span-2 lg:col-span-2 space-y-1">
+              <div className="sm:col-span-2 lg:col-span-1 space-y-1">
                 <label className="block text-slate-400">Titolo prodotto *</label>
                 <input
                   type="text"
@@ -1591,7 +2119,7 @@ export function ResearchesView({
               </div>
 
               <div className="space-y-1">
-                <label className="block text-slate-400">Prezzo (€ opzionale)</label>
+                <label className="block text-slate-400">Prezzo online (€ opz.)</label>
                 <input
                   type="number"
                   step="0.01"
@@ -1601,6 +2129,20 @@ export function ResearchesView({
                   onChange={(e) => setDraftPrice(e.target.value)}
                   placeholder="Es. 58.00"
                   className="w-full px-3 py-2 font-mono bg-slate-900 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-slate-400">Prezzo pagato all&apos;acquisto (€ opz.)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="1000000"
+                  value={draftPaidPrice}
+                  onChange={(e) => setDraftPaidPrice(e.target.value)}
+                  placeholder="Es. 49.90"
+                  className="w-full px-3 py-2 font-mono bg-slate-900 border border-slate-800 rounded-lg text-emerald-200 focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
@@ -1649,7 +2191,7 @@ export function ResearchesView({
                   maxLength={80}
                   value={draftModel}
                   onChange={(e) => setDraftModel(e.target.value)}
-                  placeholder="Es. B0HJ9QMTYM"
+                  placeholder="Es. B0HJB2DT3H"
                   className="w-full px-3 py-2 font-mono bg-slate-900 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
                 />
               </div>
@@ -1714,7 +2256,35 @@ export function ResearchesView({
 
               <div className="sm:col-span-2 lg:col-span-3 space-y-1">
                 <label className="block text-slate-400">Colore / Finitura</label>
-                <ColorFieldInput value={draftColor} onChange={setDraftColor} />
+                <ColorFieldInput
+                  value={draftColor}
+                  onChange={setDraftColor}
+                  onCommit={(nextVal, prevVal) => {
+                    setDraftTitle((prev) =>
+                      replaceColorInTitle(prev, nextVal, prevVal, draftAvailableColors).slice(
+                        0,
+                        160
+                      )
+                    );
+                    const variantImg = findColorImageUrl(draftColorImages, nextVal);
+                    if (variantImg) setDraftImageUrl(variantImg);
+                  }}
+                  options={draftAvailableColors}
+                />
+              </div>
+
+              <div className="sm:col-span-2 lg:col-span-3 space-y-1">
+                <label className="block text-slate-400">Taglia / Capacità</label>
+                <SizeFieldInput
+                  value={draftSize}
+                  onChange={setDraftSize}
+                  onCommit={(nextVal, prevVal) =>
+                    setDraftTitle((prev) =>
+                      replaceSizeInTitle(prev, nextVal, prevVal, draftAvailableSizes).slice(0, 160)
+                    )
+                  }
+                  options={draftAvailableSizes}
+                />
               </div>
 
               <div className="sm:col-span-2 lg:col-span-3 space-y-1">
@@ -1723,7 +2293,7 @@ export function ResearchesView({
                 </label>
                 <textarea
                   rows={3}
-                  maxLength={800}
+                  maxLength={2000}
                   value={draftSpecs}
                   onChange={(e) => setDraftSpecs(e.target.value)}
                   placeholder="Es. Materiale: TechWoven&#10;Modelli compatibili: iPhone 18 Pro Max&#10;Dimensioni: 19,8 x 9,6 x 2,1 cm"
@@ -1832,11 +2402,11 @@ export function ResearchesView({
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
           <div className="text-[11px] text-slate-400 flex items-center gap-1">
-            <Heart className="w-3 h-3 text-fuchsia-400" />
-            Preferiti &amp; Da acquistare
+            <ShoppingBag className="w-3 h-3 text-sky-400" />
+            Da acquistare
           </div>
           <div className="text-xl font-bold font-mono text-sky-300 mt-1 tabular-nums">
-            {kpis.favorites + kpis.toBuy}
+            {kpis.toBuy}
           </div>
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
@@ -1850,255 +2420,497 @@ export function ResearchesView({
             <BookmarkCheck className="w-3 h-3 text-emerald-400" />
             Acquistati
           </div>
-          <div className="text-xl font-bold font-mono text-emerald-300 mt-1 tabular-nums">
-            {kpis.purchased}
+          <div className="flex items-baseline gap-2 mt-1">
+            <span className="text-xl font-bold font-mono text-emerald-300 tabular-nums">
+              {kpis.purchased}
+            </span>
+            {kpis.purchasedSpent > 0 && (
+              <span className="text-xs font-mono text-emerald-200/80 tabular-nums">
+                · € {kpis.purchasedSpent.toFixed(2)}
+              </span>
+            )}
           </div>
         </div>
       </div>
 
       {/* Filters, Room & View Mode Switcher */}
-      <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              placeholder="Cerca nei prodotti salvati (nome, marca, negozio, stanza, colore, modello...)"
-              className="w-full pl-8 pr-3 py-1.5 text-xs text-slate-100 bg-slate-950 border border-slate-800 rounded-lg focus:outline-none focus:border-sky-500"
-            />
-          </div>
+      {(() => {
+        const activeFilterCount =
+          (searchText.trim() ? 1 : 0) +
+          (statusFilter !== 'all' ? 1 : 0) +
+          (roomFilter !== 'all' ? 1 : 0) +
+          (categoryFilter !== 'all' ? 1 : 0) +
+          (brandFilter !== 'all' ? 1 : 0) +
+          (storeFilter !== 'all' ? 1 : 0);
+        const hasActiveFilters = activeFilterCount > 0;
 
-          <select
-            value={roomFilter}
-            onChange={(e) =>
-              setRoomFilter(e.target.value as 'all' | 'none' | ResearchRoomId)
-            }
-            aria-label="Filtra per stanza"
-            className="px-2.5 py-1.5 text-xs text-slate-200 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
-          >
-            <option value="all">Tutte le stanze</option>
-            <option value="none">Nessuna stanza</option>
-            {RESEARCH_ROOMS.map((rm) => (
-              <option key={rm.id} value={rm.id}>
-                {rm.label}
-              </option>
-            ))}
-          </select>
+        const resetAllFilters = () => {
+          setSearchText('');
+          setStatusFilter('all');
+          setRoomFilter('all');
+          setCategoryFilter('all');
+          setBrandFilter('all');
+          setStoreFilter('all');
+        };
 
-          <select
-            value={categoryFilter}
-            onChange={(e) =>
-              setCategoryFilter(e.target.value as 'all' | ProductResearchCategory)
-            }
-            aria-label="Filtra per categoria"
-            className="px-2.5 py-1.5 text-xs text-slate-200 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
-          >
-            <option value="all">Tutte le categorie</option>
-            {CATEGORY_OPTIONS.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </select>
+        const activeChips: Array<{ key: string; label: string; onClear: () => void }> = [];
+        if (searchText.trim()) {
+          activeChips.push({
+            key: 'search',
+            label: `Ricerca: "${searchText.trim()}"`,
+            onClear: () => setSearchText(''),
+          });
+        }
+        if (roomFilter !== 'all') {
+          activeChips.push({
+            key: 'room',
+            label: `Stanza: ${
+              roomFilter === 'none'
+                ? 'Nessuna stanza'
+                : getResearchRoomLabel(roomFilter) || roomFilter
+            }`,
+            onClear: () => setRoomFilter('all'),
+          });
+        }
+        if (categoryFilter !== 'all') {
+          activeChips.push({
+            key: 'category',
+            label: `Categoria: ${getCategoryLabel(categoryFilter)}`,
+            onClear: () => setCategoryFilter('all'),
+          });
+        }
+        if (brandFilter !== 'all') {
+          activeChips.push({
+            key: 'brand',
+            label: `Marca: ${brandFilter === 'none' ? 'Senza marca' : brandFilter}`,
+            onClear: () => setBrandFilter('all'),
+          });
+        }
+        if (storeFilter !== 'all') {
+          activeChips.push({
+            key: 'store',
+            label: `Negozio: ${storeFilter}`,
+            onClear: () => setStoreFilter('all'),
+          });
+        }
+        if (statusFilter !== 'all') {
+          activeChips.push({
+            key: 'status',
+            label: `Stato: ${getStatusMeta(statusFilter).label}`,
+            onClear: () => setStatusFilter('all'),
+          });
+        }
 
-          <select
-            value={brandFilter}
-            onChange={(e) => setBrandFilter(e.target.value)}
-            aria-label="Filtra per marca"
-            className="px-2.5 py-1.5 text-xs text-slate-200 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
-          >
-            <option value="all">Tutte le marche</option>
-            {hasUnbranded && <option value="none">Senza marca</option>}
-            {availableBrands.map((br) => (
-              <option key={br} value={br}>
-                {br}
-              </option>
-            ))}
-          </select>
+        const selectBaseClass =
+          'px-2.5 py-1.5 text-xs rounded-lg border [color-scheme:dark] focus:outline-none focus:border-sky-500 transition-colors';
+        const selectInactiveClass = 'text-slate-200 bg-slate-950 border-slate-800 hover:border-slate-700';
+        const selectActiveClass =
+          'text-sky-100 font-semibold bg-sky-500/15 border-sky-400/80 ring-1 ring-sky-400/25';
 
-          <select
-            value={storeFilter}
-            onChange={(e) => setStoreFilter(e.target.value)}
-            aria-label="Filtra per negozio"
-            className="px-2.5 py-1.5 text-xs text-slate-200 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
-          >
-            <option value="all">Tutti i negozi</option>
-            {availableStores.map((st) => (
-              <option key={st} value={st}>
-                {st}
-              </option>
-            ))}
-          </select>
-
-          <div className="inline-flex items-center gap-1 shrink-0">
-            <select
-              value={sortField}
-              onChange={(e) => setSortField(e.target.value as ResearchSortField)}
-              aria-label="Ordina articoli per"
-              className="px-2.5 py-1.5 text-xs text-slate-200 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
+        return (
+          <>
+            <section
+              className={`bg-slate-900 border rounded-xl p-4 space-y-3 transition-colors ${
+                hasActiveFilters
+                  ? 'border-sky-500/45 ring-1 ring-sky-500/15'
+                  : 'border-slate-800'
+              }`}
             >
-              <option value="title">Ordina: Nome</option>
-              <option value="price">Ordina: Prezzo</option>
-              <option value="brand">Ordina: Marca</option>
-              <option value="store">Ordina: Negozio</option>
-              <option value="room">Ordina: Stanza</option>
-              <option value="status">Ordina: Stato</option>
-              <option value="recent">Ordina: Data aggiunta</option>
-            </select>
-            <button
-              type="button"
-              onClick={() =>
-                setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))
-              }
-              title={
-                sortDirection === 'asc'
-                  ? 'Ordine crescente — clicca per invertire in decrescente'
-                  : 'Ordine decrescente — clicca per invertire in crescente'
-              }
-              aria-label="Inverti ordine"
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-200 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-lg transition-colors whitespace-nowrap"
-            >
-              {sortDirection === 'asc' ? (
-                <>
-                  <ArrowUpNarrowWide className="w-3.5 h-3.5 text-sky-400" />
-                  <span>Crescente</span>
-                </>
-              ) : (
-                <>
-                  <ArrowDownWideNarrow className="w-3.5 h-3.5 text-sky-400" />
-                  <span>Decrescente</span>
-                </>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="relative flex-1 min-w-[200px]">
+                  <Search
+                    className={`w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 ${
+                      searchText.trim() ? 'text-sky-300' : 'text-slate-400'
+                    }`}
+                  />
+                  <input
+                    type="text"
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    placeholder="Cerca nei prodotti salvati (nome, marca, negozio, stanza, colore, modello...)"
+                    className={`w-full pl-8 ${
+                      searchText.trim() ? 'pr-8' : 'pr-3'
+                    } py-1.5 text-xs text-slate-100 rounded-lg border focus:outline-none focus:border-sky-500 transition-colors ${
+                      searchText.trim()
+                        ? 'bg-sky-500/10 border-sky-400/80 ring-1 ring-sky-400/20'
+                        : 'bg-slate-950 border-slate-800'
+                    }`}
+                  />
+                  {searchText.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchText('')}
+                      aria-label="Cancella ricerca"
+                      title="Cancella testo di ricerca"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-100"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                <select
+                  value={roomFilter}
+                  onChange={(e) =>
+                    setRoomFilter(e.target.value as 'all' | 'none' | ResearchRoomId)
+                  }
+                  aria-label="Filtra per stanza"
+                  className={`${selectBaseClass} ${
+                    roomFilter !== 'all' ? selectActiveClass : selectInactiveClass
+                  }`}
+                >
+                  <option value="all">Tutte le stanze</option>
+                  <option value="none">Nessuna stanza</option>
+                  {RESEARCH_ROOMS.map((rm) => (
+                    <option key={rm.id} value={rm.id}>
+                      {rm.label}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={categoryFilter}
+                  onChange={(e) =>
+                    setCategoryFilter(e.target.value as 'all' | ProductResearchCategory)
+                  }
+                  aria-label="Filtra per categoria"
+                  className={`${selectBaseClass} ${
+                    categoryFilter !== 'all' ? selectActiveClass : selectInactiveClass
+                  }`}
+                >
+                  <option value="all">Tutte le categorie</option>
+                  {CATEGORY_OPTIONS.map((c) => (
+                    <option key={c.value} value={c.value}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={brandFilter}
+                  onChange={(e) => setBrandFilter(e.target.value)}
+                  aria-label="Filtra per marca"
+                  className={`${selectBaseClass} ${
+                    brandFilter !== 'all' ? selectActiveClass : selectInactiveClass
+                  }`}
+                >
+                  <option value="all">Tutte le marche</option>
+                  {hasUnbranded && <option value="none">Senza marca</option>}
+                  {availableBrands.map((br) => (
+                    <option key={br} value={br}>
+                      {br}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={storeFilter}
+                  onChange={(e) => setStoreFilter(e.target.value)}
+                  aria-label="Filtra per negozio"
+                  className={`${selectBaseClass} ${
+                    storeFilter !== 'all' ? selectActiveClass : selectInactiveClass
+                  }`}
+                >
+                  <option value="all">Tutti i negozi</option>
+                  {availableStores.map((st) => (
+                    <option key={st} value={st}>
+                      {st}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="inline-flex items-center gap-1 shrink-0">
+                  <select
+                    value={sortField}
+                    onChange={(e) => setSortField(e.target.value as ResearchSortField)}
+                    aria-label="Ordina articoli per"
+                    className="px-2.5 py-1.5 text-xs text-slate-200 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                  >
+                    <option value="title">Ordina: Nome</option>
+                    <option value="price">Ordina: Prezzo</option>
+                    <option value="brand">Ordina: Marca</option>
+                    <option value="store">Ordina: Negozio</option>
+                    <option value="room">Ordina: Stanza</option>
+                    <option value="status">Ordina: Stato</option>
+                    <option value="recent">Ordina: Data aggiunta</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+                    }
+                    title={
+                      sortDirection === 'asc'
+                        ? 'Ordine crescente — clicca per invertire in decrescente'
+                        : 'Ordine decrescente — clicca per invertire in crescente'
+                    }
+                    aria-label="Inverti ordine"
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-200 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-lg transition-colors whitespace-nowrap"
+                  >
+                    {sortDirection === 'asc' ? (
+                      <>
+                        <ArrowUpNarrowWide className="w-3.5 h-3.5 text-sky-400" />
+                        <span>Crescente</span>
+                      </>
+                    ) : (
+                      <>
+                        <ArrowDownWideNarrow className="w-3.5 h-3.5 text-sky-400" />
+                        <span>Decrescente</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Grid vs List View Toggle */}
+                <div
+                  role="group"
+                  aria-label="Modalità visualizzazione"
+                  className="inline-flex items-center p-0.5 bg-slate-950 border border-slate-800 rounded-lg shrink-0"
+                >
+                  <button
+                    type="button"
+                    onClick={() => handleChangeViewMode('grid')}
+                    aria-pressed={viewMode === 'grid'}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                      viewMode === 'grid'
+                        ? 'bg-sky-500 text-slate-950 font-semibold'
+                        : 'text-slate-400 hover:text-slate-100'
+                    }`}
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                    <span>Griglia</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleChangeViewMode('list')}
+                    aria-pressed={viewMode === 'list'}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                      viewMode === 'list'
+                        ? 'bg-sky-500 text-slate-950 font-semibold'
+                        : 'text-slate-400 hover:text-slate-100'
+                    }`}
+                  >
+                    <List className="w-3.5 h-3.5" />
+                    <span>Elenco</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="inline-flex items-center gap-1 text-[11px] text-slate-400 mr-1">
+                    <Filter className="w-3 h-3" />
+                    Stato:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter('all')}
+                    className={`px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors ${
+                      statusFilter === 'all'
+                        ? 'bg-sky-500 text-slate-950 border-sky-400'
+                        : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-100'
+                    }`}
+                  >
+                    Tutti ({researches.length})
+                  </button>
+                  {STATUS_OPTIONS.map((st) => {
+                    const count = researches.filter((r) => r.status === st.value).length;
+                    return (
+                      <button
+                        key={st.value}
+                        type="button"
+                        onClick={() => setStatusFilter(st.value)}
+                        className={`px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors ${
+                          statusFilter === st.value
+                            ? 'bg-sky-500 text-slate-950 border-sky-400'
+                            : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-100'
+                        }`}
+                      >
+                        {st.label} ({count})
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {hasActiveFilters && (
+                  <button
+                    type="button"
+                    onClick={resetAllFilters}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 text-[11px] font-semibold text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/50 rounded-lg transition-colors whitespace-nowrap"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Azzera filtri ({activeFilterCount})</span>
+                  </button>
+                )}
+              </div>
+
+              {hasActiveFilters && (
+                <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-800/80 text-[11px]">
+                  <span className="text-sky-300 font-medium mr-1">
+                    Filtri attivi ({filteredResearches.length}/{researches.length} risultati):
+                  </span>
+                  {activeChips.map((chip) => (
+                    <button
+                      key={chip.key}
+                      type="button"
+                      onClick={chip.onClear}
+                      title="Clicca per rimuovere questo filtro"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/50 text-sky-200 font-medium transition-colors"
+                    >
+                      <span>{chip.label}</span>
+                      <X className="w-3 h-3 text-sky-300" />
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={resetAllFilters}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 transition-colors ml-auto"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Torna a tutti</span>
+                  </button>
+                </div>
               )}
-            </button>
-          </div>
+            </section>
 
-          {/* Grid vs List View Toggle */}
-          <div
-            role="group"
-            aria-label="Modalità visualizzazione"
-            className="inline-flex items-center p-0.5 bg-slate-950 border border-slate-800 rounded-lg shrink-0"
-          >
-            <button
-              type="button"
-              onClick={() => handleChangeViewMode('grid')}
-              aria-pressed={viewMode === 'grid'}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
-                viewMode === 'grid'
-                  ? 'bg-sky-500 text-slate-950 font-semibold'
-                  : 'text-slate-400 hover:text-slate-100'
-              }`}
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              <span>Griglia</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleChangeViewMode('list')}
-              aria-pressed={viewMode === 'list'}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
-                viewMode === 'list'
-                  ? 'bg-sky-500 text-slate-950 font-semibold'
-                  : 'text-slate-400 hover:text-slate-100'
-              }`}
-            >
-              <List className="w-3.5 h-3.5" />
-              <span>Elenco</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="inline-flex items-center gap-1 text-[11px] text-slate-400 mr-1">
-            <Filter className="w-3 h-3" />
-            Stato:
-          </span>
-          <button
-            type="button"
-            onClick={() => setStatusFilter('all')}
-            className={`px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors ${
-              statusFilter === 'all'
-                ? 'bg-sky-500 text-slate-950 border-sky-400'
-                : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-100'
-            }`}
-          >
-            Tutti ({researches.length})
-          </button>
-          {STATUS_OPTIONS.map((st) => {
-            const count = researches.filter((r) => r.status === st.value).length;
-            return (
-              <button
-                key={st.value}
-                type="button"
-                onClick={() => setStatusFilter(st.value)}
-                className={`px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors ${
-                  statusFilter === st.value
-                    ? 'bg-sky-500 text-slate-950 border-sky-400'
-                    : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-100'
-                }`}
-              >
-                {st.label} ({count})
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* Product Grid / List */}
-      {filteredResearches.length === 0 ? (
-        <div className="bg-slate-900 border border-dashed border-slate-800 rounded-xl p-8 text-center space-y-2">
-          <ShoppingBag className="w-8 h-8 text-slate-600 mx-auto" />
-          <p className="text-sm font-medium text-slate-300">
-            {researches.length === 0
-              ? 'Nessun prodotto salvato nelle ricerche'
-              : 'Nessun prodotto corrisponde ai filtri selezionati'}
-          </p>
-          <p className="text-xs text-slate-500">
-            {researches.length === 0
-              ? 'Incolla un link prodotto nella barra in alto per aggiungerlo subito a questa pagina.'
-              : 'Prova a cambiare ricerca, stanza, negozio o stato.'}
-          </p>
-        </div>
-      ) : (
+            {/* Product Grid / List */}
+            {filteredResearches.length === 0 ? (
+              <div className="bg-slate-900 border border-dashed border-slate-800 rounded-xl p-8 text-center space-y-3">
+                <ShoppingBag className="w-8 h-8 text-slate-600 mx-auto" />
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-slate-300">
+                    {researches.length === 0
+                      ? 'Nessun prodotto salvato nelle ricerche'
+                      : 'Nessun prodotto corrisponde ai filtri selezionati'}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {researches.length === 0
+                      ? 'Incolla un link prodotto nella barra in alto per aggiungerlo subito a questa pagina.'
+                      : 'Prova a cambiare ricerca, stanza, negozio o stato.'}
+                  </p>
+                </div>
+                {hasActiveFilters && (
+                  <button
+                    type="button"
+                    onClick={resetAllFilters}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Rimuovi tutti i filtri</span>
+                  </button>
+                )}
+              </div>
+            ) : (
         <div
           className={
             viewMode === 'list'
-              ? 'flex flex-col gap-4'
-              : 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 items-stretch'
+              ? 'flex flex-col gap-3'
+              : 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 items-stretch'
           }
         >
           {filteredResearches.map((item) => {
-            const statusMeta = getStatusMeta(item.status);
+            const effectiveItem = getEffectiveItem(item);
+            const hasPendingEdits = Boolean(pendingCardEdits[item.id]);
+            const isSavingPendingHere = savingPendingId === item.id;
+            const statusMeta = getStatusMeta(effectiveItem.status);
             const isEditing = editingId === item.id;
             const imageBroken = Boolean(brokenImages[item.id]);
             const itemDocs = getDocumentsForResearch(researchDocuments, item.id);
             const specEntries = parseSpecLines(item.specs);
+            const filteredSpecEntries = specEntries.filter((entry) => {
+              const lowL = entry.label?.toLowerCase();
+              const isColorSpec = lowL === 'colore' || lowL === 'color';
+              if (
+                isColorSpec &&
+                effectiveItem.color &&
+                entry.value.trim().toLowerCase() === effectiveItem.color.trim().toLowerCase()
+              ) {
+                return false;
+              }
+              const isSizeSpec =
+                lowL === 'taglia' || lowL === 'size' || lowL === 'capacità memoria';
+              if (
+                isSizeSpec &&
+                effectiveItem.size &&
+                entry.value.trim().toLowerCase() === effectiveItem.size.trim().toLowerCase()
+              ) {
+                return false;
+              }
+              return true;
+            });
             const isSpecsExpanded = Boolean(expandedSpecsIds[item.id]);
-            const gridDefaultVisibleCount = 5;
-            const visibleSpecs =
-              viewMode === 'list' || isSpecsExpanded
-                ? specEntries
-                : specEntries.slice(0, gridDefaultVisibleCount);
+            const defaultVisibleSpecsCount = viewMode === 'list' ? 3 : 5;
+            const visibleSpecs = isSpecsExpanded
+              ? filteredSpecEntries
+              : filteredSpecEntries.slice(0, defaultVisibleSpecsCount);
+            const visibleTechSpecs = visibleSpecs.filter(
+              (entry) => !entry.isBullet && Boolean(entry.label)
+            );
+            const visibleDescriptiveSpecs = visibleSpecs.filter(
+              (entry) => entry.isBullet || !entry.label
+            );
             const isAttachOpen = Boolean(openAttachmentsIds[item.id]) || itemDocs.length > 0;
             const selectedAttachType = cardAttachType[item.id] || 'scontrino_fattura';
             const isUploadingHere = uploadingResearchId === item.id;
             const isRefreshingHere = refreshingId === item.id;
-            const currentRoomId = normalizeResearchRoom(item.room) || '';
-            const currentRoomLabel = getResearchRoomLabel(item.room);
+            const currentRoomId = normalizeResearchRoom(effectiveItem.room) || '';
+            const currentRoomLabel = getResearchRoomLabel(effectiveItem.room);
 
             if (isEditing && !readOnly) {
+              const origBrand = (
+                normalizeBrandName(item.brand) ||
+                inferProductBrand(item) ||
+                ''
+              ).trim();
+              const origPrice =
+                typeof item.priceEur === 'number' ? Math.round(item.priceEur * 100) / 100 : undefined;
+              const origPaid =
+                typeof item.paidPriceEur === 'number'
+                  ? Math.round(item.paidPriceEur * 100) / 100
+                  : undefined;
+              const nextPrice = parseOptionalPriceInput(editPrice);
+              const nextPaid = parseOptionalPriceInput(editPaidPrice);
+              const normalizedEditUrl = normalizeUrlInput(editUrl) || editUrl.trim();
+              const normalizedOrigUrl = normalizeUrlInput(item.url) || item.url.trim();
+              const isEditFormDirty =
+                editTitle.trim() !== item.title.trim() ||
+                normalizedEditUrl !== normalizedOrigUrl ||
+                editStore.trim() !== item.store.trim() ||
+                editBrand.trim() !== origBrand ||
+                editColor.trim() !== (item.color || '').trim() ||
+                editSize.trim() !== (item.size || '').trim() ||
+                editModel.trim() !== (item.model || '').trim() ||
+                editCategory !== item.category ||
+                editStatus !== item.status ||
+                (normalizeResearchRoom(editRoom) || '') !== (normalizeResearchRoom(item.room) || '') ||
+                nextPrice !== origPrice ||
+                nextPaid !== origPaid ||
+                editImageUrl.trim() !== (item.imageUrl || '').trim() ||
+                editSpecs.trim() !== (item.specs || '').trim() ||
+                editNotes.trim() !== (item.notes || '').trim();
+
               return (
                 <form
                   key={item.id}
-                  onSubmit={(e) => void handleSaveEdit(e, item)}
-                  className="bg-slate-900 border border-sky-500/50 rounded-xl p-4 space-y-2.5 text-xs"
+                  onSubmit={(e) => {
+                    if (!isEditFormDirty) {
+                      e.preventDefault();
+                      return;
+                    }
+                    handleRequestSaveEdit(e, item);
+                  }}
+                  className={`bg-slate-900 border border-sky-500/50 rounded-xl p-4 space-y-2.5 text-xs ${
+                    viewMode === 'list' ? '' : 'sm:col-span-2'
+                  }`}
                 >
                   <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                     <span className="font-semibold text-sky-300">Modifica prodotto</span>
                     <button
                       type="button"
-                      onClick={() => setEditingId(null)}
+                      onClick={() => {
+                        setPendingEditSave(null);
+                        setEditingId(null);
+                      }}
                       className="text-slate-400 hover:text-slate-100"
                     >
                       <X className="w-4 h-4" />
@@ -2139,7 +2951,7 @@ export function ResearchesView({
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-slate-400">Prezzo (€)</label>
+                      <label className="text-slate-400">Prezzo online (€)</label>
                       <input
                         type="number"
                         step="0.01"
@@ -2148,6 +2960,19 @@ export function ResearchesView({
                         value={editPrice}
                         onChange={(e) => setEditPrice(e.target.value)}
                         className="w-full px-2.5 py-1.5 font-mono bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-slate-400">Prezzo pagato (€)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="1000000"
+                        value={editPaidPrice}
+                        onChange={(e) => setEditPaidPrice(e.target.value)}
+                        placeholder="Pagato..."
+                        className="w-full px-2.5 py-1.5 font-mono bg-slate-950 border border-slate-800 rounded-lg text-emerald-200"
                       />
                     </div>
                     <div className="space-y-1">
@@ -2217,7 +3042,7 @@ export function ResearchesView({
                         ))}
                       </select>
                     </div>
-                    <div className="space-y-1">
+                    <div className="col-span-2 space-y-1">
                       <label className="text-slate-400">URL Immagine</label>
                       <input
                         type="text"
@@ -2230,20 +3055,52 @@ export function ResearchesView({
                   </div>
                   <div className="space-y-1">
                     <label className="text-slate-400">Colore (scegli o scrivi)</label>
-                    <ColorFieldInput value={editColor} onChange={setEditColor} compact />
+                    <ColorFieldInput
+                      value={editColor}
+                      onChange={setEditColor}
+                      onCommit={(nextVal, prevVal) => {
+                        setEditTitle((prev) =>
+                          replaceColorInTitle(prev, nextVal, prevVal, editAvailableColors).slice(
+                            0,
+                            160
+                          )
+                        );
+                        const variantImg = findColorImageUrl(editColorImages, nextVal);
+                        if (variantImg) setEditImageUrl(variantImg);
+                      }}
+                      options={editAvailableColors}
+                      compact
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-slate-400">Taglia / Capacità</label>
+                    <SizeFieldInput
+                      value={editSize}
+                      onChange={setEditSize}
+                      onCommit={(nextVal, prevVal) =>
+                        setEditTitle((prev) =>
+                          replaceSizeInTitle(prev, nextVal, prevVal, editAvailableSizes).slice(
+                            0,
+                            160
+                          )
+                        )
+                      }
+                      options={editAvailableSizes}
+                      compact
+                    />
                   </div>
                   <div className="space-y-1">
                     <label className="text-slate-400">Specifiche &amp; Info dal sito</label>
                     <textarea
                       rows={3}
-                      maxLength={800}
+                      maxLength={2000}
                       value={editSpecs}
                       onChange={(e) => setEditSpecs(e.target.value)}
                       className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 resize-y"
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-slate-400">Note personali / Descrizione</label>
+                    <label className="text-slate-400">Note personali (opzionale)</label>
                     <textarea
                       rows={2}
                       maxLength={400}
@@ -2255,301 +3112,714 @@ export function ResearchesView({
                   <div className="flex items-center justify-end gap-2 pt-1">
                     <button
                       type="button"
-                      onClick={() => setEditingId(null)}
-                      className="px-2.5 py-1 text-slate-400 hover:text-slate-100"
-                    >
-                      Annulla
-                    </button>
-                    <button
-                      type="submit"
                       disabled={savingEdit}
-                      className="px-3 py-1 font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg disabled:opacity-50"
+                      onClick={() => {
+                        setPendingEditSave(null);
+                        setEditingId(null);
+                      }}
+                      className="px-3 py-1.5 text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
                     >
-                      {savingEdit ? 'Salvo...' : 'Salva'}
+                      {isEditFormDirty ? 'Annulla' : 'Chiudi'}
                     </button>
+                    {isEditFormDirty && (
+                      <button
+                        type="submit"
+                        disabled={savingEdit}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg disabled:opacity-50 transition-colors"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>{savingEdit ? 'Salvataggio...' : 'Salva modifiche'}</span>
+                      </button>
+                    )}
                   </div>
                 </form>
               );
             }
 
-            const hasExternal = Boolean(item.imageUrl) && !imageBroken;
+            const hasExternal = Boolean(effectiveItem.imageUrl) && !imageBroken;
             const displayThumb = hasExternal
-              ? item.imageUrl!
+              ? effectiveItem.imageUrl!
               : attachedThumbnails[item.id] || '';
-            const effectiveBrand = inferProductBrand(item);
+            const effectiveBrand = inferProductBrand(effectiveItem);
             const hasUniqueNotes =
               Boolean(item.notes) &&
               (!item.specs || !item.specs.includes(item.notes!.slice(0, 40)));
-            const hasExtraDetails =
-              viewMode === 'grid' && specEntries.length > gridDefaultVisibleCount;
+            const hasExtraDetails = filteredSpecEntries.length > defaultVisibleSpecsCount;
+            const isList = viewMode === 'list';
+
+            const renderRoomControl = () =>
+              readOnly ? (
+                <span className="inline-flex items-center gap-1 text-[11px] text-slate-300 shrink-0">
+                  <Home className="w-3 h-3 text-sky-400" />
+                  <span>{currentRoomLabel}</span>
+                </span>
+              ) : (
+                <label className="inline-flex items-center gap-1 text-[11px] text-slate-300 shrink-0">
+                  <Home className="w-3 h-3 text-sky-400 shrink-0" />
+                  <select
+                    aria-label={`Stanza per ${effectiveItem.title}`}
+                    value={currentRoomId}
+                    onChange={(e) => handleQuickRoomChange(item, e.target.value)}
+                    className="bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-md px-2 py-0.5 text-[11px] text-slate-200 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                  >
+                    <option value="">Nessuna stanza</option>
+                    {RESEARCH_ROOMS.map((rm) => (
+                      <option key={rm.id} value={rm.id}>
+                        {rm.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              );
+
+            const renderPaidPriceControl = () =>
+              inlinePaidEditId === item.id && !readOnly ? (
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="1000000"
+                    autoFocus
+                    value={inlinePaidValue}
+                    onChange={(e) => setInlinePaidValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleSaveInlinePaidPrice(item);
+                      } else if (e.key === 'Escape') {
+                        setInlinePaidEditId(null);
+                      }
+                    }}
+                    placeholder="Pagato €"
+                    className="w-24 px-2 py-0.5 text-[11px] font-mono bg-slate-950 border border-emerald-500/60 rounded text-emerald-200 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleSaveInlinePaidPrice(item)}
+                    className="px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-500 text-slate-950 rounded hover:bg-emerald-400"
+                  >
+                    OK
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInlinePaidEditId(null)}
+                    className="p-0.5 text-slate-500 hover:text-slate-200"
+                    aria-label="Annulla prezzo pagato"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ) : typeof effectiveItem.paidPriceEur === 'number' ? (
+                readOnly ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-mono font-semibold text-sky-300 whitespace-nowrap">
+                    Pagato: € {effectiveItem.paidPriceEur.toFixed(2)}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInlinePaidEditId(item.id);
+                      setInlinePaidValue(String(effectiveItem.paidPriceEur));
+                    }}
+                    title="Modifica prezzo pagato all'acquisto"
+                    className="inline-flex items-center gap-1 text-[11px] font-mono font-semibold text-sky-300 hover:text-sky-200 whitespace-nowrap"
+                  >
+                    <span>Pagato: € {effectiveItem.paidPriceEur.toFixed(2)}</span>
+                    <Pencil className="w-2.5 h-2.5 opacity-70" />
+                  </button>
+                )
+              ) : !readOnly ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInlinePaidEditId(item.id);
+                    setInlinePaidValue(
+                      typeof item.priceEur === 'number' ? String(item.priceEur) : ''
+                    );
+                  }}
+                  className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-400 hover:text-emerald-300 whitespace-nowrap"
+                >
+                  <Plus className="w-2.5 h-2.5" />
+                  <span>Prezzo pagato</span>
+                </button>
+              ) : null;
+
+            const renderStatusControl = () =>
+              readOnly ? (
+                <span
+                  className={`px-2 py-0.5 text-[11px] font-semibold rounded-md border whitespace-nowrap ${statusMeta.badgeClass}`}
+                >
+                  {statusMeta.label}
+                </span>
+              ) : (
+                <select
+                  aria-label={`Stato per ${effectiveItem.title}`}
+                  value={effectiveItem.status}
+                  onChange={(e) =>
+                    handleQuickStatusChange(item, e.target.value as ProductResearchStatus)
+                  }
+                  className={`px-2 py-1 text-[11px] font-semibold rounded-md border [color-scheme:dark] focus:outline-none ${statusMeta.badgeClass}`}
+                >
+                  {STATUS_OPTIONS.map((st) => (
+                    <option
+                      key={st.value}
+                      value={st.value}
+                      className="bg-slate-900 text-slate-100"
+                    >
+                      {st.label}
+                    </option>
+                  ))}
+                </select>
+              );
+
+            const renderCardActionButtons = (inListFooter: boolean) => (
+              <div
+                className={
+                  inListFooter
+                    ? 'pt-2 px-3 pb-2.5 border-t border-slate-800/80 flex flex-wrap items-center justify-start gap-1.5 bg-slate-950/30'
+                    : 'pt-2.5 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2'
+                }
+              >
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    Apri pagina
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyUrl(item)}
+                    title="Copia link"
+                    className="inline-flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors whitespace-nowrap"
+                  >
+                    {copiedId === item.id ? (
+                      <Check className="w-3 h-3 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-3 h-3" />
+                    )}
+                    <span>{copiedId === item.id ? 'Copiato' : 'Copia'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShareItem(buildResearchSharePayload(effectiveItem))}
+                    title="Condividi prodotto"
+                    className="p-1.5 text-slate-400 hover:text-sky-300 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                  </button>
+
+                  {inListFooter && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOpenAttachmentsIds((prev) => ({
+                          ...prev,
+                          [item.id]: !isAttachOpen,
+                        }))
+                      }
+                      className="inline-flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium text-slate-300 hover:text-sky-300 bg-slate-800/80 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap"
+                    >
+                      <Paperclip className="w-3 h-3 text-sky-400" />
+                      <span>Allegati ({itemDocs.length})</span>
+                    </button>
+                  )}
+                  {inListFooter && !readOnly && (
+                    <button
+                      type="button"
+                      disabled={isUploadingHere}
+                      onClick={() => triggerCardFileUpload(item)}
+                      className="inline-flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap"
+                    >
+                      {isUploadingHere ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Upload className="w-3 h-3" />
+                      )}
+                      <span>{isUploadingHere ? 'Carico...' : 'Allega'}</span>
+                    </button>
+                  )}
+                </div>
+
+                {!readOnly && (
+                  <div
+                    className={`flex items-center gap-1 ${
+                      inListFooter ? 'sm:pl-1.5 sm:border-l sm:border-slate-800' : ''
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      disabled={isRefreshingHere}
+                      onClick={() => setPendingRefresh(item)}
+                      aria-label="Aggiorna prodotto"
+                      title="Aggiorna prodotto dal sito (foto, prezzo, colore e dettagli)"
+                      className="p-1.5 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      <RefreshCw
+                        className={`w-3.5 h-3.5 ${
+                          isRefreshingHere ? 'animate-spin text-sky-400' : ''
+                        }`}
+                      />
+                    </button>
+                    {onMoveToArticles && (
+                      <button
+                        type="button"
+                        disabled={movingId === item.id || movedArticleIds[item.id]}
+                        onClick={() => void handleMoveItemToArticles(item)}
+                        title="Copia questo prodotto (con dettagli e allegati) nella pagina Articoli di casa"
+                        className={`inline-flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium rounded-lg border transition-colors whitespace-nowrap ${
+                          movedArticleIds[item.id]
+                            ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
+                            : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:text-emerald-300 hover:border-emerald-500/40'
+                        }`}
+                      >
+                        <PackagePlus className="w-3 h-3" />
+                        <span>
+                          {movedArticleIds[item.id] ? 'In Articoli' : 'Ad Articoli'}
+                        </span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => startEditItem(item)}
+                      aria-label="Modifica prodotto"
+                      title="Modifica"
+                      className="p-1.5 text-slate-400 hover:text-sky-400 hover:bg-slate-800 rounded-lg transition-colors"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPendingDelete(item)}
+                      aria-label="Elimina prodotto"
+                      title="Elimina"
+                      className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
 
             return (
               <article
                 key={item.id}
-                className={
-                  viewMode === 'list'
-                    ? 'bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl overflow-hidden flex flex-col sm:flex-row transition-colors'
-                    : 'bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl overflow-hidden flex flex-col transition-colors'
-                }
+                className={`bg-slate-900 border rounded-xl overflow-hidden flex flex-col transition-colors ${
+                  hasPendingEdits
+                    ? 'border-amber-400/70 ring-1 ring-amber-400/20'
+                    : 'border-slate-800 hover:border-slate-700'
+                }`}
               >
-                {/* Product Media Showcase */}
-                {displayThumb ? (
-                  <a
-                    href={item.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className={
-                      viewMode === 'list'
-                        ? 'group relative h-48 sm:h-auto sm:w-52 md:w-60 sm:min-h-[12rem] bg-white border-b sm:border-b-0 sm:border-r border-slate-800/80 flex items-center justify-center p-4 overflow-hidden shrink-0'
-                        : 'group relative h-56 w-full bg-white border-b border-slate-800/80 flex items-center justify-center p-5 overflow-hidden shrink-0'
-                    }
-                  >
-                    <img
-                      src={displayThumb}
-                      alt={item.title}
-                      referrerPolicy="no-referrer"
-                      onError={() => {
-                        if (hasExternal) {
-                          setBrokenImages((prev) => ({ ...prev, [item.id]: true }));
-                        }
-                      }}
-                      className="max-h-full max-w-full object-contain transition-transform duration-200 group-hover:scale-[1.03]"
-                    />
-                  </a>
-                ) : (
-                  <div
-                    className={
-                      viewMode === 'list'
-                        ? 'relative h-44 sm:h-auto sm:w-52 md:w-60 sm:min-h-[12rem] bg-gradient-to-b from-slate-800/40 to-slate-950/90 border-b sm:border-b-0 sm:border-r border-slate-800 flex flex-col items-center justify-center gap-2.5 p-4 text-center shrink-0'
-                        : 'relative h-56 w-full bg-gradient-to-b from-slate-800/40 to-slate-950/90 border-b border-slate-800 flex flex-col items-center justify-center gap-2.5 p-5 text-center shrink-0'
-                    }
-                  >
+                <div className={isList ? 'flex flex-col sm:flex-row flex-1 min-w-0' : 'flex flex-col flex-1 min-w-0'}>
+                  {/* Product Media Showcase */}
+                  {displayThumb ? (
                     <a
                       href={item.url}
                       target="_blank"
                       rel="noreferrer"
-                      className="flex flex-col items-center gap-1.5 text-slate-400 hover:text-sky-300 transition-colors"
+                      className={
+                        isList
+                          ? 'group relative h-44 w-full sm:w-36 md:w-40 sm:h-36 sm:self-start sm:m-2.5 sm:rounded-lg bg-white border-b sm:border border-slate-800/80 flex items-center justify-center p-1.5 overflow-hidden shrink-0'
+                          : 'group relative h-56 w-full bg-white border-b border-slate-800/80 flex items-center justify-center p-2.5 overflow-hidden shrink-0'
+                      }
                     >
-                      {item.imageUrl ? (
-                        <ImageOff className="w-8 h-8 text-slate-500" />
-                      ) : (
-                        <ShoppingBag className="w-8 h-8 text-slate-500" />
-                      )}
-                      <span className="text-xs font-semibold text-slate-300">{item.store}</span>
-                      <span className="text-[11px] text-slate-500">
-                        {item.imageUrl
-                          ? 'Immagine non disponibile dal sito'
-                          : 'Anteprima foto non disponibile'}
-                      </span>
+                      <img
+                        src={displayThumb}
+                        alt={effectiveItem.title}
+                        referrerPolicy="no-referrer"
+                        onError={() => {
+                          if (hasExternal) {
+                            setBrokenImages((prev) => ({ ...prev, [item.id]: true }));
+                          }
+                        }}
+                        className="w-full h-full object-contain transition-transform duration-200 group-hover:scale-[1.03]"
+                      />
                     </a>
-                    {!readOnly && (
-                      <button
-                        type="button"
-                        disabled={isUploadingHere}
-                        onClick={() => triggerCardFileUpload(item, 'targhetta_pnc')}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-sky-300 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg transition-colors disabled:opacity-50"
+                  ) : (
+                    <div
+                      className={
+                        isList
+                          ? 'relative h-36 w-full sm:w-36 md:w-40 sm:h-36 sm:self-start sm:m-2.5 sm:rounded-lg bg-gradient-to-b from-slate-800/40 to-slate-950/90 border-b sm:border border-slate-800 flex flex-col items-center justify-center gap-1.5 p-2.5 text-center shrink-0'
+                          : 'relative h-56 w-full bg-gradient-to-b from-slate-800/40 to-slate-950/90 border-b border-slate-800 flex flex-col items-center justify-center gap-2.5 p-4 text-center shrink-0'
+                      }
+                    >
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex flex-col items-center gap-1 text-slate-400 hover:text-sky-300 transition-colors"
                       >
-                        <Upload className="w-3 h-3" />
-                        <span>{isUploadingHere ? 'Carico...' : 'Carica foto'}</span>
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {/* Card Body */}
-                <div className="p-4 flex-1 flex flex-col gap-3 min-w-0">
-                  {/* 1. Brand · Store · Category + Room */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-medium text-slate-400">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
-                      {effectiveBrand && (
-                        <span
-                          className="inline-flex items-center gap-1 text-sky-300 font-semibold"
-                          title={`Marca: ${effectiveBrand}`}
+                        {effectiveItem.imageUrl ? (
+                          <ImageOff className={isList ? 'w-6 h-6 text-slate-500' : 'w-8 h-8 text-slate-500'} />
+                        ) : (
+                          <ShoppingBag className={isList ? 'w-6 h-6 text-slate-500' : 'w-8 h-8 text-slate-500'} />
+                        )}
+                        <span className="text-xs font-semibold text-slate-300">{item.store}</span>
+                        <span className="text-[10px] text-slate-500 leading-tight">
+                          {effectiveItem.imageUrl
+                            ? 'Immagine non disponibile'
+                            : 'Anteprima foto non disponibile'}
+                        </span>
+                      </a>
+                      {!readOnly && (
+                        <button
+                          type="button"
+                          disabled={isUploadingHere}
+                          onClick={() => triggerCardFileUpload(item, 'targhetta_pnc')}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-sky-300 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg transition-colors disabled:opacity-50"
                         >
-                          <Tag className="w-3 h-3 shrink-0" />
-                          <span>{effectiveBrand}</span>
-                        </span>
-                      )}
-                      {(!effectiveBrand ||
-                        effectiveBrand.toLowerCase() !== item.store.toLowerCase()) && (
-                        <span
-                          className="inline-flex items-center gap-1 text-slate-200 font-medium"
-                          title={`Negozio: ${item.store}`}
-                        >
-                          <Store className="w-3 h-3 text-slate-400 shrink-0" />
-                          <span>{item.store}</span>
-                        </span>
-                      )}
-                      <span className="text-slate-600" aria-hidden="true">
-                        ·
-                      </span>
-                      <span>{getCategoryLabel(item.category)}</span>
-                    </div>
-
-                    {readOnly ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] text-slate-300 shrink-0">
-                        <Home className="w-3 h-3 text-sky-400" />
-                        <span>{currentRoomLabel}</span>
-                      </span>
-                    ) : (
-                      <label className="inline-flex items-center gap-1 text-[11px] text-slate-300 shrink-0">
-                        <Home className="w-3 h-3 text-sky-400 shrink-0" />
-                        <select
-                          aria-label={`Stanza per ${item.title}`}
-                          value={currentRoomId}
-                          onChange={(e) => void handleQuickRoomChange(item, e.target.value)}
-                          className="bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-md px-2 py-0.5 text-[11px] text-slate-200 [color-scheme:dark] focus:outline-none focus:border-sky-500"
-                        >
-                          <option value="">Nessuna stanza</option>
-                          {RESEARCH_ROOMS.map((rm) => (
-                            <option key={rm.id} value={rm.id}>
-                              {rm.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    )}
-                  </div>
-
-                  {/* 2. Full Product Title / Description (no ugly ellipsis truncation) */}
-                  <a
-                    href={item.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block text-[15px] font-semibold text-slate-100 hover:text-sky-300 leading-snug break-words"
-                  >
-                    {item.title}
-                  </a>
-
-                  {/* 3. Color Swatch Dot + Model Code */}
-                  {(item.color || item.model) && (
-                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-400">
-                      {item.color && (
-                        <span
-                          className="inline-flex items-center gap-1.5 text-slate-200 font-medium"
-                          title={`Colore: ${item.color}`}
-                        >
-                          <ColorSwatchDot color={item.color} size="md" />
-                          <span>{item.color}</span>
-                        </span>
-                      )}
-                      {item.color && item.model && (
-                        <span className="text-slate-600" aria-hidden="true">
-                          ·
-                        </span>
-                      )}
-                      {item.model && (
-                        <span className="font-mono text-[11px] text-slate-400">
-                          Cod. {item.model}
-                        </span>
+                          <Upload className="w-3 h-3" />
+                          <span>{isUploadingHere ? 'Carico...' : 'Carica foto'}</span>
+                        </button>
                       )}
                     </div>
                   )}
 
-                  {/* 4. Aligned Price + Status Row */}
-                  <div className="flex items-center justify-between gap-2 py-2.5 border-y border-slate-800/80">
-                    {typeof item.priceEur === 'number' ? (
-                      <span className="font-mono text-lg font-bold text-emerald-300 tabular-nums">
-                        € {item.priceEur.toFixed(2)}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-slate-500">Prezzo non rilevato</span>
-                    )}
+                  {/* Card Body */}
+                  <div
+                    className={
+                      isList
+                        ? 'p-3 sm:py-2.5 sm:pr-3 sm:pl-0.5 flex-1 flex flex-col gap-2 min-w-0'
+                        : 'p-3.5 flex-1 flex flex-col gap-2.5 min-w-0'
+                    }
+                  >
+                  {isList ? (
+                    /* LIST MODE HEADER: Meta + Title + Room on left, Price + Paid + Status compactly on right */
+                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-2 pb-2 border-b border-slate-800/80">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-slate-400">
+                          {effectiveBrand && (
+                            <span
+                              className="inline-flex items-center gap-1 text-sky-300 font-semibold"
+                              title={`Marca: ${effectiveBrand}`}
+                            >
+                              <Tag className="w-3 h-3 shrink-0" />
+                              <span>{effectiveBrand}</span>
+                            </span>
+                          )}
+                          {(!effectiveBrand ||
+                            effectiveBrand.toLowerCase() !== item.store.toLowerCase()) && (
+                            <span
+                              className="inline-flex items-center gap-1 text-slate-200 font-medium"
+                              title={`Negozio: ${item.store}`}
+                            >
+                              <Store className="w-3 h-3 text-slate-400 shrink-0" />
+                              <span>{item.store}</span>
+                            </span>
+                          )}
+                          <span className="text-slate-600" aria-hidden="true">
+                            ·
+                          </span>
+                          <span>{getCategoryLabel(item.category)}</span>
+                          <span className="text-slate-700 hidden sm:inline" aria-hidden="true">
+                            |
+                          </span>
+                          {renderRoomControl()}
+                        </div>
 
-                    {readOnly ? (
-                      <span
-                        className={`px-2 py-0.5 text-[11px] font-semibold rounded-md border whitespace-nowrap ${statusMeta.badgeClass}`}
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block text-sm font-semibold text-slate-100 hover:text-sky-300 leading-snug break-words"
+                        >
+                          {effectiveItem.title}
+                        </a>
+                      </div>
+
+                      <div className="flex flex-wrap items-center md:flex-col md:items-end justify-between gap-1.5 shrink-0 md:border-l md:border-slate-800/80 md:pl-3">
+                        <div className="flex flex-wrap items-baseline md:justify-end gap-x-2.5 gap-y-0.5">
+                          {typeof item.priceEur === 'number' ? (
+                            <span className="font-mono text-base sm:text-lg font-bold text-emerald-300 tabular-nums leading-none">
+                              € {item.priceEur.toFixed(2)}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-500">Prezzo non rilevato</span>
+                          )}
+                          {renderPaidPriceControl()}
+                        </div>
+                        {renderStatusControl()}
+                      </div>
+                    </div>
+                  ) : (
+                    /* GRID MODE HEADER: 1. Meta + Room -> 2. Title */
+                    <>
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-medium text-slate-400">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
+                          {effectiveBrand && (
+                            <span
+                              className="inline-flex items-center gap-1 text-sky-300 font-semibold"
+                              title={`Marca: ${effectiveBrand}`}
+                            >
+                              <Tag className="w-3 h-3 shrink-0" />
+                              <span>{effectiveBrand}</span>
+                            </span>
+                          )}
+                          {(!effectiveBrand ||
+                            effectiveBrand.toLowerCase() !== item.store.toLowerCase()) && (
+                            <span
+                              className="inline-flex items-center gap-1 text-slate-200 font-medium"
+                              title={`Negozio: ${item.store}`}
+                            >
+                              <Store className="w-3 h-3 text-slate-400 shrink-0" />
+                              <span>{item.store}</span>
+                            </span>
+                          )}
+                          <span className="text-slate-600" aria-hidden="true">
+                            ·
+                          </span>
+                          <span>{getCategoryLabel(item.category)}</span>
+                        </div>
+
+                        {renderRoomControl()}
+                      </div>
+
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block text-sm font-semibold text-slate-100 hover:text-sky-300 leading-snug break-words"
                       >
-                        {statusMeta.label}
-                      </span>
-                    ) : (
-                      <select
-                        value={item.status}
-                        onChange={(e) =>
-                          void handleQuickStatusChange(
-                            item,
-                            e.target.value as ProductResearchStatus
-                          )
-                        }
-                        className={`px-2.5 py-1 text-[11px] font-semibold rounded-md border [color-scheme:dark] focus:outline-none ${statusMeta.badgeClass}`}
-                      >
-                        {STATUS_OPTIONS.map((st) => (
-                          <option
-                            key={st.value}
-                            value={st.value}
-                            className="bg-slate-900 text-slate-100"
+                        {effectiveItem.title}
+                      </a>
+                    </>
+                  )}
+
+                  {/* 3. Product Colors + Sizes + Model Code (inline wrap in list mode for compact height) */}
+                  {(effectiveItem.color ||
+                    (item.availableColors && item.availableColors.length > 0) ||
+                    effectiveItem.size ||
+                    (item.availableSizes && item.availableSizes.length > 0) ||
+                    item.model) && (
+                    <div
+                      className={
+                        isList
+                          ? 'flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-400'
+                          : 'space-y-1.5 text-xs text-slate-400'
+                      }
+                    >
+                      {item.availableColors && item.availableColors.length > 0 ? (
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="text-[10px] uppercase tracking-wide text-slate-500 mr-0.5">
+                            Colori:
+                          </span>
+                          {item.availableColors.map((colOpt) => {
+                            const isActive =
+                              effectiveItem.color?.trim().toLowerCase() ===
+                              colOpt.trim().toLowerCase();
+                            return readOnly ? (
+                              <span
+                                key={colOpt}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] ${
+                                  isActive
+                                    ? 'bg-sky-500/15 border-sky-400/70 text-slate-100 font-semibold'
+                                    : 'bg-slate-950/70 border-slate-800 text-slate-400'
+                                }`}
+                              >
+                                <ColorSwatchDot color={colOpt} size="sm" />
+                                <span>{colOpt}</span>
+                              </span>
+                            ) : (
+                              <button
+                                key={colOpt}
+                                type="button"
+                                onClick={() => handleQuickColorSelect(item, colOpt)}
+                                title={`Seleziona colore ${colOpt}`}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] transition-colors ${
+                                  isActive
+                                    ? 'bg-sky-500/15 border-sky-400/70 text-slate-100 font-semibold'
+                                    : 'bg-slate-950/70 border-slate-800 text-slate-300 hover:border-slate-600'
+                                }`}
+                              >
+                                <ColorSwatchDot color={colOpt} size="sm" />
+                                <span>{colOpt}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : effectiveItem.color ? (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span
+                            className="inline-flex items-center gap-1.5 text-slate-200 font-medium"
+                            title={`Colore: ${effectiveItem.color}`}
                           >
-                            {st.label}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
+                            <ColorSwatchDot color={effectiveItem.color} size="md" />
+                            <span>{effectiveItem.color}</span>
+                          </span>
+                        </div>
+                      ) : null}
 
-                  {/* 5. Full Readable Specifications & Notes */}
-                  {(specEntries.length > 0 || hasUniqueNotes) && (
-                    <div className="space-y-2">
+                      {item.availableSizes && item.availableSizes.length > 0 ? (
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="text-[10px] uppercase tracking-wide text-slate-500 mr-0.5">
+                            Taglia:
+                          </span>
+                          {item.availableSizes.map((sizeOpt) => {
+                            const isActive =
+                              effectiveItem.size?.trim().toLowerCase().replace(/\s+/g, '') ===
+                              sizeOpt.trim().toLowerCase().replace(/\s+/g, '');
+                            return readOnly ? (
+                              <span
+                                key={sizeOpt}
+                                className={`px-2 py-0.5 rounded-md border font-mono text-[11px] ${
+                                  isActive
+                                    ? 'bg-sky-500/15 border-sky-400/70 text-sky-200 font-semibold'
+                                    : 'bg-slate-950/70 border-slate-800 text-slate-400'
+                                }`}
+                              >
+                                {sizeOpt}
+                              </span>
+                            ) : (
+                              <button
+                                key={sizeOpt}
+                                type="button"
+                                onClick={() => handleQuickSizeSelect(item, sizeOpt)}
+                                title={`Seleziona taglia ${sizeOpt}`}
+                                className={`px-2 py-0.5 rounded-md border font-mono text-[11px] transition-colors ${
+                                  isActive
+                                    ? 'bg-sky-500/15 border-sky-400/70 text-sky-200 font-semibold'
+                                    : 'bg-slate-950/70 border-slate-800 text-slate-300 hover:border-slate-600'
+                                }`}
+                              >
+                                {sizeOpt}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : effectiveItem.size ? (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="px-2 py-0.5 rounded-md border border-slate-700 bg-slate-950 font-mono text-[11px] text-slate-200">
+                            {effectiveItem.size}
+                          </span>
+                        </div>
+                      ) : null}
+
+                      {item.model && (
+                        <div className="font-mono text-[11px] text-slate-400">
+                          Cod. {item.model}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 4. Grid Mode Price + Paid Price + Status Row */}
+                  {!isList && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 py-2.5 border-y border-slate-800/80">
+                      <div className="flex flex-col gap-1 min-w-0">
+                        {typeof item.priceEur === 'number' ? (
+                          <span className="font-mono text-lg font-bold text-emerald-300 tabular-nums leading-none">
+                            € {item.priceEur.toFixed(2)}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-500">Prezzo non rilevato</span>
+                        )}
+                        {renderPaidPriceControl()}
+                      </div>
+
+                      {renderStatusControl()}
+                    </div>
+                  )}
+
+                  {/* 5. Specifications & Notes with Vedi tutti i dettagli / Mostra meno in both Grid & List */}
+                  {(filteredSpecEntries.length > 0 || hasUniqueNotes) && (
+                    <div className={isList ? 'space-y-1' : 'space-y-2'}>
                       {hasUniqueNotes && (
                         <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line break-words">
                           {item.notes}
                         </p>
                       )}
 
-                      {visibleSpecs.length > 0 && (
+                      {visibleTechSpecs.length > 0 && (
                         <ul
                           className={
-                            viewMode === 'list'
-                              ? 'grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-300 leading-relaxed'
+                            isList
+                              ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-0.5 text-[11px] text-slate-300 leading-snug'
                               : 'space-y-1 text-[11px] text-slate-300 leading-relaxed'
                           }
                         >
-                          {visibleSpecs
-                            .filter((entry) => {
-                              const isColorSpec =
-                                entry.label?.toLowerCase() === 'colore' ||
-                                entry.label?.toLowerCase() === 'color';
-                              if (
-                                isColorSpec &&
-                                item.color &&
-                                entry.value.trim().toLowerCase() ===
-                                  item.color.trim().toLowerCase()
-                              ) {
-                                return false;
-                              }
-                              return true;
-                            })
-                            .map((entry, idx) => {
-                              const isColorSpec =
-                                entry.label?.toLowerCase() === 'colore' ||
-                                entry.label?.toLowerCase() === 'color';
-                              return (
-                                <li key={idx} className="flex items-start gap-1.5">
-                                  <span className="text-sky-400 shrink-0">·</span>
-                                  <span className="min-w-0 break-words">
-                                    {isColorSpec ? (
-                                      <span
-                                        className="inline-flex items-center gap-1.5"
-                                        title={`Colore: ${entry.value}`}
-                                      >
-                                        <ColorSwatchDot color={entry.value} size="sm" />
-                                        <span className="text-slate-200 font-medium">
-                                          {entry.value}
-                                        </span>
+                          {visibleTechSpecs.map((entry, idx) => {
+                            const isColorSpec =
+                              entry.label?.toLowerCase() === 'colore' ||
+                              entry.label?.toLowerCase() === 'color';
+                            return (
+                              <li key={`tech-${idx}`} className="flex items-start gap-1.5 min-w-0">
+                                <span className="text-sky-400 shrink-0">·</span>
+                                <span className="min-w-0 break-words">
+                                  {isColorSpec ? (
+                                    <span
+                                      className="inline-flex items-center gap-1.5"
+                                      title={`Colore: ${entry.value}`}
+                                    >
+                                      <ColorSwatchDot color={entry.value} size="sm" />
+                                      <span className="text-slate-200 font-medium">
+                                        {entry.value}
                                       </span>
-                                    ) : entry.label ? (
-                                      <>
-                                        <span className="text-slate-400">{entry.label}: </span>
-                                        <span className="text-slate-200 font-medium">
-                                          {entry.value}
-                                        </span>
-                                      </>
-                                    ) : (
-                                      <span>{entry.value}</span>
-                                    )}
-                                  </span>
-                                </li>
-                              );
-                            })}
+                                    </span>
+                                  ) : (
+                                    <>
+                                      <span className="text-slate-400">{entry.label}: </span>
+                                      <span className="text-slate-200 font-medium">
+                                        {entry.value}
+                                      </span>
+                                    </>
+                                  )}
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+
+                      {visibleDescriptiveSpecs.length > 0 && (
+                        <ul
+                          className={
+                            isList
+                              ? `${
+                                  visibleTechSpecs.length > 0
+                                    ? 'pt-2 mt-1.5 border-t border-slate-800/70 '
+                                    : ''
+                                }grid grid-cols-1 ${
+                                  visibleDescriptiveSpecs.length === 2
+                                    ? 'md:grid-cols-2'
+                                    : visibleDescriptiveSpecs.length >= 3
+                                      ? 'md:grid-cols-3'
+                                      : ''
+                                } gap-x-4 gap-y-1.5 text-[11px] text-slate-300 leading-snug`
+                              : `${
+                                  visibleTechSpecs.length > 0
+                                    ? 'pt-1.5 mt-1.5 border-t border-slate-800/70 '
+                                    : ''
+                                }space-y-1 text-[11px] text-slate-300 leading-relaxed`
+                          }
+                        >
+                          {visibleDescriptiveSpecs.map((entry, idx) => {
+                            const dashIdx = entry.value.indexOf(' — ');
+                            const hasLeadHeadline = dashIdx > 2 && dashIdx <= 90;
+                            return (
+                              <li key={`desc-${idx}`} className="flex items-start gap-1.5 min-w-0">
+                                <span className="text-sky-400 shrink-0">·</span>
+                                <span className="min-w-0 break-words">
+                                  {hasLeadHeadline ? (
+                                    <>
+                                      <span className="text-slate-100 font-semibold">
+                                        {entry.value.slice(0, dashIdx)}
+                                      </span>
+                                      <span className="text-slate-300">
+                                        {entry.value.slice(dashIdx)}
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <span>{entry.value}</span>
+                                  )}
+                                </span>
+                              </li>
+                            );
+                          })}
                         </ul>
                       )}
 
@@ -2572,7 +3842,7 @@ export function ResearchesView({
                           ) : (
                             <>
                               <ChevronDown className="w-3 h-3" />
-                              Vedi tutti i dettagli ({specEntries.length})
+                              Vedi tutti i dettagli ({filteredSpecEntries.length})
                             </>
                           )}
                         </button>
@@ -2580,44 +3850,86 @@ export function ResearchesView({
                     </div>
                   )}
 
-                  {/* 6. Bottom-pinned Attachments & Actions */}
-                  <div className="mt-auto space-y-2.5 pt-1">
-                    {(isAttachOpen || !readOnly) && (
-                      <div className="border-t border-slate-800/70 pt-2.5 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setOpenAttachmentsIds((prev) => ({
-                                ...prev,
-                                [item.id]: !isAttachOpen,
-                              }))
-                            }
-                            className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-300 hover:text-sky-300"
-                          >
-                            <Paperclip className="w-3.5 h-3.5 text-sky-400" />
-                            <span>Allegati ({itemDocs.length})</span>
-                          </button>
+                  {/* Pending Quick Card Edits Confirmation Bar */}
+                  {hasPendingEdits && !readOnly && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-400/40 text-[11px]">
+                      <span className="text-amber-200 font-medium inline-flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+                        Modifiche non salvate
+                      </span>
+                      <div className="flex items-center gap-1.5 ml-auto">
+                        <button
+                          type="button"
+                          disabled={isSavingPendingHere}
+                          onClick={() => handleDiscardPendingCardEdit(item.id)}
+                          className="px-2 py-1 text-slate-300 hover:text-slate-100 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-md transition-colors disabled:opacity-50"
+                        >
+                          Annulla
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isSavingPendingHere || savingEdit}
+                          onClick={() => requestCommitPendingCardEdit(item)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-md transition-colors disabled:opacity-50"
+                        >
+                          {isSavingPendingHere ||
+                          (savingEdit && pendingEditSave?.item.id === item.id) ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Check className="w-3 h-3" />
+                          )}
+                          <span>
+                            {isSavingPendingHere ||
+                            (savingEdit && pendingEditSave?.item.id === item.id)
+                              ? 'Salvataggio...'
+                              : 'Salva modifiche'}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
-                          {!readOnly && (
+                  {/* 6. Bottom-pinned Attachments & Actions */}
+                  <div className={isList ? 'mt-auto space-y-2' : 'mt-auto space-y-2.5 pt-1'}>
+                    {/* In Grid mode show attachments header row; in List mode show drawer only when expanded/populated */}
+                    {(!isList && (isAttachOpen || !readOnly)) || (isList && isAttachOpen) ? (
+                      <div className="border-t border-slate-800/70 pt-2 space-y-2">
+                        {!isList && (
+                          <div className="flex items-center justify-between gap-2">
                             <button
                               type="button"
-                              disabled={isUploadingHere}
-                              onClick={() => triggerCardFileUpload(item)}
-                              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 rounded-md transition-colors disabled:opacity-50"
+                              onClick={() =>
+                                setOpenAttachmentsIds((prev) => ({
+                                  ...prev,
+                                  [item.id]: !isAttachOpen,
+                                }))
+                              }
+                              className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-300 hover:text-sky-300"
                             >
-                              {isUploadingHere ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              ) : (
-                                <Upload className="w-3 h-3" />
-                              )}
-                              <span>{isUploadingHere ? 'Carico...' : 'Allega file'}</span>
+                              <Paperclip className="w-3.5 h-3.5 text-sky-400" />
+                              <span>Allegati ({itemDocs.length})</span>
                             </button>
-                          )}
-                        </div>
+
+                            {!readOnly && (
+                              <button
+                                type="button"
+                                disabled={isUploadingHere}
+                                onClick={() => triggerCardFileUpload(item)}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 rounded-md transition-colors disabled:opacity-50"
+                              >
+                                {isUploadingHere ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <Upload className="w-3 h-3" />
+                                )}
+                                <span>{isUploadingHere ? 'Carico...' : 'Allega file'}</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
 
                         {!readOnly && isAttachOpen && (
-                          <div className="flex items-center gap-2 text-[10px]">
+                          <div className="flex flex-wrap items-center gap-2 text-[10px]">
                             <span className="text-slate-400 shrink-0">Tipo allegato:</span>
                             <select
                               value={selectedAttachType}
@@ -2627,7 +3939,7 @@ export function ResearchesView({
                                   [item.id]: e.target.value as ArticleAttachmentType,
                                 }))
                               }
-                              className="flex-1 min-w-0 px-2 py-1 bg-slate-950 border border-slate-800 rounded text-slate-200 [color-scheme:dark]"
+                              className="flex-1 min-w-[140px] max-w-xs px-2 py-1 bg-slate-950 border border-slate-800 rounded text-slate-200 [color-scheme:dark]"
                             >
                               {ATTACHMENT_TYPE_OPTIONS.map((opt) => (
                                 <option key={opt.value} value={opt.value}>
@@ -2635,11 +3947,26 @@ export function ResearchesView({
                                 </option>
                               ))}
                             </select>
+                            {isList && (
+                              <button
+                                type="button"
+                                disabled={isUploadingHere}
+                                onClick={() => triggerCardFileUpload(item)}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 rounded-md transition-colors disabled:opacity-50"
+                              >
+                                {isUploadingHere ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <Upload className="w-3 h-3" />
+                                )}
+                                <span>{isUploadingHere ? 'Carico...' : 'Carica file'}</span>
+                              </button>
+                            )}
                           </div>
                         )}
 
                         {itemDocs.length > 0 && (
-                          <div className="space-y-1.5">
+                          <div className={isList ? 'grid grid-cols-1 md:grid-cols-2 gap-1.5' : 'space-y-1.5'}>
                             {itemDocs.map((docItem) => {
                               const parsedRef = parseResearchDocumentRef(docItem.referenceCode);
                               const docMeta = getAttachmentTypeMeta(parsedRef?.docType);
@@ -2707,103 +4034,22 @@ export function ResearchesView({
                           </div>
                         )}
                       </div>
-                    )}
+                    ) : null}
 
-                    <div className="pt-2.5 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <a
-                          href={item.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          Apri pagina
-                        </a>
-                        <button
-                          type="button"
-                          onClick={() => void handleCopyUrl(item)}
-                          title="Copia link"
-                          className="inline-flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors whitespace-nowrap"
-                        >
-                          {copiedId === item.id ? (
-                            <Check className="w-3 h-3 text-emerald-400" />
-                          ) : (
-                            <Copy className="w-3 h-3" />
-                          )}
-                          <span>{copiedId === item.id ? 'Copiato' : 'Copia'}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShareItem(buildResearchSharePayload(item))}
-                          title="Condividi prodotto"
-                          className="p-1.5 text-slate-400 hover:text-sky-300 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
-                        >
-                          <Share2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-
-                      {!readOnly && (
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            disabled={isRefreshingHere}
-                            onClick={() => void handleRefreshFromSite(item)}
-                            title="Ri-analizza il link per aggiornare foto, prezzo, colore e dettagli"
-                            className="p-1.5 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
-                          >
-                            <RefreshCw
-                              className={`w-3.5 h-3.5 ${
-                                isRefreshingHere ? 'animate-spin text-sky-400' : ''
-                              }`}
-                            />
-                          </button>
-                          {onMoveToArticles && (
-                            <button
-                              type="button"
-                              disabled={movingId === item.id || movedArticleIds[item.id]}
-                              onClick={() => void handleMoveItemToArticles(item)}
-                              title="Copia questo prodotto (con dettagli e allegati) nella pagina Articoli di casa"
-                              className={`inline-flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium rounded-lg border transition-colors whitespace-nowrap ${
-                                movedArticleIds[item.id]
-                                  ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
-                                  : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:text-emerald-300 hover:border-emerald-500/40'
-                              }`}
-                            >
-                              <PackagePlus className="w-3 h-3" />
-                              <span>
-                                {movedArticleIds[item.id] ? 'In Articoli' : 'Ad Articoli'}
-                              </span>
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => startEditItem(item)}
-                            aria-label="Modifica prodotto"
-                            title="Modifica"
-                            className="p-1.5 text-slate-400 hover:text-sky-400 hover:bg-slate-800 rounded-lg transition-colors"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPendingDelete(item)}
-                            aria-label="Elimina prodotto"
-                            title="Elimina"
-                            className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                    {!isList && renderCardActionButtons(false)}
                   </div>
                 </div>
+                </div>
+
+                {isList && renderCardActionButtons(true)}
               </article>
             );
           })}
         </div>
-      )}
+            )}
+          </>
+        );
+      })()}
 
       {shareItem && (
         <ShareSheetModal
@@ -2849,6 +4095,94 @@ export function ResearchesView({
                 className="px-3.5 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition-colors"
               >
                 {deleting ? 'Eliminazione...' : 'Elimina'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingRefresh && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-sky-500/15 text-sky-400 shrink-0">
+                <RefreshCw
+                  className={`w-5 h-5 ${
+                    refreshingId === pendingRefresh.id ? 'animate-spin' : ''
+                  }`}
+                />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-sm font-semibold text-slate-100">
+                  Aggiornare questo prodotto?
+                </h3>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Vuoi ri-analizzare il link di{' '}
+                  <span className="font-semibold text-slate-100">
+                    {pendingRefresh.title}
+                  </span>{' '}
+                  ({pendingRefresh.store}) per aggiornare foto, prezzo, varianti e dettagli su Firestore?
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                disabled={refreshingId === pendingRefresh.id}
+                onClick={() => setPendingRefresh(null)}
+                className="px-3.5 py-2 text-xs font-medium text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                disabled={refreshingId === pendingRefresh.id}
+                onClick={() => void confirmRefreshResearch()}
+                className="px-3.5 py-2 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 disabled:opacity-50 rounded-lg transition-colors"
+              >
+                {refreshingId === pendingRefresh.id ? 'Aggiornamento...' : 'Aggiorna'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingEditSave && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-amber-500/15 text-amber-400 shrink-0">
+                <Pencil className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-sm font-semibold text-slate-100">
+                  Salvare le modifiche al prodotto?
+                </h3>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Vuoi aggiornare{' '}
+                  <span className="font-semibold text-slate-100">
+                    {pendingEditSave.payload.title}
+                  </span>{' '}
+                  ({pendingEditSave.payload.store}) salvando i nuovi dati su Firestore?
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                disabled={savingEdit}
+                onClick={() => setPendingEditSave(null)}
+                className="px-3.5 py-2 text-xs font-medium text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                disabled={savingEdit}
+                onClick={() => void confirmSaveEdit()}
+                className="px-3.5 py-2 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 disabled:opacity-50 rounded-lg transition-colors"
+              >
+                {savingEdit ? 'Salvataggio...' : 'Salva modifiche'}
               </button>
             </div>
           </div>

@@ -455,7 +455,7 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'ownerId', 'name', 'brand', 'model', 'category', 'room',
-          'purchaseDate', 'warrantyEnd', 'familyWarranty', 'serialNumber',
+          'purchaseDate', 'purchasePriceEur', 'warrantyEnd', 'familyWarranty', 'serialNumber',
           'specs', 'notes', 'manualFileKey', 'manualFileName', 'manualExtractText', 'createdAt'
         ])
         && data.ownerId is string && data.ownerId == userId && data.ownerId.size() <= 128
@@ -466,6 +466,7 @@ service cloud.firestore {
         && data.category in ['elettrodomestici', 'elettronica', 'sicurezza', 'fotovoltaico', 'clima', 'altro']
         && data.room is string && data.room.size() >= 1 && data.room.size() <= 60
         && (!('purchaseDate' in data) || (data.purchaseDate is string && data.purchaseDate.size() <= 20))
+        && (!('purchasePriceEur' in data) || (data.purchasePriceEur is number && data.purchasePriceEur >= 0 && data.purchasePriceEur <= 1000000))
         && (!('warrantyEnd' in data) || (data.warrantyEnd is string && data.warrantyEnd.size() <= 20))
         && data.familyWarranty is bool
         && (!('serialNumber' in data) || (data.serialNumber is string && data.serialNumber.size() <= 80))
@@ -494,7 +495,7 @@ service cloud.firestore {
         && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'name', 'brand', 'model', 'category', 'room',
-          'purchaseDate', 'warrantyEnd', 'familyWarranty', 'serialNumber',
+          'purchaseDate', 'purchasePriceEur', 'warrantyEnd', 'familyWarranty', 'serialNumber',
           'specs', 'notes', 'manualFileKey', 'manualFileName', 'manualExtractText', 'createdAt'
         ]);
       allow delete: if isOwner(userId) && isValidId(articleId);
@@ -506,7 +507,8 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'ownerId', 'url', 'title', 'store', 'category', 'status', 'room',
-          'priceEur', 'imageUrl', 'brand', 'color', 'model', 'specs', 'notes', 'createdAt'
+          'priceEur', 'paidPriceEur', 'imageUrl', 'brand', 'color', 'availableColors',
+          'colorImages', 'size', 'availableSizes', 'model', 'specs', 'notes', 'createdAt'
         ])
         && data.ownerId is string && data.ownerId == userId && data.ownerId.size() <= 128
         && data.url is string && data.url.size() >= 8 && data.url.size() <= 1000 && data.url.matches('^https?://.+')
@@ -515,18 +517,39 @@ service cloud.firestore {
         && data.category is string && data.category.size() <= 32
         && data.category in ['elettrodomestici', 'elettronica', 'casa_arredo', 'fai_da_te', 'auto', 'abbigliamento', 'altro']
         && data.status is string && data.status.size() <= 24
-        && data.status in ['da_valutare', 'preferito', 'da_acquistare', 'acquistato', 'scartato']
+        && data.status in ['da_valutare', 'da_acquistare', 'acquistato']
         && (!('room' in data) || (
           data.room is string
           && data.room.size() <= 40
           && data.room in ['salone', 'cucina', 'bagno1', 'bagno2', 'stanza_maurizio', 'stanza_roberta', 'stanza_matrimoniale']
         ))
         && (!('priceEur' in data) || (data.priceEur is number && data.priceEur >= 0 && data.priceEur <= 1000000))
+        && (!('paidPriceEur' in data) || (data.paidPriceEur is number && data.paidPriceEur >= 0 && data.paidPriceEur <= 1000000))
         && (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 1000 && data.imageUrl.matches('^https?://.+')))
         && (!('brand' in data) || (data.brand is string && data.brand.size() <= 60))
         && (!('color' in data) || (data.color is string && data.color.size() <= 60))
+        && (!('availableColors' in data) || (
+          data.availableColors is list
+          && data.availableColors.size() >= 1
+          && data.availableColors.size() <= 24
+          && data.availableColors[0] is string
+          && data.availableColors[0].size() <= 60
+        ))
+        && (!('colorImages' in data) || (
+          data.colorImages is map
+          && data.colorImages.size() >= 1
+          && data.colorImages.size() <= 24
+        ))
+        && (!('size' in data) || (data.size is string && data.size.size() <= 60))
+        && (!('availableSizes' in data) || (
+          data.availableSizes is list
+          && data.availableSizes.size() >= 1
+          && data.availableSizes.size() <= 24
+          && data.availableSizes[0] is string
+          && data.availableSizes[0].size() <= 60
+        ))
         && (!('model' in data) || (data.model is string && data.model.size() <= 80))
-        && (!('specs' in data) || (data.specs is string && data.specs.size() <= 800))
+        && (!('specs' in data) || (data.specs is string && data.specs.size() <= 2000))
         && (!('notes' in data) || (data.notes is string && data.notes.size() <= 400))
         && data.createdAt is timestamp;
     }
@@ -547,7 +570,8 @@ service cloud.firestore {
         && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'url', 'title', 'store', 'category', 'status', 'room',
-          'priceEur', 'imageUrl', 'brand', 'color', 'model', 'specs', 'notes', 'createdAt'
+          'priceEur', 'paidPriceEur', 'imageUrl', 'brand', 'color', 'availableColors',
+          'colorImages', 'size', 'availableSizes', 'model', 'specs', 'notes', 'createdAt'
         ]);
       allow delete: if isOwner(userId) && isValidId(researchId);
     }

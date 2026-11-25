@@ -203,6 +203,7 @@
         },
         "room": { "type": "string", "maxLength": 60 },
         "purchaseDate": { "type": "string", "maxLength": 20 },
+        "purchasePriceEur": { "type": "number" },
         "warrantyEnd": { "type": "string", "maxLength": 20 },
         "familyWarranty": { "type": "boolean" },
         "serialNumber": { "type": "string", "maxLength": 80 },
@@ -233,7 +234,7 @@
         },
         "status": {
           "type": "string",
-          "enum": ["da_valutare", "preferito", "da_acquistare", "acquistato", "scartato"],
+          "enum": ["da_valutare", "da_acquistare", "acquistato"],
           "maxLength": 24
         },
         "room": {
@@ -251,11 +252,16 @@
           "description": "Stanza di destinazione opzionale"
         },
         "priceEur": { "type": "number" },
+        "paidPriceEur": { "type": "number" },
         "imageUrl": { "type": "string", "maxLength": 1000, "pattern": "^https?://.+" },
         "brand": { "type": "string", "maxLength": 60 },
         "color": { "type": "string", "maxLength": 60 },
+        "availableColors": { "type": "array" },
+        "colorImages": { "type": "object", "description": "Mappa colore -> URL immagine variante" },
+        "size": { "type": "string", "maxLength": 60 },
+        "availableSizes": { "type": "array" },
         "model": { "type": "string", "maxLength": 80 },
-        "specs": { "type": "string", "maxLength": 800 },
+        "specs": { "type": "string", "maxLength": 2000 },
         "notes": { "type": "string", "maxLength": 400 },
         "createdAt": { "type": "string", "format": "date-time" }
       },

@@ -76,6 +76,13 @@ import {
   VmcDayRecord,
   WaterBillRecord,
 } from './types/home';
+
+function normalizeResearchStatus(raw: unknown): ProductResearchStatus {
+  if (raw === 'da_acquistare' || raw === 'acquistato' || raw === 'da_valutare') {
+    return raw;
+  }
+  return 'da_valutare';
+}
 import { ParsedReadingInput } from './utils/edistribuzioneCsv';
 import {
   GmailAuthExpiredError,
@@ -144,6 +151,7 @@ import {
   getResearchRoomLabel,
   inferProductBrand,
   normalizeResearchRoom,
+  sanitizeColorImagesMap,
 } from './utils/researchHelpers';
 import { OverviewView } from './components/OverviewView';
 import { DomoticsView } from './components/DomoticsView';
@@ -777,6 +785,10 @@ export default function App() {
               category: (data.category as HomeArticleCategory) || 'altro',
               room: String(data.room || 'Casa'),
               purchaseDate: data.purchaseDate ? String(data.purchaseDate) : undefined,
+              purchasePriceEur:
+                typeof data.purchasePriceEur === 'number'
+                  ? Number(data.purchasePriceEur)
+                  : undefined,
               warrantyEnd: data.warrantyEnd ? String(data.warrantyEnd) : undefined,
               familyWarranty: Boolean(data.familyWarranty),
               serialNumber: data.serialNumber ? String(data.serialNumber) : undefined,
@@ -876,12 +888,22 @@ export default function App() {
             title: String(data.title || ''),
             store: String(data.store || ''),
             category: (data.category as ProductResearchCategory) || 'altro',
-            status: (data.status as ProductResearchStatus) || 'da_valutare',
+            status: normalizeResearchStatus(data.status),
             room: normalizeResearchRoom(data.room ? String(data.room) : undefined),
             priceEur: typeof data.priceEur === 'number' ? Number(data.priceEur) : undefined,
+            paidPriceEur:
+              typeof data.paidPriceEur === 'number' ? Number(data.paidPriceEur) : undefined,
             imageUrl: data.imageUrl ? String(data.imageUrl) : undefined,
             brand: data.brand ? String(data.brand) : undefined,
             color: data.color ? String(data.color) : undefined,
+            availableColors: Array.isArray(data.availableColors)
+              ? data.availableColors.map((c) => String(c).trim()).filter(Boolean).slice(0, 24)
+              : undefined,
+            colorImages: sanitizeColorImagesMap(data.colorImages),
+            size: data.size ? String(data.size) : undefined,
+            availableSizes: Array.isArray(data.availableSizes)
+              ? data.availableSizes.map((s) => String(s).trim()).filter(Boolean).slice(0, 24)
+              : undefined,
             model: data.model ? String(data.model) : undefined,
             specs: data.specs ? String(data.specs) : undefined,
             notes: data.notes ? String(data.notes) : undefined,
@@ -1223,12 +1245,22 @@ export default function App() {
               title: String(data.title || ''),
               store: String(data.store || ''),
               category: (data.category as ProductResearchCategory) || 'altro',
-              status: (data.status as ProductResearchStatus) || 'da_valutare',
+              status: normalizeResearchStatus(data.status),
               room: normalizeResearchRoom(data.room ? String(data.room) : undefined),
               priceEur: typeof data.priceEur === 'number' ? Number(data.priceEur) : undefined,
+              paidPriceEur:
+                typeof data.paidPriceEur === 'number' ? Number(data.paidPriceEur) : undefined,
               imageUrl: data.imageUrl ? String(data.imageUrl) : undefined,
               brand: data.brand ? String(data.brand) : undefined,
               color: data.color ? String(data.color) : undefined,
+              availableColors: Array.isArray(data.availableColors)
+                ? data.availableColors.map((c) => String(c).trim()).filter(Boolean).slice(0, 24)
+                : undefined,
+              colorImages: sanitizeColorImagesMap(data.colorImages),
+              size: data.size ? String(data.size) : undefined,
+              availableSizes: Array.isArray(data.availableSizes)
+                ? data.availableSizes.map((s) => String(s).trim()).filter(Boolean).slice(0, 24)
+                : undefined,
               model: data.model ? String(data.model) : undefined,
               specs: data.specs ? String(data.specs) : undefined,
               notes: data.notes ? String(data.notes) : undefined,
@@ -1834,29 +1866,67 @@ export default function App() {
       title: item.title.trim().slice(0, 160),
       store: item.store.trim().slice(0, 60),
       category: item.category,
-      status: item.status,
+      status: normalizeResearchStatus(item.status),
       createdAt: serverTimestamp(),
     };
     if (normalizedRoom) {
       payload.room = normalizedRoom;
     }
+    const cleanColors = Array.isArray(item.availableColors)
+      ? Array.from(
+          new Set(
+            item.availableColors
+              .map((c) => String(c).trim().slice(0, 60))
+              .filter(Boolean)
+          )
+        ).slice(0, 24)
+      : [];
+    const cleanSizes = Array.isArray(item.availableSizes)
+      ? Array.from(
+          new Set(
+            item.availableSizes
+              .map((s) => String(s).trim().slice(0, 60))
+              .filter(Boolean)
+          )
+        ).slice(0, 24)
+      : [];
     if (typeof item.priceEur === 'number' && Number.isFinite(item.priceEur) && item.priceEur >= 0) {
       payload.priceEur = Math.min(1000000, Math.round(item.priceEur * 100) / 100);
+    }
+    if (
+      typeof item.paidPriceEur === 'number' &&
+      Number.isFinite(item.paidPriceEur) &&
+      item.paidPriceEur >= 0
+    ) {
+      payload.paidPriceEur = Math.min(1000000, Math.round(item.paidPriceEur * 100) / 100);
     }
     if (item.imageUrl && /^https?:\/\/.+/.test(item.imageUrl.trim())) {
       payload.imageUrl = item.imageUrl.trim().slice(0, 1000);
     }
+    const cleanColorImages = sanitizeColorImagesMap(item.colorImages);
     if (item.brand && item.brand.trim()) {
       payload.brand = item.brand.trim().slice(0, 60);
     }
     if (item.color && item.color.trim()) {
       payload.color = item.color.trim().slice(0, 60);
     }
+    if (cleanColors.length > 0) {
+      payload.availableColors = cleanColors;
+    }
+    if (cleanColorImages) {
+      payload.colorImages = cleanColorImages;
+    }
+    if (item.size && item.size.trim()) {
+      payload.size = item.size.trim().slice(0, 60);
+    }
+    if (cleanSizes.length > 0) {
+      payload.availableSizes = cleanSizes;
+    }
     if (item.model && item.model.trim()) {
       payload.model = item.model.trim().slice(0, 80);
     }
     if (item.specs && item.specs.trim()) {
-      payload.specs = item.specs.trim().slice(0, 800);
+      payload.specs = item.specs.trim().slice(0, 2000);
     }
     if (item.notes && item.notes.trim()) {
       payload.notes = item.notes.trim().slice(0, 400);
@@ -1879,17 +1949,42 @@ export default function App() {
     if (!/^https?:\/\/.+/.test(urlTrim)) return;
     const path = `users/${user.uid}/productResearches/${id}`;
     const normalizedRoom = normalizeResearchRoom(item.room);
+    const cleanColors = Array.isArray(item.availableColors)
+      ? Array.from(
+          new Set(
+            item.availableColors
+              .map((c) => String(c).trim().slice(0, 60))
+              .filter(Boolean)
+          )
+        ).slice(0, 24)
+      : [];
+    const cleanSizes = Array.isArray(item.availableSizes)
+      ? Array.from(
+          new Set(
+            item.availableSizes
+              .map((s) => String(s).trim().slice(0, 60))
+              .filter(Boolean)
+          )
+        ).slice(0, 24)
+      : [];
+    const cleanColorImages = sanitizeColorImagesMap(item.colorImages);
     const payload: Record<string, unknown> = {
       ownerId: user.uid,
       url: urlTrim,
       title: item.title.trim().slice(0, 160),
       store: item.store.trim().slice(0, 60),
       category: item.category,
-      status: item.status,
+      status: normalizeResearchStatus(item.status),
       room: normalizedRoom ? normalizedRoom : deleteField(),
       priceEur:
         typeof item.priceEur === 'number' && Number.isFinite(item.priceEur) && item.priceEur >= 0
           ? Math.min(1000000, Math.round(item.priceEur * 100) / 100)
+          : deleteField(),
+      paidPriceEur:
+        typeof item.paidPriceEur === 'number' &&
+        Number.isFinite(item.paidPriceEur) &&
+        item.paidPriceEur >= 0
+          ? Math.min(1000000, Math.round(item.paidPriceEur * 100) / 100)
           : deleteField(),
       imageUrl:
         item.imageUrl && /^https?:\/\/.+/.test(item.imageUrl.trim())
@@ -1897,8 +1992,12 @@ export default function App() {
           : deleteField(),
       brand: item.brand && item.brand.trim() ? item.brand.trim().slice(0, 60) : deleteField(),
       color: item.color && item.color.trim() ? item.color.trim().slice(0, 60) : deleteField(),
+      availableColors: cleanColors.length > 0 ? cleanColors : deleteField(),
+      colorImages: cleanColorImages ? cleanColorImages : deleteField(),
+      size: item.size && item.size.trim() ? item.size.trim().slice(0, 60) : deleteField(),
+      availableSizes: cleanSizes.length > 0 ? cleanSizes : deleteField(),
       model: item.model && item.model.trim() ? item.model.trim().slice(0, 80) : deleteField(),
-      specs: item.specs && item.specs.trim() ? item.specs.trim().slice(0, 800) : deleteField(),
+      specs: item.specs && item.specs.trim() ? item.specs.trim().slice(0, 2000) : deleteField(),
       notes: item.notes && item.notes.trim() ? item.notes.trim().slice(0, 400) : deleteField(),
     };
     try {
@@ -2396,6 +2495,16 @@ export default function App() {
     };
     if (article.purchaseDate && article.purchaseDate.trim()) {
       payload.purchaseDate = article.purchaseDate.trim().slice(0, 20);
+    }
+    if (
+      typeof article.purchasePriceEur === 'number' &&
+      Number.isFinite(article.purchasePriceEur) &&
+      article.purchasePriceEur >= 0
+    ) {
+      payload.purchasePriceEur = Math.min(
+        1000000,
+        Math.round(article.purchasePriceEur * 100) / 100
+      );
     }
     if (article.warrantyEnd && article.warrantyEnd.trim()) {
       payload.warrantyEnd = article.warrantyEnd.trim().slice(0, 20);
@@ -2944,6 +3053,16 @@ export default function App() {
     };
     if (article.purchaseDate && article.purchaseDate.trim()) {
       payload.purchaseDate = article.purchaseDate.trim().slice(0, 20);
+    }
+    if (
+      typeof article.purchasePriceEur === 'number' &&
+      Number.isFinite(article.purchasePriceEur) &&
+      article.purchasePriceEur >= 0
+    ) {
+      payload.purchasePriceEur = Math.min(
+        1000000,
+        Math.round(article.purchasePriceEur * 100) / 100
+      );
     }
     if (article.warrantyEnd && article.warrantyEnd.trim()) {
       payload.warrantyEnd = article.warrantyEnd.trim().slice(0, 20);
@@ -3527,9 +3646,16 @@ export default function App() {
                   item.category === 'elettrodomestici' || item.category === 'elettronica'
                     ? item.category
                     : 'altro';
+                const effectivePaidPrice =
+                  typeof item.paidPriceEur === 'number' ? item.paidPriceEur : item.priceEur;
                 const specsParts = [
-                  typeof item.priceEur === 'number' ? `Prezzo: € ${item.priceEur.toFixed(2)}` : '',
+                  typeof item.paidPriceEur === 'number'
+                    ? `Pagato: € ${item.paidPriceEur.toFixed(2)}`
+                    : typeof item.priceEur === 'number'
+                      ? `Prezzo: € ${item.priceEur.toFixed(2)}`
+                      : '',
                   item.color ? `Colore: ${item.color}` : '',
+                  item.size ? `Taglia / Capacità: ${item.size}` : '',
                   item.specs ? item.specs.replace(/\n+/g, ' · ') : '',
                   `Negozio: ${item.store}`,
                 ].filter(Boolean);
@@ -3540,6 +3666,7 @@ export default function App() {
                     model: (item.model || item.store).slice(0, 80),
                     category: mappedCategory,
                     room: getResearchRoomLabel(item.room),
+                    purchasePriceEur: effectivePaidPrice,
                     familyWarranty: false,
                     specs: specsParts.join(' · ').slice(0, 240),
                     notes: (item.notes || item.url).slice(0, 240),
