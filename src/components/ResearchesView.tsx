@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   ArrowDownWideNarrow,
   ArrowUpNarrowWide,
-  BookmarkCheck,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -12,7 +11,6 @@ import {
   Download,
   ExternalLink,
   FileText,
-  Filter,
   Home,
   Image as ImageIcon,
   ImageOff,
@@ -55,8 +53,10 @@ import {
 import {
   findColorImageUrl,
   findColorNameForHex,
+  findSizePrice,
   getResearchRoomLabel,
   inferProductBrand,
+  inferResearchRoom,
   normalizeBrandName,
   normalizeResearchRoom,
   replaceColorInTitle,
@@ -65,6 +65,7 @@ import {
   ResearchRoomId,
   resolveColorHex,
   sanitizeColorImagesMap,
+  sanitizeSizePricesMap,
 } from '../utils/researchHelpers';
 import { AccessUnlockBanner } from './AccessUnlockBanner';
 import { ShareSheetModal } from './ShareSheetModal';
@@ -181,6 +182,58 @@ type ResearchSortField =
 type SortDirection = 'asc' | 'desc';
 type ResearchViewMode = 'grid' | 'list';
 const VIEW_MODE_STORAGE_KEY = 'myhome_researches_view_mode';
+const GROUP_BY_ROOM_STORAGE_KEY = 'myhome_researches_group_by_room';
+const SIZE_PRICES_CACHE_STORAGE_KEY = 'myhome_researches_size_prices_v1';
+
+function buildSizePriceCacheKey(rawUrl?: string): string {
+  if (!rawUrl) return '';
+  const trimmed = rawUrl.trim();
+  const asinMatch = trimmed.match(/\/(?:dp|gp\/product|gp\/aw\/d)\/([A-Z0-9]{10})(?:[/?]|$)/i);
+  if (asinMatch?.[1]) {
+    try {
+      const host = new URL(trimmed).hostname.toLowerCase();
+      if (host.includes('amazon.')) return `${host}/dp/${asinMatch[1].toUpperCase()}`;
+    } catch {
+      // ignore URL parse error
+    }
+  }
+  return trimmed.split('#')[0].slice(0, 300);
+}
+
+function readCachedSizePrices(url?: string): Record<string, number> | undefined {
+  if (typeof window === 'undefined' || !url) return undefined;
+  const key = buildSizePriceCacheKey(url);
+  if (!key) return undefined;
+  try {
+    const raw = window.localStorage.getItem(SIZE_PRICES_CACHE_STORAGE_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return sanitizeSizePricesMap(parsed?.[key]);
+  } catch {
+    return undefined;
+  }
+}
+
+function writeCachedSizePrices(url: string | undefined, sizePrices: Record<string, number> | undefined) {
+  if (typeof window === 'undefined' || !url || !sizePrices) return;
+  const clean = sanitizeSizePricesMap(sizePrices);
+  const key = buildSizePriceCacheKey(url);
+  if (!clean || !key) return;
+  try {
+    const raw = window.localStorage.getItem(SIZE_PRICES_CACHE_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, Record<string, number>>) : {};
+    const next: Record<string, Record<string, number>> = { ...parsed, [key]: clean };
+    const keys = Object.keys(next);
+    if (keys.length > 60) {
+      for (const oldKey of keys.slice(0, keys.length - 60)) {
+        delete next[oldKey];
+      }
+    }
+    window.localStorage.setItem(SIZE_PRICES_CACHE_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage quota errors
+  }
+}
 
 function ColorSwatchDot({
   color,
@@ -211,6 +264,13 @@ function parseOptionalPriceInput(raw: string): number | undefined {
   const parsed = Number.parseFloat(trimmed.replace(',', '.'));
   if (!Number.isFinite(parsed) || parsed < 0) return undefined;
   return Math.min(1000000, Math.round(parsed * 100) / 100);
+}
+
+function formatEuroIt(value: number): string {
+  return `${value.toLocaleString('it-IT', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} €`;
 }
 
 function ColorFieldInput({
@@ -429,6 +489,7 @@ function clientFallbackInspectUrl(validUrl: string): {
   title: string;
   store: string;
   category: ProductResearchCategory;
+  room?: ResearchRoomId;
   brand?: string;
   color?: string;
   availableColors?: string[];
@@ -548,7 +609,7 @@ function clientFallbackInspectUrl(validUrl: string): {
     category = 'elettrodomestici';
   } else if (/(tv|monitor|laptop|macbook|pc|ipad|tablet|iphone|custodia|magsafe|cuffie|router|ssd|tastiera|mouse)/.test(low)) {
     category = 'elettronica';
-  } else if (/(divano|tavolo|sedia|armadio|lampada|materasso|tappeto|arredo|arredamento|scrivania|scaffale|statuetta|busto|scultura|soprammobile|vaso|cornice|quadro|candela|cuscino|plaid|tenda|poltrona|pouf|libreria|comodino|cemento|ceramica|maisonsdumonde|zarahome|westwing|kavehome|sklum)/.test(low)) {
+  } else if (/(divano|tavolo|sedia|armadio|lampada|materasso|tappeto|arredo|arredamento|scrivania|scaffale|statuetta|busto|scultura|soprammobile|vaso|cornice|quadro|candela|cuscino|plaid|tenda|poltrona|pouf|libreria|comodino|cemento|ceramica|maisonsdumonde|zarahome|westwing|kavehome|sklum|nardioutdoor)/.test(low)) {
     category = 'casa_arredo';
   } else if (/(trapano|avvitatore|makita|utensil|scala|giardino|vernice|silicone|idropulitrice)/.test(low)) {
     category = 'fai_da_te';
@@ -560,12 +621,14 @@ function clientFallbackInspectUrl(validUrl: string): {
 
   const specs = specsLines.length > 0 ? specsLines.join('\n') : undefined;
   brand = inferProductBrand({ title, url: validUrl, store, specs });
+  const room = inferResearchRoom({ title, url: validUrl, specs, category });
 
   return {
     url: validUrl,
     title,
     store: store.slice(0, 60),
     category,
+    room,
     brand,
     model,
     specs,
@@ -600,7 +663,9 @@ function buildResearchSharePayload(item: ProductResearchRecord): ShareableItemPa
   const resolvedBrand = inferProductBrand(item);
   const priceText = typeof item.priceEur === 'number' ? `€ ${item.priceEur.toFixed(2)}` : 'Non indicato';
   const paidText =
-    typeof item.paidPriceEur === 'number' ? `€ ${item.paidPriceEur.toFixed(2)}` : '';
+    item.status === 'acquistato' && typeof item.paidPriceEur === 'number'
+      ? `€ ${item.paidPriceEur.toFixed(2)}`
+      : '';
   const lines = [
     item.title,
     resolvedBrand ? `Marca: ${resolvedBrand}` : '',
@@ -662,6 +727,9 @@ export function ResearchesView({
   );
   const [draftSize, setDraftSize] = useState('');
   const [draftAvailableSizes, setDraftAvailableSizes] = useState<string[]>([]);
+  const [draftSizePrices, setDraftSizePrices] = useState<Record<string, number> | undefined>(
+    undefined
+  );
   const [draftModel, setDraftModel] = useState('');
   const [draftCategory, setDraftCategory] = useState<ProductResearchCategory>('altro');
   const [draftStatus, setDraftStatus] = useState<ProductResearchStatus>('da_valutare');
@@ -679,7 +747,9 @@ export function ResearchesView({
   const [searchText, setSearchText] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | ProductResearchStatus>('all');
   const [categoryFilter, setCategoryFilter] = useState<'all' | ProductResearchCategory>('all');
-  const [roomFilter, setRoomFilter] = useState<'all' | 'none' | ResearchRoomId>('all');
+  const [selectedRooms, setSelectedRooms] = useState<Array<'none' | ResearchRoomId>>([]);
+  const [roomMenuOpen, setRoomMenuOpen] = useState(false);
+  const roomMenuRef = useRef<HTMLDivElement | null>(null);
   const [brandFilter, setBrandFilter] = useState<string>('all');
   const [storeFilter, setStoreFilter] = useState<string>('all');
   const [sortField, setSortField] = useState<ResearchSortField>('title');
@@ -689,7 +759,13 @@ export function ResearchesView({
       const saved = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
       if (saved === 'list' || saved === 'grid') return saved;
     }
-    return 'grid';
+    return 'list';
+  });
+  const [groupByRoom, setGroupByRoom] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.localStorage.getItem(GROUP_BY_ROOM_STORAGE_KEY) === 'true';
+    }
+    return false;
   });
 
   // Card editing / refresh / attachments / delete / share / copy / move feedback
@@ -714,6 +790,9 @@ export function ResearchesView({
   const [editImageUrl, setEditImageUrl] = useState('');
   const [editSpecs, setEditSpecs] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  const [editSizePrices, setEditSizePrices] = useState<Record<string, number> | undefined>(
+    undefined
+  );
   const [savingEdit, setSavingEdit] = useState(false);
   const [inlinePaidEditId, setInlinePaidEditId] = useState<string | null>(null);
   const [inlinePaidValue, setInlinePaidValue] = useState('');
@@ -726,6 +805,8 @@ export function ResearchesView({
         imageUrl?: string;
         colorImages?: Record<string, string>;
         size?: string;
+        priceEur?: number | null;
+        sizePrices?: Record<string, number>;
         room?: string | null;
         status?: ProductResearchStatus;
         paidPriceEur?: number | null;
@@ -736,8 +817,15 @@ export function ResearchesView({
   const [lazyColorImages, setLazyColorImages] = useState<
     Record<string, Record<string, string>>
   >({});
+  const [lazySizePrices, setLazySizePrices] = useState<
+    Record<string, Record<string, number>>
+  >({});
+  const [lazySizePriceLoadingIds, setLazySizePriceLoadingIds] = useState<
+    Record<string, boolean>
+  >({});
   const lazyInspectingIdsRef = useRef<Set<string>>(new Set());
   const latestQuickColorRef = useRef<Record<string, string>>({});
+  const latestQuickSizeRef = useRef<Record<string, string>>({});
 
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [expandedSpecsIds, setExpandedSpecsIds] = useState<Record<string, boolean>>({});
@@ -759,10 +847,29 @@ export function ResearchesView({
   } | null>(null);
   const [shareItem, setShareItem] = useState<ShareableItemPayload | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [listCopied, setListCopied] = useState(false);
   const [movedArticleIds, setMovedArticleIds] = useState<Record<string, boolean>>({});
   const [movingId, setMovingId] = useState<string | null>(null);
   const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
   const [attachedThumbnails, setAttachedThumbnails] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!roomMenuOpen) return;
+    function handleOutsideClick(e: MouseEvent) {
+      if (roomMenuRef.current && !roomMenuRef.current.contains(e.target as Node)) {
+        setRoomMenuOpen(false);
+      }
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setRoomMenuOpen(false);
+    }
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [roomMenuOpen]);
 
   // If a product has no external image URL (or it broke), render any uploaded image attachment as thumbnail
   useEffect(() => {
@@ -813,6 +920,7 @@ export function ResearchesView({
     title: string;
     store: string;
     category: ProductResearchCategory;
+    room?: ResearchRoomId;
     priceEur?: number;
     imageUrl?: string;
     brand?: string;
@@ -821,6 +929,7 @@ export function ResearchesView({
     colorImages?: Record<string, string>;
     size?: string;
     availableSizes?: string[];
+    sizePrices?: Record<string, number>;
     model?: string;
     specs?: string;
     notes?: string;
@@ -839,6 +948,7 @@ export function ResearchesView({
           title?: string;
           store?: string;
           category?: string;
+          room?: string;
           priceEur?: number;
           imageUrl?: string;
           brand?: string;
@@ -847,6 +957,7 @@ export function ResearchesView({
           colorImages?: Record<string, string>;
           size?: string;
           availableSizes?: string[];
+          sizePrices?: Record<string, number>;
           model?: string;
           specs?: string;
           notes?: string;
@@ -864,11 +975,25 @@ export function ResearchesView({
             ? data.availableSizes.map((s) => String(s).trim()).filter(Boolean).slice(0, 24)
             : [];
           const cleanColorImages = sanitizeColorImagesMap(data.colorImages);
+          const cleanSizePrices = sanitizeSizePricesMap(data.sizePrices);
+          if (cleanSizePrices) {
+            writeCachedSizePrices(validUrl, cleanSizePrices);
+            writeCachedSizePrices(data.url, cleanSizePrices);
+          }
+          const resolvedRoom =
+            normalizeResearchRoom(data.room) ||
+            inferResearchRoom({
+              title: data.title,
+              url: data.url,
+              specs: data.specs,
+              category: validCat,
+            });
           return {
             url: data.url,
             title: data.title,
             store: data.store,
             category: validCat,
+            room: resolvedRoom,
             priceEur: typeof data.priceEur === 'number' ? data.priceEur : undefined,
             imageUrl:
               typeof data.imageUrl === 'string' && /^https?:\/\/.+/.test(data.imageUrl)
@@ -880,6 +1005,7 @@ export function ResearchesView({
             colorImages: cleanColorImages,
             size: data.size || undefined,
             availableSizes: cleanSizes.length > 0 ? cleanSizes : undefined,
+            sizePrices: cleanSizePrices,
             model: data.model || undefined,
             specs: data.specs || undefined,
             notes: data.notes || undefined,
@@ -914,12 +1040,21 @@ export function ResearchesView({
       const inspected = await inspectProductLink(validUrl);
       setSavingNew(true);
       const resolvedBrand = inferProductBrand(inspected);
+      const resolvedRoom =
+        normalizeResearchRoom(inspected.room) ||
+        inferResearchRoom({
+          title: inspected.title,
+          url: inspected.url,
+          specs: inspected.specs,
+          category: inspected.category,
+        });
       await onAddResearch({
         url: inspected.url,
         title: inspected.title,
         store: inspected.store,
         category: inspected.category,
         status: 'da_valutare',
+        room: resolvedRoom,
         priceEur: inspected.priceEur,
         imageUrl: inspected.imageUrl,
         brand: resolvedBrand,
@@ -936,6 +1071,7 @@ export function ResearchesView({
       setDraftOpen(false);
       const foundBits = [
         typeof inspected.priceEur === 'number' ? `€ ${inspected.priceEur.toFixed(2)}` : '',
+        resolvedRoom ? `stanza ${getResearchRoomLabel(resolvedRoom)}` : '',
         inspected.color ? `colore ${inspected.color}` : '',
         inspected.size ? `taglia ${inspected.size}` : '',
         inspected.imageUrl ? 'immagine' : '',
@@ -979,6 +1115,7 @@ export function ResearchesView({
       setDraftColorImages(undefined);
       setDraftSize('');
       setDraftAvailableSizes([]);
+      setDraftSizePrices(undefined);
       setDraftModel('');
       setDraftCategory('altro');
       setDraftStatus('da_valutare');
@@ -1012,10 +1149,11 @@ export function ResearchesView({
       setDraftColorImages(inspected.colorImages);
       setDraftSize(inspected.size || '');
       setDraftAvailableSizes(inspected.availableSizes || []);
+      setDraftSizePrices(inspected.sizePrices);
       setDraftModel(inspected.model || '');
       setDraftCategory(inspected.category);
       setDraftStatus('da_valutare');
-      setDraftRoom('');
+      setDraftRoom(normalizeResearchRoom(inspected.room) || '');
       setDraftPrice(typeof inspected.priceEur === 'number' ? String(inspected.priceEur) : '');
       setDraftPaidPrice('');
       setDraftImageUrl(inspected.imageUrl || '');
@@ -1074,7 +1212,8 @@ export function ResearchesView({
       return;
     }
     const validPrice = parseOptionalPriceInput(draftPrice);
-    const validPaidPrice = parseOptionalPriceInput(draftPaidPrice);
+    const validPaidPrice =
+      draftStatus === 'acquistato' ? parseOptionalPriceInput(draftPaidPrice) : undefined;
     const validImg =
       draftImageUrl.trim() && /^https?:\/\/.+/.test(draftImageUrl.trim())
         ? draftImageUrl.trim().slice(0, 1000)
@@ -1124,6 +1263,7 @@ export function ResearchesView({
       setDraftColorImages(undefined);
       setDraftSize('');
       setDraftAvailableSizes([]);
+      setDraftSizePrices(undefined);
       setDraftAttachments([]);
       setFeedback(
         `Prodotto "${cleanTitle}" salvato su Firestore${
@@ -1152,6 +1292,7 @@ export function ResearchesView({
     setEditColorImages(effective.colorImages);
     setEditSize(effective.size || '');
     setEditAvailableSizes(effective.availableSizes || []);
+    setEditSizePrices(effective.sizePrices);
     setEditModel(effective.model || '');
     setEditCategory(effective.category);
     setEditStatus(effective.status);
@@ -1182,7 +1323,8 @@ export function ResearchesView({
       return;
     }
     const validPrice = parseOptionalPriceInput(editPrice);
-    const validPaidPrice = parseOptionalPriceInput(editPaidPrice);
+    const validPaidPrice =
+      editStatus === 'acquistato' ? parseOptionalPriceInput(editPaidPrice) : undefined;
     const validImg =
       editImageUrl.trim() && /^https?:\/\/.+/.test(editImageUrl.trim())
         ? editImageUrl.trim().slice(0, 1000)
@@ -1267,9 +1409,9 @@ export function ResearchesView({
         store: nextStore,
         category: inspected.category || item.category,
         status: item.status,
-        room: normalizeResearchRoom(item.room),
+        room: normalizeResearchRoom(item.room) ?? normalizeResearchRoom(inspected.room),
         priceEur: inspected.priceEur ?? item.priceEur,
-        paidPriceEur: item.paidPriceEur,
+        paidPriceEur: item.status === 'acquistato' ? item.paidPriceEur : undefined,
         imageUrl: inspected.imageUrl || item.imageUrl,
         brand: nextBrand,
         color: inspected.color || item.color,
@@ -1289,6 +1431,10 @@ export function ResearchesView({
       });
       if (inspected.colorImages) {
         setLazyColorImages((prev) => ({ ...prev, [item.id]: inspected.colorImages! }));
+      }
+      if (inspected.sizePrices) {
+        setLazySizePrices((prev) => ({ ...prev, [item.id]: inspected.sizePrices! }));
+        writeCachedSizePrices(item.url, inspected.sizePrices);
       }
       handleDiscardPendingCardEdit(item.id);
       setBrokenImages((prev) => {
@@ -1317,7 +1463,7 @@ export function ResearchesView({
     item: ProductResearchRecord,
     overrides: Partial<Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'>>
   ): Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'> {
-    return {
+    const next = {
       url: item.url,
       title: item.title,
       store: item.store,
@@ -1325,7 +1471,7 @@ export function ResearchesView({
       status: item.status,
       room: normalizeResearchRoom(item.room),
       priceEur: item.priceEur,
-      paidPriceEur: item.paidPriceEur,
+      paidPriceEur: item.status === 'acquistato' ? item.paidPriceEur : undefined,
       imageUrl: item.imageUrl,
       brand: item.brand,
       color: item.color,
@@ -1338,13 +1484,24 @@ export function ResearchesView({
       notes: item.notes,
       ...overrides,
     };
+    if (next.status !== 'acquistato') {
+      next.paidPriceEur = undefined;
+    }
+    return next;
   }
 
   function getEffectiveItem(item: ProductResearchRecord): ProductResearchRecord {
     const pending = pendingCardEdits[item.id];
     const resolvedColorImages =
       pending?.colorImages || item.colorImages || lazyColorImages[item.id];
-    if (!pending && !resolvedColorImages) return item;
+    const resolvedSizePrices =
+      pending?.sizePrices ||
+      item.sizePrices ||
+      lazySizePrices[item.id] ||
+      readCachedSizePrices(item.url);
+    const hasStalePaid = item.status !== 'acquistato' && typeof item.paidPriceEur === 'number';
+    if (!pending && !resolvedColorImages && !resolvedSizePrices && !hasStalePaid) return item;
+    const effectiveStatus = pending?.status !== undefined ? pending.status : item.status;
     return {
       ...item,
       title: pending?.title !== undefined ? pending.title : item.title,
@@ -1352,17 +1509,26 @@ export function ResearchesView({
       imageUrl: pending?.imageUrl !== undefined ? pending.imageUrl : item.imageUrl,
       colorImages: resolvedColorImages,
       size: pending?.size !== undefined ? pending.size : item.size,
+      priceEur:
+        pending?.priceEur !== undefined
+          ? pending.priceEur === null
+            ? undefined
+            : pending.priceEur
+          : item.priceEur,
+      sizePrices: resolvedSizePrices,
       room:
         pending?.room !== undefined
           ? normalizeResearchRoom(pending.room || undefined)
           : item.room,
-      status: pending?.status !== undefined ? pending.status : item.status,
+      status: effectiveStatus,
       paidPriceEur:
-        pending?.paidPriceEur !== undefined
-          ? pending.paidPriceEur === null
-            ? undefined
-            : pending.paidPriceEur
-          : item.paidPriceEur,
+        effectiveStatus !== 'acquistato'
+          ? undefined
+          : pending?.paidPriceEur !== undefined
+            ? pending.paidPriceEur === null
+              ? undefined
+              : pending.paidPriceEur
+            : item.paidPriceEur,
     };
   }
 
@@ -1374,6 +1540,8 @@ export function ResearchesView({
       imageUrl?: string;
       colorImages?: Record<string, string>;
       size?: string;
+      priceEur?: number | null;
+      sizePrices?: Record<string, number>;
       room?: string | null;
       status?: ProductResearchStatus;
       paidPriceEur?: number | null;
@@ -1387,23 +1555,35 @@ export function ResearchesView({
       const nextColor = merged.color !== undefined ? merged.color : item.color;
       const nextImageUrl = merged.imageUrl !== undefined ? merged.imageUrl : item.imageUrl;
       const nextSize = merged.size !== undefined ? merged.size : item.size;
+      const nextPrice =
+        merged.priceEur !== undefined
+          ? merged.priceEur === null
+            ? undefined
+            : merged.priceEur
+          : item.priceEur;
       const nextRoom =
         merged.room !== undefined
           ? normalizeResearchRoom(merged.room || undefined)
           : normalizeResearchRoom(item.room);
       const nextStatus = merged.status !== undefined ? merged.status : item.status;
+      if (nextStatus !== 'acquistato') {
+        merged.paidPriceEur = item.paidPriceEur !== undefined ? null : undefined;
+      }
       const nextPaid =
-        merged.paidPriceEur !== undefined
-          ? merged.paidPriceEur === null
-            ? undefined
-            : merged.paidPriceEur
-          : item.paidPriceEur;
+        nextStatus !== 'acquistato'
+          ? undefined
+          : merged.paidPriceEur !== undefined
+            ? merged.paidPriceEur === null
+              ? undefined
+              : merged.paidPriceEur
+            : item.paidPriceEur;
 
       const isIdentical =
         nextTitle === item.title &&
         nextColor === item.color &&
         nextImageUrl === item.imageUrl &&
         nextSize === item.size &&
+        nextPrice === item.priceEur &&
         nextRoom === normalizeResearchRoom(item.room) &&
         nextStatus === item.status &&
         nextPaid === item.paidPriceEur;
@@ -1446,6 +1626,7 @@ export function ResearchesView({
         imageUrl: effective.imageUrl,
         colorImages: effective.colorImages,
         size: effective.size,
+        priceEur: effective.priceEur,
         room: normalizeResearchRoom(effective.room),
         status: effective.status,
         paidPriceEur: effective.paidPriceEur,
@@ -1468,6 +1649,7 @@ export function ResearchesView({
           imageUrl: effective.imageUrl,
           colorImages: effective.colorImages,
           size: effective.size,
+          priceEur: effective.priceEur,
           room: normalizeResearchRoom(effective.room),
           status: effective.status,
           paidPriceEur: effective.paidPriceEur,
@@ -1494,7 +1676,14 @@ export function ResearchesView({
     nextStatus: ProductResearchStatus
   ) {
     if (readOnly) return;
-    stageCardEdit(item, { status: nextStatus });
+    if (nextStatus !== 'acquistato' && inlinePaidEditId === item.id) {
+      setInlinePaidEditId(null);
+      setInlinePaidValue('');
+    }
+    stageCardEdit(item, {
+      status: nextStatus,
+      ...(nextStatus !== 'acquistato' ? { paidPriceEur: null } : {}),
+    });
   }
 
   function handleQuickRoomChange(item: ProductResearchRecord, nextRoomRaw: string) {
@@ -1537,6 +1726,9 @@ export function ResearchesView({
       lazyInspectingIdsRef.current.add(item.id);
       void inspectProductLink(item.url)
         .then((inspected) => {
+          if (inspected.sizePrices && Object.keys(inspected.sizePrices).length > 0) {
+            setLazySizePrices((prev) => ({ ...prev, [item.id]: inspected.sizePrices! }));
+          }
           if (!inspected.colorImages || Object.keys(inspected.colorImages).length === 0) return;
           setLazyColorImages((prev) => ({ ...prev, [item.id]: inspected.colorImages! }));
           const targetColor = latestQuickColorRef.current[item.id] || nextColor;
@@ -1572,6 +1764,7 @@ export function ResearchesView({
 
   function handleQuickSizeSelect(item: ProductResearchRecord, nextSize: string) {
     if (readOnly) return;
+    latestQuickSizeRef.current[item.id] = nextSize;
     const effective = getEffectiveItem(item);
     const nextTitle = replaceSizeInTitle(
       effective.title,
@@ -1579,11 +1772,62 @@ export function ResearchesView({
       effective.size,
       item.availableSizes
     ).slice(0, 160);
-    stageCardEdit(item, { size: nextSize, title: nextTitle });
+    const knownSizePrices =
+      effective.sizePrices || lazySizePrices[item.id] || readCachedSizePrices(item.url);
+    const nextVariantPrice = findSizePrice(knownSizePrices, nextSize);
+
+    stageCardEdit(item, {
+      size: nextSize,
+      title: nextTitle,
+      ...(typeof nextVariantPrice === 'number' ? { priceEur: nextVariantPrice } : {}),
+    });
+
+    if (
+      (!knownSizePrices || Object.keys(knownSizePrices).length === 0) &&
+      /^https?:\/\/.+/.test(item.url) &&
+      !lazyInspectingIdsRef.current.has(item.id)
+    ) {
+      lazyInspectingIdsRef.current.add(item.id);
+      setLazySizePriceLoadingIds((prev) => ({ ...prev, [item.id]: true }));
+      void inspectProductLink(item.url)
+        .then((inspected) => {
+          if (inspected.colorImages && Object.keys(inspected.colorImages).length > 0) {
+            setLazyColorImages((prev) => ({ ...prev, [item.id]: inspected.colorImages! }));
+          }
+          if (!inspected.sizePrices || Object.keys(inspected.sizePrices).length === 0) return;
+          setLazySizePrices((prev) => ({ ...prev, [item.id]: inspected.sizePrices! }));
+          writeCachedSizePrices(item.url, inspected.sizePrices);
+          const targetSize = latestQuickSizeRef.current[item.id] || nextSize;
+          const fetchedPrice = findSizePrice(inspected.sizePrices, targetSize);
+          setPendingCardEdits((prev) => {
+            if (!prev[item.id]) return prev;
+            return {
+              ...prev,
+              [item.id]: {
+                ...prev[item.id],
+                sizePrices: inspected.sizePrices,
+                ...(typeof fetchedPrice === 'number' ? { priceEur: fetchedPrice } : {}),
+              },
+            };
+          });
+        })
+        .catch(() => {
+          // ignore lazy variant price lookup failures
+        })
+        .finally(() => {
+          lazyInspectingIdsRef.current.delete(item.id);
+          setLazySizePriceLoadingIds((prev) => {
+            if (!prev[item.id]) return prev;
+            const copy = { ...prev };
+            delete copy[item.id];
+            return copy;
+          });
+        });
+    }
   }
 
   function handleSaveInlinePaidPrice(item: ProductResearchRecord) {
-    if (readOnly) return;
+    if (readOnly || getEffectiveItem(item).status !== 'acquistato') return;
     const validPaid = parseOptionalPriceInput(inlinePaidValue);
     stageCardEdit(item, { paidPriceEur: validPaid ?? null });
     setInlinePaidEditId(null);
@@ -1597,6 +1841,18 @@ export function ResearchesView({
     } catch {
       // ignore storage errors
     }
+  }
+
+  function handleToggleGroupByRoom() {
+    setGroupByRoom((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(GROUP_BY_ROOM_STORAGE_KEY, String(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
   }
 
   function triggerCardFileUpload(
@@ -1802,13 +2058,9 @@ export function ResearchesView({
       ) {
         return false;
       }
-      if (roomFilter === 'none' && normalizeResearchRoom(item.room)) return false;
-      if (
-        roomFilter !== 'all' &&
-        roomFilter !== 'none' &&
-        normalizeResearchRoom(item.room) !== roomFilter
-      ) {
-        return false;
+      if (selectedRooms.length > 0) {
+        const normalizedItemRoom = normalizeResearchRoom(item.room) || 'none';
+        if (!selectedRooms.includes(normalizedItemRoom)) return false;
       }
       if (!q) return true;
       const haystack = [
@@ -1889,13 +2141,165 @@ export function ResearchesView({
     categoryFilter,
     brandFilter,
     storeFilter,
-    roomFilter,
+    selectedRooms,
     sortField,
     sortDirection,
   ]);
 
+  const roomStats = useMemo(() => {
+    const counts: Record<ResearchRoomId, number> = {
+      salone: 0,
+      cucina: 0,
+      bagno1: 0,
+      bagno2: 0,
+      stanza_maurizio: 0,
+      stanza_roberta: 0,
+      stanza_matrimoniale: 0,
+      terrazza_ovest: 0,
+      terrazza_est: 0,
+    };
+    let unassigned = 0;
+    for (const item of researches) {
+      const normalized = normalizeResearchRoom(item.room);
+      if (normalized) {
+        counts[normalized] += 1;
+      } else {
+        unassigned += 1;
+      }
+    }
+    return { counts, unassigned };
+  }, [researches]);
+
+  const categoryCounts = useMemo(() => {
+    const counts: Partial<Record<ProductResearchCategory, number>> = {};
+    for (const item of researches) {
+      counts[item.category] = (counts[item.category] || 0) + 1;
+    }
+    return counts;
+  }, [researches]);
+
+  const statusCounts = useMemo(() => {
+    const counts: Record<ProductResearchStatus, number> = {
+      da_valutare: 0,
+      da_acquistare: 0,
+      acquistato: 0,
+    };
+    for (const item of researches) {
+      counts[item.status] += 1;
+    }
+    return counts;
+  }, [researches]);
+
+  const pageTotals = useMemo(() => {
+    let listTotal = 0;
+    let paidTotal = 0;
+    let paidCount = 0;
+    for (const rawItem of filteredResearches) {
+      const item = getEffectiveItem(rawItem);
+      if (typeof item.priceEur === 'number') {
+        listTotal += item.priceEur;
+      }
+      if (item.status === 'acquistato' && typeof item.paidPriceEur === 'number') {
+        paidTotal += item.paidPriceEur;
+        paidCount += 1;
+      }
+    }
+    return {
+      listTotal,
+      paidTotal,
+      paidCount,
+      itemCount: filteredResearches.length,
+    };
+  }, [filteredResearches, pendingCardEdits, lazyColorImages, lazySizePrices]);
+
+  const groupedByRoom = useMemo(() => {
+    const byRoomMap = new Map<'none' | ResearchRoomId, ProductResearchRecord[]>();
+    for (const item of filteredResearches) {
+      const effectiveRoom = getEffectiveItem(item).room;
+      const key = normalizeResearchRoom(effectiveRoom) || 'none';
+      const existing = byRoomMap.get(key);
+      if (existing) existing.push(item);
+      else byRoomMap.set(key, [item]);
+    }
+
+    const groups: {
+      key: 'none' | ResearchRoomId;
+      label: string;
+      items: ProductResearchRecord[];
+      listTotal: number;
+      paidTotal: number;
+      paidCount: number;
+    }[] = [];
+
+    const orderedKeys: ('none' | ResearchRoomId)[] = [
+      ...RESEARCH_ROOMS.map((rm) => rm.id),
+      'none',
+    ];
+
+    for (const key of orderedKeys) {
+      const items = byRoomMap.get(key);
+      if (!items || items.length === 0) continue;
+      let listTotal = 0;
+      let paidTotal = 0;
+      let paidCount = 0;
+      for (const rawItem of items) {
+        const item = getEffectiveItem(rawItem);
+        if (typeof item.priceEur === 'number') listTotal += item.priceEur;
+        if (item.status === 'acquistato' && typeof item.paidPriceEur === 'number') {
+          paidTotal += item.paidPriceEur;
+          paidCount += 1;
+        }
+      }
+      groups.push({
+        key,
+        label: key === 'none' ? 'Non assegnata' : getResearchRoomLabel(key),
+        items,
+        listTotal,
+        paidTotal,
+        paidCount,
+      });
+    }
+
+    return groups;
+  }, [filteredResearches, pendingCardEdits, lazyColorImages, lazySizePrices]);
+
+  async function handleCopyFilteredList() {
+    if (filteredResearches.length === 0) return;
+    const lines = filteredResearches.map((item, idx) => {
+      const effective = getEffectiveItem(item);
+      const brand = inferProductBrand(effective);
+      const room = getResearchRoomLabel(effective.room);
+      const priceStr =
+        typeof effective.priceEur === 'number'
+          ? formatEuroIt(effective.priceEur)
+          : 'Prezzo n/d';
+      const paidStr =
+        effective.status === 'acquistato' && typeof effective.paidPriceEur === 'number'
+          ? ` · Pagato: ${formatEuroIt(effective.paidPriceEur)}`
+          : '';
+      const meta = [brand, effective.store, room !== 'Nessuna stanza' ? room : '', priceStr]
+        .filter(Boolean)
+        .join(' · ');
+      return `${idx + 1}. ${effective.title} (${meta}${paidStr})\n   ${effective.url}`;
+    });
+    const header = `Ricerche Prodotti (${filteredResearches.length} articoli · Totale: ${formatEuroIt(
+      pageTotals.listTotal
+    )}${
+      pageTotals.paidCount > 0
+        ? ` · Pagato: ${formatEuroIt(pageTotals.paidTotal)} su ${pageTotals.paidCount}`
+        : ''
+    })`;
+    try {
+      await navigator.clipboard.writeText(`${header}\n\n${lines.join('\n')}`);
+      setListCopied(true);
+      window.setTimeout(() => setListCopied(false), 2000);
+    } catch {
+      // ignore clipboard errors
+    }
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0">
       {/* Hidden input for uploading attachments directly onto any card */}
       <input
         ref={cardFileInputRef}
@@ -1974,12 +2378,12 @@ export function ResearchesView({
             </div>
 
             {!readOnly && (
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 sm:shrink-0">
                 <button
                   type="button"
                   disabled={inspecting || savingNew}
                   onClick={() => void handleOpenDraftFromLink()}
-                  className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl transition-colors whitespace-nowrap disabled:opacity-50"
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl transition-colors whitespace-nowrap disabled:opacity-50"
                 >
                   <Pencil className="w-3.5 h-3.5 text-sky-400" />
                   <span>{linkInput.trim() ? 'Anteprima / Modifica' : 'Inserimento manuale'}</span>
@@ -1987,7 +2391,7 @@ export function ResearchesView({
                 <button
                   type="submit"
                   disabled={!linkInput.trim() || inspecting || savingNew}
-                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-xl transition-colors whitespace-nowrap disabled:opacity-50"
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-xl transition-colors whitespace-nowrap disabled:opacity-50"
                 >
                   {inspecting || savingNew ? (
                     <>
@@ -2082,7 +2486,7 @@ export function ResearchesView({
                   </div>
                   <div className="text-[11px] text-slate-400 mt-0.5 flex flex-wrap items-center gap-2">
                     <span>{draftPrice ? `€ ${draftPrice}` : 'Prezzo non rilevato'}</span>
-                    {draftPaidPrice && (
+                    {draftStatus === 'acquistato' && draftPaidPrice && (
                       <span className="text-emerald-300 font-medium">
                         · Pagato € {draftPaidPrice}
                       </span>
@@ -2132,19 +2536,21 @@ export function ResearchesView({
                 />
               </div>
 
-              <div className="space-y-1">
-                <label className="block text-slate-400">Prezzo pagato all&apos;acquisto (€ opz.)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max="1000000"
-                  value={draftPaidPrice}
-                  onChange={(e) => setDraftPaidPrice(e.target.value)}
-                  placeholder="Es. 49.90"
-                  className="w-full px-3 py-2 font-mono bg-slate-900 border border-slate-800 rounded-lg text-emerald-200 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
+              {draftStatus === 'acquistato' && (
+                <div className="space-y-1">
+                  <label className="block text-slate-400">Prezzo pagato all&apos;acquisto (€ opz.)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="1000000"
+                    value={draftPaidPrice}
+                    onChange={(e) => setDraftPaidPrice(e.target.value)}
+                    placeholder="Es. 49.90"
+                    className="w-full px-3 py-2 font-mono bg-slate-900 border border-slate-800 rounded-lg text-emerald-200 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              )}
 
               <div className="sm:col-span-2 lg:col-span-2 space-y-1">
                 <label className="block text-slate-400">Link URL prodotto *</label>
@@ -2231,7 +2637,13 @@ export function ResearchesView({
                 <label className="block text-slate-400">Stato</label>
                 <select
                   value={draftStatus}
-                  onChange={(e) => setDraftStatus(e.target.value as ProductResearchStatus)}
+                  onChange={(e) => {
+                    const nextStatus = e.target.value as ProductResearchStatus;
+                    setDraftStatus(nextStatus);
+                    if (nextStatus !== 'acquistato') {
+                      setDraftPaidPrice('');
+                    }
+                  }}
                   className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
                 >
                   {STATUS_OPTIONS.map((s) => (
@@ -2278,11 +2690,15 @@ export function ResearchesView({
                 <SizeFieldInput
                   value={draftSize}
                   onChange={setDraftSize}
-                  onCommit={(nextVal, prevVal) =>
+                  onCommit={(nextVal, prevVal) => {
                     setDraftTitle((prev) =>
                       replaceSizeInTitle(prev, nextVal, prevVal, draftAvailableSizes).slice(0, 160)
-                    )
-                  }
+                    );
+                    const variantPrice = findSizePrice(draftSizePrices, nextVal);
+                    if (typeof variantPrice === 'number') {
+                      setDraftPrice(String(variantPrice));
+                    }
+                  }}
                   options={draftAvailableSizes}
                 />
               </div>
@@ -2392,53 +2808,20 @@ export function ResearchesView({
         )}
       </section>
 
-      {/* KPI Strip */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
-          <div className="text-[11px] text-slate-400">Link salvati</div>
-          <div className="text-xl font-bold font-mono text-slate-100 mt-1 tabular-nums">
-            {kpis.total}
-          </div>
-        </div>
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
-          <div className="text-[11px] text-slate-400 flex items-center gap-1">
-            <ShoppingBag className="w-3 h-3 text-sky-400" />
-            Da acquistare
-          </div>
-          <div className="text-xl font-bold font-mono text-sky-300 mt-1 tabular-nums">
-            {kpis.toBuy}
-          </div>
-        </div>
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
-          <div className="text-[11px] text-slate-400">Spesa stimata attiva</div>
-          <div className="text-xl font-bold font-mono text-amber-300 mt-1 tabular-nums">
-            € {kpis.pendingBudget.toFixed(2)}
-          </div>
-        </div>
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
-          <div className="text-[11px] text-slate-400 flex items-center gap-1">
-            <BookmarkCheck className="w-3 h-3 text-emerald-400" />
-            Acquistati
-          </div>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-xl font-bold font-mono text-emerald-300 tabular-nums">
-              {kpis.purchased}
-            </span>
-            {kpis.purchasedSpent > 0 && (
-              <span className="text-xs font-mono text-emerald-200/80 tabular-nums">
-                · € {kpis.purchasedSpent.toFixed(2)}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Filters, Room & View Mode Switcher */}
+      {/* Summary Header, Rooms Bar, Filters & View Mode Switcher */}
       {(() => {
+        const toggleRoomFilter = (roomKey: 'none' | ResearchRoomId) => {
+          setSelectedRooms((prev) =>
+            prev.includes(roomKey)
+              ? prev.filter((r) => r !== roomKey)
+              : [...prev, roomKey]
+          );
+        };
+
         const activeFilterCount =
           (searchText.trim() ? 1 : 0) +
           (statusFilter !== 'all' ? 1 : 0) +
-          (roomFilter !== 'all' ? 1 : 0) +
+          (selectedRooms.length > 0 ? 1 : 0) +
           (categoryFilter !== 'all' ? 1 : 0) +
           (brandFilter !== 'all' ? 1 : 0) +
           (storeFilter !== 'all' ? 1 : 0);
@@ -2447,7 +2830,7 @@ export function ResearchesView({
         const resetAllFilters = () => {
           setSearchText('');
           setStatusFilter('all');
-          setRoomFilter('all');
+          setSelectedRooms([]);
           setCategoryFilter('all');
           setBrandFilter('all');
           setStoreFilter('all');
@@ -2461,17 +2844,15 @@ export function ResearchesView({
             onClear: () => setSearchText(''),
           });
         }
-        if (roomFilter !== 'all') {
+        selectedRooms.forEach((rmKey) => {
           activeChips.push({
-            key: 'room',
+            key: `room_${rmKey}`,
             label: `Stanza: ${
-              roomFilter === 'none'
-                ? 'Nessuna stanza'
-                : getResearchRoomLabel(roomFilter) || roomFilter
+              rmKey === 'none' ? 'Non assegnata' : getResearchRoomLabel(rmKey) || rmKey
             }`,
-            onClear: () => setRoomFilter('all'),
+            onClear: () => setSelectedRooms((prev) => prev.filter((r) => r !== rmKey)),
           });
-        }
+        });
         if (categoryFilter !== 'all') {
           activeChips.push({
             key: 'category',
@@ -2502,22 +2883,361 @@ export function ResearchesView({
         }
 
         const selectBaseClass =
-          'px-2.5 py-1.5 text-xs rounded-lg border [color-scheme:dark] focus:outline-none focus:border-sky-500 transition-colors';
-        const selectInactiveClass = 'text-slate-200 bg-slate-950 border-slate-800 hover:border-slate-700';
+          'w-full sm:w-auto min-w-0 max-w-full px-3 py-2 text-xs rounded-lg border [color-scheme:dark] focus:outline-none focus:border-sky-500 transition-colors';
+        const selectInactiveClass =
+          'text-slate-200 bg-slate-950 border-slate-800 hover:border-slate-700';
         const selectActiveClass =
           'text-sky-100 font-semibold bg-sky-500/15 border-sky-400/80 ring-1 ring-sky-400/25';
+
+        const activeSectionTitle =
+          selectedRooms.length === 0
+            ? 'La mia lista'
+            : selectedRooms.length <= 2
+            ? selectedRooms
+                .map((rmKey) =>
+                  rmKey === 'none' ? 'Non assegnata' : getResearchRoomLabel(rmKey)
+                )
+                .join(' · ')
+            : `${selectedRooms.length} stanze selezionate`;
 
         return (
           <>
             <section
-              className={`bg-slate-900 border rounded-xl p-4 space-y-3 transition-colors ${
+              className={`bg-slate-900 border rounded-xl p-4 sm:p-5 space-y-4 transition-colors ${
                 hasActiveFilters
                   ? 'border-sky-500/45 ring-1 ring-sky-500/15'
                   : 'border-slate-800'
               }`}
             >
-              <div className="flex flex-wrap items-center gap-2.5">
-                <div className="relative flex-1 min-w-[200px]">
+              {/* Row 1: Summary Title + Page Totals + View Switcher & Copy List */}
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 min-w-0">
+                <div className="min-w-0 md:shrink-0">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-400">
+                    <span>Spazio personale</span>
+                    <span aria-hidden="true">·</span>
+                    <span className="tabular-nums">
+                      {researches.length}{' '}
+                      {researches.length === 1 ? 'articolo aggiunto' : 'articoli aggiunti'}
+                    </span>
+                    {kpis.toBuy > 0 && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="text-sky-300 tabular-nums">
+                          {kpis.toBuy} da acquistare
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  <h3 className="text-xl sm:text-2xl font-bold text-slate-100 tracking-tight mt-0.5 truncate">
+                    {activeSectionTitle}
+                  </h3>
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center md:justify-end gap-3 sm:gap-5 min-w-0">
+                  {/* Totals */}
+                  <div className="flex items-start justify-between sm:justify-start gap-3 sm:gap-5 min-w-0">
+                    <div className="min-w-0">
+                      <div className="text-[11px] text-slate-400 whitespace-nowrap">
+                        Valore totale pagina
+                      </div>
+                      <div className="text-lg sm:text-2xl font-bold font-mono tabular-nums text-slate-100 leading-tight mt-0.5 whitespace-nowrap">
+                        {formatEuroIt(pageTotals.listTotal)}
+                      </div>
+                    </div>
+
+                    <div className="w-px h-10 bg-slate-800 self-center shrink-0" aria-hidden="true" />
+
+                    <div className="min-w-0 text-right sm:text-left">
+                      <div className="text-[11px] text-slate-400 whitespace-nowrap">
+                        Totale pagato
+                      </div>
+                      <div className="text-lg sm:text-2xl font-bold font-mono tabular-nums text-emerald-400 leading-tight mt-0.5 whitespace-nowrap">
+                        {formatEuroIt(pageTotals.paidTotal)}
+                      </div>
+                      <div className="text-[11px] text-slate-400 tabular-nums mt-0.5 whitespace-nowrap">
+                        su {pageTotals.paidCount} su {pageTotals.itemCount}{' '}
+                        {pageTotals.itemCount === 1 ? 'articolo' : 'articoli'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    className="hidden sm:block w-px h-10 bg-slate-800 shrink-0"
+                    aria-hidden="true"
+                  />
+
+                  {/* View Mode Toggle + Independent Room Grouping + Copy List */}
+                  <div className="w-full sm:w-auto flex flex-wrap items-center gap-2 min-w-0">
+                    <div
+                      role="group"
+                      aria-label="Modalità visualizzazione"
+                      className="inline-flex items-center p-1 bg-slate-950 border border-slate-800 rounded-xl shrink-0"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleChangeViewMode('list')}
+                        aria-pressed={viewMode === 'list'}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+                          viewMode === 'list'
+                            ? 'bg-slate-800 text-slate-100 font-semibold shadow-sm'
+                            : 'text-slate-400 hover:text-slate-100'
+                        }`}
+                      >
+                        <List className="w-3.5 h-3.5" />
+                        <span>Elenco</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleChangeViewMode('grid')}
+                        aria-pressed={viewMode === 'grid'}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+                          viewMode === 'grid'
+                            ? 'bg-slate-800 text-slate-100 font-semibold shadow-sm'
+                            : 'text-slate-400 hover:text-slate-100'
+                        }`}
+                      >
+                        <LayoutGrid className="w-3.5 h-3.5" />
+                        <span>Griglia</span>
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleToggleGroupByRoom}
+                      aria-pressed={groupByRoom}
+                      title="Dividi i risultati per stanze (compatibile sia con Griglia che con Elenco)"
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-2 text-xs font-medium rounded-xl border transition-colors whitespace-nowrap ${
+                        groupByRoom
+                          ? 'bg-slate-100 text-slate-950 border-slate-100 font-semibold'
+                          : 'text-slate-200 bg-slate-950 hover:bg-slate-800 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <Home className="w-3.5 h-3.5" />
+                      <span>Dividi per stanze</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={filteredResearches.length === 0}
+                      onClick={() => void handleCopyFilteredList()}
+                      title="Copia riepilogo della lista filtrata negli appunti"
+                      className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-200 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-xl transition-colors whitespace-nowrap disabled:opacity-50"
+                    >
+                      {listCopied ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          <span className="text-emerald-300">Lista copiata</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5 text-slate-400" />
+                          <span>Copia lista</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t border-slate-800/80" />
+
+              {/* Row 2: Stanze Single-Line Bar (Multi-select Dropdown + Active Quick Chips) */}
+              <div className="flex items-center gap-2 min-w-0">
+                <div ref={roomMenuRef} className="relative shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setRoomMenuOpen((prev) => !prev)}
+                    aria-expanded={roomMenuOpen}
+                    aria-haspopup="listbox"
+                    title="Seleziona una o più stanze da filtrare"
+                    className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs rounded-lg border transition-colors whitespace-nowrap ${
+                      selectedRooms.length > 0
+                        ? 'bg-sky-500/15 text-sky-100 border-sky-400/80 ring-1 ring-sky-400/25 font-semibold'
+                        : 'bg-slate-950 text-slate-200 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <Home className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                    <span>
+                      {selectedRooms.length === 0
+                        ? 'Stanze'
+                        : selectedRooms.length === 1
+                        ? selectedRooms[0] === 'none'
+                          ? 'Non assegnata'
+                          : getResearchRoomLabel(selectedRooms[0])
+                        : `${selectedRooms.length} stanze`}
+                    </span>
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 text-slate-400 transition-transform ${
+                        roomMenuOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+
+                  {roomMenuOpen && (
+                    <div
+                      role="listbox"
+                      aria-multiselectable="true"
+                      aria-label="Seleziona una o più stanze"
+                      className="absolute left-0 top-full mt-1.5 z-40 w-64 max-w-[calc(100vw-2.5rem)] bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 space-y-1"
+                    >
+                      <div className="flex items-center justify-between px-2 py-1 border-b border-slate-800/80 mb-1">
+                        <span className="text-[11px] font-medium text-slate-400">
+                          Seleziona più stanze
+                        </span>
+                        {selectedRooms.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedRooms([])}
+                            className="text-[11px] font-medium text-sky-400 hover:text-sky-300"
+                          >
+                            Mostra tutte
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="max-h-64 overflow-y-auto space-y-0.5 pr-0.5">
+                        {RESEARCH_ROOMS.map((rm) => {
+                          const count = roomStats.counts[rm.id] || 0;
+                          const isSelected = selectedRooms.includes(rm.id);
+                          return (
+                            <button
+                              key={rm.id}
+                              type="button"
+                              role="option"
+                              aria-selected={isSelected}
+                              onClick={() => toggleRoomFilter(rm.id)}
+                              className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs rounded-lg transition-colors text-left ${
+                                isSelected
+                                  ? 'bg-sky-500/20 text-sky-100 font-semibold'
+                                  : count > 0
+                                  ? 'text-slate-200 hover:bg-slate-800/80'
+                                  : 'text-slate-500 hover:bg-slate-800/60 hover:text-slate-300'
+                              }`}
+                            >
+                              <span className="inline-flex items-center gap-2 min-w-0">
+                                <span
+                                  className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                                    isSelected
+                                      ? 'bg-sky-400 border-sky-400 text-slate-950'
+                                      : 'border-slate-700 bg-slate-950'
+                                  }`}
+                                >
+                                  {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                                </span>
+                                <span className="truncate">{rm.label}</span>
+                              </span>
+                              <span className="text-[11px] font-mono tabular-nums text-slate-400 shrink-0">
+                                {count}
+                              </span>
+                            </button>
+                          );
+                        })}
+
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={selectedRooms.includes('none')}
+                          onClick={() => toggleRoomFilter('none')}
+                          className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs rounded-lg transition-colors text-left ${
+                            selectedRooms.includes('none')
+                              ? 'bg-sky-500/20 text-sky-100 font-semibold'
+                              : 'text-slate-300 hover:bg-slate-800/80'
+                          }`}
+                        >
+                          <span className="inline-flex items-center gap-2 min-w-0">
+                            <span
+                              className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                                selectedRooms.includes('none')
+                                  ? 'bg-sky-400 border-sky-400 text-slate-950'
+                                  : 'border-slate-700 bg-slate-950'
+                              }`}
+                            >
+                              {selectedRooms.includes('none') && (
+                                <Check className="w-3 h-3 stroke-[3]" />
+                              )}
+                            </span>
+                            <span className="truncate">Non assegnata</span>
+                          </span>
+                          <span className="text-[11px] font-mono tabular-nums text-slate-400 shrink-0">
+                            {roomStats.unassigned}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="w-px h-5 bg-slate-800 shrink-0" aria-hidden="true" />
+
+                <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden min-w-0 flex-1 py-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedRooms([])}
+                    className={`px-2.5 sm:px-3 py-1.5 text-xs rounded-lg border transition-colors whitespace-nowrap tabular-nums shrink-0 ${
+                      selectedRooms.length === 0
+                        ? 'bg-slate-100 text-slate-950 border-slate-100 font-semibold'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-slate-100'
+                    }`}
+                  >
+                    Tutte ({researches.length})
+                  </button>
+
+                  {RESEARCH_ROOMS.map((rm) => {
+                    const count = roomStats.counts[rm.id] || 0;
+                    const isActive = selectedRooms.includes(rm.id);
+                    if (count === 0 && !isActive) return null;
+                    return (
+                      <button
+                        key={rm.id}
+                        type="button"
+                        aria-pressed={isActive}
+                        onClick={() => toggleRoomFilter(rm.id)}
+                        title={
+                          isActive
+                            ? `Rimuovi ${rm.label} dal filtro`
+                            : `Aggiungi ${rm.label} al filtro (multi-selezione)`
+                        }
+                        className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs rounded-lg border transition-colors whitespace-nowrap tabular-nums shrink-0 ${
+                          isActive
+                            ? 'bg-slate-100 text-slate-950 border-slate-100 font-semibold'
+                            : 'bg-slate-950 text-slate-200 border-slate-800 hover:border-slate-700 hover:text-white'
+                        }`}
+                      >
+                        {isActive && <Check className="w-3 h-3 shrink-0" />}
+                        <span>
+                          {rm.label}
+                          {count > 0 ? ` (${count})` : ''}
+                        </span>
+                      </button>
+                    );
+                  })}
+
+                  {(roomStats.unassigned > 0 || selectedRooms.includes('none')) && (
+                    <button
+                      type="button"
+                      aria-pressed={selectedRooms.includes('none')}
+                      onClick={() => toggleRoomFilter('none')}
+                      title={
+                        selectedRooms.includes('none')
+                          ? 'Rimuovi Non assegnata dal filtro'
+                          : 'Aggiungi Non assegnata al filtro (multi-selezione)'
+                      }
+                      className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs rounded-lg border transition-colors whitespace-nowrap tabular-nums shrink-0 ${
+                        selectedRooms.includes('none')
+                          ? 'bg-slate-100 text-slate-950 border-slate-100 font-semibold'
+                          : 'bg-slate-800/75 text-slate-300 border-slate-700/80 hover:border-slate-600 hover:text-slate-100'
+                      }`}
+                    >
+                      {selectedRooms.includes('none') && <Check className="w-3 h-3 shrink-0" />}
+                      <span>Non assegnata ({roomStats.unassigned})</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Row 3: Search + Category + Brand + Store + Status + Sort */}
+              <div className="flex flex-col lg:flex-row lg:flex-wrap lg:items-center gap-2.5 min-w-0">
+                <div className="relative w-full lg:flex-1 lg:min-w-[220px]">
                   <Search
                     className={`w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 ${
                       searchText.trim() ? 'text-sky-300' : 'text-slate-400'
@@ -2527,10 +3247,10 @@ export function ResearchesView({
                     type="text"
                     value={searchText}
                     onChange={(e) => setSearchText(e.target.value)}
-                    placeholder="Cerca nei prodotti salvati (nome, marca, negozio, stanza, colore, modello...)"
-                    className={`w-full pl-8 ${
+                    placeholder="Filtra tra i tuoi articoli (nome, marca, negozio, stanza, modello)..."
+                    className={`w-full pl-9 ${
                       searchText.trim() ? 'pr-8' : 'pr-3'
-                    } py-1.5 text-xs text-slate-100 rounded-lg border focus:outline-none focus:border-sky-500 transition-colors ${
+                    } py-2 text-xs text-slate-100 rounded-lg border focus:outline-none focus:border-sky-500 transition-colors ${
                       searchText.trim()
                         ? 'bg-sky-500/10 border-sky-400/80 ring-1 ring-sky-400/20'
                         : 'bg-slate-950 border-slate-800'
@@ -2542,211 +3262,128 @@ export function ResearchesView({
                       onClick={() => setSearchText('')}
                       aria-label="Cancella ricerca"
                       title="Cancella testo di ricerca"
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-100"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-100"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>
 
-                <select
-                  value={roomFilter}
-                  onChange={(e) =>
-                    setRoomFilter(e.target.value as 'all' | 'none' | ResearchRoomId)
-                  }
-                  aria-label="Filtra per stanza"
-                  className={`${selectBaseClass} ${
-                    roomFilter !== 'all' ? selectActiveClass : selectInactiveClass
-                  }`}
-                >
-                  <option value="all">Tutte le stanze</option>
-                  <option value="none">Nessuna stanza</option>
-                  {RESEARCH_ROOMS.map((rm) => (
-                    <option key={rm.id} value={rm.id}>
-                      {rm.label}
-                    </option>
-                  ))}
-                </select>
-
-                <select
-                  value={categoryFilter}
-                  onChange={(e) =>
-                    setCategoryFilter(e.target.value as 'all' | ProductResearchCategory)
-                  }
-                  aria-label="Filtra per categoria"
-                  className={`${selectBaseClass} ${
-                    categoryFilter !== 'all' ? selectActiveClass : selectInactiveClass
-                  }`}
-                >
-                  <option value="all">Tutte le categorie</option>
-                  {CATEGORY_OPTIONS.map((c) => (
-                    <option key={c.value} value={c.value}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
-
-                <select
-                  value={brandFilter}
-                  onChange={(e) => setBrandFilter(e.target.value)}
-                  aria-label="Filtra per marca"
-                  className={`${selectBaseClass} ${
-                    brandFilter !== 'all' ? selectActiveClass : selectInactiveClass
-                  }`}
-                >
-                  <option value="all">Tutte le marche</option>
-                  {hasUnbranded && <option value="none">Senza marca</option>}
-                  {availableBrands.map((br) => (
-                    <option key={br} value={br}>
-                      {br}
-                    </option>
-                  ))}
-                </select>
-
-                <select
-                  value={storeFilter}
-                  onChange={(e) => setStoreFilter(e.target.value)}
-                  aria-label="Filtra per negozio"
-                  className={`${selectBaseClass} ${
-                    storeFilter !== 'all' ? selectActiveClass : selectInactiveClass
-                  }`}
-                >
-                  <option value="all">Tutti i negozi</option>
-                  {availableStores.map((st) => (
-                    <option key={st} value={st}>
-                      {st}
-                    </option>
-                  ))}
-                </select>
-
-                <div className="inline-flex items-center gap-1 shrink-0">
+                <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:items-center gap-2 w-full lg:w-auto min-w-0">
                   <select
-                    value={sortField}
-                    onChange={(e) => setSortField(e.target.value as ResearchSortField)}
-                    aria-label="Ordina articoli per"
-                    className="px-2.5 py-1.5 text-xs text-slate-200 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                    value={categoryFilter}
+                    onChange={(e) =>
+                      setCategoryFilter(e.target.value as 'all' | ProductResearchCategory)
+                    }
+                    aria-label="Filtra per categoria"
+                    className={`${selectBaseClass} ${
+                      categoryFilter !== 'all' ? selectActiveClass : selectInactiveClass
+                    }`}
                   >
-                    <option value="title">Ordina: Nome</option>
-                    <option value="price">Ordina: Prezzo</option>
-                    <option value="brand">Ordina: Marca</option>
-                    <option value="store">Ordina: Negozio</option>
-                    <option value="room">Ordina: Stanza</option>
-                    <option value="status">Ordina: Stato</option>
-                    <option value="recent">Ordina: Data aggiunta</option>
+                    <option value="all">Tutte le categorie ({researches.length})</option>
+                    {CATEGORY_OPTIONS.map((c) => {
+                      const count = categoryCounts[c.value] || 0;
+                      return (
+                        <option key={c.value} value={c.value}>
+                          {c.label}
+                          {count > 0 ? ` (${count})` : ''}
+                        </option>
+                      );
+                    })}
                   </select>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))
-                    }
-                    title={
-                      sortDirection === 'asc'
-                        ? 'Ordine crescente — clicca per invertire in decrescente'
-                        : 'Ordine decrescente — clicca per invertire in crescente'
-                    }
-                    aria-label="Inverti ordine"
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-200 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-lg transition-colors whitespace-nowrap"
+
+                  <select
+                    value={brandFilter}
+                    onChange={(e) => setBrandFilter(e.target.value)}
+                    aria-label="Filtra per marca"
+                    className={`${selectBaseClass} ${
+                      brandFilter !== 'all' ? selectActiveClass : selectInactiveClass
+                    }`}
                   >
-                    {sortDirection === 'asc' ? (
-                      <>
+                    <option value="all">Tutte le marche</option>
+                    {hasUnbranded && <option value="none">Senza marca</option>}
+                    {availableBrands.map((br) => (
+                      <option key={br} value={br}>
+                        {br}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={storeFilter}
+                    onChange={(e) => setStoreFilter(e.target.value)}
+                    aria-label="Filtra per negozio"
+                    className={`${selectBaseClass} ${
+                      storeFilter !== 'all' ? selectActiveClass : selectInactiveClass
+                    }`}
+                  >
+                    <option value="all">Tutti i negozi</option>
+                    {availableStores.map((st) => (
+                      <option key={st} value={st}>
+                        {st}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={statusFilter}
+                    onChange={(e) =>
+                      setStatusFilter(e.target.value as 'all' | ProductResearchStatus)
+                    }
+                    aria-label="Filtra per stato"
+                    className={`${selectBaseClass} ${
+                      statusFilter !== 'all' ? selectActiveClass : selectInactiveClass
+                    }`}
+                  >
+                    <option value="all">Tutti gli stati ({researches.length})</option>
+                    {STATUS_OPTIONS.map((st) => (
+                      <option key={st.value} value={st.value}>
+                        {st.label} ({statusCounts[st.value]})
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="col-span-2 sm:col-span-1 flex items-center gap-1.5 w-full sm:w-auto min-w-0">
+                    <select
+                      value={sortField}
+                      onChange={(e) => setSortField(e.target.value as ResearchSortField)}
+                      aria-label="Ordina articoli per"
+                      className="flex-1 sm:flex-initial min-w-0 px-3 py-2 text-xs text-slate-200 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500 transition-colors"
+                    >
+                      <option value="title">Ordine: Nome</option>
+                      <option value="price">Ordine: Prezzo</option>
+                      <option value="brand">Ordine: Marca</option>
+                      <option value="store">Ordine: Negozio</option>
+                      <option value="room">Ordine: Stanza</option>
+                      <option value="status">Ordine: Stato</option>
+                      <option value="recent">Ordine: Salvato</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+                      }
+                      title={
+                        sortDirection === 'asc'
+                          ? 'Ordine crescente — clicca per invertire in decrescente'
+                          : 'Ordine decrescente — clicca per invertire in crescente'
+                      }
+                      aria-label="Inverti ordine"
+                      className="inline-flex items-center justify-center p-2 text-xs font-medium text-slate-200 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-lg transition-colors shrink-0"
+                    >
+                      {sortDirection === 'asc' ? (
                         <ArrowUpNarrowWide className="w-3.5 h-3.5 text-sky-400" />
-                        <span>Crescente</span>
-                      </>
-                    ) : (
-                      <>
+                      ) : (
                         <ArrowDownWideNarrow className="w-3.5 h-3.5 text-sky-400" />
-                        <span>Decrescente</span>
-                      </>
-                    )}
-                  </button>
+                      )}
+                    </button>
+                  </div>
                 </div>
-
-                {/* Grid vs List View Toggle */}
-                <div
-                  role="group"
-                  aria-label="Modalità visualizzazione"
-                  className="inline-flex items-center p-0.5 bg-slate-950 border border-slate-800 rounded-lg shrink-0"
-                >
-                  <button
-                    type="button"
-                    onClick={() => handleChangeViewMode('grid')}
-                    aria-pressed={viewMode === 'grid'}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
-                      viewMode === 'grid'
-                        ? 'bg-sky-500 text-slate-950 font-semibold'
-                        : 'text-slate-400 hover:text-slate-100'
-                    }`}
-                  >
-                    <LayoutGrid className="w-3.5 h-3.5" />
-                    <span>Griglia</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleChangeViewMode('list')}
-                    aria-pressed={viewMode === 'list'}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
-                      viewMode === 'list'
-                        ? 'bg-sky-500 text-slate-950 font-semibold'
-                        : 'text-slate-400 hover:text-slate-100'
-                    }`}
-                  >
-                    <List className="w-3.5 h-3.5" />
-                    <span>Elenco</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="inline-flex items-center gap-1 text-[11px] text-slate-400 mr-1">
-                    <Filter className="w-3 h-3" />
-                    Stato:
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setStatusFilter('all')}
-                    className={`px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors ${
-                      statusFilter === 'all'
-                        ? 'bg-sky-500 text-slate-950 border-sky-400'
-                        : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-100'
-                    }`}
-                  >
-                    Tutti ({researches.length})
-                  </button>
-                  {STATUS_OPTIONS.map((st) => {
-                    const count = researches.filter((r) => r.status === st.value).length;
-                    return (
-                      <button
-                        key={st.value}
-                        type="button"
-                        onClick={() => setStatusFilter(st.value)}
-                        className={`px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors ${
-                          statusFilter === st.value
-                            ? 'bg-sky-500 text-slate-950 border-sky-400'
-                            : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-100'
-                        }`}
-                      >
-                        {st.label} ({count})
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {hasActiveFilters && (
-                  <button
-                    type="button"
-                    onClick={resetAllFilters}
-                    className="inline-flex items-center gap-1.5 px-3 py-1 text-[11px] font-semibold text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/50 rounded-lg transition-colors whitespace-nowrap"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    <span>Azzera filtri ({activeFilterCount})</span>
-                  </button>
-                )}
               </div>
 
               {hasActiveFilters && (
-                <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-800/80 text-[11px]">
-                  <span className="text-sky-300 font-medium mr-1">
+                <div className="flex flex-wrap items-center gap-1.5 pt-2.5 border-t border-slate-800/80 text-[11px]">
+                  <span className="text-sky-300 font-medium mr-1 tabular-nums">
                     Filtri attivi ({filteredResearches.length}/{researches.length} risultati):
                   </span>
                   {activeChips.map((chip) => (
@@ -2755,19 +3392,19 @@ export function ResearchesView({
                       type="button"
                       onClick={chip.onClear}
                       title="Clicca per rimuovere questo filtro"
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/50 text-sky-200 font-medium transition-colors"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 max-w-full rounded-md bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/50 text-sky-200 font-medium transition-colors"
                     >
-                      <span>{chip.label}</span>
-                      <X className="w-3 h-3 text-sky-300" />
+                      <span className="truncate">{chip.label}</span>
+                      <X className="w-3 h-3 text-sky-300 shrink-0" />
                     </button>
                   ))}
                   <button
                     type="button"
                     onClick={resetAllFilters}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 transition-colors ml-auto"
+                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-amber-200 hover:text-amber-100 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/40 transition-colors ml-auto whitespace-nowrap"
                   >
                     <RotateCcw className="w-3 h-3" />
-                    <span>Torna a tutti</span>
+                    <span>Azzera filtri ({activeFilterCount})</span>
                   </button>
                 </div>
               )}
@@ -2800,15 +3437,8 @@ export function ResearchesView({
                   </button>
                 )}
               </div>
-            ) : (
-        <div
-          className={
-            viewMode === 'list'
-              ? 'flex flex-col gap-3'
-              : 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 items-stretch'
-          }
-        >
-          {filteredResearches.map((item) => {
+            ) : (() => {
+              const renderResearchCard = (item: ProductResearchRecord) => {
             const effectiveItem = getEffectiveItem(item);
             const hasPendingEdits = Boolean(pendingCardEdits[item.id]);
             const isSavingPendingHere = savingPendingId === item.id;
@@ -2820,21 +3450,36 @@ export function ResearchesView({
             const filteredSpecEntries = specEntries.filter((entry) => {
               const lowL = entry.label?.toLowerCase();
               const isColorSpec = lowL === 'colore' || lowL === 'color';
-              if (
-                isColorSpec &&
-                effectiveItem.color &&
-                entry.value.trim().toLowerCase() === effectiveItem.color.trim().toLowerCase()
-              ) {
-                return false;
+              if (isColorSpec && effectiveItem.color) {
+                const valNorm = entry.value.trim().toLowerCase();
+                const knownColors = [
+                  effectiveItem.color,
+                  item.color,
+                  ...(item.availableColors || []),
+                ]
+                  .filter(Boolean)
+                  .map((c) => String(c).trim().toLowerCase());
+                if (knownColors.includes(valNorm)) return false;
               }
               const isSizeSpec =
-                lowL === 'taglia' || lowL === 'size' || lowL === 'capacità memoria';
-              if (
-                isSizeSpec &&
-                effectiveItem.size &&
-                entry.value.trim().toLowerCase() === effectiveItem.size.trim().toLowerCase()
-              ) {
-                return false;
+                lowL === 'taglia' ||
+                lowL === 'size' ||
+                lowL === 'capacità' ||
+                lowL === 'capacità memoria' ||
+                lowL === 'capacità di memoria' ||
+                lowL === 'capacità della memoria' ||
+                lowL === 'dimensione memoria' ||
+                lowL === 'dimensioni memoria ram';
+              if (isSizeSpec && effectiveItem.size) {
+                const valCompact = entry.value.trim().toLowerCase().replace(/\s+/g, '');
+                const knownSizes = [
+                  effectiveItem.size,
+                  item.size,
+                  ...(item.availableSizes || []),
+                ]
+                  .filter(Boolean)
+                  .map((s) => String(s).trim().toLowerCase().replace(/\s+/g, ''));
+                if (knownSizes.includes(valCompact)) return false;
               }
               return true;
             });
@@ -2865,11 +3510,12 @@ export function ResearchesView({
               const origPrice =
                 typeof item.priceEur === 'number' ? Math.round(item.priceEur * 100) / 100 : undefined;
               const origPaid =
-                typeof item.paidPriceEur === 'number'
+                item.status === 'acquistato' && typeof item.paidPriceEur === 'number'
                   ? Math.round(item.paidPriceEur * 100) / 100
                   : undefined;
               const nextPrice = parseOptionalPriceInput(editPrice);
-              const nextPaid = parseOptionalPriceInput(editPaidPrice);
+              const nextPaid =
+                editStatus === 'acquistato' ? parseOptionalPriceInput(editPaidPrice) : undefined;
               const normalizedEditUrl = normalizeUrlInput(editUrl) || editUrl.trim();
               const normalizedOrigUrl = normalizeUrlInput(item.url) || item.url.trim();
               const isEditFormDirty =
@@ -2962,19 +3608,21 @@ export function ResearchesView({
                         className="w-full px-2.5 py-1.5 font-mono bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
                       />
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-slate-400">Prezzo pagato (€)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        max="1000000"
-                        value={editPaidPrice}
-                        onChange={(e) => setEditPaidPrice(e.target.value)}
-                        placeholder="Pagato..."
-                        className="w-full px-2.5 py-1.5 font-mono bg-slate-950 border border-slate-800 rounded-lg text-emerald-200"
-                      />
-                    </div>
+                    {editStatus === 'acquistato' && (
+                      <div className="space-y-1">
+                        <label className="text-slate-400">Prezzo pagato (€)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          max="1000000"
+                          value={editPaidPrice}
+                          onChange={(e) => setEditPaidPrice(e.target.value)}
+                          placeholder="Pagato..."
+                          className="w-full px-2.5 py-1.5 font-mono bg-slate-950 border border-slate-800 rounded-lg text-emerald-200"
+                        />
+                      </div>
+                    )}
                     <div className="space-y-1">
                       <label className="text-slate-400">Marca</label>
                       <input
@@ -3030,9 +3678,13 @@ export function ResearchesView({
                       <label className="text-slate-400">Stato</label>
                       <select
                         value={editStatus}
-                        onChange={(e) =>
-                          setEditStatus(e.target.value as ProductResearchStatus)
-                        }
+                        onChange={(e) => {
+                          const nextStatus = e.target.value as ProductResearchStatus;
+                          setEditStatus(nextStatus);
+                          if (nextStatus !== 'acquistato') {
+                            setEditPaidPrice('');
+                          }
+                        }}
                         className="w-full px-2 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark]"
                       >
                         {STATUS_OPTIONS.map((s) => (
@@ -3077,14 +3729,18 @@ export function ResearchesView({
                     <SizeFieldInput
                       value={editSize}
                       onChange={setEditSize}
-                      onCommit={(nextVal, prevVal) =>
+                      onCommit={(nextVal, prevVal) => {
                         setEditTitle((prev) =>
                           replaceSizeInTitle(prev, nextVal, prevVal, editAvailableSizes).slice(
                             0,
                             160
                           )
-                        )
-                      }
+                        );
+                        const variantPrice = findSizePrice(editSizePrices, nextVal);
+                        if (typeof variantPrice === 'number') {
+                          setEditPrice(String(variantPrice));
+                        }
+                      }}
                       options={editAvailableSizes}
                       compact
                     />
@@ -3160,7 +3816,7 @@ export function ResearchesView({
                     aria-label={`Stanza per ${effectiveItem.title}`}
                     value={currentRoomId}
                     onChange={(e) => handleQuickRoomChange(item, e.target.value)}
-                    className="bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-md px-2 py-0.5 text-[11px] text-slate-200 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                    className="max-w-[135px] sm:max-w-none bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-md px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-[11px] text-slate-200 [color-scheme:dark] focus:outline-none focus:border-sky-500"
                   >
                     <option value="">Nessuna stanza</option>
                     {RESEARCH_ROOMS.map((rm) => (
@@ -3172,8 +3828,9 @@ export function ResearchesView({
                 </label>
               );
 
-            const renderPaidPriceControl = () =>
-              inlinePaidEditId === item.id && !readOnly ? (
+            const renderPaidPriceControl = () => {
+              if (effectiveItem.status !== 'acquistato') return null;
+              return inlinePaidEditId === item.id && !readOnly ? (
                 <div className="flex items-center gap-1">
                   <input
                     type="number"
@@ -3212,7 +3869,7 @@ export function ResearchesView({
                 </div>
               ) : typeof effectiveItem.paidPriceEur === 'number' ? (
                 readOnly ? (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-mono font-semibold text-sky-300 whitespace-nowrap">
+                  <span className="inline-flex items-center gap-1 text-[11px] font-mono font-semibold text-emerald-400 whitespace-nowrap">
                     Pagato: € {effectiveItem.paidPriceEur.toFixed(2)}
                   </span>
                 ) : (
@@ -3223,7 +3880,7 @@ export function ResearchesView({
                       setInlinePaidValue(String(effectiveItem.paidPriceEur));
                     }}
                     title="Modifica prezzo pagato all'acquisto"
-                    className="inline-flex items-center gap-1 text-[11px] font-mono font-semibold text-sky-300 hover:text-sky-200 whitespace-nowrap"
+                    className="inline-flex items-center gap-1 text-[11px] font-mono font-semibold text-emerald-400 hover:text-emerald-300 whitespace-nowrap"
                   >
                     <span>Pagato: € {effectiveItem.paidPriceEur.toFixed(2)}</span>
                     <Pencil className="w-2.5 h-2.5 opacity-70" />
@@ -3235,7 +3892,9 @@ export function ResearchesView({
                   onClick={() => {
                     setInlinePaidEditId(item.id);
                     setInlinePaidValue(
-                      typeof item.priceEur === 'number' ? String(item.priceEur) : ''
+                      typeof effectiveItem.priceEur === 'number'
+                        ? String(effectiveItem.priceEur)
+                        : ''
                     );
                   }}
                   className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-400 hover:text-emerald-300 whitespace-nowrap"
@@ -3244,6 +3903,7 @@ export function ResearchesView({
                   <span>Prezzo pagato</span>
                 </button>
               ) : null;
+            };
 
             const renderStatusControl = () =>
               readOnly ? (
@@ -3277,37 +3937,52 @@ export function ResearchesView({
               <div
                 className={
                   inListFooter
-                    ? 'pt-2 px-3 pb-2.5 border-t border-slate-800/80 flex flex-wrap items-center justify-start gap-1.5 bg-slate-950/30'
+                    ? 'py-1.5 px-2 sm:pt-2 sm:px-3 sm:pb-2.5 border-t border-slate-800/80 flex flex-wrap items-center justify-between sm:justify-start gap-1 sm:gap-1.5 bg-slate-950/30'
                     : 'pt-2.5 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2'
                 }
               >
-                <div className="flex flex-wrap items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
                   <a
                     href={item.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap"
+                    className={`inline-flex items-center gap-1 ${
+                      inListFooter ? 'px-2 py-1 sm:px-2.5 sm:py-1.5' : 'px-2.5 py-1.5'
+                    } text-[11px] font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap`}
                   >
                     <ExternalLink className="w-3 h-3" />
-                    Apri pagina
+                    {inListFooter ? (
+                      <>
+                        <span className="sm:hidden">Apri</span>
+                        <span className="hidden sm:inline">Apri pagina</span>
+                      </>
+                    ) : (
+                      <span>Apri pagina</span>
+                    )}
                   </a>
                   <button
                     type="button"
                     onClick={() => void handleCopyUrl(item)}
                     title="Copia link"
-                    className="inline-flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors whitespace-nowrap"
+                    aria-label="Copia link"
+                    className={`inline-flex items-center gap-1 ${
+                      inListFooter ? 'p-1.5 sm:px-2 sm:py-1.5' : 'px-2 py-1.5'
+                    } text-[11px] font-medium text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors whitespace-nowrap`}
                   >
                     {copiedId === item.id ? (
                       <Check className="w-3 h-3 text-emerald-400" />
                     ) : (
                       <Copy className="w-3 h-3" />
                     )}
-                    <span>{copiedId === item.id ? 'Copiato' : 'Copia'}</span>
+                    <span className={inListFooter ? 'hidden sm:inline' : ''}>
+                      {copiedId === item.id ? 'Copiato' : 'Copia'}
+                    </span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setShareItem(buildResearchSharePayload(effectiveItem))}
                     title="Condividi prodotto"
+                    aria-label="Condividi prodotto"
                     className="p-1.5 text-slate-400 hover:text-sky-300 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
                   >
                     <Share2 className="w-3.5 h-3.5" />
@@ -3322,10 +3997,12 @@ export function ResearchesView({
                           [item.id]: !isAttachOpen,
                         }))
                       }
-                      className="inline-flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium text-slate-300 hover:text-sky-300 bg-slate-800/80 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap"
+                      title={`Allegati (${itemDocs.length})`}
+                      className="inline-flex items-center gap-1 px-1.5 py-1 sm:px-2 sm:py-1.5 text-[11px] font-medium text-slate-300 hover:text-sky-300 bg-slate-800/80 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap"
                     >
                       <Paperclip className="w-3 h-3 text-sky-400" />
-                      <span>Allegati ({itemDocs.length})</span>
+                      <span className="sm:hidden tabular-nums">{itemDocs.length}</span>
+                      <span className="hidden sm:inline">Allegati ({itemDocs.length})</span>
                     </button>
                   )}
                   {inListFooter && !readOnly && (
@@ -3333,21 +4010,25 @@ export function ResearchesView({
                       type="button"
                       disabled={isUploadingHere}
                       onClick={() => triggerCardFileUpload(item)}
-                      className="inline-flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap"
+                      title="Allega file"
+                      aria-label="Allega file"
+                      className="inline-flex items-center gap-1 p-1.5 sm:px-2 sm:py-1.5 text-[11px] font-medium text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap"
                     >
                       {isUploadingHere ? (
                         <Loader2 className="w-3 h-3 animate-spin" />
                       ) : (
                         <Upload className="w-3 h-3" />
                       )}
-                      <span>{isUploadingHere ? 'Carico...' : 'Allega'}</span>
+                      <span className="hidden sm:inline">
+                        {isUploadingHere ? 'Carico...' : 'Allega'}
+                      </span>
                     </button>
                   )}
                 </div>
 
                 {!readOnly && (
                   <div
-                    className={`flex items-center gap-1 ${
+                    className={`flex items-center gap-0.5 sm:gap-1 ${
                       inListFooter ? 'sm:pl-1.5 sm:border-l sm:border-slate-800' : ''
                     }`}
                   >
@@ -3371,16 +4052,27 @@ export function ResearchesView({
                         disabled={movingId === item.id || movedArticleIds[item.id]}
                         onClick={() => void handleMoveItemToArticles(item)}
                         title="Copia questo prodotto (con dettagli e allegati) nella pagina Articoli di casa"
-                        className={`inline-flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium rounded-lg border transition-colors whitespace-nowrap ${
+                        className={`inline-flex items-center gap-1 px-1.5 py-1 sm:px-2 sm:py-1.5 text-[11px] font-medium rounded-lg border transition-colors whitespace-nowrap ${
                           movedArticleIds[item.id]
                             ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
                             : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:text-emerald-300 hover:border-emerald-500/40'
                         }`}
                       >
                         <PackagePlus className="w-3 h-3" />
-                        <span>
-                          {movedArticleIds[item.id] ? 'In Articoli' : 'Ad Articoli'}
-                        </span>
+                        {inListFooter ? (
+                          <>
+                            <span className="sm:hidden">
+                              {movedArticleIds[item.id] ? 'OK' : 'Articoli'}
+                            </span>
+                            <span className="hidden sm:inline">
+                              {movedArticleIds[item.id] ? 'In Articoli' : 'Ad Articoli'}
+                            </span>
+                          </>
+                        ) : (
+                          <span>
+                            {movedArticleIds[item.id] ? 'In Articoli' : 'Ad Articoli'}
+                          </span>
+                        )}
                       </button>
                     )}
                     <button
@@ -3415,7 +4107,7 @@ export function ResearchesView({
                     : 'border-slate-800 hover:border-slate-700'
                 }`}
               >
-                <div className={isList ? 'flex flex-col sm:flex-row flex-1 min-w-0' : 'flex flex-col flex-1 min-w-0'}>
+                <div className={isList ? 'flex flex-row items-start flex-1 min-w-0' : 'flex flex-col flex-1 min-w-0'}>
                   {/* Product Media Showcase */}
                   {displayThumb ? (
                     <a
@@ -3424,7 +4116,7 @@ export function ResearchesView({
                       rel="noreferrer"
                       className={
                         isList
-                          ? 'group relative h-44 w-full sm:w-36 md:w-40 sm:h-36 sm:self-start sm:m-2.5 sm:rounded-lg bg-white border-b sm:border border-slate-800/80 flex items-center justify-center p-1.5 overflow-hidden shrink-0'
+                          ? 'group relative w-20 h-20 m-2 sm:w-36 md:w-40 sm:h-36 sm:self-start sm:m-2.5 rounded-lg bg-white border border-slate-800/80 flex items-center justify-center p-1 sm:p-1.5 overflow-hidden shrink-0'
                           : 'group relative h-56 w-full bg-white border-b border-slate-800/80 flex items-center justify-center p-2.5 overflow-hidden shrink-0'
                       }
                     >
@@ -3444,7 +4136,7 @@ export function ResearchesView({
                     <div
                       className={
                         isList
-                          ? 'relative h-36 w-full sm:w-36 md:w-40 sm:h-36 sm:self-start sm:m-2.5 sm:rounded-lg bg-gradient-to-b from-slate-800/40 to-slate-950/90 border-b sm:border border-slate-800 flex flex-col items-center justify-center gap-1.5 p-2.5 text-center shrink-0'
+                          ? 'relative w-20 h-20 m-2 sm:w-36 md:w-40 sm:h-36 sm:self-start sm:m-2.5 rounded-lg bg-gradient-to-b from-slate-800/40 to-slate-950/90 border border-slate-800 flex flex-col items-center justify-center gap-1 p-1.5 sm:p-2.5 text-center shrink-0'
                           : 'relative h-56 w-full bg-gradient-to-b from-slate-800/40 to-slate-950/90 border-b border-slate-800 flex flex-col items-center justify-center gap-2.5 p-4 text-center shrink-0'
                       }
                     >
@@ -3452,15 +4144,17 @@ export function ResearchesView({
                         href={item.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="flex flex-col items-center gap-1 text-slate-400 hover:text-sky-300 transition-colors"
+                        className="flex flex-col items-center gap-0.5 sm:gap-1 text-slate-400 hover:text-sky-300 transition-colors"
                       >
                         {effectiveItem.imageUrl ? (
-                          <ImageOff className={isList ? 'w-6 h-6 text-slate-500' : 'w-8 h-8 text-slate-500'} />
+                          <ImageOff className={isList ? 'w-4 h-4 sm:w-6 sm:h-6 text-slate-500' : 'w-8 h-8 text-slate-500'} />
                         ) : (
-                          <ShoppingBag className={isList ? 'w-6 h-6 text-slate-500' : 'w-8 h-8 text-slate-500'} />
+                          <ShoppingBag className={isList ? 'w-4 h-4 sm:w-6 sm:h-6 text-slate-500' : 'w-8 h-8 text-slate-500'} />
                         )}
-                        <span className="text-xs font-semibold text-slate-300">{item.store}</span>
-                        <span className="text-[10px] text-slate-500 leading-tight">
+                        <span className={isList ? 'text-[10px] sm:text-xs font-semibold text-slate-300 truncate max-w-full' : 'text-xs font-semibold text-slate-300'}>
+                          {item.store}
+                        </span>
+                        <span className={isList ? 'hidden sm:inline text-[10px] text-slate-500 leading-tight' : 'text-[10px] text-slate-500 leading-tight'}>
                           {effectiveItem.imageUrl
                             ? 'Immagine non disponibile'
                             : 'Anteprima foto non disponibile'}
@@ -3471,10 +4165,21 @@ export function ResearchesView({
                           type="button"
                           disabled={isUploadingHere}
                           onClick={() => triggerCardFileUpload(item, 'targhetta_pnc')}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-sky-300 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg transition-colors disabled:opacity-50"
+                          className={`inline-flex items-center gap-1 ${
+                            isList
+                              ? 'px-1.5 py-0.5 text-[9px] sm:px-2.5 sm:py-1 sm:text-[11px]'
+                              : 'px-2.5 py-1 text-[11px]'
+                          } font-medium text-sky-300 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-md sm:rounded-lg transition-colors disabled:opacity-50`}
                         >
-                          <Upload className="w-3 h-3" />
-                          <span>{isUploadingHere ? 'Carico...' : 'Carica foto'}</span>
+                          <Upload className={isList ? 'w-2.5 h-2.5 sm:w-3 sm:h-3' : 'w-3 h-3'} />
+                          {isList ? (
+                            <>
+                              <span className="sm:hidden">{isUploadingHere ? '...' : 'Foto'}</span>
+                              <span className="hidden sm:inline">{isUploadingHere ? 'Carico...' : 'Carica foto'}</span>
+                            </>
+                          ) : (
+                            <span>{isUploadingHere ? 'Carico...' : 'Carica foto'}</span>
+                          )}
                         </button>
                       )}
                     </div>
@@ -3484,21 +4189,21 @@ export function ResearchesView({
                   <div
                     className={
                       isList
-                        ? 'p-3 sm:py-2.5 sm:pr-3 sm:pl-0.5 flex-1 flex flex-col gap-2 min-w-0'
+                        ? 'py-2 pr-2.5 pl-0 sm:py-2.5 sm:pr-3 sm:pl-0.5 flex-1 flex flex-col gap-1.5 sm:gap-2 min-w-0'
                         : 'p-3.5 flex-1 flex flex-col gap-2.5 min-w-0'
                     }
                   >
                   {isList ? (
                     /* LIST MODE HEADER: Meta + Title + Room on left, Price + Paid + Status compactly on right */
-                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-2 pb-2 border-b border-slate-800/80">
+                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-1.5 sm:gap-2 pb-1.5 sm:pb-2 border-b border-slate-800/80">
                       <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-slate-400">
+                        <div className="flex flex-wrap items-center gap-x-1.5 sm:gap-x-2 gap-y-0.5 text-[10px] sm:text-[11px] font-medium text-slate-400">
                           {effectiveBrand && (
                             <span
                               className="inline-flex items-center gap-1 text-sky-300 font-semibold"
                               title={`Marca: ${effectiveBrand}`}
                             >
-                              <Tag className="w-3 h-3 shrink-0" />
+                              <Tag className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0" />
                               <span>{effectiveBrand}</span>
                             </span>
                           )}
@@ -3508,7 +4213,7 @@ export function ResearchesView({
                               className="inline-flex items-center gap-1 text-slate-200 font-medium"
                               title={`Negozio: ${item.store}`}
                             >
-                              <Store className="w-3 h-3 text-slate-400 shrink-0" />
+                              <Store className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 shrink-0" />
                               <span>{item.store}</span>
                             </span>
                           )}
@@ -3526,20 +4231,23 @@ export function ResearchesView({
                           href={item.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="block text-sm font-semibold text-slate-100 hover:text-sky-300 leading-snug break-words"
+                          className="block text-[13px] sm:text-sm font-semibold text-slate-100 hover:text-sky-300 leading-snug break-words line-clamp-2 sm:line-clamp-none"
                         >
                           {effectiveItem.title}
                         </a>
                       </div>
 
                       <div className="flex flex-wrap items-center md:flex-col md:items-end justify-between gap-1.5 shrink-0 md:border-l md:border-slate-800/80 md:pl-3">
-                        <div className="flex flex-wrap items-baseline md:justify-end gap-x-2.5 gap-y-0.5">
-                          {typeof item.priceEur === 'number' ? (
-                            <span className="font-mono text-base sm:text-lg font-bold text-emerald-300 tabular-nums leading-none">
-                              € {item.priceEur.toFixed(2)}
+                        <div className="flex flex-wrap items-baseline md:justify-end gap-x-2 gap-y-0.5">
+                          {typeof effectiveItem.priceEur === 'number' ? (
+                            <span className="inline-flex items-center gap-1.5 font-mono text-sm sm:text-base md:text-lg font-bold text-white tabular-nums leading-none">
+                              <span>€ {effectiveItem.priceEur.toFixed(2)}</span>
+                              {lazySizePriceLoadingIds[item.id] && (
+                                <Loader2 className="w-3 h-3 animate-spin text-sky-400" />
+                              )}
                             </span>
                           ) : (
-                            <span className="text-xs text-slate-500">Prezzo non rilevato</span>
+                            <span className="text-[11px] sm:text-xs text-slate-500">Prezzo non rilevato</span>
                           )}
                           {renderPaidPriceControl()}
                         </div>
@@ -3663,9 +4371,15 @@ export function ResearchesView({
                             const isActive =
                               effectiveItem.size?.trim().toLowerCase().replace(/\s+/g, '') ===
                               sizeOpt.trim().toLowerCase().replace(/\s+/g, '');
+                            const optPrice = findSizePrice(effectiveItem.sizePrices, sizeOpt);
+                            const sizeTooltip =
+                              typeof optPrice === 'number'
+                                ? `Seleziona taglia ${sizeOpt} · € ${optPrice.toFixed(2)}`
+                                : `Seleziona taglia ${sizeOpt}`;
                             return readOnly ? (
                               <span
                                 key={sizeOpt}
+                                title={sizeTooltip}
                                 className={`px-2 py-0.5 rounded-md border font-mono text-[11px] ${
                                   isActive
                                     ? 'bg-sky-500/15 border-sky-400/70 text-sky-200 font-semibold'
@@ -3679,7 +4393,7 @@ export function ResearchesView({
                                 key={sizeOpt}
                                 type="button"
                                 onClick={() => handleQuickSizeSelect(item, sizeOpt)}
-                                title={`Seleziona taglia ${sizeOpt}`}
+                                title={sizeTooltip}
                                 className={`px-2 py-0.5 rounded-md border font-mono text-[11px] transition-colors ${
                                   isActive
                                     ? 'bg-sky-500/15 border-sky-400/70 text-sky-200 font-semibold'
@@ -3711,9 +4425,12 @@ export function ResearchesView({
                   {!isList && (
                     <div className="flex flex-wrap items-center justify-between gap-2 py-2.5 border-y border-slate-800/80">
                       <div className="flex flex-col gap-1 min-w-0">
-                        {typeof item.priceEur === 'number' ? (
-                          <span className="font-mono text-lg font-bold text-emerald-300 tabular-nums leading-none">
-                            € {item.priceEur.toFixed(2)}
+                        {typeof effectiveItem.priceEur === 'number' ? (
+                          <span className="inline-flex items-center gap-1.5 font-mono text-lg font-bold text-white tabular-nums leading-none">
+                            <span>€ {effectiveItem.priceEur.toFixed(2)}</span>
+                            {lazySizePriceLoadingIds[item.id] && (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-400" />
+                            )}
                           </span>
                         ) : (
                           <span className="text-xs text-slate-500">Prezzo non rilevato</span>
@@ -3729,7 +4446,11 @@ export function ResearchesView({
                   {(filteredSpecEntries.length > 0 || hasUniqueNotes) && (
                     <div className={isList ? 'space-y-1' : 'space-y-2'}>
                       {hasUniqueNotes && (
-                        <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line break-words">
+                        <p
+                          className={`text-xs text-slate-300 leading-relaxed whitespace-pre-line break-words ${
+                            isList && !isSpecsExpanded ? 'line-clamp-1 sm:line-clamp-none' : ''
+                          }`}
+                        >
                           {item.notes}
                         </p>
                       )}
@@ -3738,7 +4459,7 @@ export function ResearchesView({
                         <ul
                           className={
                             isList
-                              ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-0.5 text-[11px] text-slate-300 leading-snug'
+                              ? `${isSpecsExpanded ? 'grid' : 'hidden sm:grid'} grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-0.5 text-[11px] text-slate-300 leading-snug`
                               : 'space-y-1 text-[11px] text-slate-300 leading-relaxed'
                           }
                         >
@@ -3779,11 +4500,11 @@ export function ResearchesView({
                         <ul
                           className={
                             isList
-                              ? `${
+                              ? `${isSpecsExpanded ? 'grid' : 'hidden sm:grid'} ${
                                   visibleTechSpecs.length > 0
                                     ? 'pt-2 mt-1.5 border-t border-slate-800/70 '
                                     : ''
-                                }grid grid-cols-1 ${
+                                }grid-cols-1 ${
                                   visibleDescriptiveSpecs.length === 2
                                     ? 'md:grid-cols-2'
                                     : visibleDescriptiveSpecs.length >= 3
@@ -3823,7 +4544,7 @@ export function ResearchesView({
                         </ul>
                       )}
 
-                      {hasExtraDetails && (
+                      {(hasExtraDetails || (isList && filteredSpecEntries.length > 0)) && (
                         <button
                           type="button"
                           onClick={() =>
@@ -3832,7 +4553,9 @@ export function ResearchesView({
                               [item.id]: !prev[item.id],
                             }))
                           }
-                          className="inline-flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300 font-medium"
+                          className={`${
+                            hasExtraDetails ? 'inline-flex' : 'inline-flex sm:hidden'
+                          } items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300 font-medium`}
                         >
                           {isSpecsExpanded ? (
                             <>
@@ -4044,9 +4767,75 @@ export function ResearchesView({
                 {isList && renderCardActionButtons(true)}
               </article>
             );
-          })}
-        </div>
-            )}
+              };
+
+              const listOrGridClass =
+                viewMode === 'list'
+                  ? 'flex flex-col gap-3'
+                  : 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 items-stretch';
+
+              if (groupByRoom) {
+                return (
+                  <div className="space-y-6">
+                    {groupedByRoom.map((group) => (
+                      <section key={group.key} className="space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800/80">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Home className="w-4 h-4 text-sky-400 shrink-0" />
+                            <h4 className="text-base font-semibold text-slate-100 truncate">
+                              {group.label}
+                            </h4>
+                            <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
+                              · {group.items.length}{' '}
+                              {group.items.length === 1 ? 'articolo' : 'articoli'}
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-3 text-xs tabular-nums">
+                            <span className="text-slate-400">
+                              Valore:{' '}
+                              <strong className="font-mono text-slate-100">
+                                {formatEuroIt(group.listTotal)}
+                              </strong>
+                            </span>
+                            {group.paidCount > 0 && (
+                              <span className="text-slate-400">
+                                Pagato:{' '}
+                                <strong className="font-mono text-emerald-400">
+                                  {formatEuroIt(group.paidTotal)}
+                                </strong>{' '}
+                                <span className="text-slate-500">
+                                  ({group.paidCount}/{group.items.length})
+                                </span>
+                              </span>
+                            )}
+                            {selectedRooms.length === 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedRooms([group.key])}
+                                className="px-2.5 py-1 text-[11px] font-medium text-sky-300 hover:text-sky-200 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-lg transition-colors whitespace-nowrap"
+                              >
+                                Filtra stanza
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className={listOrGridClass}>
+                          {group.items.map((item) => renderResearchCard(item))}
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                );
+              }
+
+              return (
+                <div className={listOrGridClass}>
+                  {filteredResearches.map((item) => renderResearchCard(item))}
+                </div>
+              );
+            })()}
           </>
         );
       })()}

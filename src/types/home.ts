@@ -410,6 +410,7 @@ export interface ProductResearchRecord {
   colorImages?: Record<string, string>;
   size?: string;
   availableSizes?: string[];
+  sizePrices?: Record<string, number>;
   model?: string;
   specs?: string;
   notes?: string;

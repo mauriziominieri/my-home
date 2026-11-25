@@ -521,7 +521,7 @@ service cloud.firestore {
         && (!('room' in data) || (
           data.room is string
           && data.room.size() <= 40
-          && data.room in ['salone', 'cucina', 'bagno1', 'bagno2', 'stanza_maurizio', 'stanza_roberta', 'stanza_matrimoniale']
+          && data.room in ['salone', 'cucina', 'bagno1', 'bagno2', 'stanza_maurizio', 'stanza_roberta', 'stanza_matrimoniale', 'terrazza_ovest', 'terrazza_est']
         ))
         && (!('priceEur' in data) || (data.priceEur is number && data.priceEur >= 0 && data.priceEur <= 1000000))
         && (!('paidPriceEur' in data) || (data.paidPriceEur is number && data.paidPriceEur >= 0 && data.paidPriceEur <= 1000000))

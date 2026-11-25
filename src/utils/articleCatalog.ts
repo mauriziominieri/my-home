@@ -10,6 +10,8 @@ export const ARTICLE_ROOM_PRESETS: string[] = [
   'Stanza Roberta',
   'Stanza Matrimoniale',
   'Matrimoniale',
+  'Terrazza Ovest',
+  'Terrazza Est',
   'Locale Tecnico / Esterno',
   'Casa / Ingresso',
 ];

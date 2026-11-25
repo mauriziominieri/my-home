@@ -151,6 +151,7 @@ import {
   getResearchRoomLabel,
   inferProductBrand,
   normalizeResearchRoom,
+  ResearchRoomId,
   sanitizeColorImagesMap,
 } from './utils/researchHelpers';
 import { OverviewView } from './components/OverviewView';
@@ -165,6 +166,73 @@ import { DocumentsView } from './components/DocumentsView';
 import { ClimateAutopilotInput } from './components/ClimateAutopilotCard';
 import { InfoGuideView } from './components/InfoGuideView';
 import { VaultCloudNotice } from './components/VaultCloudNotice';
+
+const EXTENDED_ROOM_OVERRIDES_KEY = 'myhome_research_terrace_rooms_v1';
+
+function readExtendedRoomOverrides(): Record<string, string> {
+  try {
+    const raw = window.localStorage.getItem(EXTENDED_ROOM_OVERRIDES_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, string>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeExtendedRoomOverride(
+  docId: string,
+  url: string,
+  value: ResearchRoomId | '__none__' | 'clear'
+) {
+  try {
+    const map = readExtendedRoomOverrides();
+    const idKey = `id:${docId}`;
+    const urlKey = `url:${url.trim()}`;
+    if (value === 'clear') {
+      delete map[idKey];
+      delete map[urlKey];
+    } else {
+      map[idKey] = value;
+      if (url.trim()) map[urlKey] = value;
+    }
+    window.localStorage.setItem(EXTENDED_ROOM_OVERRIDES_KEY, JSON.stringify(map));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function resolveResearchRoomWithFallback(
+  docId: string,
+  url: string,
+  firestoreRoom: string | undefined,
+  title: string
+): ResearchRoomId | undefined {
+  const fromDoc = normalizeResearchRoom(firestoreRoom);
+  if (fromDoc) return fromDoc;
+
+  const overrides = readExtendedRoomOverrides();
+  const overrideVal = overrides[`id:${docId}`] || overrides[`url:${url.trim()}`];
+  if (overrideVal === '__none__') return undefined;
+  const fromOverride = normalizeResearchRoom(overrideVal);
+  if (fromOverride) return fromOverride;
+
+  if (/\bkomodo(?:\s*5)?\b/i.test(`${title} ${url}`)) {
+    return 'terrazza_ovest';
+  }
+  return undefined;
+}
+
+function isFirestorePermissionDenied(err: unknown): boolean {
+  const code = (err as { code?: string })?.code || '';
+  const msg = err instanceof Error ? err.message : String(err || '');
+  return (
+    code === 'permission-denied' ||
+    /permission[-_ ]denied|insufficient permissions/i.test(msg)
+  );
+}
 
 const NAV_ITEMS: { id: NavSection; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'panoramica', label: 'Panoramica', icon: LayoutDashboard },
@@ -881,18 +949,28 @@ export default function App() {
         const list: ProductResearchRecord[] = snap.docs.map((d) => {
           const data = d.data();
           const createdTs = data.createdAt as { toMillis?: () => number } | undefined;
+          const urlStr = String(data.url || '');
+          const titleStr = String(data.title || '');
+          const normalizedStatus = normalizeResearchStatus(data.status);
           return {
             id: d.id,
             ownerId: String(data.ownerId || activeUid),
-            url: String(data.url || ''),
-            title: String(data.title || ''),
+            url: urlStr,
+            title: titleStr,
             store: String(data.store || ''),
             category: (data.category as ProductResearchCategory) || 'altro',
-            status: normalizeResearchStatus(data.status),
-            room: normalizeResearchRoom(data.room ? String(data.room) : undefined),
+            status: normalizedStatus,
+            room: resolveResearchRoomWithFallback(
+              d.id,
+              urlStr,
+              data.room ? String(data.room) : undefined,
+              titleStr
+            ),
             priceEur: typeof data.priceEur === 'number' ? Number(data.priceEur) : undefined,
             paidPriceEur:
-              typeof data.paidPriceEur === 'number' ? Number(data.paidPriceEur) : undefined,
+              normalizedStatus === 'acquistato' && typeof data.paidPriceEur === 'number'
+                ? Number(data.paidPriceEur)
+                : undefined,
             imageUrl: data.imageUrl ? String(data.imageUrl) : undefined,
             brand: data.brand ? String(data.brand) : undefined,
             color: data.color ? String(data.color) : undefined,
@@ -1238,18 +1316,28 @@ export default function App() {
           snap.docs.map((d) => {
             const data = d.data();
             const createdTs = data.createdAt as { toMillis?: () => number } | undefined;
+            const urlStr = String(data.url || '');
+            const titleStr = String(data.title || '');
+            const normalizedStatus = normalizeResearchStatus(data.status);
             return {
               id: d.id,
               ownerId: String(data.ownerId || publicOwnerUid),
-              url: String(data.url || ''),
-              title: String(data.title || ''),
+              url: urlStr,
+              title: titleStr,
               store: String(data.store || ''),
               category: (data.category as ProductResearchCategory) || 'altro',
-              status: normalizeResearchStatus(data.status),
-              room: normalizeResearchRoom(data.room ? String(data.room) : undefined),
+              status: normalizedStatus,
+              room: resolveResearchRoomWithFallback(
+                d.id,
+                urlStr,
+                data.room ? String(data.room) : undefined,
+                titleStr
+              ),
               priceEur: typeof data.priceEur === 'number' ? Number(data.priceEur) : undefined,
               paidPriceEur:
-                typeof data.paidPriceEur === 'number' ? Number(data.paidPriceEur) : undefined,
+                normalizedStatus === 'acquistato' && typeof data.paidPriceEur === 'number'
+                  ? Number(data.paidPriceEur)
+                  : undefined,
               imageUrl: data.imageUrl ? String(data.imageUrl) : undefined,
               brand: data.brand ? String(data.brand) : undefined,
               color: data.color ? String(data.color) : undefined,
@@ -1894,6 +1982,7 @@ export default function App() {
       payload.priceEur = Math.min(1000000, Math.round(item.priceEur * 100) / 100);
     }
     if (
+      payload.status === 'acquistato' &&
       typeof item.paidPriceEur === 'number' &&
       Number.isFinite(item.paidPriceEur) &&
       item.paidPriceEur >= 0
@@ -1933,8 +2022,28 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, basePath, docId), payload);
+      writeExtendedRoomOverride(docId, urlTrim, 'clear');
       return docId;
     } catch (error) {
+      if (
+        (normalizedRoom === 'terrazza_ovest' || normalizedRoom === 'terrazza_est') &&
+        isFirestorePermissionDenied(error)
+      ) {
+        const fallbackPayload = { ...payload };
+        delete fallbackPayload.room;
+        try {
+          writeExtendedRoomOverride(docId, urlTrim, normalizedRoom);
+          await setDoc(doc(db, basePath, docId), fallbackPayload);
+          setProductResearches((prev) =>
+            prev.map((r) => (r.id === docId ? { ...r, room: normalizedRoom } : r))
+          );
+          return docId;
+        } catch (fallbackErr) {
+          writeExtendedRoomOverride(docId, urlTrim, 'clear');
+          handleFirestoreError(fallbackErr, OperationType.CREATE, `${basePath}/${docId}`);
+          throw fallbackErr;
+        }
+      }
       handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
       throw error;
     }
@@ -1968,19 +2077,21 @@ export default function App() {
         ).slice(0, 24)
       : [];
     const cleanColorImages = sanitizeColorImagesMap(item.colorImages);
+    const normalizedStatus = normalizeResearchStatus(item.status);
     const payload: Record<string, unknown> = {
       ownerId: user.uid,
       url: urlTrim,
       title: item.title.trim().slice(0, 160),
       store: item.store.trim().slice(0, 60),
       category: item.category,
-      status: normalizeResearchStatus(item.status),
+      status: normalizedStatus,
       room: normalizedRoom ? normalizedRoom : deleteField(),
       priceEur:
         typeof item.priceEur === 'number' && Number.isFinite(item.priceEur) && item.priceEur >= 0
           ? Math.min(1000000, Math.round(item.priceEur * 100) / 100)
           : deleteField(),
       paidPriceEur:
+        normalizedStatus === 'acquistato' &&
         typeof item.paidPriceEur === 'number' &&
         Number.isFinite(item.paidPriceEur) &&
         item.paidPriceEur >= 0
@@ -2002,7 +2113,32 @@ export default function App() {
     };
     try {
       await setDoc(doc(db, path), payload, { merge: true });
+      if (!normalizedRoom && /\bkomodo(?:\s*5)?\b/i.test(`${item.title} ${urlTrim}`)) {
+        writeExtendedRoomOverride(id, urlTrim, '__none__');
+      } else {
+        writeExtendedRoomOverride(id, urlTrim, 'clear');
+      }
     } catch (error) {
+      if (
+        (normalizedRoom === 'terrazza_ovest' || normalizedRoom === 'terrazza_est') &&
+        isFirestorePermissionDenied(error)
+      ) {
+        try {
+          writeExtendedRoomOverride(id, urlTrim, normalizedRoom);
+          await setDoc(
+            doc(db, path),
+            { ...payload, room: deleteField() },
+            { merge: true }
+          );
+          setProductResearches((prev) =>
+            prev.map((r) => (r.id === id ? { ...r, room: normalizedRoom } : r))
+          );
+          return;
+        } catch (fallbackErr) {
+          handleFirestoreError(fallbackErr, OperationType.UPDATE, path);
+          throw fallbackErr;
+        }
+      }
       handleFirestoreError(error, OperationType.UPDATE, path);
       throw error;
     }
@@ -3646,11 +3782,15 @@ export default function App() {
                   item.category === 'elettrodomestici' || item.category === 'elettronica'
                     ? item.category
                     : 'altro';
+                const effectivePaidEur =
+                  item.status === 'acquistato' && typeof item.paidPriceEur === 'number'
+                    ? item.paidPriceEur
+                    : undefined;
                 const effectivePaidPrice =
-                  typeof item.paidPriceEur === 'number' ? item.paidPriceEur : item.priceEur;
+                  typeof effectivePaidEur === 'number' ? effectivePaidEur : item.priceEur;
                 const specsParts = [
-                  typeof item.paidPriceEur === 'number'
-                    ? `Pagato: € ${item.paidPriceEur.toFixed(2)}`
+                  typeof effectivePaidEur === 'number'
+                    ? `Pagato: € ${effectivePaidEur.toFixed(2)}`
                     : typeof item.priceEur === 'number'
                       ? `Prezzo: € ${item.priceEur.toFixed(2)}`
                       : '',

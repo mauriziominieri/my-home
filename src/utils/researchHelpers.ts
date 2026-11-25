@@ -5,7 +5,9 @@ export type ResearchRoomId =
   | 'bagno2'
   | 'stanza_maurizio'
   | 'stanza_roberta'
-  | 'stanza_matrimoniale';
+  | 'stanza_matrimoniale'
+  | 'terrazza_ovest'
+  | 'terrazza_est';
 
 export const RESEARCH_ROOMS: { id: ResearchRoomId; label: string }[] = [
   { id: 'salone', label: 'Salone' },
@@ -15,6 +17,8 @@ export const RESEARCH_ROOMS: { id: ResearchRoomId; label: string }[] = [
   { id: 'stanza_maurizio', label: 'Stanza Maurizio' },
   { id: 'stanza_roberta', label: 'Stanza Roberta' },
   { id: 'stanza_matrimoniale', label: 'Stanza Matrimoniale' },
+  { id: 'terrazza_ovest', label: 'Terrazza Ovest' },
+  { id: 'terrazza_est', label: 'Terrazza Est' },
 ];
 
 const ROOM_ALIASES: Record<string, ResearchRoomId> = {
@@ -34,6 +38,12 @@ const ROOM_ALIASES: Record<string, ResearchRoomId> = {
   stanza_matrimoniale: 'stanza_matrimoniale',
   'stanza matrimoniale': 'stanza_matrimoniale',
   matrimoniale: 'stanza_matrimoniale',
+  terrazza_ovest: 'terrazza_ovest',
+  'terrazza ovest': 'terrazza_ovest',
+  'terrazzo ovest': 'terrazza_ovest',
+  terrazza_est: 'terrazza_est',
+  'terrazza est': 'terrazza_est',
+  'terrazzo est': 'terrazza_est',
 };
 
 export function normalizeResearchRoom(raw?: string | null): ResearchRoomId | undefined {
@@ -49,6 +59,113 @@ export function getResearchRoomLabel(raw?: string | null): string {
   const normalized = normalizeResearchRoom(raw);
   if (!normalized) return 'Nessuna stanza';
   return RESEARCH_ROOMS.find((r) => r.id === normalized)?.label || 'Nessuna stanza';
+}
+
+const NON_ROOM_PRODUCT_RE =
+  /\b(?:iphone|smartphone|cellulare|telefono\s+cellulare|galaxy\s+(?:s\d|a\d|m\d|z\s*fold|z\s*flip|tab|buds|watch)|pixel\s*\d|xiaomi\s+(?:\d|redmi|poco)|redmi\s+\d|oneplus\s+\d|ipad|tablet|kindle|kobo|smartwatch|apple\s+watch|garmin|fitbit|airpods|auricolari|cuffie(?:\s+bluetooth|\s+wireless|\s+in-ear|\s+over-ear)?|power\s*bank|cover|custodia|pellicola|vetro\s+temperato|caricabatterie\s+portatile|magsafe|airtag|macbook|notebook|laptop|pc\s+portatile|chromebook|ultrabook|pneumatici|gomme\s+auto|catene\s+da\s+neve|portabici|seggiolino\s+auto|autoradio|dash\s*cam|scarpe|sneakers|stivali|sandali|giacca|giubbotto|cappotto|pantaloni|jeans|maglia|maglietta|t-shirt|felpa|camicia|vestito|gonna|zaino|valigia|trolley|borsa|portafoglio|occhiali\s+da\s+sole|bicicletta|monopattino|tosaerba|tagliaerba|decespugliatore|motosega|barbecue|ombrellone|sdraio)\b/i;
+
+const OUTDOOR_GUARD_RE = /\b(?:da\s+)?(?:giardino|esterno|esterni|terrazzo|balcone)\b|outdoor/i;
+const BOOK_GUARD_RE = /\b(?:libro|libri|ricettario|ebook|audiolibro|rivista)\b/i;
+
+const BATHROOM_ROOM_RE =
+  /\b(?:lavatrice|lavatrici|lavasciuga|asciugatrice|asciugatrici|washing\s+machine|tumble\s+dryer|colonna\s+bucato|cesta\s+(?:per\s+)?biancheria|portabiancheria|cesto\s+biancheria|stendibiancheria\s+elettrico|asse\s+da\s+stiro|mobile\s+(?:da\s+|per\s+)?bagno|mobili\s+bagno|arredo\s+bagno|sottolavabo|colonna\s+bagno|pensile\s+bagno|specchio\s+(?:da\s+)?bagno|specchiera\s+bagno|lavabo|lavandino\s+(?:da\s+)?bagno|sanitari|vaso\s+wc|wc\s+(?:sospeso|a\s+terra|filo\s+muro)|bidet|copriwater|sedile\s+wc|box\s+doccia|cabina\s+doccia|piatto\s+doccia|colonna\s+doccia|soffione\s+doccia|doccetta|saliscendi\s+doccia|parete\s+doccia|vasca\s+da\s+bagno|rubinetto\s+(?:da\s+)?bagno|miscelatore\s+(?:bagno|lavabo|bidet|doccia|vasca)|termoarredo|scaldasalviette|portasciugamani|porta\s*rotolo|portarotolo|dispenser\s+sapone|portasapone|portaspazzolini|scopino\s+wc|scopino\s+bagno|tenda\s+doccia|tappeto\s+bagno|tappetino\s+bagno|set\s+asciugamani|asciugamani\s+bagno|accappatoio|asciugacapelli|phon\s+capelli|spazzolino\s+elettrico)\b/i;
+
+const KITCHEN_ROOM_RE =
+  /\b(?:cucina(?:\s+(?:completa|lineare|angolare|componibile|modulare|moderna|classica|su\s+misura|con\s+elettrodomestici))?|cucine|mobile\s+cucina|basi\s+cucina|pensile\s+cucina|pensili\s+cucina|isola\s+cucina|penisola\s+cucina|top\s+cucina|piano\s+(?:da\s+|di\s+lavoro\s+)?cucina|alzatina\s+cucina|paraschizzi|credenza\s+(?:da\s+)?cucina|carrello\s+(?:da\s+)?cucina|tavolo\s+(?:da\s+)?cucina|sgabelli\s+(?:da\s+)?cucina|piano\s+(?:a\s+|ad\s+)?induzione|piano\s+cottura|piani\s+cottura|piano\s+(?:a\s+)?gas|induction\s+hob|forno\s+(?:da\s+incasso|elettrico|ventilato|pirolitico|a\s+vapore|a\s+microonde|pizza)|fornetto(?:\s+elettrico)?|microonde|lavastoviglie|dishwasher|frigorifero|frigoriferi|frigo(?:\s+(?:combinato|americano|side\s+by\s+side|monoporta|doppia\s+porta|da\s+incasso|sottotop))?|congelatore|freezer|abbattitore|cantinetta\s+vini|cappa(?:\s+(?:aspirante|filtrante|cucina|arredo|telescopica|sottopensile|a\s+isola|da\s+parete|ad\s+incasso))?|lavello(?:\s+cucina)?|vasca\s+lavello|miscelatore\s+(?:da\s+)?cucina|rubinetto\s+(?:da\s+)?cucina|pattumiera\s+(?:cucina|differenziata|sottolavello)|friggitrice(?:\s+ad\s+aria)?|air\s+fryer|macchina\s+(?:da|del|per)\s+caff[eè]|macchina\s+caff[eè]|nespresso|lavazza\s+a\s+modo\s+mio|tostapane|bollitore(?:\s+elettrico)?|robot\s+da\s+cucina|impastatrice|planetaria|frullatore|minipimer|estrattore\s+(?:di\s+)?succo|centrifuga|bimby|thermomix|affettatrice|bilancia\s+(?:da\s+)?cucina|montalatte|vaporiera|cuociriso|pentola|pentole|padella|padelle|casseruola|tegame|wok|bistecchiera|piastra\s+(?:per\s+)?(?:panini|waffle|crepes)|scolapiatti|portaposate|ceppo\s+coltelli|coltelli\s+da\s+cucina|servizio\s+(?:di\s+)?piatti|servizio\s+(?:di\s+)?posate|posate|tagliere)\b/i;
+
+const LIVING_ROOM_RE =
+  /\b(?:divano|divani|divano\s+letto|divano\s+angolare|sof[aà]|copridivano|poltrona(?:\s+relax|\s+reclinabile|\s+letto|\s+da\s+salotto)?|chaise\s+longue|pouf(?:\s+contenitore)?|parete\s+attrezzata|mobile\s+(?:tv|porta\s*tv|soggiorno|salotto|salone)|porta\s*tv|tavolino\s+(?:da\s+)?(?:salotto|soggiorno|fumo|caff[eè]|basso|divano)|madia|credenza\s+(?:moderna|soggiorno|salotto|design)|libreria\s+(?:soggiorno|salotto|da\s+parete|modulare)|tavolo\s+da\s+pranzo|tavolo\s+allungabile|tavolo\s+soggiorno|sedie\s+(?:da\s+)?(?:pranzo|soggiorno|salotto)|sedia\s+da\s+pranzo|consolle\s+(?:allungabile|ingresso|soggiorno)|camino|caminetto|bioetanolo|smart\s*tv|oled\s*(?:tv|evo)?|qled|qned|miniled|tv\s+\d{2}\s*(?:pollici|["”])|televisore|televisori|soundbar|home\s+theater|home\s+theatre|home\s+cinema|staffa\s+(?:a\s+muro\s+per\s+)?tv|supporto\s+tv)\b/i;
+
+const MASTER_BEDROOM_RE =
+  /\b(?:letto\s+matrimoniale|letto\s+contenitore\s+matrimoniale|testiera\s+matrimoniale|rete\s+matrimoniale|materasso\s+matrimoniale|topper\s+matrimoniale|copripiumino\s+matrimoniale|piumone\s+matrimoniale|lenzuola\s+matrimoniali|completo\s+lenzuola\s+matrimoniale|trapunta\s+matrimoniale|copriletto\s+matrimoniale|king\s*size|materasso\s+(?:160|180)\s*x\s*(?:190|200)|letto\s+(?:160|180)\s*x\s*(?:190|200))\b/i;
+
+function extractResearchUrlSlugText(rawUrl?: string): string {
+  if (!rawUrl) return '';
+  try {
+    const u = new URL(rawUrl);
+    return decodeURIComponent(u.pathname)
+      .replace(/\/dp\/[A-Z0-9]{10}.*/i, '')
+      .replace(/[-_/+.]+/g, ' ');
+  } catch {
+    return '';
+  }
+}
+
+function extractStructuredSpecText(specs?: string): string {
+  if (!specs) return '';
+  return specs
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) =>
+      /^(?:tipo(?:\s+di\s+prodotto)?|tipologia|categoria|modello|nome\s+modello|prodotto|stanza|ambiente)\s*:/i.test(
+        line
+      )
+    )
+    .join(' ');
+}
+
+function matchRoomFromProductText(text: string): ResearchRoomId | undefined {
+  const clean = text.trim();
+  if (!clean) return undefined;
+
+  if (/\b(?:bagno\s*2|secondo\s+bagno)\b/i.test(clean)) return 'bagno2';
+  if (/\b(?:bagno\s*1|primo\s+bagno|bagno\s+principale)\b/i.test(clean)) return 'bagno1';
+  if (/\b(?:stanza|camera)\s*(?:di\s*)?maurizio\b/i.test(clean)) return 'stanza_maurizio';
+  if (/\b(?:stanza|camera)\s*(?:di\s*)?roberta\b/i.test(clean)) return 'stanza_roberta';
+  if (/\b(?:stanza|camera)\s*matrimoniale\b/i.test(clean)) return 'stanza_matrimoniale';
+  if (/\bterrazz[ao]\s*(?:a\s*)?ovest\b/i.test(clean)) return 'terrazza_ovest';
+  if (/\bterrazz[ao]\s*(?:a\s*)?est\b/i.test(clean)) return 'terrazza_est';
+  if (/\bkomodo(?:\s*5)?\b/i.test(clean)) return 'terrazza_ovest';
+
+  if (NON_ROOM_PRODUCT_RE.test(clean) || OUTDOOR_GUARD_RE.test(clean)) {
+    return undefined;
+  }
+
+  if (BATHROOM_ROOM_RE.test(clean)) return 'bagno1';
+  if (!BOOK_GUARD_RE.test(clean) && KITCHEN_ROOM_RE.test(clean)) return 'cucina';
+  if (LIVING_ROOM_RE.test(clean)) return 'salone';
+  if (MASTER_BEDROOM_RE.test(clean)) return 'stanza_matrimoniale';
+
+  return undefined;
+}
+
+export function inferResearchRoom(input: {
+  title?: string;
+  url?: string;
+  specs?: string;
+  category?: string;
+}): ResearchRoomId | undefined {
+  if (input.category === 'auto' || input.category === 'abbigliamento') {
+    return undefined;
+  }
+
+  const primaryText = `${input.title || ''} ${extractResearchUrlSlugText(input.url)}`.trim();
+  const explicitOrKomodo = matchRoomFromProductText(primaryText);
+  if (
+    explicitOrKomodo === 'terrazza_ovest' ||
+    explicitOrKomodo === 'terrazza_est' ||
+    /\b(?:bagno\s*[12]|(?:primo|secondo)\s+bagno|bagno\s+principale|(?:stanza|camera)\s*(?:di\s*)?(?:maurizio|roberta|matrimoniale))\b/i.test(
+      primaryText
+    )
+  ) {
+    return explicitOrKomodo;
+  }
+
+  if (
+    NON_ROOM_PRODUCT_RE.test(primaryText) ||
+    OUTDOOR_GUARD_RE.test(`${primaryText} ${input.url || ''}`)
+  ) {
+    return undefined;
+  }
+
+  if (explicitOrKomodo) return explicitOrKomodo;
+
+  const structuredSpecs = extractStructuredSpecText(input.specs);
+  if (structuredSpecs && !NON_ROOM_PRODUCT_RE.test(structuredSpecs)) {
+    return matchRoomFromProductText(structuredSpecs);
+  }
+
+  return undefined;
 }
 
 export interface ColorPreset {
@@ -313,6 +430,7 @@ const KNOWN_BRAND_RULES: [RegExp, string][] = [
   [/\b(?:kave\s*home)\b/i, 'Kave Home'],
   [/\b(?:sklum)\b/i, 'Sklum'],
   [/\b(?:mondo\s*convenienza)\b/i, 'Mondo Convenienza'],
+  [/\b(?:nardi|nardi\s*outdoor|nardioutdoor)\b/i, 'Nardi'],
   [/\b(?:ikea)\b/i, 'IKEA'],
 ];
 
@@ -590,4 +708,39 @@ export function findColorImageUrl(
     return kNorm.includes(target) || target.includes(kNorm);
   });
   return partial ? partial[1].trim() : undefined;
+}
+
+export function sanitizeSizePricesMap(raw: unknown): Record<string, number> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (Object.keys(out).length >= 24) break;
+    const cleanKey = String(k).replace(/\s+/g, ' ').trim().slice(0, 60);
+    const num = typeof v === 'number' ? v : Number(v);
+    if (!cleanKey || !Number.isFinite(num) || num < 0 || num > 1_000_000) continue;
+    out[cleanKey] = Math.round(num * 100) / 100;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+export function findSizePrice(
+  sizePrices: Record<string, number> | undefined,
+  size?: string
+): number | undefined {
+  if (!sizePrices || !size) return undefined;
+  const targetTrim = size.trim().toLowerCase().replace(/\s+/g, ' ');
+  const targetCompact = targetTrim.replace(/\s+/g, '');
+  if (!targetCompact) return undefined;
+  const entries = Object.entries(sizePrices).filter(
+    ([k, v]) => Boolean(k.trim()) && typeof v === 'number' && Number.isFinite(v) && v >= 0
+  );
+  if (entries.length === 0) return undefined;
+  const exact = entries.find(
+    ([k]) => k.trim().toLowerCase().replace(/\s+/g, ' ') === targetTrim
+  );
+  if (exact) return exact[1];
+  const compactMatch = entries.find(
+    ([k]) => k.trim().toLowerCase().replace(/\s+/g, '') === targetCompact
+  );
+  return compactMatch ? compactMatch[1] : undefined;
 }

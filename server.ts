@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import http from 'http';
+import https from 'https';
 import path from 'path';
 import fs from 'fs';
 import { GoogleGenAI } from '@google/genai';
@@ -857,6 +858,7 @@ async function startServer() {
       [/\b(?:kave\s*home)\b/i, 'Kave Home'],
       [/\b(?:sklum)\b/i, 'Sklum'],
       [/\b(?:mondo\s*convenienza)\b/i, 'Mondo Convenienza'],
+      [/\b(?:nardi|nardi\s*outdoor|nardioutdoor)\b/i, 'Nardi'],
       [/\b(?:ikea)\b/i, 'IKEA'],
     ];
     const cleanExplicit = (input.brand || '')
@@ -1069,7 +1071,7 @@ async function startServer() {
     if (/(tv|televis|monitor|laptop|macbook|pc|ipad|tablet|iphone|smartphone|cellulare|sbloccato|ricondizionato|cuffie|airpods|router|modem|ssd|mouse|tastiera|soundbar|console|ps5|custodia|magsafe|5g|apple)/.test(t)) {
       return 'elettronica';
     }
-    if (/(divano|tavolo|sedia|armadio|lampada|materasso|tappeto|cucina|arredo|arredamento|mobili|scrivania|scaffale|specchio|statuetta|busto|scultura|soprammobile|vaso|cornice|quadro|candela|portacandele|cuscino|plaid|tenda|poltrona|pouf|libreria|comodino|credenza|cassettiera|mensola|cemento|ceramica|maisonsdumonde|zarahome|westwing|kavehome|sklum|mondoconv|laredoute|conforama)/.test(t)) {
+    if (/(divano|tavolo|sedia|armadio|lampada|materasso|tappeto|cucina|arredo|arredamento|mobili|scrivania|scaffale|specchio|statuetta|busto|scultura|soprammobile|vaso|cornice|quadro|candela|portacandele|cuscino|plaid|tenda|poltrona|pouf|libreria|comodino|credenza|cassettiera|mensola|cemento|ceramica|maisonsdumonde|zarahome|westwing|kavehome|sklum|mondoconv|laredoute|conforama|nardioutdoor)/.test(t)) {
       return 'casa_arredo';
     }
     if (/(trapano|avvitatore|sega|vernice|silicone|martello|makita|dewalt|utensil|scala|giardino|tagliaerba|idropulitrice)/.test(t)) {
@@ -1082,6 +1084,158 @@ async function startServer() {
       return 'abbigliamento';
     }
     return 'altro';
+  }
+
+  type ResearchRoomIdServer =
+    | 'salone'
+    | 'cucina'
+    | 'bagno1'
+    | 'bagno2'
+    | 'stanza_maurizio'
+    | 'stanza_roberta'
+    | 'stanza_matrimoniale'
+    | 'terrazza_ovest'
+    | 'terrazza_est';
+
+  const RESEARCH_ROOM_ALIASES_SERVER: Record<string, ResearchRoomIdServer> = {
+    salone: 'salone',
+    soggiorno: 'salone',
+    cucina: 'cucina',
+    bagno1: 'bagno1',
+    'bagno 1': 'bagno1',
+    bagno2: 'bagno2',
+    'bagno 2': 'bagno2',
+    stanza_maurizio: 'stanza_maurizio',
+    'stanza maurizio': 'stanza_maurizio',
+    maurizio: 'stanza_maurizio',
+    stanza_roberta: 'stanza_roberta',
+    'stanza roberta': 'stanza_roberta',
+    roberta: 'stanza_roberta',
+    stanza_matrimoniale: 'stanza_matrimoniale',
+    'stanza matrimoniale': 'stanza_matrimoniale',
+    matrimoniale: 'stanza_matrimoniale',
+    terrazza_ovest: 'terrazza_ovest',
+    'terrazza ovest': 'terrazza_ovest',
+    'terrazzo ovest': 'terrazza_ovest',
+    terrazza_est: 'terrazza_est',
+    'terrazza est': 'terrazza_est',
+    'terrazzo est': 'terrazza_est',
+  };
+
+  function normalizeResearchRoomServer(raw?: string | null): ResearchRoomIdServer | undefined {
+    if (!raw) return undefined;
+    const key = raw.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!key || key === 'nessuna' || key === 'nessuna stanza' || key === 'none' || key === 'null') {
+      return undefined;
+    }
+    return RESEARCH_ROOM_ALIASES_SERVER[key];
+  }
+
+  const NON_ROOM_PRODUCT_RE_SERVER =
+    /\b(?:iphone|smartphone|cellulare|telefono\s+cellulare|galaxy\s+(?:s\d|a\d|m\d|z\s*fold|z\s*flip|tab|buds|watch)|pixel\s*\d|xiaomi\s+(?:\d|redmi|poco)|redmi\s+\d|oneplus\s+\d|ipad|tablet|kindle|kobo|smartwatch|apple\s+watch|garmin|fitbit|airpods|auricolari|cuffie(?:\s+bluetooth|\s+wireless|\s+in-ear|\s+over-ear)?|power\s*bank|cover|custodia|pellicola|vetro\s+temperato|caricabatterie\s+portatile|magsafe|airtag|macbook|notebook|laptop|pc\s+portatile|chromebook|ultrabook|pneumatici|gomme\s+auto|catene\s+da\s+neve|portabici|seggiolino\s+auto|autoradio|dash\s*cam|scarpe|sneakers|stivali|sandali|giacca|giubbotto|cappotto|pantaloni|jeans|maglia|maglietta|t-shirt|felpa|camicia|vestito|gonna|zaino|valigia|trolley|borsa|portafoglio|occhiali\s+da\s+sole|bicicletta|monopattino|tosaerba|tagliaerba|decespugliatore|motosega|barbecue|ombrellone|sdraio)\b/i;
+
+  const OUTDOOR_GUARD_RE_SERVER = /\b(?:da\s+)?(?:giardino|esterno|esterni|terrazzo|balcone)\b|outdoor/i;
+  const BOOK_GUARD_RE_SERVER = /\b(?:libro|libri|ricettario|ebook|audiolibro|rivista)\b/i;
+
+  const BATHROOM_ROOM_RE_SERVER =
+    /\b(?:lavatrice|lavatrici|lavasciuga|asciugatrice|asciugatrici|washing\s+machine|tumble\s+dryer|colonna\s+bucato|cesta\s+(?:per\s+)?biancheria|portabiancheria|cesto\s+biancheria|stendibiancheria\s+elettrico|asse\s+da\s+stiro|mobile\s+(?:da\s+|per\s+)?bagno|mobili\s+bagno|arredo\s+bagno|sottolavabo|colonna\s+bagno|pensile\s+bagno|specchio\s+(?:da\s+)?bagno|specchiera\s+bagno|lavabo|lavandino\s+(?:da\s+)?bagno|sanitari|vaso\s+wc|wc\s+(?:sospeso|a\s+terra|filo\s+muro)|bidet|copriwater|sedile\s+wc|box\s+doccia|cabina\s+doccia|piatto\s+doccia|colonna\s+doccia|soffione\s+doccia|doccetta|saliscendi\s+doccia|parete\s+doccia|vasca\s+da\s+bagno|rubinetto\s+(?:da\s+)?bagno|miscelatore\s+(?:bagno|lavabo|bidet|doccia|vasca)|termoarredo|scaldasalviette|portasciugamani|porta\s*rotolo|portarotolo|dispenser\s+sapone|portasapone|portaspazzolini|scopino\s+wc|scopino\s+bagno|tenda\s+doccia|tappeto\s+bagno|tappetino\s+bagno|set\s+asciugamani|asciugamani\s+bagno|accappatoio|asciugacapelli|phon\s+capelli|spazzolino\s+elettrico)\b/i;
+
+  const KITCHEN_ROOM_RE_SERVER =
+    /\b(?:cucina(?:\s+(?:completa|lineare|angolare|componibile|modulare|moderna|classica|su\s+misura|con\s+elettrodomestici))?|cucine|mobile\s+cucina|basi\s+cucina|pensile\s+cucina|pensili\s+cucina|isola\s+cucina|penisola\s+cucina|top\s+cucina|piano\s+(?:da\s+|di\s+lavoro\s+)?cucina|alzatina\s+cucina|paraschizzi|credenza\s+(?:da\s+)?cucina|carrello\s+(?:da\s+)?cucina|tavolo\s+(?:da\s+)?cucina|sgabelli\s+(?:da\s+)?cucina|piano\s+(?:a\s+|ad\s+)?induzione|piano\s+cottura|piani\s+cottura|piano\s+(?:a\s+)?gas|induction\s+hob|forno\s+(?:da\s+incasso|elettrico|ventilato|pirolitico|a\s+vapore|a\s+microonde|pizza)|fornetto(?:\s+elettrico)?|microonde|lavastoviglie|dishwasher|frigorifero|frigoriferi|frigo(?:\s+(?:combinato|americano|side\s+by\s+side|monoporta|doppia\s+porta|da\s+incasso|sottotop))?|congelatore|freezer|abbattitore|cantinetta\s+vini|cappa(?:\s+(?:aspirante|filtrante|cucina|arredo|telescopica|sottopensile|a\s+isola|da\s+parete|ad\s+incasso))?|lavello(?:\s+cucina)?|vasca\s+lavello|miscelatore\s+(?:da\s+)?cucina|rubinetto\s+(?:da\s+)?cucina|pattumiera\s+(?:cucina|differenziata|sottolavello)|friggitrice(?:\s+ad\s+aria)?|air\s+fryer|macchina\s+(?:da|del|per)\s+caff[eè]|macchina\s+caff[eè]|nespresso|lavazza\s+a\s+modo\s+mio|tostapane|bollitore(?:\s+elettrico)?|robot\s+da\s+cucina|impastatrice|planetaria|frullatore|minipimer|estrattore\s+(?:di\s+)?succo|centrifuga|bimby|thermomix|affettatrice|bilancia\s+(?:da\s+)?cucina|montalatte|vaporiera|cuociriso|pentola|pentole|padella|padelle|casseruola|tegame|wok|bistecchiera|piastra\s+(?:per\s+)?(?:panini|waffle|crepes)|scolapiatti|portaposate|ceppo\s+coltelli|coltelli\s+da\s+cucina|servizio\s+(?:di\s+)?piatti|servizio\s+(?:di\s+)?posate|posate|tagliere)\b/i;
+
+  const LIVING_ROOM_RE_SERVER =
+    /\b(?:divano|divani|divano\s+letto|divano\s+angolare|sof[aà]|copridivano|poltrona(?:\s+relax|\s+reclinabile|\s+letto|\s+da\s+salotto)?|chaise\s+longue|pouf(?:\s+contenitore)?|parete\s+attrezzata|mobile\s+(?:tv|porta\s*tv|soggiorno|salotto|salone)|porta\s*tv|tavolino\s+(?:da\s+)?(?:salotto|soggiorno|fumo|caff[eè]|basso|divano)|madia|credenza\s+(?:moderna|soggiorno|salotto|design)|libreria\s+(?:soggiorno|salotto|da\s+parete|modulare)|tavolo\s+da\s+pranzo|tavolo\s+allungabile|tavolo\s+soggiorno|sedie\s+(?:da\s+)?(?:pranzo|soggiorno|salotto)|sedia\s+da\s+pranzo|consolle\s+(?:allungabile|ingresso|soggiorno)|camino|caminetto|bioetanolo|smart\s*tv|oled\s*(?:tv|evo)?|qled|qned|miniled|tv\s+\d{2}\s*(?:pollici|["”])|televisore|televisori|soundbar|home\s+theater|home\s+theatre|home\s+cinema|staffa\s+(?:a\s+muro\s+per\s+)?tv|supporto\s+tv)\b/i;
+
+  const MASTER_BEDROOM_RE_SERVER =
+    /\b(?:letto\s+matrimoniale|letto\s+contenitore\s+matrimoniale|testiera\s+matrimoniale|rete\s+matrimoniale|materasso\s+matrimoniale|topper\s+matrimoniale|copripiumino\s+matrimoniale|piumone\s+matrimoniale|lenzuola\s+matrimoniali|completo\s+lenzuola\s+matrimoniale|trapunta\s+matrimoniale|copriletto\s+matrimoniale|king\s*size|materasso\s+(?:160|180)\s*x\s*(?:190|200)|letto\s+(?:160|180)\s*x\s*(?:190|200))\b/i;
+
+  function extractUrlSlugTextServer(rawUrl?: string): string {
+    if (!rawUrl) return '';
+    try {
+      const u = new URL(rawUrl);
+      return decodeURIComponent(u.pathname)
+        .replace(/\/dp\/[A-Z0-9]{10}.*/i, '')
+        .replace(/[-_/+.]+/g, ' ');
+    } catch {
+      return '';
+    }
+  }
+
+  function extractStructuredSpecTextServer(specs?: string): string {
+    if (!specs) return '';
+    return specs
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter((line) =>
+        /^(?:tipo(?:\s+di\s+prodotto)?|tipologia|categoria|modello|nome\s+modello|prodotto|stanza|ambiente)\s*:/i.test(
+          line
+        )
+      )
+      .join(' ');
+  }
+
+  function matchRoomFromProductTextServer(text: string): ResearchRoomIdServer | undefined {
+    const clean = text.trim();
+    if (!clean) return undefined;
+
+    if (/\b(?:bagno\s*2|secondo\s+bagno)\b/i.test(clean)) return 'bagno2';
+    if (/\b(?:bagno\s*1|primo\s+bagno|bagno\s+principale)\b/i.test(clean)) return 'bagno1';
+    if (/\b(?:stanza|camera)\s*(?:di\s*)?maurizio\b/i.test(clean)) return 'stanza_maurizio';
+    if (/\b(?:stanza|camera)\s*(?:di\s*)?roberta\b/i.test(clean)) return 'stanza_roberta';
+    if (/\b(?:stanza|camera)\s*matrimoniale\b/i.test(clean)) return 'stanza_matrimoniale';
+    if (/\bterrazz[ao]\s*(?:a\s*)?ovest\b/i.test(clean)) return 'terrazza_ovest';
+    if (/\bterrazz[ao]\s*(?:a\s*)?est\b/i.test(clean)) return 'terrazza_est';
+    if (/\bkomodo(?:\s*5)?\b/i.test(clean)) return 'terrazza_ovest';
+
+    if (NON_ROOM_PRODUCT_RE_SERVER.test(clean) || OUTDOOR_GUARD_RE_SERVER.test(clean)) {
+      return undefined;
+    }
+
+    if (BATHROOM_ROOM_RE_SERVER.test(clean)) return 'bagno1';
+    if (!BOOK_GUARD_RE_SERVER.test(clean) && KITCHEN_ROOM_RE_SERVER.test(clean)) return 'cucina';
+    if (LIVING_ROOM_RE_SERVER.test(clean)) return 'salone';
+    if (MASTER_BEDROOM_RE_SERVER.test(clean)) return 'stanza_matrimoniale';
+
+    return undefined;
+  }
+
+  function inferResearchRoomServer(input: {
+    title?: string;
+    url?: string;
+    specs?: string;
+    category?: string;
+  }): ResearchRoomIdServer | undefined {
+    if (input.category === 'auto' || input.category === 'abbigliamento') {
+      return undefined;
+    }
+
+    const primaryText = `${input.title || ''} ${extractUrlSlugTextServer(input.url)}`.trim();
+    const explicitOrKomodo = matchRoomFromProductTextServer(primaryText);
+    if (
+      explicitOrKomodo === 'terrazza_ovest' ||
+      explicitOrKomodo === 'terrazza_est' ||
+      /\b(?:bagno\s*[12]|(?:primo|secondo)\s+bagno|bagno\s+principale|(?:stanza|camera)\s*(?:di\s*)?(?:maurizio|roberta|matrimoniale))\b/i.test(
+        primaryText
+      )
+    ) {
+      return explicitOrKomodo;
+    }
+
+    if (
+      NON_ROOM_PRODUCT_RE_SERVER.test(primaryText) ||
+      OUTDOOR_GUARD_RE_SERVER.test(`${primaryText} ${input.url || ''}`)
+    ) {
+      return undefined;
+    }
+
+    if (explicitOrKomodo) return explicitOrKomodo;
+
+    const structuredSpecs = extractStructuredSpecTextServer(input.specs);
+    if (structuredSpecs && !NON_ROOM_PRODUCT_RE_SERVER.test(structuredSpecs)) {
+      return matchRoomFromProductTextServer(structuredSpecs);
+    }
+
+    return undefined;
   }
 
   function extractMetaContent(html: string, attrName: string, attrValue: string): string {
@@ -1300,6 +1454,19 @@ async function startServer() {
     return Object.keys(out).length > 0 ? out : undefined;
   }
 
+  function sanitizeSizePricesMapServer(raw: unknown): Record<string, number> | undefined {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (Object.keys(out).length >= 24) break;
+      const cleanKey = stripHtmlTags(String(k)).replace(/\s+/g, ' ').trim().slice(0, 60);
+      const parsed = parsePriceNumber(v);
+      if (!cleanKey || parsed === undefined) continue;
+      out[cleanKey] = Math.round(parsed * 100) / 100;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  }
+
   function normalizeOptionList(rawList: unknown, maxItems = 24): string[] {
     if (!Array.isArray(rawList)) return [];
     const seen = new Set<string>();
@@ -1325,6 +1492,7 @@ async function startServer() {
     colorImages?: Record<string, string>;
     size?: string;
     availableSizes?: string[];
+    sizePrices?: Record<string, number>;
     model?: string;
     imageUrl?: string;
     priceEur?: number;
@@ -1370,6 +1538,7 @@ async function startServer() {
           const variantColors: string[] = [];
           const variantSizes: string[] = [];
           const variantColorImages: Record<string, string> = {};
+          const variantSizePrices: Record<string, number> = {};
           const readLdImg = (rawImg: unknown): string | undefined => {
             if (typeof rawImg === 'string' && /^https?:\/\//i.test(rawImg)) return rawImg.slice(0, 1000);
             if (Array.isArray(rawImg)) {
@@ -1397,7 +1566,21 @@ async function startServer() {
                   variantColorImages[vCol] = vImg;
                 }
               }
-              if (typeof vo.size === 'string') variantSizes.push(vo.size);
+              if (typeof vo.size === 'string') {
+                variantSizes.push(vo.size);
+                const vSz = stripHtmlTags(vo.size).replace(/\s+/g, ' ').trim().slice(0, 60);
+                const voOffers = Array.isArray(vo.offers) ? vo.offers[0] : vo.offers;
+                if (vSz && voOffers && typeof voOffers === 'object') {
+                  const oo = voOffers as Record<string, unknown>;
+                  const vPrice =
+                    parsePriceNumber(oo.price) ??
+                    parsePriceNumber(oo.lowPrice) ??
+                    parsePriceNumber(oo.highPrice);
+                  if (vPrice !== undefined && Object.keys(variantSizePrices).length < 24) {
+                    variantSizePrices[vSz] = vPrice;
+                  }
+                }
+              }
             }
           }
           const availableColors = normalizeOptionList(variantColors);
@@ -1430,6 +1613,8 @@ async function startServer() {
                 Object.keys(variantColorImages).length > 0 ? variantColorImages : undefined,
               size,
               availableSizes: availableSizes.length > 0 ? availableSizes : undefined,
+              sizePrices:
+                Object.keys(variantSizePrices).length > 0 ? variantSizePrices : undefined,
               model,
               imageUrl,
               priceEur,
@@ -1463,6 +1648,62 @@ async function startServer() {
     return clean.toString();
   }
 
+  function extractAmazonBuyboxPrice(html: string): number | undefined {
+    let priceEur: number | undefined;
+    const twisterJsonMatch = html.match(
+      /twister-plus-(?:buying-options-)?price-data["'][^>]*>([\s\S]*?)<\/script>/i
+    );
+    if (twisterJsonMatch?.[1]) {
+      const twAmountM = twisterJsonMatch[1].match(/"priceAmount"\s*:\s*([0-9]+(?:\.[0-9]+)?)/);
+      if (twAmountM?.[1]) {
+        priceEur = parsePriceNumber(twAmountM[1]);
+      }
+    }
+
+    const priceBlockRegions: string[] = [];
+    const priceDisplayIdx = html.indexOf('corePriceDisplay_desktop_feature_div');
+    if (priceDisplayIdx !== -1) priceBlockRegions.push(html.slice(priceDisplayIdx, priceDisplayIdx + 16000));
+    const corePriceIdx = html.indexOf('id="corePrice_feature_div"');
+    if (corePriceIdx !== -1) priceBlockRegions.push(html.slice(corePriceIdx, corePriceIdx + 14000));
+    const buyboxPriceIdx = html.indexOf('id="price_inside_buybox"');
+    if (buyboxPriceIdx !== -1) priceBlockRegions.push(html.slice(buyboxPriceIdx, buyboxPriceIdx + 1500));
+
+    for (const region of priceBlockRegions) {
+      if (priceEur !== undefined) break;
+      const toPayMatch = region.match(
+        /class=["'][^"']*(?:priceToPay|apex-pricetopay-value)[^"']*["'][\s\S]{0,1000}/i
+      );
+      const targetSlice = toPayMatch?.[0] || region;
+
+      const offscreenMatches = [
+        ...targetSlice.matchAll(/class=["'](?:a-offscreen|aok-offscreen)["'][^>]*>([\s\S]*?)<\/span>/gi),
+      ];
+      for (const om of offscreenMatches) {
+        const parsed = parsePriceNumber(stripHtmlTags(om[1]));
+        if (parsed !== undefined) {
+          priceEur = parsed;
+          break;
+        }
+      }
+      if (priceEur === undefined) {
+        const wholeM = targetSlice.match(/class=["']a-price-whole["'][^>]*>([\d.]+)/i);
+        const fracM = targetSlice.match(/class=["']a-price-fraction["'][^>]*>(\d{1,2})/i);
+        if (wholeM?.[1]) {
+          const cleanWhole = wholeM[1].replace(/\./g, '');
+          const candidate = fracM?.[1] ? `${cleanWhole}.${fracM[1]}` : cleanWhole;
+          priceEur = parsePriceNumber(candidate);
+        }
+      }
+      if (priceEur === undefined) {
+        const regionAmountM = targetSlice.match(/"priceAmount"\s*:\s*([0-9]+(?:\.[0-9]+)?)/);
+        if (regionAmountM?.[1]) {
+          priceEur = parsePriceNumber(regionAmountM[1]);
+        }
+      }
+    }
+    return priceEur;
+  }
+
   function extractAmazonDomDetails(
     html: string,
     asin?: string
@@ -1476,6 +1717,7 @@ async function startServer() {
     colorImages: Record<string, string>;
     size?: string;
     availableSizes: string[];
+    sizeAsinCandidates: Record<string, string[]>;
     model?: string;
     specsList: string[];
     bullets: string[];
@@ -1576,60 +1818,7 @@ async function startServer() {
     }
 
     // 3. Price (twister-plus-buying-options-price-data / .priceToPay / #corePriceDisplay_desktop_feature_div)
-    let priceEur: number | undefined;
-
-    // 3a. Mobile / Modern Twister BuyBox JSON (cleanest, avoids trade-in widget false positives)
-    const twisterJsonMatch = html.match(
-      /twister-plus-(?:buying-options-)?price-data["'][^>]*>([\s\S]*?)<\/script>/i
-    );
-    if (twisterJsonMatch?.[1]) {
-      const twAmountM = twisterJsonMatch[1].match(/"priceAmount"\s*:\s*([0-9]+(?:\.[0-9]+)?)/);
-      if (twAmountM?.[1]) {
-        priceEur = parsePriceNumber(twAmountM[1]);
-      }
-    }
-
-    const priceBlockRegions: string[] = [];
-    const priceDisplayIdx = html.indexOf('corePriceDisplay_desktop_feature_div');
-    if (priceDisplayIdx !== -1) priceBlockRegions.push(html.slice(priceDisplayIdx, priceDisplayIdx + 16000));
-    const corePriceIdx = html.indexOf('id="corePrice_feature_div"');
-    if (corePriceIdx !== -1) priceBlockRegions.push(html.slice(corePriceIdx, corePriceIdx + 14000));
-    const buyboxPriceIdx = html.indexOf('id="price_inside_buybox"');
-    if (buyboxPriceIdx !== -1) priceBlockRegions.push(html.slice(buyboxPriceIdx, buyboxPriceIdx + 1500));
-
-    for (const region of priceBlockRegions) {
-      if (priceEur !== undefined) break;
-      const toPayMatch = region.match(
-        /class=["'][^"']*(?:priceToPay|apex-pricetopay-value)[^"']*["'][\s\S]{0,1000}/i
-      );
-      const targetSlice = toPayMatch?.[0] || region;
-
-      const offscreenMatches = [
-        ...targetSlice.matchAll(/class=["'](?:a-offscreen|aok-offscreen)["'][^>]*>([\s\S]*?)<\/span>/gi),
-      ];
-      for (const om of offscreenMatches) {
-        const parsed = parsePriceNumber(stripHtmlTags(om[1]));
-        if (parsed !== undefined) {
-          priceEur = parsed;
-          break;
-        }
-      }
-      if (priceEur === undefined) {
-        const wholeM = targetSlice.match(/class=["']a-price-whole["'][^>]*>([\d.]+)/i);
-        const fracM = targetSlice.match(/class=["']a-price-fraction["'][^>]*>(\d{1,2})/i);
-        if (wholeM?.[1]) {
-          const cleanWhole = wholeM[1].replace(/\./g, '');
-          const candidate = fracM?.[1] ? `${cleanWhole}.${fracM[1]}` : cleanWhole;
-          priceEur = parsePriceNumber(candidate);
-        }
-      }
-      if (priceEur === undefined) {
-        const regionAmountM = targetSlice.match(/"priceAmount"\s*:\s*([0-9]+(?:\.[0-9]+)?)/);
-        if (regionAmountM?.[1]) {
-          priceEur = parsePriceNumber(regionAmountM[1]);
-        }
-      }
-    }
+    const priceEur = extractAmazonBuyboxPrice(html);
 
     // 4. Brand (#bylineInfo, overridden by explicit Marchio/Marca in Product Overview if Renewed/Amazon)
     let bylineBrand: string | undefined;
@@ -2039,6 +2228,69 @@ async function startServer() {
       colorImages[color] = imageUrl;
     }
 
+    // 9. Per-size candidate ASINs (prioritizing active color's ASIN first, with other colors as fallback)
+    const sizeAsinCandidates: Record<string, string[]> = {};
+    const addSizeAsinCandidate = (sizeLabel: string, candAsin: string, prioritize = false) => {
+      const cleanAsin = candAsin.trim().toUpperCase();
+      if (!/^[A-Z0-9]{10}$/.test(cleanAsin)) return;
+      const existing = sizeAsinCandidates[sizeLabel] || [];
+      if (existing.includes(cleanAsin)) {
+        if (prioritize && existing[0] !== cleanAsin) {
+          sizeAsinCandidates[sizeLabel] = [cleanAsin, ...existing.filter((x) => x !== cleanAsin)];
+        }
+        return;
+      }
+      sizeAsinCandidates[sizeLabel] = prioritize ? [cleanAsin, ...existing] : [...existing, cleanAsin];
+    };
+
+    const matchCanonicalSize = (rawSz: string): string | undefined => {
+      const compact = rawSz.trim().toLowerCase().replace(/\s+/g, '');
+      if (!compact) return undefined;
+      return availableSizes.find(
+        (s) => s.trim().toLowerCase().replace(/\s+/g, '') === compact
+      );
+    };
+
+    const sizeBlockForAsinsIdx = html.search(
+      /id=["'](?:variation_size_name|variation_memory_storage_capacity|variation_capacity_name|inline-twister-row-size_name|inline-twister-row-memory_storage_capacity|inline-twister-row-capacity_name|inline-twister-expander-content-size_name|inline-twister-expander-content-memory_storage_capacity|inline-twister-expander-content-capacity_name)["']/i
+    );
+    if (sizeBlockForAsinsIdx !== -1 && availableSizes.length > 0) {
+      const sSlice = html.slice(sizeBlockForAsinsIdx, sizeBlockForAsinsIdx + 25000);
+      for (const liMatch of sSlice.matchAll(
+        /<li[^>]*data-asin=["']([A-Z0-9]{10})["'][^>]*>([\s\S]*?)<\/li>/gi
+      )) {
+        const liAsin = liMatch[1];
+        const textM = liMatch[2].match(
+          /(?:swatch-title-text-display[^>]*>([\s\S]*?)<\/span>|twisterTextDiv[^>]*>([\s\S]*?)<\/div>|<span[^>]*class=["'][^"']*a-size-base[^"']*["'][^>]*>([\s\S]*?)<\/span>)/i
+        );
+        const rawText = stripHtmlTags(textM?.[1] || textM?.[2] || textM?.[3] || '').replace(/\s+/g, ' ').trim();
+        const canonical = matchCanonicalSize(rawText);
+        if (canonical) {
+          addSizeAsinCandidate(canonical, liAsin, true);
+        }
+      }
+    }
+
+    if (dimensionValuesDisplayData && Array.isArray(dimensions) && availableSizes.length > 0) {
+      const sIdx = sizeDimKey ? dimensions.indexOf(sizeDimKey) : -1;
+      const cIdx = colorDimKey ? dimensions.indexOf(colorDimKey) : -1;
+      const activeColorNorm = color?.trim().toLowerCase() || '';
+      if (sIdx !== -1) {
+        for (const [candAsin, tuple] of Object.entries(dimensionValuesDisplayData)) {
+          if (!Array.isArray(tuple) || typeof tuple[sIdx] !== 'string') continue;
+          const rawSz = stripHtmlTags(tuple[sIdx]).replace(/\s+/g, ' ').trim();
+          const canonical = matchCanonicalSize(rawSz);
+          if (!canonical) continue;
+          const rawCol =
+            cIdx !== -1 && typeof tuple[cIdx] === 'string'
+              ? stripHtmlTags(tuple[cIdx]).replace(/\s+/g, ' ').trim().toLowerCase()
+              : '';
+          const isSameColor = Boolean(activeColorNorm && rawCol === activeColorNorm);
+          addSizeAsinCandidate(canonical, candAsin, isSameColor);
+        }
+      }
+    }
+
     return {
       title,
       brand,
@@ -2049,6 +2301,7 @@ async function startServer() {
       colorImages,
       size,
       availableSizes,
+      sizeAsinCandidates,
       model,
       specsList,
       bullets,
@@ -2136,6 +2389,7 @@ async function startServer() {
     let colorImages: Record<string, string> | undefined;
     let size = '';
     let availableSizes: string[] = [];
+    let sizePrices: Record<string, number> | undefined;
     let model = amazonAsin || urlDetails.model || '';
     let imageUrl = '';
     let priceEur: number | undefined;
@@ -2144,32 +2398,187 @@ async function startServer() {
     let extractedFrom: 'page-meta' | 'url-slug' = 'url-slug';
     let blockedBySite = false;
 
+    const resolvePageImageUrl = (rawImg?: string): string | undefined => {
+      const trimmed = (rawImg || '').trim();
+      if (!trimmed || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return undefined;
+      try {
+        const resolved = new URL(trimmed, finalUrl);
+        if (resolved.protocol !== 'https:' && resolved.protocol !== 'http:') return undefined;
+        return resolved.toString().slice(0, 1000);
+      } catch {
+        return undefined;
+      }
+    };
+
+    const extractFallbackHtmlImage = (candidateHtml: string): string | undefined => {
+      const metaCandidates = [
+        extractMetaContent(candidateHtml, 'itemprop', 'image'),
+        extractMetaContent(candidateHtml, 'name', 'msapplication-TileImage'),
+      ];
+      const linkImageSrcM = candidateHtml.match(
+        /<link[^>]*rel=["']image_src["'][^>]*href=["']([^"']+)["'][^>]*>/i
+      );
+      if (linkImageSrcM?.[1]) metaCandidates.push(decodeHtmlEntities(linkImageSrcM[1]));
+
+      for (const cand of metaCandidates) {
+        const resolved = resolvePageImageUrl(cand);
+        if (resolved && !/(?:favicon|apple-touch-icon|logo)/i.test(resolved)) {
+          return resolved;
+        }
+      }
+
+      const imgSrcMatches = candidateHtml.matchAll(
+        /<(?:img|source)[^>]*(?:src|data-src|data-lazy-src|srcset)=["']([^"']+)["'][^>]*>/gi
+      );
+      let bestUrl: string | undefined;
+      let bestScore = -1;
+      for (const m of imgSrcMatches) {
+        const rawAttr = decodeHtmlEntities(m[1]).split(',')[0].trim().split(/\s+/)[0];
+        const resolved = resolvePageImageUrl(rawAttr);
+        if (!resolved) continue;
+        if (/\.(?:svg|ico)(?:[?#]|$)/i.test(resolved)) continue;
+        if (/(?:favicon|sprite|spacer|pixel|tracking|analytics|cookie|gdpr|flag|icon-16|icon-32)/i.test(resolved)) {
+          continue;
+        }
+        let score = 0;
+        if (/\.(?:webp|jpg|jpeg|png|avif)(?:[?#]|$)/i.test(resolved)) score += 3;
+        if (/\/(?:media|products?|prodotti|catalogo|upload|images?|img|foto)\//i.test(resolved)) score += 2;
+        if (urlDetails.title) {
+          const words = urlDetails.title
+            .toLowerCase()
+            .split(/\s+/)
+            .filter((w) => w.length >= 4 && !/^\d+$/.test(w));
+          if (words.some((w) => resolved.toLowerCase().includes(w))) score += 4;
+        }
+        if (/logo/i.test(resolved)) score -= 4;
+        if (score > bestScore) {
+          bestScore = score;
+          bestUrl = resolved;
+        }
+      }
+      return bestScore >= 2 ? bestUrl : undefined;
+    };
+
+    const isTlsChainError = (err: unknown): boolean => {
+      const code =
+        (err as { cause?: { code?: string }; code?: string })?.cause?.code ||
+        (err as { code?: string })?.code ||
+        '';
+      return (
+        code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ||
+        code === 'SELF_SIGNED_CERT_IN_CHAIN' ||
+        code === 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY' ||
+        code === 'CERT_UNTRUSTED'
+      );
+    };
+
+    const fetchWithInsecureTlsFallback = async (
+      targetUrl: string,
+      headers: Record<string, string>,
+      hopsLeft = 4
+    ): Promise<{ status: number; contentType: string; text: string }> => {
+      const u = new URL(targetUrl);
+      const client = u.protocol === 'https:' ? https : http;
+      return new Promise((resolve, reject) => {
+        const req = client.request(
+          u,
+          {
+            method: 'GET',
+            headers,
+            timeout: 9500,
+            ...(u.protocol === 'https:' ? { rejectUnauthorized: false } : {}),
+          },
+          (resp) => {
+            const status = resp.statusCode || 0;
+            const loc = resp.headers.location;
+            if (status >= 300 && status < 400 && loc && hopsLeft > 0) {
+              resp.resume();
+              try {
+                const nextUrl = new URL(loc, u).toString();
+                if (!isPrivateOrLocalHostname(new URL(nextUrl).hostname)) {
+                  void fetchWithInsecureTlsFallback(nextUrl, headers, hopsLeft - 1)
+                    .then(resolve)
+                    .catch(reject);
+                  return;
+                }
+              } catch {
+                // fall through
+              }
+            }
+            const chunks: Buffer[] = [];
+            let totalBytes = 0;
+            resp.on('data', (chunk: Buffer) => {
+              if (totalBytes < 3_000_000) {
+                chunks.push(chunk);
+                totalBytes += chunk.length;
+              }
+            });
+            resp.on('end', () => {
+              resolve({
+                status,
+                contentType: String(resp.headers['content-type'] || '').toLowerCase(),
+                text: Buffer.concat(chunks).toString('utf8').slice(0, 3_000_000),
+              });
+            });
+          }
+        );
+        req.on('timeout', () => req.destroy(new Error('Request timeout')));
+        req.on('error', reject);
+        req.end();
+      });
+    };
+
     const fetchPageHtml = async (
       targetUrl: string,
       userAgentOverride?: string
     ): Promise<{ html: string; blocked: boolean }> => {
-      const response = await fetch(targetUrl, {
-        method: 'GET',
-        redirect: 'follow',
-        signal: AbortSignal.timeout(9500),
-        headers: {
-          'User-Agent':
-            userAgentOverride ||
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-          'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Cache-Control': 'no-cache',
-        },
-      });
-      const contentType = (response.headers.get('content-type') || '').toLowerCase();
-      const bodyText = contentType.includes('text/html')
-        ? (await response.text()).slice(0, 3_000_000)
-        : '';
-      const blocked = isBotChallengeHtml(bodyText, response.status);
-      if (!response.ok || !contentType.includes('text/html') || blocked) {
-        return { html: '', blocked };
+      const reqHeaders: Record<string, string> = {
+        'User-Agent':
+          userAgentOverride ||
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Cache-Control': 'no-cache',
+      };
+      try {
+        const response = await fetch(targetUrl, {
+          method: 'GET',
+          redirect: 'follow',
+          signal: AbortSignal.timeout(9500),
+          headers: reqHeaders,
+        });
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        const bodyText = contentType.includes('text/html')
+          ? (await response.text()).slice(0, 3_000_000)
+          : '';
+        const blocked = isBotChallengeHtml(bodyText, response.status);
+        if (!response.ok || !contentType.includes('text/html') || blocked) {
+          return { html: '', blocked };
+        }
+        return { html: bodyText, blocked: false };
+      } catch (err) {
+        if (isTlsChainError(err)) {
+          try {
+            const fallbackRes = await fetchWithInsecureTlsFallback(targetUrl, reqHeaders);
+            const bodyText = fallbackRes.contentType.includes('text/html')
+              ? fallbackRes.text
+              : '';
+            const blocked = isBotChallengeHtml(bodyText, fallbackRes.status);
+            if (
+              fallbackRes.status < 200 ||
+              fallbackRes.status >= 400 ||
+              !fallbackRes.contentType.includes('text/html') ||
+              blocked
+            ) {
+              return { html: '', blocked };
+            }
+            return { html: bodyText, blocked: false };
+          } catch {
+            return { html: '', blocked: false };
+          }
+        }
+        throw err;
       }
-      return { html: bodyText, blocked: false };
     };
 
     const hasUsableProductHtml = (candidateHtml: string): boolean => {
@@ -2285,15 +2694,17 @@ async function startServer() {
           blockedBySite = true;
         }
 
-        const ogImage =
+        const rawOgImage =
           amazonDom?.imageUrl ||
           mobileDom?.imageUrl ||
           ld.imageUrl ||
           extractMetaContent(html, 'property', 'og:image') ||
           extractMetaContent(html, 'property', 'og:image:secure_url') ||
           extractMetaContent(html, 'name', 'twitter:image');
-        if (ogImage && /^https?:\/\//i.test(ogImage) && !isBlockedPageTitle(candidateTitle)) {
-          imageUrl = ogImage.slice(0, 1000);
+        const resolvedOgImage =
+          resolvePageImageUrl(rawOgImage) || extractFallbackHtmlImage(html);
+        if (resolvedOgImage && !isBlockedPageTitle(candidateTitle)) {
+          imageUrl = resolvedOgImage;
         }
 
         const itemPropPriceM = html.match(/itemprop=["']price["'][^>]*content=["']([^"']+)["']/i);
@@ -2359,6 +2770,73 @@ async function startServer() {
               ? mobileDom.availableSizes
               : ld.availableSizes || [];
 
+        const collectedSizePrices: Record<string, number> = {
+          ...(ld.sizePrices || {}),
+        };
+        const resolveCanonicalSizeKey = (rawSz?: string): string | undefined => {
+          const trimmed = rawSz?.trim();
+          if (!trimmed) return undefined;
+          const compact = trimmed.toLowerCase().replace(/\s+/g, '');
+          return (
+            availableSizes.find((s) => s.trim().toLowerCase().replace(/\s+/g, '') === compact) ||
+            trimmed
+          );
+        };
+        const activeSizeKey = resolveCanonicalSizeKey(size);
+        if (activeSizeKey && typeof priceEur === 'number') {
+          collectedSizePrices[activeSizeKey] = priceEur;
+        }
+
+        // Fetch sibling Amazon size ASIN prices in parallel when multiple sizes exist
+        const mergedSizeAsins =
+          amazonDom?.sizeAsinCandidates && Object.keys(amazonDom.sizeAsinCandidates).length > 0
+            ? amazonDom.sizeAsinCandidates
+            : mobileDom?.sizeAsinCandidates || {};
+
+        if (amazonAsin && availableSizes.length > 1 && Object.keys(mergedSizeAsins).length > 0) {
+          const sizesToLookup = availableSizes
+            .filter((sz) => {
+              const compact = sz.trim().toLowerCase().replace(/\s+/g, '');
+              const alreadyHas = Object.keys(collectedSizePrices).some(
+                (k) => k.trim().toLowerCase().replace(/\s+/g, '') === compact
+              );
+              return !alreadyHas && (mergedSizeAsins[sz]?.length || 0) > 0;
+            })
+            .slice(0, 8);
+
+          await Promise.all(
+            sizesToLookup.map(async (sz) => {
+              const rawCandidates = mergedSizeAsins[sz] || [];
+              const candidates =
+                priceEur === undefined
+                  ? rawCandidates.filter((a) => a.toUpperCase() !== amazonAsin.toUpperCase())
+                  : rawCandidates;
+              const orderedAsins = (candidates.length > 0 ? candidates : rawCandidates).slice(0, 2);
+              for (const candAsin of orderedAsins) {
+                if (candAsin.toUpperCase() === amazonAsin.toUpperCase()) continue;
+                try {
+                  const sibRes = await fetchPageHtml(
+                    `https://${parsedUrl.hostname}/dp/${candAsin}?th=1&psc=1`
+                  );
+                  if (!sibRes.html) continue;
+                  const sibPrice = extractAmazonBuyboxPrice(sibRes.html);
+                  if (typeof sibPrice === 'number') {
+                    collectedSizePrices[sz] = sibPrice;
+                    break;
+                  }
+                } catch {
+                  // ignore sibling ASIN fetch failures
+                }
+              }
+            })
+          );
+        }
+
+        sizePrices = sanitizeSizePricesMapServer(collectedSizePrices);
+        if (priceEur === undefined && activeSizeKey && sizePrices?.[activeSizeKey] !== undefined) {
+          priceEur = sizePrices[activeSizeKey];
+        }
+
         if (amazonDom?.model) {
           model = amazonDom.model;
         } else if (mobileDom?.model) {
@@ -2387,6 +2865,8 @@ async function startServer() {
       // Fall back gracefully to online enrichment or URL slug extraction below
     }
 
+    let aiSuggestedRoom: ResearchRoomIdServer | undefined;
+
     // Online grounding fallback via Gemini when page blocked / JS-rendered / sparse
     if (
       (extractedFrom !== 'page-meta' || (!priceEur && !specs && !color)) &&
@@ -2406,9 +2886,12 @@ async function startServer() {
             '- availableColors: array JSON dei soli colori disponibili per questo prodotto se elencati nella pagina (es. ["Borgogna", "Argento", "Glacier", "Nero"])',
             '- size: taglia, taglio memoria o capacità selezionata (es. "256 GB", "M", "42", max 60 caratteri)',
             '- availableSizes: array JSON delle sole taglie o capacità disponibili per questo prodotto (es. ["256 GB", "512 GB", "1 TB", "2 TB"])',
+            '- sizePrices: oggetto JSON mappa taglia/capacità -> prezzo in EUR se nella fonte sono presenti prezzi diversi per taglia (es. {"256 GB": 1579, "512 GB": 1889, "1 TB": 2389, "2 TB": 3139})',
             '- model: codice modello o ASIN (max 80 caratteri)',
             '- priceEur: numero prezzo attuale in EUR se chiaramente presente nella fonte (altrimenti null)',
             '- specs: 3-5 righe sintetiche con specifiche utili dal sito: compatibilità, materiale, dimensioni, caratteristiche principali (max 1600 caratteri)',
+            '- imageUrl: URL pubblico diretto dell\'immagine principale del prodotto se trovato nella fonte (altrimenti null)',
+            '- room: ID stanza della casa solo se è evidente e univoca ("cucina", "salone", "bagno1", "bagno2", "stanza_matrimoniale", "stanza_maurizio", "stanza_roberta", "terrazza_ovest", "terrazza_est"), altrimenti null per articoli personali, portatili o senza stanza specifica (es. smartphone, tablet, portatili, cuffie, abbigliamento, auto)',
           ]
             .filter(Boolean)
             .join('\n');
@@ -2428,9 +2911,12 @@ async function startServer() {
             availableColors?: string[];
             size?: string;
             availableSizes?: string[];
+            sizePrices?: Record<string, number | string>;
             model?: string;
             priceEur?: number | string | null;
+            imageUrl?: string | null;
             specs?: string;
+            room?: string | null;
           }>(aiRes.text || '');
 
           if (enriched) {
@@ -2453,14 +2939,26 @@ async function startServer() {
             if (availableSizes.length === 0 && Array.isArray(enriched.availableSizes)) {
               availableSizes = normalizeOptionList(enriched.availableSizes);
             }
+            if (!sizePrices && enriched.sizePrices) {
+              sizePrices = sanitizeSizePricesMapServer(enriched.sizePrices);
+            }
             if (!model && typeof enriched.model === 'string' && enriched.model.trim()) {
               model = enriched.model.trim().slice(0, 80);
             }
             if (priceEur === undefined) {
               priceEur = parsePriceNumber(enriched.priceEur);
             }
+            if (!imageUrl && typeof enriched.imageUrl === 'string' && enriched.imageUrl.trim()) {
+              const resolvedAiImg = resolvePageImageUrl(enriched.imageUrl);
+              if (resolvedAiImg) {
+                imageUrl = resolvedAiImg;
+              }
+            }
             if (!specs && typeof enriched.specs === 'string' && enriched.specs.trim()) {
               specs = truncateAtWordBoundary(enriched.specs.trim(), 1850);
+            }
+            if (typeof enriched.room === 'string' && enriched.room.trim()) {
+              aiSuggestedRoom = normalizeResearchRoomServer(enriched.room);
             }
           }
         }
@@ -2490,12 +2988,24 @@ async function startServer() {
       }) || '';
 
     const category = inferResearchCategory(`${title} ${brand} ${specs} ${finalUrl}`);
+    const deterministicRoom = inferResearchRoomServer({
+      title,
+      url: finalUrl,
+      specs,
+      category,
+    });
+    const isPersonalOrExcludedForRoom =
+      category === 'auto' ||
+      category === 'abbigliamento' ||
+      NON_ROOM_PRODUCT_RE_SERVER.test(`${title} ${extractUrlSlugTextServer(finalUrl)}`);
+    const room = deterministicRoom || (!isPersonalOrExcludedForRoom ? aiSuggestedRoom : undefined);
 
     const payload = {
       url: finalUrl,
       title: title.slice(0, 160),
       store: store.slice(0, 60),
       category,
+      room: room || undefined,
       priceEur,
       imageUrl: imageUrl || undefined,
       brand: brand || undefined,
@@ -2504,6 +3014,7 @@ async function startServer() {
       colorImages,
       size: size || undefined,
       availableSizes: availableSizes.length > 0 ? availableSizes.slice(0, 24) : undefined,
+      sizePrices,
       model: model || undefined,
       specs: specs || undefined,
       notes: notes || undefined,

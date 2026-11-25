@@ -246,7 +246,9 @@
             "bagno2",
             "stanza_maurizio",
             "stanza_roberta",
-            "stanza_matrimoniale"
+            "stanza_matrimoniale",
+            "terrazza_ovest",
+            "terrazza_est"
           ],
           "maxLength": 40,
           "description": "Stanza di destinazione opzionale"
