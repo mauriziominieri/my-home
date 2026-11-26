@@ -1,12 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   Bell,
   CheckCircle2,
   Download,
   Droplets,
   ExternalLink,
+  FileCheck2,
   FileUp,
   HelpCircle,
+  LayoutGrid,
+  List,
+  Loader2,
   Mail,
   Paperclip,
   PenLine,
@@ -32,6 +37,7 @@ import {
   getWaterBillFileKey,
   isOctopusContractRecord,
   listVaultFileMetadata,
+  openVaultFileInNewTab,
   saveVaultFile,
   ShareableItemPayload,
   VAULT_UPDATED_EVENT,
@@ -53,8 +59,8 @@ import {
   SortState,
   toggleSort,
 } from './SortableHeader';
-import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { doc } from 'firebase/firestore';
+import { auth, db, trackedGetDoc as getDoc } from '../firebase';
 
 interface BillsViewProps {
   readings: EnergyReading[];
@@ -70,6 +76,7 @@ interface BillsViewProps {
   onDeleteElectricityBill?: (bill: BillRecord) => Promise<void>;
   onClearAllBills?: () => Promise<void>;
   onAddWaterBill?: (bill: Omit<WaterBillRecord, 'id'>, pdfFile?: File) => Promise<void>;
+  onDeleteWaterBill?: (bill: WaterBillRecord) => Promise<void>;
   onAddTariBill?: (bill: Omit<TariBillRecord, 'id'>, pdfFile?: File) => Promise<void>;
   onToggleTariPaid?: (bill: TariBillRecord) => Promise<void>;
   onDeleteTariBill?: (id: string) => Promise<void>;
@@ -105,6 +112,7 @@ export function BillsView({
   onDeleteElectricityBill,
   onClearAllBills,
   onAddWaterBill,
+  onDeleteWaterBill,
   onAddTariBill,
   onToggleTariPaid,
   onDeleteTariBill,
@@ -113,6 +121,22 @@ export function BillsView({
   onUpdateGsePayment,
 }: BillsViewProps) {
   const [utilityTab, setUtilityTab] = useState<'luce' | 'acqua' | 'tari' | 'gse'>('luce');
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
+    try {
+      const saved = window.localStorage.getItem('myhome_bills_view_mode_v1');
+      if (saved === 'list' || saved === 'grid') return saved;
+    } catch {
+      // ignore storage issues
+    }
+    return 'list';
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('myhome_bills_view_mode_v1', viewMode);
+    } catch {
+      // ignore storage issues
+    }
+  }, [viewMode]);
   const [vaultMeta, setVaultMeta] = useState<Record<string, VaultFileMeta>>({});
 
   const allElectricityRecords = useMemo(() => {
@@ -129,15 +153,13 @@ export function BillsView({
   );
   const bills = useMemo(
     () =>
-      allElectricityRecords.filter(
-        (bill) => {
-          const fileKey = bill.pdfFileKey || getElectricityBillFileKey(bill.invoiceNumber);
-          return (
-            !isOctopusContractRecord(bill) &&
-            (readOnly ? Boolean(bill.pdfFileKey) : Boolean(vaultMeta[fileKey]))
-          );
-        }
-      ),
+      allElectricityRecords.filter((bill) => {
+        const fileKey = bill.pdfFileKey || getElectricityBillFileKey(bill.invoiceNumber);
+        return (
+          !isOctopusContractRecord(bill) &&
+          (readOnly ? Boolean(bill.pdfFileKey) : Boolean(bill.pdfFileKey || vaultMeta[fileKey]))
+        );
+      }),
     [allElectricityRecords, readOnly, vaultMeta]
   );
 
@@ -146,9 +168,7 @@ export function BillsView({
       .filter((bill) =>
         readOnly
           ? Boolean(bill.pdfFileKey)
-          : Boolean(
-              vaultMeta[bill.pdfFileKey || getWaterBillFileKey(bill.invoiceNumber)]
-            )
+          : Boolean(bill.pdfFileKey || vaultMeta[getWaterBillFileKey(bill.invoiceNumber)])
       )
       .sort((a, b) => a.invoiceNumber.localeCompare(b.invoiceNumber));
   }, [propWaterBills, readOnly, vaultMeta]);
@@ -158,7 +178,7 @@ export function BillsView({
       .filter((bill) =>
         readOnly
           ? Boolean(bill.pdfFileKey)
-          : Boolean(vaultMeta[bill.pdfFileKey || getTariBillFileKey(bill.noticeNumber)])
+          : Boolean(bill.pdfFileKey || vaultMeta[getTariBillFileKey(bill.noticeNumber)])
       )
       .sort((a, b) => b.year - a.year || a.noticeNumber.localeCompare(b.noticeNumber));
   }, [propTariBills, readOnly, vaultMeta]);
@@ -296,6 +316,52 @@ export function BillsView({
   const [confirmClearAllBills, setConfirmClearAllBills] = useState(false);
   const [confirmDeleteOctopus, setConfirmDeleteOctopus] = useState(false);
   const [confirmDeleteGseId, setConfirmDeleteGseId] = useState<string | null>(null);
+  const [openingAttachmentKey, setOpeningAttachmentKey] = useState<string | null>(null);
+  const [pendingBillDelete, setPendingBillDelete] = useState<
+    | { kind: 'elec'; label: string; bill: BillRecord }
+    | { kind: 'water'; label: string; bill: WaterBillRecord }
+    | { kind: 'tari'; label: string; bill: TariBillRecord }
+    | null
+  >(null);
+  const [deletingBill, setDeletingBill] = useState(false);
+
+  async function handleOpenAttachment(fileKey?: string, fallbackName?: string) {
+    if (!fileKey || readOnly) return;
+    setOpeningAttachmentKey(fileKey);
+    try {
+      const opened = await openVaultFileInNewTab(fileKey, undefined, fallbackName);
+      if (!opened) {
+        setAttachNotice('File allegato non ancora disponibile in locale/cloud per apertura diretta.');
+      }
+    } catch (err) {
+      setAttachNotice(err instanceof Error ? err.message : 'Impossibile aprire l’allegato in nuova scheda.');
+    } finally {
+      setOpeningAttachmentKey(null);
+    }
+  }
+
+  async function handleConfirmBillDelete() {
+    if (!pendingBillDelete) return;
+    setDeletingBill(true);
+    setAttachNotice(null);
+    try {
+      if (pendingBillDelete.kind === 'elec' && onDeleteElectricityBill) {
+        await onDeleteElectricityBill(pendingBillDelete.bill);
+        setAttachNotice(`Bolletta luce ${pendingBillDelete.label} e PDF eliminati.`);
+      } else if (pendingBillDelete.kind === 'water' && onDeleteWaterBill) {
+        await onDeleteWaterBill(pendingBillDelete.bill);
+        setAttachNotice(`Bolletta acqua ${pendingBillDelete.label} e PDF eliminati.`);
+      } else if (pendingBillDelete.kind === 'tari' && onDeleteTariBill) {
+        await onDeleteTariBill(pendingBillDelete.bill.id);
+        setAttachNotice(`Avviso TARI ${pendingBillDelete.label} e PDF eliminati.`);
+      }
+      setPendingBillDelete(null);
+    } catch (err) {
+      setAttachNotice(err instanceof Error ? err.message : 'Errore durante l’eliminazione della bolletta.');
+    } finally {
+      setDeletingBill(false);
+    }
+  }
 
   useEffect(() => {
     const refresh = () => {
@@ -846,6 +912,36 @@ export function BillsView({
               Fotovoltaico / GSE
             </button>
           </div>
+
+          {/* Toggle Elenco / Griglia (come in Prodotti) */}
+          <div className="inline-flex bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-0.5 gap-0.5">
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              title="Vista a elenco tabellare"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                viewMode === 'list'
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              <List className="w-3.5 h-3.5" />
+              <span>Elenco</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('grid')}
+              title="Vista a schede / griglia"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                viewMode === 'grid'
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>Griglia</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1080,129 +1176,276 @@ export function BillsView({
               </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                  <tr>
-                    <SortableTh
-                      sortKey="period"
-                      currentSort={waterSort}
-                      onSort={(k) => setWaterSort((prev) => toggleSort(prev, k, 'desc'))}
-                      className="px-4 py-2.5 font-medium"
-                    >
-                      Periodo
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="invoice"
-                      currentSort={waterSort}
-                      onSort={(k) => setWaterSort((prev) => toggleSort(prev, k, 'asc'))}
-                      className="px-3 py-2.5 font-medium"
-                    >
-                      Fattura
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="mc"
-                      currentSort={waterSort}
-                      onSort={(k) => setWaterSort((prev) => toggleSort(prev, k, 'desc'))}
-                      align="right"
-                      className="px-3 py-2.5 font-medium text-right"
-                    >
-                      Consumo (m³)
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="fixed"
-                      currentSort={waterSort}
-                      onSort={(k) => setWaterSort((prev) => toggleSort(prev, k, 'desc'))}
-                      align="right"
-                      className="px-3 py-2.5 font-medium text-right"
-                    >
-                      Quota Fissa
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="total"
-                      currentSort={waterSort}
-                      onSort={(k) => setWaterSort((prev) => toggleSort(prev, k, 'desc'))}
-                      align="right"
-                      className="px-4 py-2.5 font-medium text-right"
-                    >
-                      Totale Pagato
-                    </SortableTh>
-                    <th className="px-3 py-2.5 font-medium text-right">Azioni</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70">
-                  {sortedWaterBills.map((w) => {
-                    const fileKey = getWaterBillFileKey(w.invoiceNumber);
-                    const hasPdf = Boolean(vaultMeta[fileKey]);
-                    const sharePayload = buildWaterBillSharePayload(w);
-                    return (
-                      <tr key={w.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
-                        <td className="px-4 py-2.5 font-medium text-slate-900 dark:text-slate-100">
-                          <div>{w.period}</div>
-                          {w.note && <div className="text-[10px] text-slate-500 dark:text-slate-400">{w.note}</div>}
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-slate-500 dark:text-slate-400">
-                          <div>#{w.invoiceNumber}</div>
-                          <div className="text-[10px]">{w.issueDate}</div>
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-cyan-700 dark:text-cyan-300">
-                          {w.cubicMeters.toFixed(1).replace('.', ',')} m³
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300">
-                          {w.fixedCostEur.toFixed(2).replace('.', ',')} €
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
-                          {w.totalPaid.toFixed(2).replace('.', ',')} €
-                        </td>
-                        <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                          <div className="inline-flex items-center justify-end gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void downloadShareableItem(
+            {viewMode === 'list' ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
+                    <tr>
+                      <SortableTh
+                        sortKey="period"
+                        currentSort={waterSort}
+                        onSort={(k) => setWaterSort((prev) => toggleSort(prev, k, 'desc'))}
+                        className="px-4 py-2.5 font-medium"
+                      >
+                        Periodo
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="invoice"
+                        currentSort={waterSort}
+                        onSort={(k) => setWaterSort((prev) => toggleSort(prev, k, 'asc'))}
+                        className="px-3 py-2.5 font-medium"
+                      >
+                        Fattura
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="mc"
+                        currentSort={waterSort}
+                        onSort={(k) => setWaterSort((prev) => toggleSort(prev, k, 'desc'))}
+                        align="right"
+                        className="px-3 py-2.5 font-medium text-right"
+                      >
+                        Consumo (m³)
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="fixed"
+                        currentSort={waterSort}
+                        onSort={(k) => setWaterSort((prev) => toggleSort(prev, k, 'desc'))}
+                        align="right"
+                        className="px-3 py-2.5 font-medium text-right"
+                      >
+                        Quota Fissa
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="total"
+                        currentSort={waterSort}
+                        onSort={(k) => setWaterSort((prev) => toggleSort(prev, k, 'desc'))}
+                        align="right"
+                        className="px-4 py-2.5 font-medium text-right"
+                      >
+                        Totale Pagato
+                      </SortableTh>
+                      <th className="px-3 py-2.5 font-medium text-right">Allegato &amp; Azioni</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70">
+                    {sortedWaterBills.map((w) => {
+                      const fileKey = w.pdfFileKey || getWaterBillFileKey(w.invoiceNumber);
+                      const hasPdf = Boolean(vaultMeta[fileKey]);
+                      const sharePayload = buildWaterBillSharePayload(w);
+                      return (
+                        <tr key={w.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                          <td className="px-4 py-2.5 font-medium text-slate-900 dark:text-slate-100">
+                            <div>{w.period}</div>
+                            {w.note && <div className="text-[10px] text-slate-500 dark:text-slate-400">{w.note}</div>}
+                          </td>
+                          <td className="px-3 py-2.5 font-mono text-slate-500 dark:text-slate-400">
+                            <div>#{w.invoiceNumber}</div>
+                            <div className="text-[10px]">{w.issueDate}</div>
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-mono tabular-nums text-cyan-700 dark:text-cyan-300">
+                            {w.cubicMeters.toFixed(1).replace('.', ',')} m³
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                            {w.fixedCostEur.toFixed(2).replace('.', ',')} €
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
+                            {w.totalPaid.toFixed(2).replace('.', ',')} €
+                          </td>
+                          <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center justify-end gap-1">
+                              {!readOnly && hasPdf && (
+                                <button
+                                  type="button"
+                                  disabled={openingAttachmentKey === fileKey}
+                                  onClick={() => void handleOpenAttachment(fileKey, vaultMeta[fileKey]?.fileName)}
+                                  title="Apri PDF in nuova scheda"
+                                  className="p-1.5 text-sky-600 hover:bg-slate-200/70 dark:text-sky-300 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                  {openingAttachmentKey === fileKey ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void downloadShareableItem(
+                                    readOnly
+                                      ? { ...sharePayload, attachmentKey: undefined }
+                                      : sharePayload
+                                  )
+                                }
+                                title={
                                   readOnly
-                                    ? { ...sharePayload, attachmentKey: undefined }
-                                    : sharePayload
-                                )
-                              }
-                              title={
-                                readOnly
-                                  ? 'Scarica riepilogo HTML'
-                                  : hasPdf
-                                    ? `Scarica PDF originale (${vaultMeta[fileKey]?.fileName})`
-                                    : 'Scarica riepilogo HTML'
-                              }
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-lg transition-colors"
-                            >
-                              <Download className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
-                              Scarica
-                            </button>
+                                    ? 'Scarica riepilogo HTML'
+                                    : hasPdf
+                                      ? `Scarica PDF originale (${vaultMeta[fileKey]?.fileName})`
+                                      : 'Scarica riepilogo HTML'
+                                }
+                                className="p-1.5 text-emerald-600 hover:bg-slate-200/70 dark:text-emerald-300 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDeleteBillFromShare(null);
+                                  setShareBillItem(sharePayload);
+                                }}
+                                title={
+                                  readOnly
+                                    ? 'Condividi riepilogo'
+                                    : hasPdf
+                                      ? `Condividi bolletta e PDF (${vaultMeta[fileKey]?.fileName})`
+                                      : 'Condividi riepilogo'
+                                }
+                                className="p-1.5 text-indigo-600 hover:bg-slate-200/70 dark:text-indigo-300 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                              >
+                                <Share2 className="w-3.5 h-3.5" />
+                              </button>
+                              {!readOnly && onDeleteWaterBill && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPendingBillDelete({
+                                      kind: 'water',
+                                      label: `${w.period} (#${w.invoiceNumber})`,
+                                      bill: w,
+                                    })
+                                  }
+                                  title="Elimina bolletta acqua e PDF"
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-200/70 dark:text-slate-500 dark:hover:text-rose-400 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                                  aria-label="Elimina bolletta acqua"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+                {sortedWaterBills.map((w) => {
+                  const fileKey = w.pdfFileKey || getWaterBillFileKey(w.invoiceNumber);
+                  const hasPdf = Boolean(vaultMeta[fileKey]);
+                  const sharePayload = buildWaterBillSharePayload(w);
+                  return (
+                    <article
+                      key={w.id}
+                      className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3.5 flex flex-col justify-between gap-3"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/30">
+                            <Droplets className="w-3 h-3" />
+                            Acqua
+                          </span>
+                          {hasPdf && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25">
+                              <FileCheck2 className="w-3 h-3" />
+                              PDF
+                            </span>
+                          )}
+                        </div>
+                        <div>
+                          <div className="text-sm font-bold text-slate-900 dark:text-slate-100">{w.period}</div>
+                          <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                            Fattura #{w.invoiceNumber} · {w.issueDate}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 pt-1 text-[11px]">
+                          <div>
+                            <div className="text-slate-500">Consumo</div>
+                            <div className="font-mono font-semibold text-cyan-700 dark:text-cyan-300">
+                              {w.cubicMeters.toFixed(1).replace('.', ',')} m³
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-slate-500">Fisso</div>
+                            <div className="font-mono text-slate-800 dark:text-slate-200">
+                              {w.fixedCostEur.toFixed(2).replace('.', ',')} €
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-slate-500">Totale</div>
+                            <div className="font-mono font-bold text-slate-900 dark:text-slate-100">
+                              {w.totalPaid.toFixed(2).replace('.', ',')} €
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="pt-2.5 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1">
+                          {!readOnly && hasPdf && (
                             <button
                               type="button"
-                              onClick={() => {
-                                setDeleteBillFromShare(null);
-                                setShareBillItem(sharePayload);
-                              }}
-                              title={
-                                readOnly
-                                  ? 'Condividi il riepilogo della bolletta'
-                                  : hasPdf
-                                    ? `Condividi bolletta e PDF originale (${vaultMeta[fileKey]?.fileName})`
-                                    : 'Condividi riepilogo della bolletta'
-                              }
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/10 dark:bg-sky-500/15 hover:bg-sky-500/20 dark:hover:bg-sky-500/25 border border-sky-500/30 dark:border-sky-500/35 text-sky-700 dark:text-sky-300 rounded-lg transition-colors"
+                              disabled={openingAttachmentKey === fileKey}
+                              onClick={() => void handleOpenAttachment(fileKey, vaultMeta[fileKey]?.fileName)}
+                              title="Apri in nuova scheda"
+                              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 rounded-md hover:bg-sky-100 dark:hover:bg-sky-500/25 disabled:opacity-50"
                             >
-                              <Share2 className="w-3.5 h-3.5" />
-                              Condividi
+                              {openingAttachmentKey === fileKey ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              )}
+                              <span>Apri</span>
                             </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void downloadShareableItem(
+                                readOnly ? { ...sharePayload, attachmentKey: undefined } : sharePayload
+                              )
+                            }
+                            title="Scarica allegato"
+                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/15 rounded-md hover:bg-emerald-100 dark:hover:bg-emerald-500/25"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Scarica</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDeleteBillFromShare(null);
+                              setShareBillItem(sharePayload);
+                            }}
+                            title="Condividi"
+                            className="p-1.5 text-indigo-600 dark:text-indigo-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 rounded-md"
+                          >
+                            <Share2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        {!readOnly && onDeleteWaterBill && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPendingBillDelete({
+                                kind: 'water',
+                                label: `${w.period} (#${w.invoiceNumber})`,
+                                bill: w,
+                              })
+                            }
+                            title="Elimina bolletta"
+                            className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-md"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
           </div>
             </>
           ) : (
@@ -1285,170 +1528,287 @@ export function BillsView({
                 Storico Avvisi TARI ({tariBills.length})
               </h3>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                  <tr>
-                    <SortableTh
-                      sortKey="period"
-                      currentSort={tariSort}
-                      onSort={(k) => setTariSort((prev) => toggleSort(prev, k, 'desc'))}
-                      className="px-4 py-2.5 font-medium"
-                    >
-                      Periodo / Anno
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="notice"
-                      currentSort={tariSort}
-                      onSort={(k) => setTariSort((prev) => toggleSort(prev, k, 'asc'))}
-                      className="px-3 py-2.5 font-medium"
-                    >
-                      N° Avviso
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="due"
-                      currentSort={tariSort}
-                      onSort={(k) => setTariSort((prev) => toggleSort(prev, k, 'desc'))}
-                      className="px-3 py-2.5 font-medium"
-                    >
-                      Scadenza
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="source"
-                      currentSort={tariSort}
-                      onSort={(k) => setTariSort((prev) => toggleSort(prev, k, 'asc'))}
-                      className="px-3 py-2.5 font-medium"
-                    >
-                      Origine
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="paid"
-                      currentSort={tariSort}
-                      onSort={(k) => setTariSort((prev) => toggleSort(prev, k, 'asc'))}
-                      className="px-3 py-2.5 font-medium"
-                    >
-                      Stato
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="total"
-                      currentSort={tariSort}
-                      onSort={(k) => setTariSort((prev) => toggleSort(prev, k, 'desc'))}
-                      align="right"
-                      className="px-4 py-2.5 font-medium text-right"
-                    >
-                      Importo
-                    </SortableTh>
-                    <th className="px-3 py-2.5 font-medium text-right">Azioni</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70">
-                  {sortedTariBills.length === 0 ? (
+            {viewMode === 'list' ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                     <tr>
-                      <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
-                        Nessun avviso TARI ancora salvato. Appena arriva la prossima email da{' '}
-                        <span className="font-mono text-slate-700 dark:text-slate-300">tassa_rifiuti@acegasapsamga.it</span>{' '}
-                        verrà estratta automaticamente, oppure puoi inserirne una manualmente qui sopra.
-                      </td>
+                      <SortableTh
+                        sortKey="period"
+                        currentSort={tariSort}
+                        onSort={(k) => setTariSort((prev) => toggleSort(prev, k, 'desc'))}
+                        className="px-4 py-2.5 font-medium"
+                      >
+                        Periodo / Anno
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="notice"
+                        currentSort={tariSort}
+                        onSort={(k) => setTariSort((prev) => toggleSort(prev, k, 'asc'))}
+                        className="px-3 py-2.5 font-medium"
+                      >
+                        N° Avviso
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="due"
+                        currentSort={tariSort}
+                        onSort={(k) => setTariSort((prev) => toggleSort(prev, k, 'desc'))}
+                        className="px-3 py-2.5 font-medium"
+                      >
+                        Scadenza
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="source"
+                        currentSort={tariSort}
+                        onSort={(k) => setTariSort((prev) => toggleSort(prev, k, 'asc'))}
+                        className="px-3 py-2.5 font-medium"
+                      >
+                        Origine
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="paid"
+                        currentSort={tariSort}
+                        onSort={(k) => setTariSort((prev) => toggleSort(prev, k, 'asc'))}
+                        className="px-3 py-2.5 font-medium"
+                      >
+                        Stato
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="total"
+                        currentSort={tariSort}
+                        onSort={(k) => setTariSort((prev) => toggleSort(prev, k, 'desc'))}
+                        align="right"
+                        className="px-4 py-2.5 font-medium text-right"
+                      >
+                        Importo
+                      </SortableTh>
+                      <th className="px-3 py-2.5 font-medium text-right">Allegato &amp; Azioni</th>
                     </tr>
-                  ) : (
-                    sortedTariBills.map((t) => {
-                      const fileKey = getTariBillFileKey(t.noticeNumber);
-                      const hasPdf = Boolean(vaultMeta[fileKey]);
-                      const sharePayload = buildTariBillSharePayload(t);
-                      return (
-                        <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
-                          <td className="px-4 py-2.5 font-medium text-slate-900 dark:text-slate-100">
-                            <div>{t.period}</div>
-                            {t.note && <div className="text-[10px] text-slate-500 dark:text-slate-400">{t.note}</div>}
-                          </td>
-                          <td className="px-3 py-2.5 font-mono text-slate-500 dark:text-slate-400">
-                            <div>#{t.noticeNumber}</div>
-                            <div className="text-[10px]">{t.issueDate}</div>
-                          </td>
-                          <td className="px-3 py-2.5 font-mono tabular-nums text-amber-700 dark:text-amber-300">{t.dueDate}</td>
-                          <td className="px-3 py-2.5">
-                            <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                              {t.source === 'gmail-pdf' ? 'Auto Gmail PDF' : 'Manuale'}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <button
-                              type="button"
-                              disabled={readOnly || !onToggleTariPaid}
-                              onClick={() => onToggleTariPaid && void onToggleTariPaid(t)}
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${
-                                t.paid
-                                  ? 'bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 dark:border-emerald-500/30'
-                                  : 'bg-rose-500/10 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/25 dark:border-rose-500/30'
-                              }`}
-                            >
-                              <CheckCircle2 className="w-3 h-3" />
-                              {t.paid ? 'Pagato' : 'Da pagare'}
-                            </button>
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
-                            {t.totalPaid.toFixed(2).replace('.', ',')} €
-                          </td>
-                          <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                            <div className="inline-flex items-center justify-end gap-1.5">
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70">
+                    {sortedTariBills.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
+                          Nessun avviso TARI ancora salvato. Appena arriva la prossima email da{' '}
+                          <span className="font-mono text-slate-700 dark:text-slate-300">tassa_rifiuti@acegasapsamga.it</span>{' '}
+                          verrà estratta automaticamente, oppure puoi inserirne una manualmente qui sopra.
+                        </td>
+                      </tr>
+                    ) : (
+                      sortedTariBills.map((t) => {
+                        const fileKey = t.pdfFileKey || getTariBillFileKey(t.noticeNumber);
+                        const hasPdf = Boolean(vaultMeta[fileKey]);
+                        const sharePayload = buildTariBillSharePayload(t);
+                        return (
+                          <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                            <td className="px-4 py-2.5 font-medium text-slate-900 dark:text-slate-100">
+                              <div>{t.period}</div>
+                              {t.note && <div className="text-[10px] text-slate-500 dark:text-slate-400">{t.note}</div>}
+                            </td>
+                            <td className="px-3 py-2.5 font-mono text-slate-500 dark:text-slate-400">
+                              <div>#{t.noticeNumber}</div>
+                              <div className="text-[10px]">{t.issueDate}</div>
+                            </td>
+                            <td className="px-3 py-2.5 font-mono tabular-nums text-amber-700 dark:text-amber-300">{t.dueDate}</td>
+                            <td className="px-3 py-2.5">
+                              <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                                {t.source === 'gmail-pdf' ? 'Auto Gmail PDF' : 'Manuale'}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2.5">
                               <button
                                 type="button"
-                                onClick={() =>
-                                  void downloadShareableItem(
-                                    readOnly
-                                      ? { ...sharePayload, attachmentKey: undefined }
-                                      : sharePayload
-                                  )
-                                }
-                                title={
-                                  readOnly
-                                    ? 'Scarica riepilogo HTML'
-                                    : hasPdf
-                                      ? `Scarica PDF originale (${vaultMeta[fileKey]?.fileName})`
-                                      : 'Scarica riepilogo HTML'
-                                }
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-lg transition-colors"
+                                disabled={readOnly || !onToggleTariPaid}
+                                onClick={() => onToggleTariPaid && void onToggleTariPaid(t)}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${
+                                  t.paid
+                                    ? 'bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 dark:border-emerald-500/30'
+                                    : 'bg-rose-500/10 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/25 dark:border-rose-500/30'
+                                }`}
                               >
-                                <Download className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
-                                Scarica
+                                <CheckCircle2 className="w-3 h-3" />
+                                {t.paid ? 'Pagato' : 'Da pagare'}
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setDeleteBillFromShare(null);
-                                  setShareBillItem(sharePayload);
-                                }}
-                                title={
-                                  readOnly
-                                    ? 'Condividi il riepilogo dell’avviso TARI'
-                                    : hasPdf
-                                      ? `Condividi avviso e PDF originale (${vaultMeta[fileKey]?.fileName})`
-                                      : 'Condividi riepilogo dell’avviso TARI'
-                                }
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/10 dark:bg-sky-500/15 hover:bg-sky-500/20 dark:hover:bg-sky-500/25 border border-sky-500/30 dark:border-sky-500/35 text-sky-700 dark:text-sky-300 rounded-lg transition-colors"
-                              >
-                                <Share2 className="w-3.5 h-3.5" />
-                                Condividi
-                              </button>
-                              {!readOnly && onDeleteTariBill && (
+                            </td>
+                            <td className="px-4 py-2.5 text-right font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
+                              {t.totalPaid.toFixed(2).replace('.', ',')} €
+                            </td>
+                            <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                              <div className="inline-flex items-center justify-end gap-1">
+                                {!readOnly && hasPdf && (
+                                  <button
+                                    type="button"
+                                    disabled={openingAttachmentKey === fileKey}
+                                    onClick={() => void handleOpenAttachment(fileKey, vaultMeta[fileKey]?.fileName)}
+                                    title="Apri PDF in nuova scheda"
+                                    className="p-1.5 text-sky-600 hover:bg-slate-200/70 dark:text-sky-300 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
+                                  >
+                                    {openingAttachmentKey === fileKey ? (
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <ExternalLink className="w-3.5 h-3.5" />
+                                    )}
+                                  </button>
+                                )}
                                 <button
                                   type="button"
-                                  onClick={() => void onDeleteTariBill(t.id)}
-                                  className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg"
-                                  aria-label="Elimina avviso TARI"
+                                  onClick={() =>
+                                    void downloadShareableItem(
+                                      readOnly
+                                        ? { ...sharePayload, attachmentKey: undefined }
+                                        : sharePayload
+                                    )
+                                  }
+                                  title={
+                                    readOnly
+                                      ? 'Scarica riepilogo HTML'
+                                      : hasPdf
+                                        ? `Scarica PDF originale (${vaultMeta[fileKey]?.fileName})`
+                                        : 'Scarica riepilogo HTML'
+                                  }
+                                  className="p-1.5 text-emerald-600 hover:bg-slate-200/70 dark:text-emerald-300 dark:hover:bg-slate-800 rounded-lg transition-colors"
                                 >
-                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <Download className="w-3.5 h-3.5" />
                                 </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDeleteBillFromShare(null);
+                                    setShareBillItem(sharePayload);
+                                  }}
+                                  title="Condividi"
+                                  className="p-1.5 text-indigo-600 hover:bg-slate-200/70 dark:text-indigo-300 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                                >
+                                  <Share2 className="w-3.5 h-3.5" />
+                                </button>
+                                {!readOnly && onDeleteTariBill && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setPendingBillDelete({
+                                        kind: 'tari',
+                                        label: `${t.period} (#${t.noticeNumber})`,
+                                        bill: t,
+                                      })
+                                    }
+                                    className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                                    title="Elimina avviso TARI e PDF"
+                                    aria-label="Elimina avviso TARI"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+                {sortedTariBills.map((t) => {
+                  const fileKey = t.pdfFileKey || getTariBillFileKey(t.noticeNumber);
+                  const hasPdf = Boolean(vaultMeta[fileKey]);
+                  const sharePayload = buildTariBillSharePayload(t);
+                  return (
+                    <article
+                      key={t.id}
+                      className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3.5 flex flex-col justify-between gap-3"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30">
+                            <Receipt className="w-3 h-3" />
+                            TARI
+                          </span>
+                          <button
+                            type="button"
+                            disabled={readOnly || !onToggleTariPaid}
+                            onClick={() => onToggleTariPaid && void onToggleTariPaid(t)}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold ${
+                              t.paid
+                                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
+                                : 'bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/30'
+                            }`}
+                          >
+                            <CheckCircle2 className="w-3 h-3" />
+                            {t.paid ? 'Pagato' : 'Da pagare'}
+                          </button>
+                        </div>
+                        <div>
+                          <div className="text-sm font-bold text-slate-900 dark:text-slate-100">{t.period}</div>
+                          <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                            Avviso #{t.noticeNumber} · Scad. {t.dueDate}
+                          </div>
+                        </div>
+                        <div className="text-base font-bold font-mono text-slate-900 dark:text-slate-100">
+                          {t.totalPaid.toFixed(2).replace('.', ',')} €
+                        </div>
+                      </div>
+                      <div className="pt-2.5 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1">
+                          {!readOnly && hasPdf && (
+                            <button
+                              type="button"
+                              disabled={openingAttachmentKey === fileKey}
+                              onClick={() => void handleOpenAttachment(fileKey, vaultMeta[fileKey]?.fileName)}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 rounded-md hover:bg-sky-100 dark:hover:bg-sky-500/25 disabled:opacity-50"
+                            >
+                              {openingAttachmentKey === fileKey ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <ExternalLink className="w-3.5 h-3.5" />
                               )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+                              <span>Apri</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void downloadShareableItem(
+                                readOnly ? { ...sharePayload, attachmentKey: undefined } : sharePayload
+                              )
+                            }
+                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/15 rounded-md hover:bg-emerald-100 dark:hover:bg-emerald-500/25"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Scarica</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDeleteBillFromShare(null);
+                              setShareBillItem(sharePayload);
+                            }}
+                            className="p-1.5 text-indigo-600 dark:text-indigo-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 rounded-md"
+                          >
+                            <Share2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        {!readOnly && onDeleteTariBill && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPendingBillDelete({
+                                kind: 'tari',
+                                label: `${t.period} (#${t.noticeNumber})`,
+                                bill: t,
+                              })
+                            }
+                            className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-md"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
           </div>
             </>
           ) : (
@@ -1554,136 +1914,282 @@ export function BillsView({
                 Storico Bonifici GSE — Scambio sul Posto ({gsePayments.length})
               </h3>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                  <tr>
-                    <SortableTh
-                      sortKey="date"
-                      currentSort={gseSort}
-                      onSort={(k) => setGseSort((prev) => toggleSort(prev, k, 'desc'))}
-                      className="px-4 py-2.5 font-medium"
-                    >
-                      Data Bonifico
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="amount"
-                      currentSort={gseSort}
-                      onSort={(k) => setGseSort((prev) => toggleSort(prev, k, 'desc'))}
-                      align="right"
-                      className="px-4 py-2.5 font-medium text-right"
-                    >
-                      Importo
-                    </SortableTh>
-                    <th className="px-3 py-2.5 font-medium text-right">Allegato</th>
-                    {!readOnly && <th className="px-3 py-2.5 font-medium text-right">Azioni</th>}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70">
-                  {sortedGsePayments.length === 0 ? (
+            {viewMode === 'list' ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                     <tr>
-                      <td colSpan={readOnly ? 3 : 4} className="px-4 py-6 text-center text-slate-500">
-                        Nessun bonifico GSE registrato.
-                      </td>
+                      <SortableTh
+                        sortKey="date"
+                        currentSort={gseSort}
+                        onSort={(k) => setGseSort((prev) => toggleSort(prev, k, 'desc'))}
+                        className="px-4 py-2.5 font-medium"
+                      >
+                        Data Bonifico
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="amount"
+                        currentSort={gseSort}
+                        onSort={(k) => setGseSort((prev) => toggleSort(prev, k, 'desc'))}
+                        align="right"
+                        className="px-4 py-2.5 font-medium text-right"
+                      >
+                        Importo
+                      </SortableTh>
+                      <th className="px-3 py-2.5 font-medium text-right">Allegato</th>
+                      {!readOnly && <th className="px-3 py-2.5 font-medium text-right">Azioni</th>}
                     </tr>
-                  ) : (
-                    sortedGsePayments.map((p) => (
-                      <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
-                        <td className="px-4 py-2.5 font-mono tabular-nums text-slate-800 dark:text-slate-200">{p.paymentDate}</td>
-                        <td className="px-4 py-2.5 text-right font-mono tabular-nums font-semibold text-emerald-700 dark:text-emerald-300">
-                          {p.amountEur.toFixed(2).replace('.', ',')} €
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70">
+                    {sortedGsePayments.length === 0 ? (
+                      <tr>
+                        <td colSpan={readOnly ? 3 : 4} className="px-4 py-6 text-center text-slate-500">
+                          Nessun bonifico GSE registrato.
                         </td>
-                        <td className="px-3 py-2.5 text-right">
-                          {p.attachmentFileKey && vaultMeta[p.attachmentFileKey] ? (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void downloadShareableItem({
-                                  title: `Bonifico GSE ${p.paymentDate}`,
-                                  subtitle: `${p.amountEur.toFixed(2)} €`,
-                                  shareText: `Bonifico GSE del ${p.paymentDate}: ${p.amountEur.toFixed(2)} €`,
-                                  htmlDocument: '',
-                                  fallbackFileName: `bonifico-gse-${p.id}.html`,
-                                  attachmentKey: p.attachmentFileKey,
-                                })
-                              }
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-lg transition-colors"
-                            >
-                              <Download className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
-                              Scarica
-                            </button>
-                          ) : (
-                            <span className="text-xs text-slate-500">Nessun allegato</span>
-                          )}
-                        </td>
-                        {!readOnly && (
-                          <td className="px-3 py-2.5 text-right">
-                            <div className="inline-flex items-center justify-end gap-2">
+                      </tr>
+                    ) : (
+                      sortedGsePayments.map((p) => {
+                        const hasAtt = Boolean(p.attachmentFileKey && vaultMeta[p.attachmentFileKey]);
+                        return (
+                          <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                            <td className="px-4 py-2.5 font-mono tabular-nums text-slate-800 dark:text-slate-200">{p.paymentDate}</td>
+                            <td className="px-4 py-2.5 text-right font-mono tabular-nums font-semibold text-emerald-700 dark:text-emerald-300">
+                              {p.amountEur.toFixed(2).replace('.', ',')} €
+                            </td>
+                            <td className="px-3 py-2.5 text-right">
+                              {hasAtt && p.attachmentFileKey ? (
+                                <div className="inline-flex items-center justify-end gap-1">
+                                  {!readOnly && (
+                                    <button
+                                      type="button"
+                                      disabled={openingAttachmentKey === p.attachmentFileKey}
+                                      onClick={() =>
+                                        void handleOpenAttachment(
+                                          p.attachmentFileKey,
+                                          vaultMeta[p.attachmentFileKey!]?.fileName
+                                        )
+                                      }
+                                      title="Apri allegato in nuova scheda"
+                                      className="p-1.5 text-sky-600 hover:bg-slate-200/70 dark:text-sky-300 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
+                                    >
+                                      {openingAttachmentKey === p.attachmentFileKey ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                      ) : (
+                                        <ExternalLink className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void downloadShareableItem({
+                                        title: `Bonifico GSE ${p.paymentDate}`,
+                                        subtitle: `${p.amountEur.toFixed(2)} €`,
+                                        shareText: `Bonifico GSE del ${p.paymentDate}: ${p.amountEur.toFixed(2)} €`,
+                                        htmlDocument: '',
+                                        fallbackFileName: `bonifico-gse-${p.id}.html`,
+                                        attachmentKey: p.attachmentFileKey,
+                                      })
+                                    }
+                                    title="Scarica allegato"
+                                    className="p-1.5 text-emerald-600 hover:bg-slate-200/70 dark:text-emerald-300 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                                  >
+                                    <Download className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-slate-500">Nessun allegato</span>
+                              )}
+                            </td>
+                            {!readOnly && (
+                              <td className="px-3 py-2.5 text-right">
+                                <div className="inline-flex items-center justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    title={p.attachmentFileKey ? 'Sostituisci allegato' : 'Allega screenshot o PDF'}
+                                    onClick={() => {
+                                      setAttachingGsePaymentId(p.id);
+                                      gseAttachmentInputRef.current?.click();
+                                    }}
+                                    className="inline-flex items-center gap-1 text-xs text-sky-700 dark:text-sky-300 hover:text-sky-600 dark:hover:text-sky-200"
+                                  >
+                                    <Paperclip className="w-3.5 h-3.5" />
+                                    {p.attachmentFileKey ? 'Sostituisci' : 'Allega file'}
+                                  </button>
+                                  {onUpdateGsePayment && (
+                                    <button
+                                      type="button"
+                                      title="Modifica bonifico"
+                                      onClick={() => openGsePaymentEditor(p)}
+                                      className="p-1 text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-300"
+                                      aria-label="Modifica bonifico GSE"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                  {onDeleteGsePayment && (
+                                    confirmDeleteGseId === p.id ? (
+                                      <span className="inline-flex items-center gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setConfirmDeleteGseId(null);
+                                            void handleDeleteGsePayment(p.id);
+                                          }}
+                                          className="px-1.5 py-0.5 text-[10px] font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded"
+                                        >
+                                          Elimina
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setConfirmDeleteGseId(null)}
+                                          className="px-1.5 py-0.5 text-[10px] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
+                                        >
+                                          No
+                                        </button>
+                                      </span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        title="Elimina bonifico"
+                                        onClick={() => setConfirmDeleteGseId(p.id)}
+                                        className="p-1 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400"
+                                        aria-label="Elimina bonifico GSE"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )
+                                  )}
+                                </div>
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="p-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3.5">
+                {sortedGsePayments.length === 0 ? (
+                  <div className="col-span-full text-center text-xs text-slate-500 py-6">
+                    Nessun bonifico GSE registrato.
+                  </div>
+                ) : (
+                  sortedGsePayments.map((p) => {
+                    const hasAtt = Boolean(p.attachmentFileKey && vaultMeta[p.attachmentFileKey]);
+                    return (
+                      <article
+                        key={p.id}
+                        className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3.5 flex flex-col justify-between gap-3"
+                      >
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                              <Sun className="w-3 h-3" />
+                              GSE · {p.paymentDate}
+                            </span>
+                            {hasAtt && (
+                              <span className="text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+                                Allegato pronto
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-lg font-bold font-mono text-emerald-700 dark:text-emerald-300">
+                            {p.amountEur.toFixed(2).replace('.', ',')} €
+                          </div>
+                        </div>
+                        <div className="pt-2.5 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-1.5">
+                          <div className="flex items-center gap-1">
+                            {!readOnly && hasAtt && p.attachmentFileKey && (
                               <button
                                 type="button"
-                                title={p.attachmentFileKey ? 'Sostituisci allegato' : 'Allega screenshot o PDF'}
+                                disabled={openingAttachmentKey === p.attachmentFileKey}
+                                onClick={() =>
+                                  void handleOpenAttachment(
+                                    p.attachmentFileKey,
+                                    vaultMeta[p.attachmentFileKey!]?.fileName
+                                  )
+                                }
+                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 rounded-md"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                                <span>Apri</span>
+                              </button>
+                            )}
+                            {hasAtt && p.attachmentFileKey && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void downloadShareableItem({
+                                    title: `Bonifico GSE ${p.paymentDate}`,
+                                    subtitle: `${p.amountEur.toFixed(2)} €`,
+                                    shareText: `Bonifico GSE del ${p.paymentDate}: ${p.amountEur.toFixed(2)} €`,
+                                    htmlDocument: '',
+                                    fallbackFileName: `bonifico-gse-${p.id}.html`,
+                                    attachmentKey: p.attachmentFileKey,
+                                  })
+                                }
+                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/15 rounded-md"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                <span>Scarica</span>
+                              </button>
+                            )}
+                            {!readOnly && (
+                              <button
+                                type="button"
                                 onClick={() => {
                                   setAttachingGsePaymentId(p.id);
                                   gseAttachmentInputRef.current?.click();
                                 }}
-                                className="inline-flex items-center gap-1 text-xs text-sky-700 dark:text-sky-300 hover:text-sky-600 dark:hover:text-sky-200"
+                                className="p-1.5 text-sky-700 dark:text-sky-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 rounded-md"
+                                title={p.attachmentFileKey ? 'Sostituisci allegato' : 'Allega file'}
                               >
                                 <Paperclip className="w-3.5 h-3.5" />
-                                {p.attachmentFileKey ? 'Sostituisci' : 'Allega file'}
                               </button>
-                              {onUpdateGsePayment && (
+                            )}
+                          </div>
+                          {!readOnly && onDeleteGsePayment && (
+                            confirmDeleteGseId === p.id ? (
+                              <span className="inline-flex items-center gap-1">
                                 <button
                                   type="button"
-                                  title="Modifica bonifico"
-                                  onClick={() => openGsePaymentEditor(p)}
-                                  className="p-1 text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-300"
-                                  aria-label="Modifica bonifico GSE"
+                                  onClick={() => {
+                                    setConfirmDeleteGseId(null);
+                                    void handleDeleteGsePayment(p.id);
+                                  }}
+                                  className="px-1.5 py-0.5 text-[10px] font-semibold text-white bg-rose-600 rounded"
                                 >
-                                  <Pencil className="w-3.5 h-3.5" />
+                                  Elimina
                                 </button>
-                              )}
-                              {onDeleteGsePayment && (
-                                confirmDeleteGseId === p.id ? (
-                                  <span className="inline-flex items-center gap-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setConfirmDeleteGseId(null);
-                                        void handleDeleteGsePayment(p.id);
-                                      }}
-                                      className="px-1.5 py-0.5 text-[10px] font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded"
-                                    >
-                                      Elimina
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => setConfirmDeleteGseId(null)}
-                                      className="px-1.5 py-0.5 text-[10px] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
-                                    >
-                                      No
-                                    </button>
-                                  </span>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    title="Elimina bonifico"
-                                    onClick={() => setConfirmDeleteGseId(p.id)}
-                                    className="p-1 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400"
-                                    aria-label="Elimina bonifico GSE"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )
-                              )}
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteGseId(null)}
+                                  className="px-1.5 py-0.5 text-[10px] text-slate-600 dark:text-slate-300"
+                                >
+                                  No
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteGseId(p.id)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-md"
+                                title="Elimina bonifico"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )
+                          )}
+                        </div>
+                      </article>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1749,20 +2255,42 @@ export function BillsView({
                   {octopusContractToManage && !readOnly && (
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       {vaultMeta[
-                        getElectricityBillFileKey(octopusContractToManage.invoiceNumber)
+                        octopusContractToManage.pdfFileKey ||
+                          getElectricityBillFileKey(octopusContractToManage.invoiceNumber)
                       ] && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void downloadShareableItem(
-                              buildElectricityBillSharePayload(octopusContractToManage)
-                            )
-                          }
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-200 bg-emerald-500/10 dark:bg-emerald-500/15 hover:bg-emerald-500/20 dark:hover:bg-emerald-500/25 border border-emerald-500/25 dark:border-emerald-500/30 rounded-lg"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          Scarica contratto PDF
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            disabled={
+                              openingAttachmentKey ===
+                              (octopusContractToManage.pdfFileKey ||
+                                getElectricityBillFileKey(octopusContractToManage.invoiceNumber))
+                            }
+                            onClick={() =>
+                              void handleOpenAttachment(
+                                octopusContractToManage.pdfFileKey ||
+                                  getElectricityBillFileKey(octopusContractToManage.invoiceNumber),
+                                'Contratto Octopus.pdf'
+                              )
+                            }
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700 dark:text-sky-200 bg-sky-500/10 dark:bg-sky-500/15 hover:bg-sky-500/20 border border-sky-500/25 dark:border-sky-500/30 rounded-lg"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            Apri in nuova scheda
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void downloadShareableItem(
+                                buildElectricityBillSharePayload(octopusContractToManage)
+                              )
+                            }
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-200 bg-emerald-500/10 dark:bg-emerald-500/15 hover:bg-emerald-500/20 dark:hover:bg-emerald-500/25 border border-emerald-500/25 dark:border-emerald-500/30 rounded-lg"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            Scarica contratto PDF
+                          </button>
+                        </>
                       )}
                       {confirmDeleteOctopus ? (
                         <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-rose-500/10 dark:bg-rose-500/15 border border-rose-500/30 dark:border-rose-500/40 rounded-lg text-[11px]">
@@ -2074,83 +2602,211 @@ export function BillsView({
               </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                  <tr>
-                    <SortableTh
-                      sortKey="period"
-                      currentSort={elecSort}
-                      onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'desc'))}
-                      className="px-4 py-2.5 font-medium"
-                    >
-                      Periodo
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="supplier"
-                      currentSort={elecSort}
-                      onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'asc'))}
-                      className="px-3 py-2.5 font-medium"
-                    >
-                      Fornitore
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="invoice"
-                      currentSort={elecSort}
-                      onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'asc'))}
-                      className="px-3 py-2.5 font-medium"
-                    >
-                      Fattura
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="kwh"
-                      currentSort={elecSort}
-                      onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'desc'))}
-                      align="right"
-                      className="px-3 py-2.5 font-medium text-right"
-                    >
-                      kWh
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="pun"
-                      currentSort={elecSort}
-                      onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'desc'))}
-                      align="right"
-                      className="px-3 py-2.5 font-medium text-right"
-                    >
-                      PUN
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="elecOnly"
-                      currentSort={elecSort}
-                      onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'desc'))}
-                      align="right"
-                      className="px-3 py-2.5 font-medium text-right"
-                    >
-                      Solo Luce
-                    </SortableTh>
-                    <SortableTh
-                      sortKey="total"
-                      currentSort={elecSort}
-                      onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'desc'))}
-                      align="right"
-                      className="px-4 py-2.5 font-medium text-right"
-                    >
-                      Totale
-                    </SortableTh>
-                    <th className="px-3 py-2.5 font-medium text-right">Azioni</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70">
-                  {sortedElecBills.length === 0 && (
+            {viewMode === 'list' ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                     <tr>
-                      <td colSpan={8} className="px-4 py-8 text-center text-sm text-slate-500">
-                        Nessuna bolletta corrisponde ai filtri selezionati.
-                      </td>
+                      <SortableTh
+                        sortKey="period"
+                        currentSort={elecSort}
+                        onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'desc'))}
+                        className="px-4 py-2.5 font-medium"
+                      >
+                        Periodo
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="supplier"
+                        currentSort={elecSort}
+                        onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'asc'))}
+                        className="px-3 py-2.5 font-medium"
+                      >
+                        Fornitore
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="invoice"
+                        currentSort={elecSort}
+                        onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'asc'))}
+                        className="px-3 py-2.5 font-medium"
+                      >
+                        Fattura
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="kwh"
+                        currentSort={elecSort}
+                        onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'desc'))}
+                        align="right"
+                        className="px-3 py-2.5 font-medium text-right"
+                      >
+                        kWh
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="pun"
+                        currentSort={elecSort}
+                        onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'desc'))}
+                        align="right"
+                        className="px-3 py-2.5 font-medium text-right"
+                      >
+                        PUN
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="elecOnly"
+                        currentSort={elecSort}
+                        onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'desc'))}
+                        align="right"
+                        className="px-3 py-2.5 font-medium text-right"
+                      >
+                        Solo Luce
+                      </SortableTh>
+                      <SortableTh
+                        sortKey="total"
+                        currentSort={elecSort}
+                        onSort={(k) => setElecSort((prev) => toggleSort(prev, k, 'desc'))}
+                        align="right"
+                        className="px-4 py-2.5 font-medium text-right"
+                      >
+                        Totale
+                      </SortableTh>
+                      <th className="px-3 py-2.5 font-medium text-right">Allegato &amp; Azioni</th>
                     </tr>
-                  )}
-                  {sortedElecBills.map((b) => {
-                    const fileKey = getElectricityBillFileKey(b.invoiceNumber);
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70">
+                    {sortedElecBills.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="px-4 py-8 text-center text-sm text-slate-500">
+                          Nessuna bolletta corrisponde ai filtri selezionati.
+                        </td>
+                      </tr>
+                    )}
+                    {sortedElecBills.map((b) => {
+                      const fileKey = b.pdfFileKey || getElectricityBillFileKey(b.invoiceNumber);
+                      const hasPdf = Boolean(vaultMeta[fileKey]);
+                      const canDeleteBill = Boolean(
+                        onDeleteElectricityBill &&
+                          propElectricityBills?.some(
+                            (persistedBill) => persistedBill.invoiceNumber === b.invoiceNumber
+                          )
+                      );
+                      const sharePayload = buildElectricityBillSharePayload(b);
+                      return (
+                        <tr key={b.invoiceNumber} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                          <td className="px-4 py-2.5 font-medium text-slate-900 dark:text-slate-100">
+                            <div>{b.period}</div>
+                            {b.note && <div className="text-[10px] text-emerald-700 dark:text-emerald-400">{b.note}</div>}
+                          </td>
+                          <td className="px-3 py-2.5 text-slate-700 dark:text-slate-300">
+                            <div>{b.supplier}</div>
+                            <div className="text-[10px] text-slate-500">{b.offerName}</div>
+                          </td>
+                          <td className="px-3 py-2.5 font-mono text-slate-500 dark:text-slate-400">
+                            <div>#{b.invoiceNumber}</div>
+                            <div className="text-[10px]">{b.issueDate}</div>
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-800 dark:text-slate-200">{b.kwh}</td>
+                          <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                            {b.punText}
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-mono tabular-nums text-sky-700 dark:text-sky-300">
+                            {b.electricityOnly.toFixed(2).replace('.', ',')} €
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
+                            {b.totalPaid.toFixed(2).replace('.', ',')} €
+                          </td>
+                          <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center justify-end gap-1">
+                              {!readOnly && hasPdf && (
+                                <button
+                                  type="button"
+                                  disabled={openingAttachmentKey === fileKey}
+                                  onClick={() => void handleOpenAttachment(fileKey, vaultMeta[fileKey]?.fileName)}
+                                  title="Apri PDF in nuova scheda"
+                                  className="p-1.5 text-sky-600 hover:bg-slate-200/70 dark:text-sky-300 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                  {openingAttachmentKey === fileKey ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              )}
+                              {!readOnly && !hasPdf ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAttachingFileKey(fileKey);
+                                    attachFileInputRef.current?.click();
+                                  }}
+                                  title="Importa il PDF originale di questa bolletta"
+                                  className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-sky-700 dark:text-sky-200 bg-sky-500/10 dark:bg-sky-500/15 hover:bg-sky-500/20 border border-sky-500/30 rounded-lg transition-colors"
+                                >
+                                  <FileUp className="w-3.5 h-3.5" />
+                                  Importa
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void downloadShareableItem(
+                                      readOnly
+                                        ? { ...sharePayload, attachmentKey: undefined }
+                                        : sharePayload
+                                    )
+                                  }
+                                  title={
+                                    readOnly
+                                      ? 'Scarica riepilogo HTML'
+                                      : `Scarica il PDF originale (${vaultMeta[fileKey]?.fileName})`
+                                  }
+                                  className="p-1.5 text-emerald-600 hover:bg-slate-200/70 dark:text-emerald-300 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDeleteBillFromShare(canDeleteBill ? b : null);
+                                  setShareBillItem(sharePayload);
+                                }}
+                                title="Condividi il riepilogo o il PDF della bolletta"
+                                className="p-1.5 text-indigo-600 hover:bg-slate-200/70 dark:text-indigo-300 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                              >
+                                <Share2 className="w-3.5 h-3.5" />
+                              </button>
+                              {!readOnly && canDeleteBill && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPendingBillDelete({
+                                      kind: 'elec',
+                                      label: `${b.period} (#${b.invoiceNumber})`,
+                                      bill: b,
+                                    })
+                                  }
+                                  title="Elimina bolletta luce e PDF"
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-200/70 dark:text-slate-500 dark:hover:text-rose-400 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                                  aria-label="Elimina bolletta luce"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+                {sortedElecBills.length === 0 ? (
+                  <div className="col-span-full py-8 text-center text-sm text-slate-500">
+                    Nessuna bolletta corrisponde ai filtri selezionati.
+                  </div>
+                ) : (
+                  sortedElecBills.map((b) => {
+                    const fileKey = b.pdfFileKey || getElectricityBillFileKey(b.invoiceNumber);
                     const hasPdf = Boolean(vaultMeta[fileKey]);
                     const canDeleteBill = Boolean(
                       onDeleteElectricityBill &&
@@ -2160,85 +2816,109 @@ export function BillsView({
                     );
                     const sharePayload = buildElectricityBillSharePayload(b);
                     return (
-                      <tr key={b.invoiceNumber} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
-                        <td className="px-4 py-2.5 font-medium text-slate-900 dark:text-slate-100">
-                          <div>{b.period}</div>
-                          {b.note && <div className="text-[10px] text-emerald-700 dark:text-emerald-400">{b.note}</div>}
-                        </td>
-                        <td className="px-3 py-2.5 text-slate-700 dark:text-slate-300">
-                          <div>{b.supplier}</div>
-                          <div className="text-[10px] text-slate-500">{b.offerName}</div>
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-slate-500 dark:text-slate-400">
-                          <div>#{b.invoiceNumber}</div>
-                          <div className="text-[10px]">{b.issueDate}</div>
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-800 dark:text-slate-200">{b.kwh}</td>
-                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300">
-                          {b.punText}
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-sky-700 dark:text-sky-300">
-                          {b.electricityOnly.toFixed(2).replace('.', ',')} €
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
-                          {b.totalPaid.toFixed(2).replace('.', ',')} €
-                        </td>
-                        <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                          <div className="inline-flex items-center justify-end gap-1.5">
-                            {!readOnly && !hasPdf ? (
+                      <article
+                        key={b.invoiceNumber}
+                        className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3.5 flex flex-col justify-between gap-3"
+                      >
+                        <div className="space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/30">
+                              <Zap className="w-3 h-3" />
+                              {b.supplier}
+                            </span>
+                            {hasPdf && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25">
+                                <FileCheck2 className="w-3 h-3" />
+                                PDF
+                              </span>
+                            )}
+                          </div>
+                          <div>
+                            <div className="text-sm font-bold text-slate-900 dark:text-slate-100">{b.period}</div>
+                            <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                              Fattura #{b.invoiceNumber} · {b.issueDate}
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2 pt-1 text-[11px]">
+                            <div>
+                              <div className="text-slate-500">Consumo</div>
+                              <div className="font-mono font-semibold text-slate-900 dark:text-slate-100">
+                                {b.kwh} kWh
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-slate-500">Solo Luce</div>
+                              <div className="font-mono text-sky-700 dark:text-sky-300">
+                                {b.electricityOnly.toFixed(2).replace('.', ',')} €
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-slate-500">Totale</div>
+                              <div className="font-mono font-bold text-slate-900 dark:text-slate-100">
+                                {b.totalPaid.toFixed(2).replace('.', ',')} €
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="pt-2.5 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-1.5">
+                          <div className="flex items-center gap-1">
+                            {!readOnly && hasPdf && (
                               <button
                                 type="button"
-                                onClick={() => {
-                                  setAttachingFileKey(fileKey);
-                                  attachFileInputRef.current?.click();
-                                }}
-                                title="Importa il PDF originale di questa bolletta"
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700 dark:text-sky-200 bg-sky-500/10 dark:bg-sky-500/15 hover:bg-sky-500/20 dark:hover:bg-sky-500/25 border border-sky-500/30 rounded-lg transition-colors"
+                                disabled={openingAttachmentKey === fileKey}
+                                onClick={() => void handleOpenAttachment(fileKey, vaultMeta[fileKey]?.fileName)}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 rounded-md hover:bg-sky-100 dark:hover:bg-sky-500/25 disabled:opacity-50"
                               >
-                                <FileUp className="w-3.5 h-3.5" />
-                                Importa
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void downloadShareableItem(
-                                    readOnly
-                                      ? { ...sharePayload, attachmentKey: undefined }
-                                      : sharePayload
-                                  )
-                                }
-                                title={
-                                  readOnly
-                                    ? 'Scarica riepilogo HTML'
-                                    : `Scarica il PDF originale (${vaultMeta[fileKey]?.fileName})`
-                                }
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-lg transition-colors"
-                              >
-                                <Download className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
-                                Scarica
+                                <ExternalLink className="w-3.5 h-3.5" />
+                                <span>Apri</span>
                               </button>
                             )}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void downloadShareableItem(
+                                  readOnly ? { ...sharePayload, attachmentKey: undefined } : sharePayload
+                                )
+                              }
+                              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/15 rounded-md hover:bg-emerald-100 dark:hover:bg-emerald-500/25"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>Scarica</span>
+                            </button>
                             <button
                               type="button"
                               onClick={() => {
                                 setDeleteBillFromShare(canDeleteBill ? b : null);
                                 setShareBillItem(sharePayload);
                               }}
-                              title="Condividi il riepilogo o il PDF della bolletta"
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/10 dark:bg-sky-500/15 hover:bg-sky-500/20 dark:hover:bg-sky-500/25 border border-sky-500/30 dark:border-sky-500/35 text-sky-700 dark:text-sky-300 rounded-lg transition-colors"
+                              className="p-1.5 text-indigo-600 dark:text-indigo-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 rounded-md"
                             >
                               <Share2 className="w-3.5 h-3.5" />
-                              Condividi
                             </button>
                           </div>
-                        </td>
-                      </tr>
+                          {!readOnly && canDeleteBill && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPendingBillDelete({
+                                  kind: 'elec',
+                                  label: `${b.period} (#${b.invoiceNumber})`,
+                                  bill: b,
+                                })
+                              }
+                              className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-md"
+                              title="Elimina bolletta"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </article>
                     );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                  })
+                )}
+              </div>
+            )}
           </div>
           ) : (
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 px-4 py-6 text-center text-sm text-slate-500 dark:text-slate-400">
@@ -2326,6 +3006,44 @@ export function BillsView({
           onSaveWaterBill={onAddWaterBill}
           onSaveTariBill={onAddTariBill}
         />
+      )}
+
+      {pendingBillDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/75 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-rose-50 dark:bg-rose-500/15 text-rose-600 dark:text-rose-400 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Eliminare {pendingBillDelete.label}?
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                  Verranno rimossi sia i dati della bolletta che il PDF allegato dall&apos;archivio (e dalla sezione Documenti).
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                disabled={deletingBill}
+                onClick={() => setPendingBillDelete(null)}
+                className="px-3.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                disabled={deletingBill}
+                onClick={() => void handleConfirmBillDelete()}
+                className="px-3.5 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded-lg disabled:opacity-50"
+              >
+                {deletingBill ? 'Eliminazione...' : 'Elimina'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

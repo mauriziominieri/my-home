@@ -105,7 +105,8 @@ interface ResearchesViewProps {
     docType: ArticleAttachmentType,
     title: string,
     provider: string,
-    file: File
+    file: File,
+    cloudUrl?: string
   ) => Promise<void>;
   onAddResearchDocumentLink?: (
     researchId: string,
@@ -998,7 +999,7 @@ function buildResearchSharePayload(item: ProductResearchRecord): ShareableItemPa
     subtitle: `${resolvedBrand ? `${resolvedBrand} · ` : ''}${item.store} · ${paidText || priceText} · ${statusLabel}`,
     cloudUrl: item.url,
     shareText: lines.join('\n'),
-    fallbackFileName: `ricerca-${item.store.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.html`,
+    fallbackFileName: `prodotto-${item.store.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.html`,
     htmlDocument: safeHtml,
   };
 }
@@ -1390,6 +1391,8 @@ export function ResearchesView({
   const [expandedColorsIds, setExpandedColorsIds] = useState<Record<string, boolean>>({});
   const [openAttachmentsIds, setOpenAttachmentsIds] = useState<Record<string, boolean>>({});
   const [cardAttachType, setCardAttachType] = useState<Record<string, ArticleAttachmentType>>({});
+  const [cardLinkDrawerOpen, setCardLinkDrawerOpen] = useState<Record<string, boolean>>({});
+  const [cardAttachLinkUrl, setCardAttachLinkUrl] = useState<Record<string, string>>({});
   const [uploadingResearchId, setUploadingResearchId] = useState<string | null>(null);
   const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
   const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
@@ -2031,7 +2034,7 @@ export function ResearchesView({
         }
       }
 
-      if (uploadOutcome === 'failed' && onAddResearchDocumentLink && docItem.url.length <= 231) {
+      if (uploadOutcome === 'failed' && onAddResearchDocumentLink) {
         try {
           const kindLabel =
             docItem.kind === 'bim_3d'
@@ -3769,6 +3772,144 @@ export function ResearchesView({
     }
   }
 
+  async function handleCardAttachLink(item: ProductResearchRecord) {
+    if (readOnly) return;
+    if (isLocalDraftId(item.id)) {
+      setLinkNotice('Salva prima il prodotto su Firestore con "Salva modifiche" per poter allegare link.');
+      return;
+    }
+    const rawInput = (cardAttachLinkUrl[item.id] || '').trim();
+    const validUrl = normalizeUrlInput(rawInput);
+    if (!validUrl) {
+      setLinkError('Inserisci un URL valido (es. https://...) da allegare al prodotto.');
+      return;
+    }
+
+    const docType = cardAttachType[item.id] || 'manuale';
+    const typeLabel = getAttachmentTypeMeta(docType).label;
+    setUploadingResearchId(item.id);
+    setLinkError(null);
+    setLinkNotice(null);
+
+    try {
+      let binaryUploaded = false;
+      try {
+        const dlResp = await fetch('/api/researches/fetch-document', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: validUrl }),
+        });
+        const dlCt = (dlResp.headers.get('content-type') || '').toLowerCase();
+        if (dlResp.ok && !dlCt.includes('application/json') && !dlCt.includes('text/html')) {
+          const blob = await dlResp.blob();
+          if (blob.size > 0 && blob.size <= MAX_CLOUD_FILE_BYTES) {
+            const rawHeaderName =
+              dlResp.headers.get('x-document-filename') ||
+              dlResp.headers.get('content-disposition')?.match(
+                /filename\*?=(?:UTF-8''|["']?)([^"';\r\n]+)["']?/i
+              )?.[1];
+            let fileName = '';
+            if (rawHeaderName) {
+              try {
+                fileName = decodeURIComponent(rawHeaderName).trim();
+              } catch {
+                fileName = rawHeaderName.trim();
+              }
+            }
+            if (!fileName) {
+              try {
+                const seg = decodeURIComponent(new URL(validUrl).pathname.split('/').pop() || '').trim();
+                if (seg && seg.includes('.')) fileName = seg;
+              } catch {
+                // ignore URL parse error
+              }
+            }
+            if (!fileName) {
+              fileName = `documento-${Date.now().toString().slice(-5)}.${dlCt.includes('zip') ? 'zip' : 'pdf'}`;
+            }
+            const cleanBase = fileName.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').slice(0, 36);
+            const docTitle = `${item.title.slice(0, 36)} · ${cleanBase || typeLabel}`.slice(0, 80);
+            const fileObj = new File([blob], fileName, {
+              type: dlCt.split(';')[0] || 'application/pdf',
+            });
+            await onUploadResearchDocument(
+              item.id,
+              docType,
+              docTitle,
+              item.brand || item.store,
+              fileObj,
+              validUrl
+            );
+            binaryUploaded = true;
+          }
+        }
+      } catch {
+        // Fallback to link metadata inspection below
+      }
+
+      if (!binaryUploaded) {
+        if (!onAddResearchDocumentLink) {
+          throw new Error('Salvataggio link diretto non disponibile.');
+        }
+        let inspectedTitle = '';
+        let inspectedSite = '';
+        try {
+          const inspectResp = await fetch('/api/documents/inspect-link', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: validUrl }),
+          });
+          if (inspectResp.ok) {
+            const meta = (await inspectResp.json()) as { title?: string; siteName?: string };
+            if (meta.title) inspectedTitle = meta.title.trim();
+            if (meta.siteName) inspectedSite = meta.siteName.trim();
+          }
+        } catch {
+          // ignore inspection error and fall back to URL slug
+        }
+
+        let fallbackSlug = typeLabel;
+        try {
+          const seg = decodeURIComponent(new URL(validUrl).pathname.split('/').pop() || '')
+            .replace(/\.[^.]+$/, '')
+            .replace(/[_-]+/g, ' ')
+            .trim();
+          if (seg) fallbackSlug = seg;
+        } catch {
+          // ignore URL parse error
+        }
+
+        const docTitle = inspectedTitle
+          ? inspectedTitle.slice(0, 80)
+          : `${item.title.slice(0, 34)} · ${fallbackSlug.slice(0, 38)}`.slice(0, 80);
+        const provider = (inspectedSite || item.brand || item.store || 'Prodotti').slice(0, 80);
+        await onAddResearchDocumentLink(
+          item.id,
+          docType,
+          docTitle,
+          provider,
+          validUrl,
+          `Link allegato a prodotto (${typeLabel})`
+        );
+      }
+
+      setCardAttachLinkUrl((prev) => ({ ...prev, [item.id]: '' }));
+      setCardLinkDrawerOpen((prev) => ({ ...prev, [item.id]: false }));
+      setOpenAttachmentsIds((prev) => ({ ...prev, [item.id]: true }));
+      setFeedback(
+        binaryUploaded
+          ? `File dal link salvato in "${item.title}" e in Documenti → Prodotti.`
+          : `Link allegato a "${item.title}" e sincronizzato in Documenti → Prodotti.`
+      );
+    } catch (err) {
+      setLinkError(
+        err instanceof Error ? err.message : 'Errore durante il salvataggio del link allegato.'
+      );
+    } finally {
+      setUploadingResearchId(null);
+    }
+  }
+
   async function handleOpenDocInNewTab(docItem: HomeDocumentRecord) {
     const existingUrl = vaultDocUrls[docItem.id];
     if (existingUrl) {
@@ -4235,7 +4376,7 @@ export function ResearchesView({
         .join(' · ');
       return `${idx + 1}. ${effective.title} (${meta}${paidStr})\n   ${effective.url}`;
     });
-    const header = `Ricerche Prodotti (${filteredResearches.length} articoli · Totale: ${formatEuroIt(
+    const header = `Prodotti (${filteredResearches.length} articoli · Totale: ${formatEuroIt(
       pageTotals.listTotal
     )}${
       pageTotals.paidCount > 0
@@ -4267,10 +4408,10 @@ export function ResearchesView({
         <div>
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
             <ShoppingBag className="w-5 h-5 text-sky-600 dark:text-sky-400" />
-            Ricerche Prodotti &amp; Link Online
+            Prodotti &amp; Link Online
           </h2>
           <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-            Incolla un link da Amazon, MediaWorld, Electrolux, IKEA o qualsiasi negozio: estrae foto, prezzo, colore, modello e specifiche tecniche del sito e ti permette di allegare PDF, fatture o immagini su Firestore.
+            Incolla un link da Amazon, MediaWorld, Electrolux, IKEA o qualsiasi negozio: estrae foto, prezzo, colore, modello e specifiche tecniche del sito e ti permette di allegare PDF, link, fatture o immagini su Firestore.
           </p>
         </div>
       </div>
@@ -4278,10 +4419,10 @@ export function ResearchesView({
       <AccessUnlockBanner
         isSignedIn={!readOnly}
         onSignIn={onSignIn}
-        pageName="Ricerche"
+        pageName="Prodotti"
         unlockedFeatures={[
           'Incolla link per ottenere scheda completa con foto, prezzo, colore e specifiche',
-          'Allega file PDF, ricevute, garanzie o foto direttamente a ciascun prodotto',
+          'Allega file PDF, link diretti, ricevute, garanzie o foto direttamente a ciascun prodotto',
           'Sposta con 1 click prodotto e allegati nella pagina Articoli di casa',
         ]}
       />
@@ -4294,7 +4435,7 @@ export function ResearchesView({
             className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200"
           >
             <Link2 className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
-            Incolla il link di un prodotto da aggiungere alle ricerche
+            Incolla il link di un prodotto da aggiungere alla lista Prodotti
           </label>
           <div className="flex flex-col sm:flex-row gap-2.5">
             <div className="relative flex-1 min-w-0">
@@ -5413,7 +5554,7 @@ export function ResearchesView({
                 <div className="space-y-1">
                   <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
                     {allResearches.length === 0
-                      ? 'Nessun prodotto salvato nelle ricerche'
+                      ? 'Nessun prodotto salvato'
                       : 'Nessun prodotto corrisponde ai filtri selezionati'}
                   </p>
                   <p className="text-xs text-slate-500">
@@ -6904,56 +7045,132 @@ export function ResearchesView({
                             </button>
 
                             {!readOnly && (
-                              <button
-                                type="button"
-                                disabled={isUploadingHere}
-                                onClick={() => triggerCardFileUpload(item)}
-                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 dark:text-sky-300 dark:bg-sky-500/10 dark:hover:bg-sky-500/20 dark:border-sky-500/30 rounded-md transition-colors disabled:opacity-50"
-                              >
-                                {isUploadingHere ? (
-                                  <Loader2 className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <Upload className="w-3 h-3" />
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  disabled={isUploadingHere}
+                                  onClick={() => triggerCardFileUpload(item)}
+                                  className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium whitespace-nowrap text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 dark:text-sky-300 dark:bg-sky-500/10 dark:hover:bg-sky-500/20 dark:border-sky-500/30 rounded-md transition-colors disabled:opacity-50"
+                                >
+                                  {isUploadingHere ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <Upload className="w-3 h-3" />
+                                  )}
+                                  <span>{isUploadingHere ? 'Carico...' : 'Allega file'}</span>
+                                </button>
+                                {onAddResearchDocumentLink && (
+                                  <button
+                                    type="button"
+                                    disabled={isUploadingHere}
+                                    onClick={() => {
+                                      setOpenAttachmentsIds((prev) => ({ ...prev, [item.id]: true }));
+                                      setCardLinkDrawerOpen((prev) => ({
+                                        ...prev,
+                                        [item.id]: !prev[item.id],
+                                      }));
+                                    }}
+                                    className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium whitespace-nowrap text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 dark:text-indigo-300 dark:bg-indigo-500/10 dark:hover:bg-indigo-500/20 dark:border-indigo-500/30 rounded-md transition-colors disabled:opacity-50"
+                                  >
+                                    <Link2 className="w-3 h-3" />
+                                    <span>Allega link</span>
+                                  </button>
                                 )}
-                                <span>{isUploadingHere ? 'Carico...' : 'Allega file'}</span>
-                              </button>
+                              </div>
                             )}
                           </div>
                         )}
 
                         {!readOnly && isAttachOpen && (
-                          <div className="flex flex-wrap items-center gap-2 text-[10px]">
-                            <span className="text-slate-500 dark:text-slate-400 shrink-0">Tipo allegato:</span>
-                            <select
-                              value={selectedAttachType}
-                              onChange={(e) =>
-                                setCardAttachType((prev) => ({
-                                  ...prev,
-                                  [item.id]: e.target.value as ArticleAttachmentType,
-                                }))
-                              }
-                              className="flex-1 min-w-[140px] max-w-xs px-2 py-1 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded text-slate-800 dark:text-slate-200 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
-                            >
-                              {ATTACHMENT_TYPE_OPTIONS.map((opt) => (
-                                <option key={opt.value} value={opt.value}>
-                                  {opt.label}
-                                </option>
-                              ))}
-                            </select>
-                            {isList && (
-                              <button
-                                type="button"
-                                disabled={isUploadingHere}
-                                onClick={() => triggerCardFileUpload(item)}
-                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 dark:text-sky-300 dark:bg-sky-500/10 dark:hover:bg-sky-500/20 dark:border-sky-500/30 rounded-md transition-colors disabled:opacity-50"
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                              <span className="text-slate-500 dark:text-slate-400 shrink-0">Tipo allegato:</span>
+                              <select
+                                value={selectedAttachType}
+                                onChange={(e) =>
+                                  setCardAttachType((prev) => ({
+                                    ...prev,
+                                    [item.id]: e.target.value as ArticleAttachmentType,
+                                  }))
+                                }
+                                className="flex-1 min-w-[140px] max-w-xs px-2 py-1 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded text-slate-800 dark:text-slate-200 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                               >
-                                {isUploadingHere ? (
-                                  <Loader2 className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <Upload className="w-3 h-3" />
-                                )}
-                                <span>{isUploadingHere ? 'Carico...' : 'Carica file'}</span>
-                              </button>
+                                {ATTACHMENT_TYPE_OPTIONS.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </option>
+                                ))}
+                              </select>
+                              {isList && (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={isUploadingHere}
+                                    onClick={() => triggerCardFileUpload(item)}
+                                    className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium whitespace-nowrap text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 dark:text-sky-300 dark:bg-sky-500/10 dark:hover:bg-sky-500/20 dark:border-sky-500/30 rounded-md transition-colors disabled:opacity-50"
+                                  >
+                                    {isUploadingHere ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <Upload className="w-3 h-3" />
+                                    )}
+                                    <span>{isUploadingHere ? 'Carico...' : 'Carica file'}</span>
+                                  </button>
+                                  {onAddResearchDocumentLink && (
+                                    <button
+                                      type="button"
+                                      disabled={isUploadingHere}
+                                      onClick={() =>
+                                        setCardLinkDrawerOpen((prev) => ({
+                                          ...prev,
+                                          [item.id]: !prev[item.id],
+                                        }))
+                                      }
+                                      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium whitespace-nowrap text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 dark:text-indigo-300 dark:bg-indigo-500/10 dark:hover:bg-indigo-500/20 dark:border-indigo-500/30 rounded-md transition-colors disabled:opacity-50"
+                                    >
+                                      <Link2 className="w-3 h-3" />
+                                      <span>Allega link</span>
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                            </div>
+
+                            {cardLinkDrawerOpen[item.id] && (
+                              <div className="flex flex-wrap items-center gap-1.5 bg-slate-50 dark:bg-slate-950/75 border border-indigo-200 dark:border-indigo-500/30 rounded-lg p-2">
+                                <input
+                                  type="url"
+                                  disabled={isUploadingHere}
+                                  value={cardAttachLinkUrl[item.id] || ''}
+                                  onChange={(e) =>
+                                    setCardAttachLinkUrl((prev) => ({
+                                      ...prev,
+                                      [item.id]: e.target.value,
+                                    }))
+                                  }
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      void handleCardAttachLink(item);
+                                    }
+                                  }}
+                                  placeholder="https://... (PDF scheda prodotto, manuale, Google Drive)"
+                                  className="flex-1 min-w-[180px] px-2.5 py-1.5 text-[11px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={isUploadingHere || !(cardAttachLinkUrl[item.id] || '').trim()}
+                                  onClick={() => void handleCardAttachLink(item)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold whitespace-nowrap text-white bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-400 dark:text-slate-950 rounded transition-colors disabled:opacity-50"
+                                >
+                                  {isUploadingHere ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <Link2 className="w-3 h-3" />
+                                  )}
+                                  <span>{isUploadingHere ? 'Salvo...' : 'Salva link'}</span>
+                                </button>
+                              </div>
                             )}
                           </div>
                         )}
@@ -7315,7 +7532,7 @@ export function ResearchesView({
                     ? 'Scartare questa bozza?'
                     : writesDisabled
                       ? 'Eliminare in locale (Modalità Test)?'
-                      : 'Eliminare questa ricerca?'}
+                      : 'Eliminare questo prodotto?'}
                 </h3>
                 <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
                   {isLocalDraftId(pendingDelete.id) ? (

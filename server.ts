@@ -387,7 +387,7 @@ function buildFallbackManualPayload(
 
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '12mb' }));
 
   app.post('/api/articles/search', async (req, res) => {
     const rawQuery = typeof req.body?.query === 'string' ? req.body.query.trim() : '';
@@ -4328,6 +4328,591 @@ async function startServer() {
       res.send(result.buffer);
     } catch {
       res.status(200).json({ ok: false, reason: 'network_error', url: parsedDocUrl.toString() });
+    }
+  });
+
+  function classifyDocumentDeterministic(fileName: string, textContent: string, cloudUrl = '') {
+    const cleanName = fileName.replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[_-]+/g, ' ').trim();
+    const hay = `${fileName}\n${cloudUrl}\n${textContent}`.toLowerCase();
+
+    const isOctopusContract =
+      hay.includes('octopus') &&
+      (hay.includes('condizioni') || hay.includes('contratto') || hay.includes('proposta') || hay.includes('octofix'));
+
+    const isTari =
+      hay.includes('tassa sui rifiuti') ||
+      hay.includes('tassa rifiuti') ||
+      /\btari\b/.test(hay) ||
+      hay.includes('tassa_rifiuti');
+
+    const isElecBill =
+      !isOctopusContract &&
+      (hay.includes('fattura') || hay.includes('bolletta') || hay.includes('totale da pagare') || hay.includes('pod')) &&
+      (hay.includes('energia elettrica') || hay.includes('edison energia') || hay.includes('enel energia') || hay.includes('octopus energy') || hay.includes('kwh') || hay.includes('it001e'));
+
+    const isWaterBill =
+      (hay.includes('servizio idrico') || hay.includes('acquedotto') || hay.includes('fognatura') || hay.includes('depurazione') || (hay.includes('acegas') && !hay.includes('kwh') && !isTari));
+
+    if (isTari) {
+      return {
+        target: 'bill_tari' as const,
+        confidence: 'alta' as const,
+        documentCategory: 'Contratti & Utenze' as const,
+        title: cleanName || 'Avviso TARI',
+        provider: hay.includes('acegas') ? 'AcegasApsAmga TARI' : 'Comune / TARI',
+        notes: 'Riconosciuto automaticamente come avviso TARI.',
+        usedAi: false,
+      };
+    }
+
+    if (isElecBill) {
+      let supplier = 'Fornitore Luce';
+      if (hay.includes('edison')) supplier = 'Edison Energia';
+      else if (hay.includes('octopus')) supplier = 'Octopus Energy';
+      else if (hay.includes('enel')) supplier = 'Enel Energia';
+      return {
+        target: 'bill_luce' as const,
+        confidence: 'alta' as const,
+        documentCategory: 'Contratti & Utenze' as const,
+        title: cleanName || `Bolletta Luce ${supplier}`,
+        provider: supplier,
+        notes: 'Riconosciuto automaticamente come bolletta energia elettrica.',
+        usedAi: false,
+      };
+    }
+
+    if (isWaterBill) {
+      return {
+        target: 'bill_acqua' as const,
+        confidence: 'alta' as const,
+        documentCategory: 'Contratti & Utenze' as const,
+        title: cleanName || 'Bolletta Acqua AcegasApsAmga',
+        provider: 'AcegasApsAmga',
+        notes: 'Riconosciuto automaticamente come bolletta servizio idrico.',
+        usedAi: false,
+      };
+    }
+
+    if (hay.includes('mutuo') || hay.includes('rogito') || hay.includes('catasto') || hay.includes('planimetria') || hay.includes('notaio') || hay.includes('ape ')) {
+      return {
+        target: 'document' as const,
+        confidence: 'media' as const,
+        documentCategory: 'Mutuo & Casa' as const,
+        title: cleanName || 'Documento Casa / Mutuo',
+        provider: hay.includes('intesa') ? 'Intesa Sanpaolo' : hay.includes('unicredit') ? 'UniCredit' : 'Banca / Casa',
+        notes: 'Classificato automaticamente in Mutuo & Casa.',
+        usedAi: false,
+      };
+    }
+
+    if (hay.includes('windtre') || hay.includes('fibra') || hay.includes('wi-fi') || hay.includes('wifi') || hay.includes('tim ') || hay.includes('vodafone') || hay.includes('fastweb') || hay.includes('iliad')) {
+      const prov = hay.includes('wind')
+        ? 'WindTre'
+        : hay.includes('vodafone')
+          ? 'Vodafone'
+          : hay.includes('fastweb')
+            ? 'Fastweb'
+            : hay.includes('tim')
+              ? 'TIM'
+              : 'Operatore Internet';
+      return {
+        target: 'document' as const,
+        confidence: 'media' as const,
+        documentCategory: 'Internet & Wi-Fi' as const,
+        title: cleanName || `Contratto ${prov}`,
+        provider: prov,
+        notes: 'Classificato automaticamente in Internet & Wi-Fi.',
+        usedAi: false,
+      };
+    }
+
+    if (hay.includes('polizza') || hay.includes('assicuraz') || hay.includes('conte.it') || hay.includes('rca') || hay.includes('sinistr') || hay.includes('garanzia')) {
+      return {
+        target: 'document' as const,
+        confidence: 'media' as const,
+        documentCategory: 'Assicurazioni' as const,
+        title: cleanName || 'Polizza / Assicurazione',
+        provider: hay.includes('conte') ? 'ConTe.it' : 'Compagnia Assicurativa',
+        notes: 'Classificato automaticamente in Assicurazioni.',
+        usedAi: false,
+      };
+    }
+
+    if (hay.includes('identit') || hay.includes('codice fiscale') || hay.includes('tessera sanitaria') || hay.includes('patente') || hay.includes('passaporto') || hay.includes('730') || hay.includes('isee') || hay.includes('agenzia delle entrate') || hay.includes('f24')) {
+      return {
+        target: 'document' as const,
+        confidence: 'media' as const,
+        documentCategory: 'Fiscale & Identità' as const,
+        title: cleanName || 'Documento Fiscale / Identità',
+        provider: 'Ente / Famiglia',
+        notes: 'Classificato automaticamente in Fiscale & Identità.',
+        usedAi: false,
+      };
+    }
+
+    if (isOctopusContract || hay.includes('contratto') || hay.includes('fornitura') || hay.includes('utenz') || hay.includes('gse')) {
+      return {
+        target: 'document' as const,
+        confidence: 'media' as const,
+        documentCategory: 'Contratti & Utenze' as const,
+        title: cleanName || 'Contratto Utenza',
+        provider: isOctopusContract ? 'Octopus Energy' : hay.includes('gse') ? 'GSE' : 'Fornitore Utenza',
+        notes: 'Classificato automaticamente in Contratti & Utenze.',
+        usedAi: false,
+      };
+    }
+
+    return {
+      target: 'document' as const,
+      confidence: 'bassa' as const,
+      documentCategory: 'Altro' as const,
+      title: cleanName || 'Documento casa',
+      provider: 'Archivio Casa',
+      notes: 'Documento generico classificato automaticamente.',
+      usedAi: false,
+    };
+  }
+
+  interface ClassifyProductHint {
+    id: string;
+    title: string;
+    brand?: string;
+    model?: string;
+    url?: string;
+  }
+
+  function inferAttachmentTypeServer(
+    hayRaw: string
+  ): 'manuale' | 'scontrino_fattura' | 'garanzia_extra_family' | 'targhetta_pnc' | 'altro' {
+    const h = hayRaw.toLowerCase();
+    if (/scontrin|fattur|ricevut|invoice|receipt|ordine|acquisto/.test(h)) {
+      return 'scontrino_fattura';
+    }
+    if (/garanzi|warranty|estensione|polizza/.test(h)) {
+      return 'garanzia_extra_family';
+    }
+    if (/targhett|pnc\b|etichett|seriale|matricola/.test(h)) {
+      return 'targhetta_pnc';
+    }
+    if (/manual|istruzion|montagg|manutenz|scheda|datasheet|brochure|specif|3d|bim|dwg/.test(h)) {
+      return 'manuale';
+    }
+    return 'altro';
+  }
+
+  function matchDocumentProductServer(
+    fileName: string,
+    cloudUrl: string,
+    textContent: string,
+    products: ClassifyProductHint[]
+  ): ClassifyProductHint | null {
+    if (!Array.isArray(products) || products.length === 0) return null;
+    const norm = (v: string) =>
+      v
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+
+    const stopwords = new Set([
+      'con', 'per', 'del', 'della', 'dei', 'degli', 'il', 'lo', 'la', 'i', 'gli', 'le',
+      'di', 'da', 'in', 'su', 'ed', 'e', 'o', 'a', 'uno', 'una', 'un', 'divano',
+      'poltrona', 'sedia', 'tavolo', 'prodotto', 'scheda', 'tecnica', 'manuale',
+      'istruzioni', 'montaggio', 'manutenzione', 'documento', 'allegato', 'file',
+      'pdf', 'htm', 'html', 'http', 'https', 'www', 'com', 'it', 'outdoor', 'esterno',
+      'casa', 'colore', 'nero', 'bianco', 'grigio', 'beige', 'tortora', 'antracite',
+    ]);
+
+    const strongChannel = norm(`${fileName} ${cloudUrl}`);
+    const bodyChannel = norm(textContent.slice(0, 6000));
+    const docUrlClean = cloudUrl.split('#')[0].split('?')[0].toLowerCase();
+
+    let bestProduct: ClassifyProductHint | null = null;
+    let bestScore = 0;
+
+    for (const p of products) {
+      if (!p.id || !p.title) continue;
+      let score = 0;
+      const prodUrlClean = (p.url || '').split('#')[0].split('?')[0].toLowerCase();
+      if (prodUrlClean && docUrlClean) {
+        if (prodUrlClean === docUrlClean) {
+          score += 140;
+        } else {
+          try {
+            const pUrl = new URL(prodUrlClean);
+            const dUrl = new URL(docUrlClean);
+            const pSlug = pUrl.pathname.split('/').filter((s) => s.length >= 5).pop() || '';
+            if (pUrl.hostname === dUrl.hostname && pSlug && dUrl.pathname.toLowerCase().includes(pSlug)) {
+              score += 100;
+            }
+          } catch {
+            // ignore URL parse
+          }
+        }
+      }
+
+      const brandNorm = norm(p.brand || '');
+      const modelNorm = norm(p.model || '');
+      const titleTokens = norm(p.title)
+        .split(' ')
+        .filter((t) => (t.length >= 3 || /^\d+$/.test(t)) && !stopwords.has(t));
+      const modelTokens = modelNorm
+        .split(' ')
+        .filter((t) => (t.length >= 2 || /^\d+$/.test(t)) && !stopwords.has(t));
+      const distinctiveTokens = Array.from(new Set([...modelTokens, ...titleTokens]));
+
+      if (modelNorm && modelNorm.length >= 3) {
+        if (strongChannel.includes(modelNorm)) score += 65;
+        else if (bodyChannel.includes(modelNorm)) score += 45;
+      }
+
+      let matchedDistinctive = 0;
+      for (const tok of distinctiveTokens) {
+        if (/^\d{1,2}$/.test(tok) && tok.length < 2 && distinctiveTokens.length > 1) continue;
+        const re = new RegExp(`(?:^| )${tok}(?: |$)`);
+        if (re.test(strongChannel)) {
+          score += tok.length >= 4 ? 32 : 18;
+          matchedDistinctive += 1;
+        } else if (re.test(bodyChannel)) {
+          score += tok.length >= 4 ? 20 : 10;
+          matchedDistinctive += 1;
+        }
+      }
+
+      if (brandNorm && brandNorm.length >= 3 && matchedDistinctive >= 1) {
+        const bRe = new RegExp(`(?:^| )${brandNorm}(?: |$)`);
+        if (bRe.test(strongChannel)) score += 28;
+        else if (bRe.test(bodyChannel)) score += 16;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestProduct = p;
+      }
+    }
+
+    return bestScore >= 55 ? bestProduct : null;
+  }
+
+  app.post('/api/documents/inspect-link', async (req, res) => {
+    const rawUrl = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+    if (!rawUrl || rawUrl.length > 1500) {
+      res.status(400).json({ ok: false, reason: 'invalid', error: 'URL non valido.' });
+      return;
+    }
+
+    let currentUrl: URL;
+    try {
+      currentUrl = new URL(rawUrl);
+    } catch {
+      res.status(400).json({ ok: false, reason: 'invalid', error: 'URL malformato.' });
+      return;
+    }
+
+    if (
+      (currentUrl.protocol !== 'http:' && currentUrl.protocol !== 'https:') ||
+      isPrivateOrLocalHostname(currentUrl.hostname)
+    ) {
+      res.status(400).json({ ok: false, reason: 'invalid', error: 'Host URL non consentito.' });
+      return;
+    }
+
+    try {
+      let targetStr = currentUrl.toString();
+      let finalResp: Response | null = null;
+      for (let hop = 0; hop < 4; hop++) {
+        const hopUrl = new URL(targetStr);
+        if (
+          (hopUrl.protocol !== 'http:' && hopUrl.protocol !== 'https:') ||
+          isPrivateOrLocalHostname(hopUrl.hostname)
+        ) {
+          res.status(400).json({ ok: false, reason: 'invalid', error: 'Redirect non consentito.' });
+          return;
+        }
+        const resp = await fetch(targetStr, {
+          method: 'GET',
+          redirect: 'manual',
+          signal: AbortSignal.timeout(10_000),
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+          },
+        });
+        if (resp.status >= 300 && resp.status < 400) {
+          const loc = resp.headers.get('location');
+          if (!loc) {
+            finalResp = resp;
+            break;
+          }
+          targetStr = new URL(loc, hopUrl).toString();
+          continue;
+        }
+        finalResp = resp;
+        break;
+      }
+
+      if (!finalResp || !finalResp.ok) {
+        res.status(200).json({
+          ok: false,
+          reason: 'blocked',
+          status: finalResp?.status || 0,
+          url: targetStr,
+        });
+        return;
+      }
+
+      const rawText = (await finalResp.text()).slice(0, 250_000);
+      const titleMatch = rawText.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+      const ogTitleMatch = rawText.match(
+        /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i
+      );
+      const ogSiteMatch = rawText.match(
+        /<meta[^>]+property=["']og:site_name["'][^>]+content=["']([^"']+)["']/i
+      );
+      const descMatch = rawText.match(
+        /<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i
+      );
+
+      const pageTitle = decodeHtmlEntities(
+        stripHtmlTags(ogTitleMatch?.[1] || titleMatch?.[1] || '')
+      ).slice(0, 160);
+      const siteName = decodeHtmlEntities(
+        stripHtmlTags(ogSiteMatch?.[1] || new URL(targetStr).hostname.replace(/^www\./, ''))
+      ).slice(0, 80);
+      const description = decodeHtmlEntities(stripHtmlTags(descMatch?.[1] || '')).slice(0, 400);
+
+      const cleanBody = rawText
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ');
+      const textSnippet = decodeHtmlEntities(cleanBody).replace(/\s+/g, ' ').trim().slice(0, 10_000);
+
+      res.json({
+        ok: true,
+        url: targetStr,
+        title: pageTitle,
+        siteName,
+        description,
+        textSnippet,
+      });
+    } catch {
+      res.status(200).json({ ok: false, reason: 'network_error', url: currentUrl.toString() });
+    }
+  });
+
+  app.post('/api/documents/classify', async (req, res) => {
+    const fileName = typeof req.body?.fileName === 'string' ? req.body.fileName.trim().slice(0, 180) : '';
+    const mimeType = typeof req.body?.mimeType === 'string' ? req.body.mimeType.trim().slice(0, 100) : '';
+    const cloudUrl = typeof req.body?.cloudUrl === 'string' ? req.body.cloudUrl.trim().slice(0, 1500) : '';
+    const textContent =
+      typeof req.body?.textContent === 'string' ? req.body.textContent.slice(0, 18_000) : '';
+    const rawImageBase64 =
+      typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64.slice(0, 8_000_000) : '';
+    const rawProducts: unknown[] = Array.isArray(req.body?.products)
+      ? (req.body.products as unknown[])
+      : [];
+    const products: ClassifyProductHint[] = rawProducts
+      .filter((p: unknown): p is Record<string, unknown> => Boolean(p && typeof p === 'object'))
+      .slice(0, 40)
+      .map((p: Record<string, unknown>): ClassifyProductHint => ({
+        id: typeof p.id === 'string' ? p.id.slice(0, 80) : '',
+        title: typeof p.title === 'string' ? p.title.slice(0, 120) : '',
+        brand: typeof p.brand === 'string' ? p.brand.slice(0, 60) : undefined,
+        model: typeof p.model === 'string' ? p.model.slice(0, 80) : undefined,
+        url: typeof p.url === 'string' ? p.url.slice(0, 300) : undefined,
+      }))
+      .filter((p: ClassifyProductHint) => Boolean(p.id && p.title));
+
+    if (!fileName && !cloudUrl) {
+      res.status(400).json({ error: 'fileName o cloudUrl obbligatorio.' });
+      return;
+    }
+
+    const effectiveName = fileName || decodeURIComponent(cloudUrl.split('/').pop() || 'link-documento').slice(0, 140);
+    const deterministicProduct = matchDocumentProductServer(effectiveName, cloudUrl, textContent, products);
+    const deterministicAttachType = inferAttachmentTypeServer(`${effectiveName}\n${cloudUrl}\n${textContent.slice(0, 3000)}`);
+    const baseFallback = classifyDocumentDeterministic(effectiveName, textContent, cloudUrl);
+    const fallback = {
+      ...baseFallback,
+      ...(deterministicProduct
+        ? {
+            provider: deterministicProduct.brand || baseFallback.provider,
+            matchedProductId: deterministicProduct.id,
+            attachmentType: deterministicAttachType,
+          }
+        : {}),
+    };
+    const ai = getGeminiClient();
+
+    if (!ai || (!textContent.trim() && !rawImageBase64 && !cloudUrl)) {
+      res.json(fallback);
+      return;
+    }
+
+    try {
+      const productsPromptList =
+        products.length > 0
+          ? [
+              'Prodotti presenti in archivio Prodotti (se il documento appartiene chiaramente a uno di essi, imposta "matchedProductId" al suo id, altrimenti ""):',
+              ...products.map(
+                (p) =>
+                  `- id="${p.id}" | titolo="${p.title}"${p.brand ? ` | marca="${p.brand}"` : ''}${p.model ? ` | modello="${p.model}"` : ''}`
+              ),
+            ].join('\n')
+          : '';
+
+      const prompt = [
+        'Classifica questo documento domestico italiano e restituisci SOLO JSON valido senza testo aggiuntivo.',
+        'Valori ammessi per "target":',
+        '- "bill_luce": SOLO bolletta/fattura periodica energia elettrica (Edison, Octopus, Enel, ecc.). NON usare per contratti firmati o preventivi.',
+        '- "bill_acqua": SOLO bolletta/fattura periodica acqua / servizio idrico (AcegasApsAmga, ecc.).',
+        '- "bill_tari": SOLO avviso di pagamento TARI / tassa sui rifiuti.',
+        '- "document": qualsiasi altro documento (contratti luce/internet/mutuo, rogito, polizze, documenti identità, fiscali, manuali/schede prodotto, bonifici GSE, ricevute).',
+        'Valori ammessi per "documentCategory": "Mutuo & Casa" | "Internet & Wi-Fi" | "Contratti & Utenze" | "Assicurazioni" | "Fiscale & Identità" | "Altro".',
+        'Valori ammessi per "attachmentType": "manuale" | "scontrino_fattura" | "garanzia_extra_family" | "targhetta_pnc" | "altro".',
+        'Valori ammessi per "confidence": "alta" | "media" | "bassa".',
+        'Schema JSON:',
+        '{',
+        '  "target": "bill_luce" | "bill_acqua" | "bill_tari" | "document",',
+        '  "confidence": "alta" | "media" | "bassa",',
+        '  "documentCategory": "Mutuo & Casa" | "Internet & Wi-Fi" | "Contratti & Utenze" | "Assicurazioni" | "Fiscale & Identità" | "Altro",',
+        '  "matchedProductId": "id del prodotto corrispondente o stringa vuota",',
+        '  "attachmentType": "manuale" | "scontrino_fattura" | "garanzia_extra_family" | "targhetta_pnc" | "altro",',
+        '  "title": "titolo conciso max 75 caratteri",',
+        '  "provider": "ente, banca o fornitore max 60 caratteri",',
+        '  "referenceCode": "numero contratto/fattura/pratica/targa se visibile o stringa vuota",',
+        '  "issueDate": "GG/MM/AAAA o stringa vuota",',
+        '  "expiryDate": "GG/MM/AAAA o stringa vuota",',
+        '  "notes": "breve descrizione max 150 caratteri",',
+        '  "bill": { "supplier": "", "offerName": "", "invoiceOrNoticeNumber": "", "issueDate": "", "dueDate": "", "period": "", "year": 2026, "totalPaid": 0, "kwh": 0, "canoneTv": 0, "cubicMeters": 0, "fixedCostEur": 0 }',
+        '}',
+        `Nome file: ${effectiveName}`,
+        cloudUrl ? `URL sorgente: ${cloudUrl}` : '',
+        mimeType ? `MIME type: ${mimeType}` : '',
+        productsPromptList,
+        textContent.trim()
+          ? `Testo estratto:\n${textContent.slice(0, 12_000)}`
+          : rawImageBase64
+            ? 'Analizza immagine allegata.'
+            : 'Classifica in base a nome file ed URL.',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const parts: Array<
+        | { text: string }
+        | { inlineData: { mimeType: string; data: string } }
+      > = [{ text: prompt }];
+
+      if (rawImageBase64) {
+        const cleanBase64 = rawImageBase64.replace(/^data:[^;]+;base64,/, '');
+        const resolvedImgMime = mimeType.startsWith('image/') ? mimeType : 'image/jpeg';
+        parts.push({
+          inlineData: {
+            mimeType: resolvedImgMime,
+            data: cleanBase64,
+          },
+        });
+      }
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: [{ role: 'user', parts }],
+      });
+
+      const rawText = (response.text || '').trim();
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        res.json(fallback);
+        return;
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+      const validTargets = new Set(['bill_luce', 'bill_acqua', 'bill_tari', 'document']);
+      const validCategories = new Set([
+        'Mutuo & Casa',
+        'Internet & Wi-Fi',
+        'Contratti & Utenze',
+        'Assicurazioni',
+        'Fiscale & Identità',
+        'Altro',
+      ]);
+      const validConfidence = new Set(['alta', 'media', 'bassa']);
+      const validAttachTypes = new Set([
+        'manuale',
+        'scontrino_fattura',
+        'garanzia_extra_family',
+        'targhetta_pnc',
+        'altro',
+      ]);
+      const validProductIds = new Set(products.map((p) => p.id));
+
+      const target = validTargets.has(String(parsed.target || ''))
+        ? (String(parsed.target) as 'bill_luce' | 'bill_acqua' | 'bill_tari' | 'document')
+        : fallback.target;
+      const documentCategory = validCategories.has(String(parsed.documentCategory || ''))
+        ? (String(parsed.documentCategory) as
+            | 'Mutuo & Casa'
+            | 'Internet & Wi-Fi'
+            | 'Contratti & Utenze'
+            | 'Assicurazioni'
+            | 'Fiscale & Identità'
+            | 'Altro')
+        : fallback.documentCategory;
+      const confidence = validConfidence.has(String(parsed.confidence || ''))
+        ? (String(parsed.confidence) as 'alta' | 'media' | 'bassa')
+        : fallback.confidence;
+
+      const aiProductId =
+        typeof parsed.matchedProductId === 'string' && validProductIds.has(parsed.matchedProductId.trim())
+          ? parsed.matchedProductId.trim()
+          : '';
+      const matchedProductId =
+        target === 'document' ? aiProductId || deterministicProduct?.id || '' : '';
+      const attachmentType = validAttachTypes.has(String(parsed.attachmentType || ''))
+        ? (String(parsed.attachmentType) as
+            | 'manuale'
+            | 'scontrino_fattura'
+            | 'garanzia_extra_family'
+            | 'targhetta_pnc'
+            | 'altro')
+        : deterministicAttachType;
+
+      res.json({
+        target,
+        confidence,
+        documentCategory,
+        matchedProductId: matchedProductId || undefined,
+        attachmentType,
+        title:
+          typeof parsed.title === 'string' && parsed.title.trim()
+            ? parsed.title.trim().slice(0, 80)
+            : fallback.title,
+        provider:
+          typeof parsed.provider === 'string' && parsed.provider.trim()
+            ? parsed.provider.trim().slice(0, 80)
+            : fallback.provider,
+        referenceCode:
+          typeof parsed.referenceCode === 'string' ? parsed.referenceCode.trim().slice(0, 80) : '',
+        issueDate:
+          typeof parsed.issueDate === 'string' ? parsed.issueDate.trim().slice(0, 20) : '',
+        expiryDate:
+          typeof parsed.expiryDate === 'string' ? parsed.expiryDate.trim().slice(0, 20) : '',
+        notes:
+          typeof parsed.notes === 'string' && parsed.notes.trim()
+            ? parsed.notes.trim().slice(0, 180)
+            : fallback.notes,
+        bill: parsed.bill && typeof parsed.bill === 'object' ? parsed.bill : undefined,
+        usedAi: true,
+      });
+    } catch (error) {
+      if (!isQuotaOrRateError(error)) {
+        console.warn('Errore classificazione documento AI, uso fallback locale:', error);
+      }
+      res.json(fallback);
     }
   });
 

@@ -1,8 +1,6 @@
 import {
   collection,
   doc,
-  getDoc,
-  getDocs,
   query,
   serverTimestamp,
   Timestamp,
@@ -16,12 +14,16 @@ import {
   guardedWriteBatch as writeBatch,
   isFirestoreWritesDisabled,
   recordFirestoreWritesSaved,
+  trackedGetDoc as getDoc,
+  trackedGetDocs as getDocs,
 } from '../firebase';
 import {
+  ArticleAttachmentType,
   BillRecord,
   HomeArticleRecord,
   HomeDocumentCategory,
   HomeDocumentRecord,
+  ProductResearchRecord,
   TariBillRecord,
   WaterBillRecord,
 } from '../types/home';
@@ -897,6 +899,7 @@ function packDocNotes(notes?: string, cloudUrl?: string): string | undefined {
 export function articleToHomeDocument(article: HomeArticleRecord): HomeDocumentRecord {
   const kv = parseKv(article.specs);
   const unpacked = unpackDocNotes(article.notes);
+  const unpackedExtract = unpackDocNotes(article.manualExtractText);
   const category = DOCUMENT_CATEGORIES.includes(article.brand as HomeDocumentCategory)
     ? (article.brand as HomeDocumentCategory)
     : 'Altro';
@@ -910,7 +913,7 @@ export function articleToHomeDocument(article: HomeArticleRecord): HomeDocumentR
     referenceCode: article.serialNumber || undefined,
     issueDate: article.purchaseDate || undefined,
     expiryDate: article.warrantyEnd || undefined,
-    cloudUrl: unpacked.cloudUrl,
+    cloudUrl: unpacked.cloudUrl || unpackedExtract.cloudUrl,
     fileName: kv.FILE || undefined,
     fileMime: kv.MIME || undefined,
     fileSize: sizeNum !== undefined && Number.isFinite(sizeNum) ? sizeNum : undefined,
@@ -933,6 +936,11 @@ export function homeDocumentToArticlePayload(
     parts.push(`KEY:${sanitizeToken(docItem.attachmentKey).slice(0, 64)}`);
   }
 
+  const cleanUrl = (docItem.cloudUrl || '').trim();
+  const cleanNotes = (docItem.notes || '').replace(LINK_MARKER_RE, ' ').trim();
+  const packedNotes = packDocNotes(cleanNotes, cleanUrl);
+  const urlFitsInNotes = !cleanUrl || `[Link: ${cleanUrl}]`.length < 240;
+
   return {
     name: docItem.title.trim().slice(0, 80),
     brand: (docItem.category || 'Altro').slice(0, 60),
@@ -944,8 +952,133 @@ export function homeDocumentToArticlePayload(
     warrantyEnd: docItem.expiryDate ? docItem.expiryDate.trim().slice(0, 20) : undefined,
     serialNumber: docItem.referenceCode ? docItem.referenceCode.trim().slice(0, 80) : undefined,
     specs: parts.length > 0 ? parts.join('|').slice(0, 240) : undefined,
-    notes: packDocNotes(docItem.notes, docItem.cloudUrl),
+    notes: urlFitsInNotes ? packedNotes : cleanNotes.slice(0, 240) || undefined,
+    manualExtractText: !urlFitsInNotes && cleanUrl ? `[Link: ${cleanUrl.slice(0, 1950)}]` : undefined,
   };
+}
+
+const PRODUCT_MATCH_STOPWORDS = new Set([
+  'con', 'per', 'del', 'della', 'dei', 'degli', 'il', 'lo', 'la', 'i', 'gli', 'le',
+  'di', 'da', 'in', 'su', 'ed', 'e', 'o', 'a', 'uno', 'una', 'un', 'divano',
+  'poltrona', 'sedia', 'tavolo', 'prodotto', 'scheda', 'tecnica', 'manuale',
+  'istruzioni', 'montaggio', 'manutenzione', 'documento', 'allegato', 'file',
+  'pdf', 'htm', 'html', 'http', 'https', 'www', 'com', 'it', 'outdoor', 'esterno',
+  'casa', 'colore', 'nero', 'bianco', 'grigio', 'beige', 'tortora', 'antracite',
+]);
+
+function normalizeMatchTokens(raw: string): string {
+  return raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+export function inferArticleAttachmentType(hints: string): ArticleAttachmentType {
+  const h = hints.toLowerCase();
+  if (/scontrin|fattur|ricevut|invoice|receipt|ordine|acquisto/.test(h)) {
+    return 'scontrino_fattura';
+  }
+  if (/garanzi|warranty|estensione|polizza/.test(h)) {
+    return 'garanzia_extra_family';
+  }
+  if (/targhett|pnc\b|etichett|seriale|matricola/.test(h)) {
+    return 'targhetta_pnc';
+  }
+  if (/manual|istruzion|montagg|manutenz|scheda|datasheet|brochure|specif|3d|bim|dwg/.test(h)) {
+    return 'manuale';
+  }
+  return 'altro';
+}
+
+export function matchResearchProductForDocument(
+  hints: {
+    fileName?: string;
+    title?: string;
+    provider?: string;
+    cloudUrl?: string;
+    textContent?: string;
+    notes?: string;
+  },
+  researches: ProductResearchRecord[]
+): ProductResearchRecord | null {
+  if (!researches || researches.length === 0) return null;
+
+  const strongChannel = normalizeMatchTokens(
+    `${hints.fileName || ''} ${hints.title || ''} ${hints.provider || ''} ${hints.cloudUrl || ''}`
+  );
+  const bodyChannel = normalizeMatchTokens(
+    `${hints.notes || ''} ${(hints.textContent || '').slice(0, 8000)}`
+  );
+  const docUrlClean = (hints.cloudUrl || '').split('#')[0].split('?')[0].toLowerCase();
+
+  let best: ProductResearchRecord | null = null;
+  let bestScore = 0;
+
+  for (const item of researches) {
+    if (!item.id || !item.title) continue;
+    let score = 0;
+
+    const prodUrlClean = (item.url || '').split('#')[0].split('?')[0].toLowerCase();
+    if (prodUrlClean && docUrlClean) {
+      if (prodUrlClean === docUrlClean) {
+        score += 140;
+      } else {
+        try {
+          const pUrl = new URL(prodUrlClean);
+          const dUrl = new URL(docUrlClean);
+          const pSlug = pUrl.pathname.split('/').filter((s) => s.length >= 5).pop() || '';
+          if (pUrl.hostname === dUrl.hostname && pSlug && dUrl.pathname.toLowerCase().includes(pSlug)) {
+            score += 100;
+          }
+        } catch {
+          // ignore URL parse errors
+        }
+      }
+    }
+
+    const brandNorm = normalizeMatchTokens(item.brand || '');
+    const modelNorm = normalizeMatchTokens(item.model || '');
+    const titleTokens = normalizeMatchTokens(item.title)
+      .split(' ')
+      .filter((t) => (t.length >= 3 || /^\d+$/.test(t)) && !PRODUCT_MATCH_STOPWORDS.has(t));
+    const modelTokens = modelNorm
+      .split(' ')
+      .filter((t) => (t.length >= 2 || /^\d+$/.test(t)) && !PRODUCT_MATCH_STOPWORDS.has(t));
+    const distinctiveTokens = Array.from(new Set([...modelTokens, ...titleTokens]));
+
+    if (modelNorm && modelNorm.length >= 3) {
+      if (strongChannel.includes(modelNorm)) score += 65;
+      else if (bodyChannel.includes(modelNorm)) score += 45;
+    }
+
+    let matchedDistinctive = 0;
+    for (const tok of distinctiveTokens) {
+      if (/^\d{1,2}$/.test(tok) && tok.length < 2 && distinctiveTokens.length > 1) continue;
+      const re = new RegExp(`(?:^| )${tok}(?: |$)`);
+      if (re.test(strongChannel)) {
+        score += tok.length >= 4 ? 32 : 18;
+        matchedDistinctive += 1;
+      } else if (re.test(bodyChannel)) {
+        score += tok.length >= 4 ? 20 : 10;
+        matchedDistinctive += 1;
+      }
+    }
+
+    if (brandNorm && brandNorm.length >= 3 && matchedDistinctive >= 1) {
+      const bRe = new RegExp(`(?:^| )${brandNorm}(?: |$)`);
+      if (bRe.test(strongChannel)) score += 28;
+      else if (bRe.test(bodyChannel)) score += 16;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = item;
+    }
+  }
+
+  return bestScore >= 55 ? best : null;
 }
 
 // ---------- Download & Share payload builders (Documents + Bills) ----------
@@ -1033,6 +1166,48 @@ export async function downloadShareableItem(item: ShareableItemPayload): Promise
   const blob = new Blob([item.htmlDocument], { type: 'text/html;charset=utf-8' });
   triggerBlobDownload(blob, item.fallbackFileName);
   return 'generated';
+}
+
+export async function openVaultFileInNewTab(
+  attachmentKey?: string,
+  cloudUrl?: string,
+  fallbackName?: string
+): Promise<boolean> {
+  if (attachmentKey) {
+    const stored = await getVaultFile(attachmentKey);
+    if (stored) {
+      const targetName = (stored.fileName || fallbackName || '').toLowerCase();
+      const normalizedMime =
+        targetName.endsWith('.pdf') || stored.mimeType === 'application/pdf'
+          ? 'application/pdf'
+          : stored.mimeType || stored.blob.type || 'application/octet-stream';
+      const typedBlob =
+        stored.blob.type === normalizedMime
+          ? stored.blob
+          : new Blob([stored.blob], { type: normalizedMime });
+      const blobUrl = URL.createObjectURL(typedBlob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.target = '_blank';
+      a.rel = 'noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+      return true;
+    }
+  }
+  if (cloudUrl && /^https?:\/\//i.test(cloudUrl.trim())) {
+    const a = document.createElement('a');
+    a.href = cloudUrl.trim();
+    a.target = '_blank';
+    a.rel = 'noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return true;
+  }
+  return false;
 }
 
 export function buildDocumentSharePayload(docItem: HomeDocumentRecord): ShareableItemPayload {

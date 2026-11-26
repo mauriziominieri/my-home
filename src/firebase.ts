@@ -12,14 +12,22 @@ import {
   doc,
   DocumentData,
   DocumentReference,
+  DocumentSnapshot,
   FieldValue,
   Firestore,
+  FirestoreError,
+  getDoc as rawGetDoc,
   getDocFromServer,
+  getDocs as rawGetDocs,
   getFirestore,
+  onSnapshot as rawOnSnapshot,
+  Query,
+  QuerySnapshot,
   serverTimestamp,
   setDoc as rawSetDoc,
   SetOptions,
   Timestamp,
+  Unsubscribe,
   writeBatch as rawWriteBatch,
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
@@ -520,7 +528,7 @@ function describePathSectionAndTitle(
 
   if (col === 'productResearches') {
     const title = String(data?.title || hintedTitle || docId);
-    return { section: 'Ricerche', targetTitle: title };
+    return { section: 'Prodotti', targetTitle: title };
   }
   if (col === 'homeArticles') {
     const room = String(data?.room || '');
@@ -1762,6 +1770,122 @@ let firestoreWriteStats: FirestoreWriteStats = {
   lastActionAt: null,
 };
 
+export const DAILY_FREE_WRITES_LIMIT = 20_000;
+export const DAILY_FREE_READS_LIMIT = 50_000;
+const DAILY_USAGE_STORAGE_KEY = 'myhome_firestore_daily_usage_v1';
+const MAX_DAILY_USAGE_DAYS = 30;
+
+export interface DailyFirestoreUsageEntry {
+  date: string; // YYYY-MM-DD local
+  writes: number;
+  deletes: number;
+  reads: number;
+  savedInTestMode: number;
+  settingsWrites: number;
+}
+
+function getLocalTodayIsoDate(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function loadDailyUsageHistory(): DailyFirestoreUsageEntry[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(DAILY_USAGE_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is DailyFirestoreUsageEntry =>
+        Boolean(item && typeof item === 'object' && /^\d{4}-\d{2}-\d{2}$/.test(String((item as { date?: unknown }).date || '')))
+      )
+      .map((item) => ({
+        date: String(item.date),
+        writes: Math.max(0, Math.round(Number(item.writes || 0))),
+        deletes: Math.max(0, Math.round(Number(item.deletes || 0))),
+        reads: Math.max(0, Math.round(Number(item.reads || 0))),
+        savedInTestMode: Math.max(0, Math.round(Number(item.savedInTestMode || 0))),
+        settingsWrites: Math.max(0, Math.round(Number(item.settingsWrites || 0))),
+      }))
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, MAX_DAILY_USAGE_DAYS);
+  } catch {
+    return [];
+  }
+}
+
+let dailyUsageHistory: DailyFirestoreUsageEntry[] = loadDailyUsageHistory();
+const dailyUsageListeners = new Set<(entries: DailyFirestoreUsageEntry[]) => void>();
+
+function saveAndEmitDailyUsage(): void {
+  const trimmed = [...dailyUsageHistory]
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, MAX_DAILY_USAGE_DAYS);
+  dailyUsageHistory = trimmed;
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.setItem(DAILY_USAGE_STORAGE_KEY, JSON.stringify(trimmed));
+    } catch {
+      // ignore localStorage quota errors
+    }
+  }
+  const snapshot = trimmed.map((e) => ({ ...e }));
+  dailyUsageListeners.forEach((listener) => listener(snapshot));
+}
+
+function mutateTodayDailyUsage(
+  updater: (entry: DailyFirestoreUsageEntry) => void
+): void {
+  const today = getLocalTodayIsoDate();
+  const nextList = dailyUsageHistory.map((e) => ({ ...e }));
+  let todayEntry = nextList.find((e) => e.date === today);
+  if (!todayEntry) {
+    todayEntry = {
+      date: today,
+      writes: 0,
+      deletes: 0,
+      reads: 0,
+      savedInTestMode: 0,
+      settingsWrites: 0,
+    };
+    nextList.unshift(todayEntry);
+  }
+  updater(todayEntry);
+  dailyUsageHistory = nextList;
+  saveAndEmitDailyUsage();
+}
+
+export function getDailyFirestoreUsage(): DailyFirestoreUsageEntry[] {
+  return dailyUsageHistory.map((e) => ({ ...e }));
+}
+
+export function subscribeDailyFirestoreUsage(
+  listener: (entries: DailyFirestoreUsageEntry[]) => void
+): () => void {
+  dailyUsageListeners.add(listener);
+  listener(getDailyFirestoreUsage());
+  return () => {
+    dailyUsageListeners.delete(listener);
+  };
+}
+
+export function clearDailyFirestoreUsageHistory(): void {
+  dailyUsageHistory = [];
+  saveAndEmitDailyUsage();
+}
+
+export function recordFirestoreReadsExecuted(count = 1): void {
+  if (!Number.isFinite(count) || count <= 0) return;
+  const cleanCount = Math.round(count);
+  mutateTodayDailyUsage((entry) => {
+    entry.reads += cleanCount;
+  });
+}
+
 const writeStatsListeners = new Set<(stats: FirestoreWriteStats) => void>();
 
 function emitWriteStats(): void {
@@ -1816,24 +1940,115 @@ export function resetFirestoreWriteStats(): void {
 
 export function recordFirestoreWritesSaved(count = 1, label?: string): void {
   if (count <= 0) return;
+  const cleanCount = Math.round(count);
   firestoreWriteStats = {
     ...firestoreWriteStats,
-    writesSavedCount: firestoreWriteStats.writesSavedCount + count,
+    writesSavedCount: firestoreWriteStats.writesSavedCount + cleanCount,
     lastActionLabel: label || 'Test browser (scrittura ignorata)',
     lastActionAt: Date.now(),
   };
   emitWriteStats();
+  mutateTodayDailyUsage((entry) => {
+    entry.savedInTestMode += cleanCount;
+  });
 }
 
-export function recordFirestoreWritesExecuted(count = 1, label?: string): void {
+export function recordFirestoreWritesExecuted(
+  count = 1,
+  label?: string,
+  options?: { deletes?: number; isSettingsWrite?: boolean }
+): void {
   if (count <= 0) return;
+  const cleanCount = Math.round(count);
+  const cleanDeletes = Math.max(0, Math.min(cleanCount, Math.round(options?.deletes || 0)));
+  const cleanWrites = cleanCount - cleanDeletes;
   firestoreWriteStats = {
     ...firestoreWriteStats,
-    writesExecutedCount: firestoreWriteStats.writesExecutedCount + count,
+    writesExecutedCount: firestoreWriteStats.writesExecutedCount + cleanCount,
     lastActionLabel: label || 'Scrittura Firestore completata',
     lastActionAt: Date.now(),
   };
   emitWriteStats();
+  mutateTodayDailyUsage((entry) => {
+    entry.writes += cleanWrites;
+    entry.deletes += cleanDeletes;
+    if (options?.isSettingsWrite) {
+      entry.settingsWrites += cleanCount;
+    }
+  });
+}
+
+export async function trackedGetDoc<AppModelType = DocumentData, DbModelType extends DocumentData = DocumentData>(
+  reference: DocumentReference<AppModelType, DbModelType>
+): Promise<DocumentSnapshot<AppModelType, DbModelType>> {
+  const snap = await rawGetDoc(reference);
+  if (!snap.metadata.fromCache) {
+    recordFirestoreReadsExecuted(1);
+  }
+  return snap;
+}
+
+export async function trackedGetDocs<AppModelType = DocumentData, DbModelType extends DocumentData = DocumentData>(
+  queryObj: Query<AppModelType, DbModelType>
+): Promise<QuerySnapshot<AppModelType, DbModelType>> {
+  const snap = await rawGetDocs(queryObj);
+  if (!snap.metadata.fromCache) {
+    recordFirestoreReadsExecuted(Math.max(1, snap.size));
+  }
+  return snap;
+}
+
+export function trackedOnSnapshot<AppModelType = DocumentData, DbModelType extends DocumentData = DocumentData>(
+  reference: DocumentReference<AppModelType, DbModelType>,
+  onNext: (snapshot: DocumentSnapshot<AppModelType, DbModelType>) => void,
+  onError?: (error: FirestoreError) => void
+): Unsubscribe;
+export function trackedOnSnapshot<AppModelType = DocumentData, DbModelType extends DocumentData = DocumentData>(
+  queryObj: Query<AppModelType, DbModelType>,
+  onNext: (snapshot: QuerySnapshot<AppModelType, DbModelType>) => void,
+  onError?: (error: FirestoreError) => void
+): Unsubscribe;
+export function trackedOnSnapshot<AppModelType = DocumentData, DbModelType extends DocumentData = DocumentData>(
+  target: DocumentReference<AppModelType, DbModelType> | Query<AppModelType, DbModelType>,
+  onNext:
+    | ((snapshot: DocumentSnapshot<AppModelType, DbModelType>) => void)
+    | ((snapshot: QuerySnapshot<AppModelType, DbModelType>) => void),
+  onError?: (error: FirestoreError) => void
+): Unsubscribe {
+  let receivedServerSnap = false;
+  const wrappedNext = (
+    snap: DocumentSnapshot<AppModelType, DbModelType> | QuerySnapshot<AppModelType, DbModelType>
+  ) => {
+    if (!snap.metadata.fromCache) {
+      if ('docs' in snap) {
+        if (!receivedServerSnap) {
+          receivedServerSnap = true;
+          recordFirestoreReadsExecuted(Math.max(1, snap.size));
+        } else {
+          const changesCount = snap.docChanges().length;
+          if (changesCount > 0) {
+            recordFirestoreReadsExecuted(changesCount);
+          }
+        }
+      } else {
+        receivedServerSnap = true;
+        recordFirestoreReadsExecuted(1);
+      }
+    }
+    (onNext as (s: typeof snap) => void)(snap);
+  };
+  if ('type' in target && target.type === 'document') {
+    return rawOnSnapshot(
+      target as DocumentReference<AppModelType, DbModelType>,
+      wrappedNext as (s: DocumentSnapshot<AppModelType, DbModelType>) => void,
+      onError
+    );
+  }
+  return rawOnSnapshot(
+    target as Query<AppModelType, DbModelType>,
+    wrappedNext as (s: QuerySnapshot<AppModelType, DbModelType>) => void,
+    onError
+  );
 }
 
 export const guardedSetDoc: typeof rawSetDoc = (async (...args: unknown[]) => {
@@ -1883,6 +2098,7 @@ export async function saveSystemStateDoc(
   data: Record<string, unknown>
 ): Promise<void> {
   await raceWithFirestoreQuotaAbort(rawSetDoc(doc(db, path), data));
+  recordFirestoreWritesExecuted(1, 'Impostazioni app (cloud)', { isSettingsWrite: true });
 }
 
 export const guardedDeleteDoc: typeof rawDeleteDoc = (async (...args: unknown[]) => {
@@ -1914,12 +2130,13 @@ export const guardedDeleteDoc: typeof rawDeleteDoc = (async (...args: unknown[])
   await raceWithFirestoreQuotaAbort(
     (rawDeleteDoc as (...inner: unknown[]) => Promise<void>)(...args)
   );
-  recordFirestoreWritesExecuted(1, 'deleteDoc');
+  recordFirestoreWritesExecuted(1, 'deleteDoc', { deletes: 1 });
 }) as typeof rawDeleteDoc;
 
 export function guardedWriteBatch(firestore: Firestore): ReturnType<typeof rawWriteBatch> {
   const batch = rawWriteBatch(firestore);
   let opCount = 0;
+  let deleteCount = 0;
   const recordedSubOps: SimulatedBatchSubOp[] = [];
 
   const origSet = batch.set.bind(batch);
@@ -1972,6 +2189,7 @@ export function guardedWriteBatch(firestore: Firestore): ReturnType<typeof rawWr
 
   batch.delete = ((...args: unknown[]) => {
     opCount += 1;
+    deleteCount += 1;
     const docRef = args[0] as DocumentReference | undefined;
     if (docRef?.path) {
       recordedSubOps.push({
@@ -2024,7 +2242,7 @@ export function guardedWriteBatch(firestore: Firestore): ReturnType<typeof rawWr
       return;
     }
     await raceWithFirestoreQuotaAbort(origCommit());
-    recordFirestoreWritesExecuted(opCount, `batch (${opCount} op)`);
+    recordFirestoreWritesExecuted(opCount, `batch (${opCount} op)`, { deletes: deleteCount });
   };
 
   return batch;

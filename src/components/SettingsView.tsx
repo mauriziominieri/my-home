@@ -25,7 +25,11 @@ import {
   Zap,
 } from 'lucide-react';
 import {
+  clearDailyFirestoreUsageHistory,
   clearSimulatedFirestoreOps,
+  DAILY_FREE_READS_LIMIT,
+  DAILY_FREE_WRITES_LIMIT,
+  DailyFirestoreUsageEntry,
   discardSimulatedFirestoreOp,
   dismissSimulatedFlushResult,
   FIREBASE_PROJECT_ID,
@@ -36,6 +40,7 @@ import {
   resetFirestoreWriteStats,
   SimulatedFirestoreOp,
   SimulatedFlushState,
+  subscribeDailyFirestoreUsage,
   subscribeFirestoreQuotaExceeded,
   subscribeFirestoreWriteStats,
   subscribeSimulatedFirestoreOps,
@@ -102,7 +107,7 @@ const START_SECTION_OPTIONS: { value: DefaultStartSection; label: string }[] = [
   { value: 'domotica', label: 'Clima & Domotica' },
   { value: 'bollette', label: 'Bollette' },
   { value: 'articoli', label: 'Articoli' },
-  { value: 'ricerche', label: 'Ricerche' },
+  { value: 'ricerche', label: 'Prodotti' },
   { value: 'documenti', label: 'Documenti' },
   { value: 'macchina', label: 'Macchina' },
   { value: 'spesa', label: 'Spesa' },
@@ -164,9 +169,15 @@ export function SettingsView({
     null
   );
   const [storageStats, setStorageStats] = useState(() => measureLocalStorageBytes());
+  const [dailyUsage, setDailyUsage] = useState<DailyFirestoreUsageEntry[]>([]);
+  const [confirmClearUsageHistory, setConfirmClearUsageHistory] = useState(false);
 
   useEffect(() => {
     return subscribeFirestoreWriteStats(setWriteStats);
+  }, []);
+
+  useEffect(() => {
+    return subscribeDailyFirestoreUsage(setDailyUsage);
   }, []);
 
   useEffect(() => {
@@ -180,6 +191,29 @@ export function SettingsView({
   useEffect(() => {
     return subscribeSimulatedFlushState(setFlushState);
   }, []);
+
+  const todayUsage = useMemo(() => {
+    const now = new Date();
+    const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+      now.getDate()
+    ).padStart(2, '0')}`;
+    return (
+      dailyUsage.find((d) => d.date === todayKey) ?? {
+        date: todayKey,
+        writes: 0,
+        deletes: 0,
+        reads: 0,
+        savedInTestMode: 0,
+        settingsWrites: 0,
+      }
+    );
+  }, [dailyUsage]);
+
+  const todayWriteOps = todayUsage.writes + todayUsage.deletes;
+  const remainingWriteQuota = Math.max(0, DAILY_FREE_WRITES_LIMIT - todayWriteOps);
+  const remainingReadQuota = Math.max(0, DAILY_FREE_READS_LIMIT - todayUsage.reads);
+  const writeUsagePct = Math.min(100, (todayWriteOps / DAILY_FREE_WRITES_LIMIT) * 100);
+  const readUsagePct = Math.min(100, (todayUsage.reads / DAILY_FREE_READS_LIMIT) * 100);
 
   const totalRecords = useMemo(
     () =>
@@ -223,8 +257,8 @@ export function SettingsView({
       tone: 'info',
       text:
         removed > 0
-          ? `Cache locale ricerche pulita (${removed} voci rimosse).`
-          : 'Nessuna cache locale di ricerche da rimuovere.',
+          ? `Cache locale prodotti pulita (${removed} voci rimosse).`
+          : 'Nessuna cache locale prodotti da rimuovere.',
     });
   }
 
@@ -353,7 +387,7 @@ export function SettingsView({
             </div>
 
             <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              Attiva questa opzione quando vuoi fare test nel browser (aggiungere articoli, cambiare varianti su Ricerche, provare la domotica o caricare allegati) senza consumare la quota giornaliera gratuita di Firebase Firestore. Tutte le operazioni simulate restano salvate e visibili in locale e, dopo tua conferma, vengono inviate a Firestore in un unico blocco batch quando riattivi le scritture.
+              Attiva questa opzione quando vuoi fare test nel browser (aggiungere articoli, cambiare varianti su Prodotti, provare la domotica o caricare allegati) senza consumare la quota giornaliera gratuita di Firebase Firestore. Tutte le operazioni simulate restano salvate e visibili in locale e, dopo tua conferma, vengono inviate a Firestore in un unico blocco batch quando riattivi le scritture.
             </p>
           </div>
 
@@ -601,6 +635,195 @@ export function SettingsView({
             )}
           </div>
         )}
+      </section>
+
+      {/* 1b. Daily Firestore Quota & Settings Writes Transparency */}
+      <section className={cardCls}>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <Database className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+              <span>Quota Giornaliera Firestore &amp; Storico Consumi</span>
+            </h2>
+            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
+              Ogni modifica effettiva di un&apos;impostazione (da loggato) esegue{' '}
+              <strong className="text-slate-900 dark:text-slate-100">1 scrittura</strong> su Firebase (documento{' '}
+              <span className="font-mono text-[11px]">app_settings_state</span>) e{' '}
+              <strong className="text-slate-900 dark:text-slate-100">0 letture</strong>; se clicchi lo stesso valore già attivo o sei sloggato consuma{' '}
+              <strong className="text-emerald-700 dark:text-emerald-300">0 scritture</strong>. Qui vedi il consumo registrato su questo browser rispetto ai limiti gratuiti giornalieri Spark (reset ~09:00 ora italiana / 00:00 Pacifico).
+            </p>
+          </div>
+
+          {dailyUsage.length > 0 && (
+            <div className="shrink-0">
+              {confirmClearUsageHistory ? (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-rose-500/10 border border-rose-500/30 rounded-lg text-[11px]">
+                  <span className="text-rose-700 dark:text-rose-200 font-medium">Azzerare storico?</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearDailyFirestoreUsageHistory();
+                      setConfirmClearUsageHistory(false);
+                      setFeedback({ tone: 'info', text: 'Storico giornaliero Firestore azzerato su questo browser.' });
+                    }}
+                    className="px-2 py-0.5 font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded"
+                  >
+                    Conferma
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClearUsageHistory(false)}
+                    className="px-2 py-0.5 text-slate-600 dark:text-slate-300"
+                  >
+                    Annulla
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmClearUsageHistory(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                  <span>Azzera storico</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Today's Quota Meters */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+          <div className={`${subSurfaceCls} p-3.5 space-y-2`}>
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">
+                Scritture + Eliminazioni Oggi
+              </span>
+              <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
+                {todayWriteOps.toLocaleString('it-IT')} / {DAILY_FREE_WRITES_LIMIT.toLocaleString('it-IT')}
+              </span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+              <div
+                className={`h-full transition-all ${
+                  writeUsagePct >= 85
+                    ? 'bg-rose-500'
+                    : writeUsagePct >= 60
+                      ? 'bg-amber-500'
+                      : 'bg-emerald-500'
+                }`}
+                style={{ width: `${Math.max(todayWriteOps > 0 ? 2 : 0, writeUsagePct)}%` }}
+              />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+              <span>
+                Restanti stimate:{' '}
+                <strong className="font-mono text-emerald-700 dark:text-emerald-300">
+                  {remainingWriteQuota.toLocaleString('it-IT')}
+                </strong>{' '}
+                ({(100 - writeUsagePct).toFixed(1).replace('.', ',')}%)
+              </span>
+              <span className="font-mono">
+                {todayUsage.writes} scr. · {todayUsage.deletes} elim. · {todayUsage.settingsWrites} imp.
+              </span>
+            </div>
+          </div>
+
+          <div className={`${subSurfaceCls} p-3.5 space-y-2`}>
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">
+                Letture Listener &amp; Query Oggi
+              </span>
+              <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
+                {todayUsage.reads.toLocaleString('it-IT')} / {DAILY_FREE_READS_LIMIT.toLocaleString('it-IT')}
+              </span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+              <div
+                className={`h-full transition-all ${
+                  readUsagePct >= 85
+                    ? 'bg-rose-500'
+                    : readUsagePct >= 60
+                      ? 'bg-amber-500'
+                      : 'bg-sky-500'
+                }`}
+                style={{ width: `${Math.max(todayUsage.reads > 0 ? 2 : 0, readUsagePct)}%` }}
+              />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+              <span>
+                Restanti stimate:{' '}
+                <strong className="font-mono text-sky-700 dark:text-sky-300">
+                  {remainingReadQuota.toLocaleString('it-IT')}
+                </strong>{' '}
+                ({(100 - readUsagePct).toFixed(1).replace('.', ',')}%)
+              </span>
+              <span className="font-mono text-amber-700 dark:text-amber-300">
+                Risparmiate (Test Mode): {todayUsage.savedInTestMode.toLocaleString('it-IT')}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 30-day Daily Table */}
+        {dailyUsage.length > 0 && (
+          <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800 max-h-56 overflow-y-auto">
+            <table className="w-full text-xs text-left">
+              <thead className="bg-slate-50 dark:bg-slate-950/80 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800 sticky top-0">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Data</th>
+                  <th className="px-3 py-2 font-medium text-right">Scritture</th>
+                  <th className="px-3 py-2 font-medium text-right">Eliminazioni</th>
+                  <th className="px-3 py-2 font-medium text-right">Impostazioni</th>
+                  <th className="px-3 py-2 font-medium text-right">Letture</th>
+                  <th className="px-3 py-2 font-medium text-right">Risparmiate (Test)</th>
+                  <th className="px-3 py-2 font-medium text-right">% Quota Scritture</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70">
+                {dailyUsage.map((row) => {
+                  const totalW = row.writes + row.deletes;
+                  const pct = (totalW / DAILY_FREE_WRITES_LIMIT) * 100;
+                  const [y, m, d] = row.date.split('-');
+                  return (
+                    <tr key={row.date} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                      <td className="px-3 py-1.5 font-mono text-slate-800 dark:text-slate-200">
+                        {d}/{m}/{y}
+                        {row.date === todayUsage.date && (
+                          <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-sans font-semibold bg-sky-500/15 text-sky-700 dark:text-sky-300 rounded">
+                            Oggi
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-slate-900 dark:text-slate-100">
+                        {row.writes}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-rose-700 dark:text-rose-300">
+                        {row.deletes}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-indigo-700 dark:text-indigo-300">
+                        {row.settingsWrites}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-sky-700 dark:text-sky-300">
+                        {row.reads}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-amber-700 dark:text-amber-300">
+                        {row.savedInTestMode}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                        {pct.toFixed(2).replace('.', ',')}%
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-3 leading-relaxed">
+          Nota tecnica: Firebase non fornisce un&apos;API client per leggere il contatore ufficiale di fatturazione del progetto, quindi questo pannello misura tutte le operazioni reali eseguite da questo browser (cache locale di Firestore esclusa). Gli script automatici esterni (Google Apps Script 24/7 per e-distribuzione) scrivono separatamente lato server senza passare dal browser.
+        </p>
       </section>
 
       {/* Main 2-column Grid */}
@@ -989,14 +1212,14 @@ export function SettingsView({
                 {totalRecords}
               </div>
               <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                {countsSummary.readings} giorni · {countsSummary.researches} ricerche · {countsSummary.articles} articoli
+                {countsSummary.readings} giorni · {countsSummary.researches} prodotti · {countsSummary.articles} articoli
               </div>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
             <div className="text-[11px] text-slate-500 dark:text-slate-400">
-              Chiavi locali ricerche: {storageStats.researchKeys}
+              Chiavi locali prodotti: {storageStats.researchKeys}
             </div>
             <button
               type="button"
@@ -1004,7 +1227,7 @@ export function SettingsView({
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
               <Trash2 className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
-              <span>Pulisci cache locale ricerche</span>
+              <span>Pulisci cache locale prodotti</span>
             </button>
           </div>
         </section>

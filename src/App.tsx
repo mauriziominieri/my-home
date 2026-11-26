@@ -5,9 +5,6 @@ import {
   deleteField,
   doc,
   DocumentData,
-  getDoc,
-  getDocs,
-  onSnapshot,
   query,
   serverTimestamp,
   where,
@@ -32,8 +29,8 @@ import {
   Package,
   Receipt,
   RefreshCw,
-  Search,
   Settings,
+  ShoppingBag,
   ShoppingCart,
   Sun,
   Thermometer,
@@ -78,6 +75,9 @@ import {
   subscribeFirestoreWriteStats,
   subscribeSimulatedFirestoreOps,
   subscribeSimulatedFlushState,
+  trackedGetDoc as getDoc,
+  trackedGetDocs as getDocs,
+  trackedOnSnapshot as onSnapshot,
 } from './firebase';
 import {
   ArticleAttachmentType,
@@ -465,7 +465,7 @@ import {
   getLocalTodayIso,
   SYSTEM_ROOM_CLIMATE_AUTO,
 } from './utils/climateAutopilot';
-import { formatTimeSlotString } from './utils/climateTime';
+import { formatTimeSlotString, getDayEffectiveSlots } from './utils/climateTime';
 import {
   MIGRATION_DONE_DOC_ID,
   migrateFromLegacyProject,
@@ -574,7 +574,7 @@ const NAV_ITEMS: { id: NavSection; label: string; icon: typeof LayoutDashboard }
   { id: 'domotica', label: 'Clima & Domotica', icon: Thermometer },
   { id: 'bollette', label: 'Bollette', icon: Receipt },
   { id: 'articoli', label: 'Articoli', icon: Package },
-  { id: 'ricerche', label: 'Ricerche', icon: Search },
+  { id: 'ricerche', label: 'Prodotti', icon: ShoppingBag },
   { id: 'documenti', label: 'Documenti', icon: FolderOpen },
   { id: 'macchina', label: 'Macchina', icon: Car },
   { id: 'spesa', label: 'Spesa', icon: ShoppingCart },
@@ -2767,6 +2767,88 @@ export default function App() {
     setPendingTrashMessages([]);
   }
 
+  function buildCoupledAutopilotUpdate(
+    uid: string,
+    nextTodaySessions: ClimateSession[],
+    overrideVmcToday?: boolean
+  ) {
+    let nextCfg: ClimateAutopilotConfig | null = null;
+    if (nextTodaySessions.length > 0) {
+      const primary = nextTodaySessions[0];
+      const slots = getDayEffectiveSlots(nextTodaySessions);
+      const firstSlot = slots[0] || { startTime: primary.startTime, endTime: primary.endTime };
+      const lastSlot = slots[slots.length - 1] || firstSlot;
+      const mergedRooms = Array.from(new Set(nextTodaySessions.flatMap((s) => s.rooms)));
+      const effectiveRooms =
+        mergedRooms.length > 0
+          ? mergedRooms
+          : climateAutopilot?.rooms?.length
+            ? climateAutopilot.rooms
+            : (['salone', 'roberta', 'matrimoniale', 'maurizio'] as RoomId[]);
+      const resolvedVmc =
+        typeof overrideVmcToday === 'boolean'
+          ? overrideVmcToday
+          : Boolean(vmcDaysMap.get(todayIso) || nextTodaySessions.some((s) => s.vmcMax));
+      const cleanNote = primary.notes?.replace(/^Auto\s*·\s*/i, '').trim();
+      const startDate =
+        climateAutopilot?.active && climateAutopilot.startDate <= todayIso
+          ? climateAutopilot.startDate
+          : todayIso;
+      nextCfg = {
+        active: true,
+        mode: primary.mode,
+        startTime: firstSlot.startTime,
+        endTime: lastSlot.endTime,
+        timeSlots: slots,
+        vmcMax: resolvedVmc,
+        targetTemp: primary.targetTemp,
+        rooms: effectiveRooms,
+        startDate,
+        lastAppliedDate: todayIso,
+        notes:
+          cleanNote && cleanNote !== 'Combinazione automatica giornaliera'
+            ? cleanNote
+            : climateAutopilot?.notes,
+      };
+    } else if (climateAutopilot?.active) {
+      nextCfg = {
+        ...climateAutopilot,
+        active: false,
+        lastAppliedDate: addDaysIso(todayIso, -1),
+      };
+    }
+
+    if (!nextCfg) return null;
+
+    const artPayload = climateAutopilotToArticlePayload(nextCfg);
+    const statePayload: Record<string, unknown> = {
+      ownerId: uid,
+      name: artPayload.name.slice(0, 80),
+      brand: artPayload.brand.slice(0, 60),
+      model: artPayload.model.slice(0, 80),
+      category: artPayload.category,
+      room: artPayload.room.slice(0, 60),
+      familyWarranty: Boolean(nextCfg.active),
+      createdAt: serverTimestamp(),
+    };
+    if (artPayload.purchaseDate) statePayload.purchaseDate = artPayload.purchaseDate.slice(0, 20);
+    if (artPayload.warrantyEnd) statePayload.warrantyEnd = artPayload.warrantyEnd.slice(0, 20);
+    if (artPayload.serialNumber) statePayload.serialNumber = artPayload.serialNumber.slice(0, 80);
+    if (artPayload.specs) statePayload.specs = artPayload.specs.slice(0, 240);
+    if (artPayload.notes) statePayload.notes = artPayload.notes.slice(0, 240);
+
+    const slotsKey = getAutopilotSlots(nextCfg).map(formatTimeSlotString).join(',');
+    return {
+      cfg: nextCfg,
+      artPayload,
+      statePayload,
+      statePath: `users/${uid}/homeArticles/${CLIMATE_AUTOPILOT_DOC_ID}`,
+      syncKey: `${uid}:${todayIso}:${nextCfg.startDate}:0:${nextCfg.mode}:${slotsKey}:${
+        nextCfg.vmcMax ? 1 : 0
+      }:${nextCfg.targetTemp}`,
+    };
+  }
+
   async function handleAddClimateLog(
     session: Omit<ClimateSession, 'id' | 'ownerId'>
   ) {
@@ -2798,6 +2880,20 @@ export default function App() {
     const shouldWriteVmc =
       typeof session.vmcMax === 'boolean' && desiredVmc !== currentVmcEnabled;
 
+    const newSessionObj: ClimateSession = {
+      id: docId,
+      ownerId: user.uid,
+      ...session,
+    };
+    const coupled =
+      session.date === todayIso
+        ? buildCoupledAutopilotUpdate(
+            user.uid,
+            [...climateLogs.filter((l) => l.date === todayIso), newSessionObj],
+            typeof session.vmcMax === 'boolean' ? desiredVmc : undefined
+          )
+        : null;
+
     try {
       setSimulatedOpDetailHint(`${basePath}/${docId}`, {
         title: `${session.mode} · ${session.date}`,
@@ -2810,15 +2906,21 @@ export default function App() {
         ],
       });
 
-      if (shouldWriteVmc) {
+      if (shouldWriteVmc || coupled) {
         const batch = writeBatch(db);
         batch.set(doc(db, basePath, docId), payload);
-        batch.set(doc(db, vmcDocPath), {
-          ownerId: user.uid,
-          date: session.date,
-          enabled: desiredVmc,
-          createdAt: serverTimestamp(),
-        });
+        if (shouldWriteVmc) {
+          batch.set(doc(db, vmcDocPath), {
+            ownerId: user.uid,
+            date: session.date,
+            enabled: desiredVmc,
+            createdAt: serverTimestamp(),
+          });
+        }
+        if (coupled) {
+          lastAutopilotSyncKeyRef.current = coupled.syncKey;
+          batch.set(doc(db, coupled.statePath), coupled.statePayload);
+        }
         await batch.commit();
       } else {
         await setDoc(doc(db, basePath, docId), payload);
@@ -2826,16 +2928,7 @@ export default function App() {
 
       if (isFirestoreWritesDisabled()) {
         setClimateLogs((prev) =>
-          prev.some((l) => l.id === docId)
-            ? prev
-            : [
-                ...prev,
-                {
-                  id: docId,
-                  ownerId: user.uid,
-                  ...session,
-                },
-              ]
+          prev.some((l) => l.id === docId) ? prev : [...prev, newSessionObj]
         );
         if (shouldWriteVmc) {
           setVmcDays((prev) => {
@@ -2843,6 +2936,15 @@ export default function App() {
             return [
               ...filtered,
               { id: vmcDocId, ownerId: user.uid, date: session.date, enabled: desiredVmc },
+            ];
+          });
+        }
+        if (coupled) {
+          setHomeArticles((prev) => {
+            const rest = prev.filter((a) => a.id !== CLIMATE_AUTOPILOT_DOC_ID);
+            return [
+              ...rest,
+              { ...coupled.artPayload, id: CLIMATE_AUTOPILOT_DOC_ID, familyWarranty: coupled.cfg.active },
             ];
           });
         }
@@ -2902,6 +3004,25 @@ export default function App() {
     const shouldWriteVmc =
       typeof session.vmcMax === 'boolean' && desiredVmc !== currentVmcEnabled;
 
+    const touchesToday = session.date === todayIso || prevLog?.date === todayIso;
+    const nextTodaySessions = touchesToday
+      ? [
+          ...climateLogs.filter((l) => l.id !== id && l.date === todayIso),
+          ...(session.date === todayIso
+            ? [{ id, ownerId: user.uid, ...session }]
+            : []),
+        ]
+      : [];
+    const coupled = touchesToday
+      ? buildCoupledAutopilotUpdate(
+          user.uid,
+          nextTodaySessions,
+          session.date === todayIso && typeof session.vmcMax === 'boolean'
+            ? desiredVmc
+            : undefined
+        )
+      : null;
+
     try {
       setSimulatedOpDetailHint(path, {
         title: `${session.mode} · ${session.date}`,
@@ -2910,15 +3031,21 @@ export default function App() {
         changedDetails: climateDetails.length > 0 ? climateDetails : undefined,
       });
 
-      if (shouldWriteVmc) {
+      if (shouldWriteVmc || coupled) {
         const batch = writeBatch(db);
         batch.set(doc(db, path), payload, { merge: true });
-        batch.set(doc(db, vmcDocPath), {
-          ownerId: user.uid,
-          date: session.date,
-          enabled: desiredVmc,
-          createdAt: serverTimestamp(),
-        });
+        if (shouldWriteVmc) {
+          batch.set(doc(db, vmcDocPath), {
+            ownerId: user.uid,
+            date: session.date,
+            enabled: desiredVmc,
+            createdAt: serverTimestamp(),
+          });
+        }
+        if (coupled) {
+          lastAutopilotSyncKeyRef.current = coupled.syncKey;
+          batch.set(doc(db, coupled.statePath), coupled.statePayload);
+        }
         await batch.commit();
       } else {
         await setDoc(doc(db, path), payload, { merge: true });
@@ -2934,6 +3061,15 @@ export default function App() {
             return [
               ...filtered,
               { id: vmcDocId, ownerId: user.uid, date: session.date, enabled: desiredVmc },
+            ];
+          });
+        }
+        if (coupled) {
+          setHomeArticles((prev) => {
+            const rest = prev.filter((a) => a.id !== CLIMATE_AUTOPILOT_DOC_ID);
+            return [
+              ...rest,
+              { ...coupled.artPayload, id: CLIMATE_AUTOPILOT_DOC_ID, familyWarranty: coupled.cfg.active },
             ];
           });
         }
@@ -2981,8 +3117,13 @@ export default function App() {
         Boolean(currentVmcEntry.enabled) !== baseVmcEnabled
     );
 
+    const touchesToday = existingLog?.date === todayIso;
+    const coupled = touchesToday
+      ? buildCoupledAutopilotUpdate(user.uid, otherLogsOnDate)
+      : null;
+
     try {
-      if (shouldDeleteLocalVmc || shouldRestoreBaseVmc) {
+      if (shouldDeleteLocalVmc || shouldRestoreBaseVmc || coupled) {
         const batch = writeBatch(db);
         batch.delete(doc(db, path));
         if (shouldDeleteLocalVmc) {
@@ -2994,6 +3135,10 @@ export default function App() {
             enabled: baseVmcEnabled,
             createdAt: serverTimestamp(),
           });
+        }
+        if (coupled) {
+          lastAutopilotSyncKeyRef.current = coupled.syncKey;
+          batch.set(doc(db, coupled.statePath), coupled.statePayload);
         }
         await batch.commit();
       } else {
@@ -3011,6 +3156,15 @@ export default function App() {
             )
           );
         }
+        if (coupled) {
+          setHomeArticles((prev) => {
+            const rest = prev.filter((a) => a.id !== CLIMATE_AUTOPILOT_DOC_ID);
+            return [
+              ...rest,
+              { ...coupled.artPayload, id: CLIMATE_AUTOPILOT_DOC_ID, familyWarranty: coupled.cfg.active },
+            ];
+          });
+        }
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
@@ -3024,6 +3178,16 @@ export default function App() {
     );
     if (validDates.length === 0) return;
     const vmcPath = `users/${user.uid}/vmcDays`;
+    const todayLogsUpdated = validDates.includes(todayIso)
+      ? climateLogs
+          .filter((l) => l.date === todayIso)
+          .map((l) => ({ ...l, vmcMax: Boolean(enabled) }))
+      : [];
+    const coupled =
+      todayLogsUpdated.length > 0
+        ? buildCoupledAutopilotUpdate(user.uid, todayLogsUpdated, Boolean(enabled))
+        : null;
+
     try {
       const batch = writeBatch(db);
       for (const dateIso of validDates) {
@@ -3042,6 +3206,10 @@ export default function App() {
           );
         }
       }
+      if (coupled) {
+        lastAutopilotSyncKeyRef.current = coupled.syncKey;
+        batch.set(doc(db, coupled.statePath), coupled.statePayload);
+      }
       await batch.commit();
       if (isFirestoreWritesDisabled()) {
         const dateSet = new Set(validDates);
@@ -3058,6 +3226,15 @@ export default function App() {
         setClimateLogs((prev) =>
           prev.map((l) => (dateSet.has(l.date) ? { ...l, vmcMax: Boolean(enabled) } : l))
         );
+        if (coupled) {
+          setHomeArticles((prev) => {
+            const rest = prev.filter((a) => a.id !== CLIMATE_AUTOPILOT_DOC_ID);
+            return [
+              ...rest,
+              { ...coupled.artPayload, id: CLIMATE_AUTOPILOT_DOC_ID, familyWarranty: coupled.cfg.active },
+            ];
+          });
+        }
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, vmcPath);
@@ -3067,7 +3244,7 @@ export default function App() {
   async function handleAddProductResearch(
     item: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'>
   ): Promise<string> {
-    if (!user) throw new Error('Accedi con Google per salvare le ricerche.');
+    if (!user) throw new Error('Accedi con Google per salvare i prodotti.');
     const urlTrim = item.url.trim().slice(0, 1000);
     if (!/^https?:\/\/.+/.test(urlTrim)) {
       throw new Error('Link non valido: deve iniziare con http:// o https://.');
@@ -3864,6 +4041,51 @@ export default function App() {
     }
   }
 
+  async function handleDeleteWaterBill(bill: WaterBillRecord) {
+    if (!user) return;
+    const fileKey = bill.pdfFileKey || getWaterBillFileKey(bill.invoiceNumber);
+    if (isFirestoreWritesDisabled()) {
+      await deleteVaultFile(fileKey, user.uid);
+      setWaterBills((prev) =>
+        prev.filter((b) => b.id !== bill.id && b.invoiceNumber !== bill.invoiceNumber)
+      );
+      return;
+    }
+
+    const basePath = `users/${user.uid}/waterBills`;
+    const billsSnap = await getDocs(
+      query(collection(db, basePath), where('ownerId', '==', user.uid))
+    );
+    const matchingDocs = billsSnap.docs.filter(
+      (billDoc) =>
+        billDoc.id === bill.id ||
+        String(billDoc.data().invoiceNumber || '') === bill.invoiceNumber
+    );
+    if (matchingDocs.length === 0) {
+      throw new Error('La bolletta acqua non è stata trovata nell’archivio Firebase.');
+    }
+
+    const fileMetaRef = doc(db, `users/${user.uid}/vaultFiles`, fileKey);
+    const fileMetaSnap = await getDoc(fileMetaRef);
+    const batch = writeBatch(db);
+    for (const billDoc of matchingDocs) batch.delete(billDoc.ref);
+
+    if (fileMetaSnap.exists()) {
+      const chunkCount = Math.min(16, Math.max(0, Number(fileMetaSnap.data()?.chunkCount || 0)));
+      batch.delete(fileMetaRef);
+      for (let i = 0; i < chunkCount; i++) {
+        batch.delete(doc(db, `users/${user.uid}/vaultFileChunks`, `${fileKey}_chunk_${i}`));
+      }
+    }
+
+    try {
+      await batch.commit();
+      await deleteVaultFile(fileKey, user.uid);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `${basePath}/${fileKey}`);
+    }
+  }
+
   async function handleAddTariBill(bill: Omit<TariBillRecord, 'id'>, pdfFile?: File) {
     if (!user) throw new Error('È necessario autenticarsi per importare bollette.');
     if (!pdfFile) throw new Error('Per registrare una bolletta è necessario caricare il PDF originale.');
@@ -4256,6 +4478,9 @@ export default function App() {
     if (articlePayload.serialNumber) payload.serialNumber = articlePayload.serialNumber.slice(0, 80);
     if (articlePayload.specs) payload.specs = articlePayload.specs.slice(0, 240);
     if (articlePayload.notes) payload.notes = articlePayload.notes.slice(0, 240);
+    if (articlePayload.manualExtractText?.trim()) {
+      payload.manualExtractText = articlePayload.manualExtractText.trim().slice(0, 12_000);
+    }
 
     try {
       await setDoc(doc(db, basePath, docId), payload);
@@ -4306,18 +4531,20 @@ export default function App() {
     docType: ArticleAttachmentType,
     title: string,
     provider: string,
-    file: File
+    file: File,
+    cloudUrl?: string
   ) {
     const todayIt = new Date().toLocaleDateString('it-IT');
     await handleUploadLinkedDocument(
       {
         title: title.slice(0, 80),
         category: docType === 'garanzia_extra_family' ? 'Assicurazioni' : 'Altro',
-        provider: (provider || 'Ricerche').slice(0, 80),
+        provider: (provider || 'Prodotti').slice(0, 80),
         referenceCode: buildResearchDocumentRef(researchId, docType),
         issueDate: todayIt,
         pinned: docType === 'scontrino_fattura' || docType === 'garanzia_extra_family',
-        notes: `File allegato a prodotto ricercato (${docType})`,
+        cloudUrl: cloudUrl?.trim() || undefined,
+        notes: `File allegato a prodotto (${docType})`,
       },
       file
     );
@@ -4335,7 +4562,7 @@ export default function App() {
     await handleAddDocument({
       title: title.slice(0, 80),
       category: docType === 'garanzia_extra_family' ? 'Assicurazioni' : 'Altro',
-      provider: (provider || 'Ricerche').slice(0, 80),
+      provider: (provider || 'Prodotti').slice(0, 80),
       referenceCode: buildResearchDocumentRef(researchId, docType),
       issueDate: todayIt,
       pinned: docType === 'scontrino_fattura' || docType === 'garanzia_extra_family',
@@ -5813,6 +6040,7 @@ export default function App() {
               onDeleteElectricityBill={handleDeleteElectricityBill}
               onClearAllBills={handleClearAllBills}
               onAddWaterBill={handleAddWaterBill}
+              onDeleteWaterBill={handleDeleteWaterBill}
               onAddTariBill={handleAddTariBill}
               onToggleTariPaid={handleToggleTariPaid}
               onDeleteTariBill={handleDeleteTariBill}
@@ -5938,6 +6166,10 @@ export default function App() {
               electricityBills={electricityBills}
               waterBills={waterBills}
               tariBills={tariBills}
+              gsePayments={gsePayments}
+              articles={visibleHomeArticles}
+              researches={productResearches}
+              carPlate={carProfile.plate}
               readOnly={!canEdit}
               isGmailConnected={Boolean(gmailToken)}
               onSignIn={handleSignIn}
@@ -5945,6 +6177,14 @@ export default function App() {
               onAddDocument={handleAddDocument}
               onUpdateDocument={handleUpdateDocument}
               onDeleteDocument={handleDeleteLinkedDocument}
+              onUploadLinkedDocument={handleUploadLinkedDocument}
+              onAddElectricityBill={handleAddElectricityBill}
+              onAddWaterBill={handleAddWaterBill}
+              onAddTariBill={handleAddTariBill}
+              onDeleteElectricityBill={handleDeleteElectricityBill}
+              onDeleteWaterBill={handleDeleteWaterBill}
+              onDeleteTariBill={handleDeleteTariBill}
+              onDeleteGsePayment={handleDeleteGsePayment}
             />
           )}
 

@@ -1,27 +1,35 @@
 # my-home — Istruzioni Tecniche & Passaggio di Consegne AI
 
-> **Scopo di questo file:** fornire a qualsiasi AI (Claude, ChatGPT, Gemini, Cursor, ecc.) tutto il contesto architetturale, le regole di sicurezza, le scorciatoie anti-spreco e la mappa dei file del progetto **my-home**, così da poter riprendere lo sviluppo subito senza consumare crediti in analisi esplorative inutili.
+> **Ultimo aggiornamento manuale:** `26/11/2026`
+> **Nota:** questo file `.md` **non si auto-genera** automaticamente a ogni modifica dell'app; va mantenuto manualmente quando cambiano architettura, flussi, componenti o API server.
+> **Scopo di questo file:** fornire a qualsiasi AI (Claude, ChatGPT, Gemini, Cursor, ecc.) tutto il contesto architetturale, le regole di sicurezza, le scorciatoie anti-spreco e la mappa completa dei file del progetto **my-home**, così da riprendere lo sviluppo subito senza consumare crediti in esplorazioni inutili.
 
 ---
 
 ## 1. Regole Fondamentali (LEGGERE PRIMA DI TOCCARE QUALSIASI FILE)
 
-1. **ZERO CREDITI AI SU CONSUMI, BOLLETTE E PDF:**
-   - **NON leggere mai** eventuali file binari o PDF in `public/assets/` (sono protetti in `.aiignore`).
-   - **NON usare mai** chiamate a LLM / Gemini API per parsare CSV e-distribuzione, bollette Edison/Acegas/TARI o allegati PDF. Il parsing è al 100% locale e deterministico lato browser (`pdfjs-dist`, `jszip`, regex) e lato Python (`scripts/sync_edistribuzione.py`).
-   - La ricerca articoli usa le API pubbliche di Wikipedia e Wikimedia Commons dal browser (`src/utils/freeArticleSearch.ts`): nessuna chiave, Function o chiamata Gemini. Immagini e relative attribuzioni rimandano alle pagine Commons; i risultati dipendono dalla copertura dei cataloghi aperti.
+1. **ZERO CREDITI AI SU CONSUMI & BOLLETTE PDF STANDARD:**
+   - **NON leggere mai** eventuali file binari o PDF in `public/assets/` (protetti in `.aiignore`).
+   - Il parsing dei CSV/ZIP e-distribuzione (`src/utils/edistribuzioneCsv.ts`) e delle bollette PDF Edison / Octopus / Acegas Acqua / TARI (`src/utils/billImporter.ts`) è **100% locale e deterministico** nel browser (`pdfjs-dist`, `jszip`, regex), a **0 crediti AI**.
+   - **Smart Import Documenti:** `DocumentsView.tsx` prova sempre prima `extractPdfTextFromBytes` + `parseBillText` in locale (`0` chiamate server/AI); invoca `POST /api/documents/classify` (`server.ts`, modello `gemini-4-hydrogen` con fallback deterministico locale) solo per documenti generici, scansioni/immagini o PDF ambigui.
+   - La ricerca articoli / dettagli prodotto passa da `server.ts` (`/api/articles/search`, `/api/articles/manual`, `/api/researches/extract`, `/api/documents/download`) con `src/utils/freeArticleSearch.ts` per i fallback gratuiti Wikimedia/Wikipedia.
 
 2. **PROGETTO FIREBASE UNIFICATO (`gen-lang-client-0721850501`):**
    - `src/firebase.ts` usa **un solo progetto Firebase principale** letto da `firebase-applet-config.json`:
      - `projectId`: `gen-lang-client-0721850501`
      - `firestoreDatabaseId`: `ai-studio-30a168e3-8158-474f-b9f2-f717d7220314`
-     - Qui risiedono **Auth Google + Gmail OAuth (`connectGmailAccount()`) + tutti i dati Firestore + Vault PDF + `FIREBASE_SERVICE_ACCOUNT`** usato dai bot GitHub Actions 24/7.
+     - Qui risiedono **Auth Google + Gmail OAuth (`connectGmailAccount()`) + tutti i dati Firestore + Vault PDF**.
    - `getLegacyMigrationFirebase()` in `src/firebase.ts` mantiene un'app lazy secondaria esclusivamente per la migrazione one-click dal vecchio database gestito (`spiritual-bearing-sq7xb`) via `src/utils/legacyMigration.ts`.
-   - **VIETATO:** rimuovere `oAuthClientId` da `firebase-applet-config.json` o rompere la compatibilità delle regole in `firestore.rules` (verifica sempre con `npx eslint firestore.rules`).
+   - **VIETATO:** rimuovere `oAuthClientId` da `firebase-applet-config.json` o modificare `firestore.rules` senza aver verificato le autorizzazioni di deploy del progetto. In `src/firebase.ts` usa sempre i wrapper tracciati (`guardedSetDoc`, `guardedDeleteDoc`, `guardedWriteBatch`, `trackedGetDoc`, `trackedGetDocs`, `trackedOnSnapshot`).
 
-3. **LINGUA, VINCOLI UI & AMBIENTE:**
-   - L'interfaccia è interamente in **italiano**, tema dark (`slate-950` / `slate-900` / accenti `sky` / `emerald` / `amber`), Tailwind CSS v4 (`@import "tailwindcss";` in `src/index.css`).
-   - **NON usare** `window.alert`, `window.confirm` o `window.open` (l'app può girare in iframe; usa modali React custom o link `<a target="_blank">`).
+3. **MODALITÀ TEST BROWSER & QUOTA FIRESTORE (`src/firebase.ts`, `SettingsView.tsx`):**
+   - L'app supporta la **Modalità Test Browser (`firestoreWritesDisabled`)**: quando attiva, tutte le scritture/eliminazioni dati (articoli, ricerche, bollette, domotica, documenti, spesa, macchina, Vault) vengono simulate in locale con **0 scritture Firestore** e messe in coda (`localStorage`) con anteprima diff/dettagli e flush batch su conferma.
+   - Le preferenze utente (`src/utils/appSettings.ts`, salvate in `users/{uid}/homeArticles/app_settings_state`) bypassano intenzionalmente il blocco Test Mode solo quando un valore cambia davvero (`1` scrittura Firestore, `0` letture).
+   - Il tracker giornaliero in `src/firebase.ts` (`myhome_firestore_daily_usage_v1`, storico 30 giorni in `SettingsView.tsx`) registra scritture, eliminazioni, scritture impostazioni, letture reali (esclusa cache offline Firestore) e operazioni risparmiate in Modalità Test rispetto ai limiti giornalieri gratuiti Spark (`20.000` scritture+eliminazioni/giorno, `50.000` letture/giorno).
+
+4. **LINGUA, TEMA & VINCOLI UI / AMBIENTE:**
+   - L'interfaccia è interamente in **italiano**, supporta **Dark Mode** (predefinita) e **Light Mode** + 5 palette accento dinamiche CSS (`sky`, `amber`, `emerald`, `teal`, `indigo` in `src/index.css` via variabili `--brand-*`), più densità compatta/normale e sidebar espandibile.
+   - **NON usare** `window.alert`, `window.confirm` o `window.open` (usa modali React custom o link/ancore `<a target="_blank" rel="noreferrer">`, es. `openVaultFileInNewTab`).
    - **NON cancellare** funzionalità esistenti né sostituire dati reali con dati finti.
 
 ---
@@ -33,81 +41,77 @@
 - **Proprietario:** `mauminieri@gmail.com` (`appMeta/owner` memorizza dinamicamente l'`ownerUid` su `gen-lang-client-0721850501`).
 - **POD Luce:** `IT001E11251419` (6,0 kW impegnati; tariffa di riferimento Octopus Fissa 24M `0,1595 €/kWh` o config personalizzata in `homeConfig`).
 - **Impianto Clima:** Pompa di calore / centrale **Ariston NET** + termostati di zona **Rehau Nea Smart 2.0** (zone: `salone`, `roberta`, `bagno1`, `matrimoniale`, `bagno2`, `maurizio`) + **VMC**.
+- **Accoppiamento Riquadro Oggi ↔ Banner Autopilot (`src/App.tsx`):** modificare, aggiungere, incollare o eliminare sessioni NeaSmart nella data di oggi (`todayIso`) aggiorna automaticamente e atomicamente anche `CLIMATE_AUTOPILOT_DOC_ID` (`climate_autopilot_state`), mantenendo allineati il banner *Impianto Acceso* e la copia automatica giornaliera.
 - **Veicolo principale:** Fiat Panda targa **`EA218ES`**.
 - **Supermercati confrontati nella Spesa:** `IN'S`, `MD`, `CONAD`.
-- **Stack:** React 19, TypeScript, Vite 8 (`base: '/my-home/'` quando `GITHUB_PAGES=true`), Express (`server.ts`, porta `3000`), Recharts, Lucide Icons, Firebase v13, `pdfjs-dist`, `jszip`.
+- **Stack:** React 19, TypeScript, Vite 8 (`base: '/my-home/'` quando `GITHUB_PAGES=true`), Express (`server.ts`, porta `3000`), `@google/genai` (solo server-side), Recharts, Lucide Icons, Firebase v13, `pdfjs-dist`, `jszip`.
 
 ---
 
-## 3. Flusso Consumi & Bollette (GitHub Actions ➔ Firestore Diretto)
+## 3. Flusso Consumi & Bollette (Google Apps Script 24/7 + Sync Gmail Browser + Smart Import)
 
-1. **GitHub Actions 24/7 (`.github/workflows/sync-edistribuzione.yml`):**
-   - Schedulato ogni 10 minuti (`cron: '*/10 * * * *'`, tempi reali ~10–30 min in base alla coda GitHub) o avviabile manualmente (`workflow_dispatch`).
-   - Esegue `scripts/sync_edistribuzione.py`:
-     - Legge via IMAP Gmail (`secrets.GMAIL_USER` + `secrets.GMAIL_APP_PASSWORD`) **solo la INBOX** (ignorando il Cestino).
-     - Estrae CSV/ZIP di e-distribuzione, bollette PDF Edison Luce, bollette PDF Acegas Acqua e avvisi PDF TARI.
-     - Scrive **direttamente su Firestore** tramite `firebase-admin` usando `secrets.FIREBASE_SERVICE_ACCOUNT` (sia i documenti strutturati che i PDF originali in `vaultFiles`/`vaultFileChunks`), risolvendo `ownerUid` da `appMeta/owner` o `auth.get_user_by_email('mauminieri@gmail.com')` e leggendo la tariffa reale da `homeConfig/main`.
-     - Sposta nel Cestino Gmail solo le email elaborate e salvate con successo.
-   - Esegue inoltre `scripts/check_octopus_tariff.py` (in cron dedicato alle 23:45 UTC) che salva il confronto tariffe mercato su Firestore (`appMeta/octopusTariff`).
-   - *Nota su GitHub Actions:* GitHub sospende i workflow `schedule` dopo 60 giorni senza commit umani su `main`.
+1. **Google Apps Script 24/7 (esterno al repo):**
+   - Esegue automaticamente il controllo INBOX Gmail per le curve di carico **e-distribuzione** (`from:notifichemailped@enel.com` / `e-distribuzione`, soggetto `curve di carico`) salvando i consumi giornalieri su Firestore e spostando nel Cestino solo le email curve di carico già importate.
 2. **Lettura nell'App React (`src/App.tsx`):**
-   - Quando l'utente è autenticato (`user?.uid`), sottoscrive in tempo reale tutte le subcollection sotto `users/{uid}/...` e `appMeta/octopusTariff`, salvando i dati in cache `localStorage` (`myhome_readings_cache_last`) per visualizzazione offline/sloggata senza errori di permessi.
+   - Quando l'utente è autenticato (`user?.uid`), sottoscrive in tempo reale con `trackedOnSnapshot` tutte le subcollection sotto `users/{uid}/...` e `appMeta/octopusTariff`, salvando i dati in cache `localStorage` (`myhome_readings_cache_last`, ecc.) per consultazione offline/sloggata.
    - Supporta la migrazione one-click dal vecchio database (`spiritual-bearing-sq7xb`) via `src/utils/legacyMigration.ts`.
 3. **Sync Gmail Istantaneo dal Browser (`src/utils/gmailSync.ts`):**
-   - Pulsante nella barra in alto (**"Collega Gmail"** / **"Sincronizza Gmail"**) visibile quando loggati: scansiona la INBOX via Gmail REST API e importa subito letture/bollette/PDF su Firestore senza attendere la coda GitHub Actions.
+   - Pulsante **"Collega Gmail"** / **"Sincronizza Gmail"** visibile da loggati: scansiona la sola **INBOX** (mai Cestino/Spam) per estrarre bollette PDF **Edison/Octopus Luce**, **Acegas Acqua**, **TARI** e curve e-distribuzione, archiviando i PDF nel Vault Firestore e lasciando intatte in INBOX le email delle bollette.
+4. **Monitoraggio Tariffe (`scripts/check_octopus_tariff.py`):**
+   - Salva il confronto tariffe mercato su `appMeta/octopusTariff` (letto in `BillsView.tsx`).
 
 ---
 
-## 4. Schema Firestore & Regole di Sicurezza (`firestore.rules`)
+## 4. Schema Firestore & Architettura `homeArticles` / `vaultFiles`
 
-**ATTENZIONE:** ogni collection in `firestore.rules` ha controlli rigidi con `hasAll([...])` e `hasOnly([...])` oltre ai range numerici e lunghezze stringa. Controlla sempre `firestore.rules` e `firebase-blueprint.json` prima di aggiungere un campo, e valida con `npx eslint firestore.rules`.
-
-- `appMeta/owner` (`{ ownerUid, updatedAt }`): letta solo da autenticati; scritta solo se `ownerUid == request.auth.uid`.
-- `appMeta/octopusTariff`: letta solo da autenticati; aggiornata via Admin SDK dal bot Python.
-- `users/{userId}/energyReadings/{day_YYYYMMDD}`
-  - Campi: `ownerId`, `date` (`YYYY-MM-DD`), `f1Kwh`..`f3Kwh` (`0..500`), `totalKwh` (`0..1500`), `peakKw` (`0..50`), `estimatedCostEur` (`0..1000`), `source` (`'e-distribuzione-csv' | 'e-distribuzione-api' | 'manuale'`), `notes?` (max 240), `createdAt` (`serverTimestamp()`).
-- `users/{userId}/homeConfig/main`
-- `users/{userId}/climateLogs/{logId}` (inclusi gli ID `auto_YYYYMMDD` dell'Autopilot Clima).
-- `users/{userId}/electricityBills/{billId}`, `waterBills/{billId}`, `tariBills/{billId}`, `gsePayments/{paymentId}`.
-- `users/{userId}/homeArticles/{articleId}`:
-  - Oltre agli articoli di casa per stanza (`Cucina`, `Salone`, `Stanza Maurizio`, `Stanza Roberta`, ecc.), usa `room` di sistema speciali:
-    - `__macchina__` -> Profilo Fiat Panda `EA218ES` (`car_profile_main`) + storico spese/manutenzioni (`src/utils/carGroceryStore.ts`)
-    - `__spesa__` -> Catalogo prodotti alimentari e prezzi IN'S / MD / CONAD (`src/utils/carGroceryStore.ts`)
-    - `__documenti__` -> Documenti utili casa (mutuo, Wi-Fi WindTre, contratti, ecc.) (`src/utils/documentVault.ts`)
-    - `__clima_autopilot__` -> Stato attivo/spento e combinazione dell'Autopilot Clima (`climate_autopilot_main`, `src/utils/climateAutopilot.ts`)
-    - `__migrazione__` -> Marker completamento migrazione dal vecchio DB (`db_migration_gen_lang_done`, `src/utils/legacyMigration.ts`)
-- `users/{userId}/vaultFiles/{fileKey}` e `users/{userId}/vaultFileChunks/{fileKey}_chunk_{i}`:
-  - Archiviazione binaria cross-device su Firestore in chunk Base64 (`<= 6 MB` per file, max 16 chunk da `600_000` caratteri) + cache locale IndexedDB (`myhome_vault_files_v1`).
+Tutte le subcollection principali sotto `users/{userId}/`:
+- `appMeta/owner` & `appMeta/octopusTariff`
+- `energyReadings/{day_YYYYMMDD}` (`ownerId`, `date`, `f1Kwh`..`f3Kwh`, `totalKwh`, `peakKw`, `estimatedCostEur`, `source`, `notes?`, `createdAt`)
+- `homeConfig/main`
+- `climateLogs/{logId}` (`auto_YYYYMMDD` per Autopilot Clima, `log_YYYYMMDD_*` per inserimenti manuali) + `vmcDays/{vmc_YYYYMMDD}`
+- `electricityBills/{billId}`, `waterBills/{billId}`, `tariBills/{billId}`, `gsePayments/{paymentId}`
+- `homeArticles/{articleId}`: oltre agli articoli delle stanze reali e alle ricerche (`room: '__ricerche__'`), usa `room` di sistema speciali:
+  - `__macchina__` -> Profilo Fiat Panda `EA218ES` (`car_profile_main`), polizza (`car_policy_main`) e storico interventi (`src/utils/carGroceryStore.ts`)
+  - `__spesa__` / `__spesa_meta__` -> Catalogo prodotti e prezzi `IN'S` / `MD` / `CONAD` (`src/utils/carGroceryStore.ts`)
+  - `__documenti__` -> Archivio documenti casa + documenti collegati via `referenceCode` (`ART:...`, `RES:...`, `AUTO:...`) (`src/utils/documentVault.ts`)
+  - `__clima_auto__` -> Stato attivo/spento e combinazione di Autopilot Clima (`climate_autopilot_state`, `src/utils/climateAutopilot.ts`)
+  - `__app_settings__` -> Preferenze tema/accento/UI/Test Mode sincronizzate su cloud (`app_settings_state`, `src/utils/appSettings.ts`)
+  - `__migrazione__` -> Marker completamento migrazione dal vecchio DB (`db_migration_gen_lang_done`)
+- `vaultFiles/{fileKey}` e `vaultFileChunks/{fileKey}_chunk_{i}`:
+  - Archiviazione binaria cross-device su Firestore in chunk Base64 (`<= 6 MB` per file, chunk da `600_000` caratteri) + cache locale IndexedDB (`myhome_vault_files_v1`).
 
 ---
 
 ## 5. Mappa Completa File & Componenti
 
 - **Entry & Shell:**
-  - `src/App.tsx`: auth, sottoscrizioni Firestore con fallback cache locale, migrazione one-click legacy DB, Autopilot Clima giornaliero automatico, stato sync Gmail, navigazione sidebar 9 sezioni.
-  - `server.ts`: server Express porta 3000 (dev con `vite.middlewares`, prod serve `dist/`) + endpoint `/api/articles/search` e `/api/articles/manual`.
+  - `src/App.tsx`: auth Google + Gmail, sottoscrizioni Firestore tracciate con cache locale, migrazione legacy DB, accoppiamento bidirezionale NeaSmart oggi ↔ Autopilot Clima, coda Test Mode, navigazione sidebar 11 sezioni.
+  - `server.ts`: server Express porta `3000` (dev con `vite.middlewares`, prod serve `dist/`) + API `/api/articles/search`, `/api/articles/manual`, `/api/researches/extract` (estrazione URL multi-piattaforma + varianti/immagini/documenti PDF), `/api/researches/fetch-document` (proxy download allegati/PDF con fallback TLS & Wayback), `/api/documents/inspect-link` (estrazione sicura metadati pagina web) e `/api/documents/classify` (classificazione automatica documenti/bollette e abbinamento prodotti con `gemini-4-hydrogen` + fallback deterministico).
 - **Viste Principali (`src/components/`):**
   - `OverviewView.tsx` (`panoramica`): KPI annuali, riepilogo FV/GSE e stato impianto.
-  - `EnergyDatabaseView.tsx` (`consumi`): matrice annuale 12 mesi x 31 giorni + barre mensili + classifica combinazioni NeaSmart + Autopilot Clima (`ClimateAutopilotCard.tsx`) + dettaglio giornaliero con copia/incolla combinazioni (`Ctrl+C`/`Ctrl+V`, selezione multipla trascinando).
-  - `DomoticsView.tsx` (`domotica`): impostazioni Ariston NET / Rehau Nea Smart 2.0, tariffa €/kWh, POD, log clima.
-  - `BillsView.tsx` (`bollette`): bollette Luce (Edison), Acqua (Acegas), TARI, pagamenti GSE, monitor tariffe mercato; importazione PDF locale zero-crediti (`BillImportModal.tsx`), download PDF originale e condivisione (`ShareSheetModal.tsx`).
-  - `ArticlesView.tsx` (`articoli`): inventario casa per stanze, ricerca online, schede e manuali esportabili (`src/utils/articleCatalog.ts`, `src/data/articlesSeed.ts`).
-  - `DocumentsView.tsx` (`documenti`): archivio contratti e documenti utili (mutuo, Wi-Fi WindTre, polizze, bollette condivisibili), upload allegati fino a 6 MB su Firestore Vault, download e ShareSheet.
-  - `CarView.tsx` (`macchina`): scheda Fiat Panda `EA218ES` (scadenze bollo/assicurazione/revisione/tagliando, km, interventi).
-  - `GroceryView.tsx` (`spesa`): listino e confronto prezzi tra IN'S, MD, CONAD + lista spesa rapida (pre-popolato a zero crediti da `src/data/grocerySeed.ts` con sync automatico iniziale su Firestore).
-  - `InfoGuideView.tsx` (`info`): guide pratiche Nea Smart 2.0, Ariston NET, VMC, e-distribuzione, flusso diretto GitHub Actions ➔ Firestore + pulsante download di questo file.
-  - `AccessUnlockBanner.tsx` & `VaultCloudNotice.tsx`: banner informativo da sloggati e stato sincronizzazione Cloud PDF.
-- **Script & Workflow:**
-  - `scripts/sync_edistribuzione.py`: sync Gmail IMAP ➔ Firestore diretto (consumi, bollette Luce/Acqua/TARI + PDF Vault) via `firebase-admin`.
-  - `scripts/check_octopus_tariff.py`: monitoraggio tariffe Octopus / mercato su `appMeta/octopusTariff` via `firebase-admin`.
-  - `.github/workflows/sync-edistribuzione.yml` & `.github/workflows/deploy-pages.yml`.
+  - `EnergyDatabaseView.tsx` (`consumi`): matrice annuale 12 mesi × 31 giorni, grafici mensili, classifica combinazioni NeaSmart, `ClimateAutopilotCard.tsx`, copia/incolla e selezione multipla giornaliera.
+  - `DomoticsView.tsx` (`domotica`): impostazioni Ariston NET / Rehau Nea Smart 2.0, tariffa €/kWh, POD, storico clima.
+  - `BillsView.tsx` (`bollette`): vista **Elenco / Griglia**, bollette Luce (+ contratto Octopus), Acqua, TARI, bonifici GSE, monitor tariffe mercato; azioni allegati complete (**Apri in nuova scheda**, **Scarica**, **Condividi**, **Elimina**), import PDF locale zero-crediti (`BillImportModal.tsx`) e `ShareSheetModal.tsx`.
+  - `ArticlesView.tsx` (`articoli`): inventario casa per stanze, ricerca articoli, manuali ed allegati collegati.
+  - `ResearchesView.tsx` (`ricerche`, sezione UI **Prodotti**): gestione prodotti da URL (`extract` + varianti colore/taglia con foto dedicate, documenti/manuali collegati via file o link diretto, vista Elenco/Griglia, passaggio diretto a `Articoli`).
+  - `DocumentsView.tsx` (`documenti`): vista **Elenco / Griglia**, repository unificato di **tutti** i documenti dell'app (Documenti Casa, Articoli, **Prodotti**, Macchina, Bollette Luce/Acqua/TARI e allegati GSE) con tab dedicata `Prodotti`, filtro per origine, azioni allegati (**Apri in nuova scheda**, **Scarica**, **Condividi**, **Modifica**, **Elimina**), **Importa Documenti (Auto)** e **Importa da Link** con riconoscimento automatico dei prodotti e sincronizzazione bidirezionale con `Bollette` e `Prodotti`.
+  - `CarView.tsx` (`macchina`): scheda Fiat Panda `EA218ES`, parser polizza ConTe.it (`src/utils/carInsuranceParser.ts`), scadenze e manutenzioni.
+  - `GroceryView.tsx` (`spesa`): listino e confronto prezzi tra `IN'S`, `MD`, `CONAD` + lista spesa rapida.
+  - `SettingsView.tsx` (`impostazioni`): Modalità Test Browser (coda locale + flush batch), **Quota Giornaliera Firestore & Storico 30 giorni** (incluso conteggio scritture Impostazioni), tema Dark/Light, 5 colori accento, densità, sidebar, pagina iniziale, Gmail e backup JSON.
+  - `InfoGuideView.tsx` (`info`): guide pratiche Nea Smart 2.0, Ariston NET, VMC, e-distribuzione e download di questo file `.md`.
+  - `AccessUnlockBanner.tsx`, `AddReadingModal.tsx`, `ErrorBoundary.tsx`, `SortableHeader.tsx`, `VaultCloudNotice.tsx`.
+- **Utilities (`src/utils/`):**
+  - `appSettings.ts`, `articleCatalog.ts`, `billImporter.ts`, `carGroceryStore.ts`, `carInsuranceParser.ts`, `climateAutopilot.ts`, `climateTime.ts`, `documentVault.ts`, `edistribuzioneCsv.ts`, `freeArticleSearch.ts`, `gmailSync.ts`, `legacyMigration.ts`, `researchHelpers.ts`.
+- **Script & Workflow residui nel repo:**
+  - `scripts/check_octopus_tariff.py`: monitoraggio tariffe su `appMeta/octopusTariff`.
+  - `.github/workflows/deploy-pages.yml` & `.github/workflows/deploy-firestore-rules.yml`.
 
 ---
 
 ## 6. Comandi di Verifica & Sviluppo
 
 ```bash
-npm run dev                  # Avvia server Express + Vite HMR/dev su http://0.0.0.0:3000
+npm run dev                  # Avvia server Express + Vite su http://0.0.0.0:3000
 npm run lint                 # Controllo TypeScript completo (tsc --noEmit)
 npm run build                # Build produzione Vite in dist/
 GITHUB_PAGES=true npm run build  # Build per GitHub Pages con base /my-home/

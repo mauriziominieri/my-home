@@ -332,6 +332,9 @@ export function ClimateAutopilotCard({
               <Repeat className="w-3 h-3 text-sky-600 dark:text-sky-400" />
               Ripetizione automatica giornaliera
             </span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-500/30 rounded-md">
+              Collegato automaticamente al riquadro di oggi
+            </span>
           </div>
 
           {isActive && displayCfg ? (

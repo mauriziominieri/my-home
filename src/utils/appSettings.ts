@@ -167,6 +167,9 @@ export function getAppSettings(): AppSettings {
 
 export function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
   const next = sanitizeSettings({ ...currentSettings, ...patch });
+  if (areSettingsEqual(currentSettings, next)) {
+    return currentSettings;
+  }
   currentSettings = next;
   persistLocalAndApplySideEffects(next);
   cloudSettingsSaver?.(next);

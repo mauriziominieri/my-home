@@ -77,11 +77,16 @@ export function InfoGuideView() {
             <Bot className="w-5 h-5" />
           </div>
           <div className="space-y-1">
-            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              Istruzioni &amp; Passaggio di Consegne per un&apos;altra AI
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                Istruzioni &amp; Passaggio di Consegne per un&apos;altra AI
+              </div>
+              <span className="px-2 py-0.5 text-[10px] font-mono font-semibold rounded bg-sky-100 dark:bg-sky-500/20 text-sky-800 dark:text-sky-200 border border-sky-200 dark:border-sky-500/30">
+                Aggiornate manualmente al 26/11/2026
+              </span>
             </div>
             <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed max-w-3xl">
-              Se finiscono i crediti o cambi assistente AI, scarica questo file <span className="font-mono text-sky-700 dark:text-sky-300">.md</span> e allegalo nella nuova chat: contiene architettura unificata Firebase, schema Firestore/Rules, sync 24/7 con Google Apps Script, regole anti-spreco crediti e mappa completa dei file.
+              Se finiscono i crediti o cambi assistente AI, scarica questo file <span className="font-mono text-sky-700 dark:text-sky-300">.md</span> e allegalo nella nuova chat: contiene architettura unificata Firebase, schema Firestore/Rules, sync 24/7 con Google Apps Script, Modalità Test, tracker quota, regole anti-spreco crediti e mappa completa dei file (viene aggiornato manualmente alle modifiche principali).
             </p>
           </div>
         </div>
