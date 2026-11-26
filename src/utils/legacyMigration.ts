@@ -6,14 +6,15 @@ import {
   getDocs,
   query,
   serverTimestamp,
-  setDoc,
   where,
-  writeBatch,
 } from 'firebase/firestore';
 import {
   auth,
   db,
   getLegacyMigrationFirebase,
+  guardedSetDoc as setDoc,
+  guardedWriteBatch as writeBatch,
+  isFirestoreWritesDisabled,
   LEGACY_OWNER_UID,
 } from '../firebase';
 
@@ -334,6 +335,11 @@ export async function migrateFromLegacyProject(
 ): Promise<MigrationSummary> {
   if (!targetUid) {
     throw new Error('Devi prima accedere con Google sul nuovo progetto.');
+  }
+  if (isFirestoreWritesDisabled()) {
+    throw new Error(
+      'Le scritture su Firestore sono disattivate in Impostazioni (Modalità Test). Riattivale prima di eseguire la migrazione.'
+    );
   }
 
   onProgress?.('Connessione al vecchio database Firebase (spiritual-bearing-sq7xb)...');

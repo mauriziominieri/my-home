@@ -375,15 +375,15 @@ export function DomoticsView({
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold text-slate-100">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             NeaSmart & Pompa di Calore Ariston
           </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
             Registro accensioni riscaldamento/raffrescamento per le 6 stanze correlato ai consumi reali e-distribuzione.
           </p>
         </div>
         {savedNotice && (
-          <div className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+          <div className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
             <Check className="w-3.5 h-3.5" />
             <span>Impostazioni salvate</span>
           </div>
@@ -413,24 +413,24 @@ export function DomoticsView({
       )}
 
       {/* NeaSmart 6-Room Session Logger */}
-      <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-800">
+      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-5 shadow-xs dark:shadow-none">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-200 dark:border-slate-800">
           <div>
-            <h3 className="text-base font-semibold text-slate-100">
+            <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
               Registro Accensioni NeaSmart (6 Stanze)
             </h3>
-            <p className="text-xs text-slate-400 mt-0.5">
+            <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
               Registra quando accendi riscaldamento o raffrescamento, fascia oraria, temperatura e stanze attive.
             </p>
           </div>
-          <div className="flex items-center gap-1 p-1 bg-slate-950 border border-slate-800 rounded-lg">
+          <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg">
             <button
               type="button"
               onClick={() => setMode('riscaldamento')}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                 mode === 'riscaldamento'
-                  ? 'bg-amber-500 text-slate-950'
-                  : 'text-slate-400 hover:text-slate-100'
+                  ? 'bg-orange-600 text-white dark:bg-orange-500/25 dark:text-orange-200 dark:border dark:border-orange-400/50'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
               }`}
             >
               <Flame className="w-3.5 h-3.5" />
@@ -441,8 +441,8 @@ export function DomoticsView({
               onClick={() => setMode('raffrescamento')}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                 mode === 'raffrescamento'
-                  ? 'bg-sky-400 text-slate-950'
-                  : 'text-slate-400 hover:text-slate-100'
+                  ? 'bg-sky-600 text-white dark:bg-sky-400 dark:text-slate-950'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
               }`}
             >
               <Snowflake className="w-3.5 h-3.5" />
@@ -457,7 +457,7 @@ export function DomoticsView({
         <form onSubmit={handleSaveSession} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-300">
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                 Data
               </label>
               <input
@@ -465,12 +465,12 @@ export function DomoticsView({
                 required
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                className="w-full px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 text-xs font-mono text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-300">
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                 Temperatura (°C)
               </label>
               <input
@@ -481,12 +481,12 @@ export function DomoticsView({
                 required
                 value={targetTemp}
                 onChange={(e) => setTargetTemp(e.target.value)}
-                className="w-full px-3 py-2 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 text-xs font-mono text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-300">
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                 Ventilazione Meccanica (VMC)
               </label>
               <button
@@ -494,8 +494,8 @@ export function DomoticsView({
                 onClick={() => setVmcMax((v) => !v)}
                 className={`w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors ${
                   vmcMax
-                    ? 'bg-fuchsia-500/20 border-fuchsia-400 text-fuchsia-200'
-                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                    ? 'bg-fuchsia-100 dark:bg-fuchsia-500/20 border-fuchsia-400 text-fuchsia-800 dark:text-fuchsia-200'
+                    : 'bg-slate-50 dark:bg-slate-950 border-slate-300 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                 }`}
               >
                 <Wind className="w-3.5 h-3.5" />
@@ -505,9 +505,9 @@ export function DomoticsView({
           </div>
 
           {/* Multi-slot fasce orarie */}
-          <div className="space-y-2 bg-slate-950/60 border border-slate-800 rounded-lg p-3">
+          <div className="space-y-2 bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-lg p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <label className="text-xs font-medium text-slate-300">
+              <label className="text-xs font-medium text-slate-700 dark:text-slate-300">
                 Fasce Orarie (aggiungi più fasce se hai interrotto e riacceso, es. 09:00–12:00 e 15:00–20:00)
               </label>
               <div className="flex items-center gap-2">
@@ -522,8 +522,8 @@ export function DomoticsView({
                   }}
                   className={`text-[10px] px-2 py-1 rounded border font-medium transition-colors ${
                     allDayForm
-                      ? 'bg-sky-500/20 border-sky-400 text-sky-300'
-                      : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                      ? 'bg-sky-100 dark:bg-sky-500/20 border-sky-400 text-sky-700 dark:text-sky-300'
+                      : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
                   {allDayForm ? '✓ 24h Attivo' : 'Tutto il giorno (24h)'}
@@ -532,7 +532,7 @@ export function DomoticsView({
                   <button
                     type="button"
                     onClick={addExtraSlot}
-                    className="inline-flex items-center gap-1 text-[10px] px-2.5 py-1 rounded border bg-sky-500/15 border-sky-400/40 text-sky-300 hover:bg-sky-500/25 font-medium"
+                    className="inline-flex items-center gap-1 text-[10px] px-2.5 py-1 rounded border bg-sky-50 dark:bg-sky-500/15 border-sky-300 dark:border-sky-400/40 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-500/25 font-medium"
                   >
                     <Plus className="w-3 h-3" />
                     Aggiungi fascia
@@ -542,7 +542,7 @@ export function DomoticsView({
             </div>
 
             {allDayForm ? (
-              <div className="w-full px-3 py-2 text-xs font-medium text-sky-300 bg-sky-500/10 border border-sky-500/30 rounded-lg text-center">
+              <div className="w-full px-3 py-2 text-xs font-medium text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/10 border border-sky-200 dark:border-sky-500/30 rounded-lg text-center">
                 Tutto il giorno (24h)
               </div>
             ) : (
@@ -550,7 +550,7 @@ export function DomoticsView({
                 {timeSlots.map((slot, idx) => (
                   <div
                     key={idx}
-                    className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5"
+                    className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5"
                   >
                     <span className="text-[10px] font-mono text-slate-500 shrink-0">
                       #{idx + 1}
@@ -560,7 +560,7 @@ export function DomoticsView({
                       required
                       value={slot.startTime}
                       onChange={(e) => updateSlot(idx, { startTime: e.target.value })}
-                      className="flex-1 min-w-0 px-1.5 py-1 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                      className="flex-1 min-w-0 px-1.5 py-1 text-xs font-mono text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                     />
                     <span className="text-slate-500">→</span>
                     <input
@@ -568,14 +568,14 @@ export function DomoticsView({
                       required
                       value={slot.endTime}
                       onChange={(e) => updateSlot(idx, { endTime: e.target.value })}
-                      className="flex-1 min-w-0 px-1.5 py-1 text-xs font-mono text-slate-100 bg-slate-950 border border-slate-800 rounded [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                      className="flex-1 min-w-0 px-1.5 py-1 text-xs font-mono text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                     />
                     {timeSlots.length > 1 && (
                       <button
                         type="button"
                         onClick={() => removeSlot(idx)}
                         aria-label={`Rimuovi fascia ${idx + 1}`}
-                        className="p-1 text-slate-500 hover:text-rose-400"
+                        className="p-1 text-slate-500 hover:text-rose-500 dark:hover:text-rose-400"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -589,7 +589,7 @@ export function DomoticsView({
           {/* 6 Rooms Selector */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <label className="block text-xs font-medium text-slate-300">
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                 Stanze attive ({selectedRooms.length} / 6)
               </label>
               <button
@@ -601,7 +601,7 @@ export function DomoticsView({
                       : HOME_ROOMS.map((r) => r.id)
                   )
                 }
-                className="text-[11px] text-sky-400 hover:text-sky-300"
+                className="text-[11px] text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300"
               >
                 {selectedRooms.length === HOME_ROOMS.length
                   ? 'Deseleziona tutte'
@@ -619,9 +619,9 @@ export function DomoticsView({
                     className={`px-3 py-2 text-xs font-medium rounded-lg border transition-colors ${
                       active
                         ? mode === 'riscaldamento'
-                          ? 'bg-amber-500/20 border-amber-500/50 text-amber-200'
-                          : 'bg-sky-500/20 border-sky-500/50 text-sky-200'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                          ? 'bg-orange-50 dark:bg-orange-500/20 border-orange-300 dark:border-orange-500/50 text-orange-800 dark:text-orange-200'
+                          : 'bg-sky-50 dark:bg-sky-500/20 border-sky-300 dark:border-sky-500/50 text-sky-800 dark:text-sky-200'
+                        : 'bg-slate-50 dark:bg-slate-950 border-slate-300 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                     }`}
                   >
                     {room.label}
@@ -638,12 +638,12 @@ export function DomoticsView({
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Note opzionali (es. prima accensione invernale, deumidificatore attivo...)"
-              className="w-full sm:flex-1 min-w-0 px-3 py-2 text-xs text-slate-100 bg-slate-950 border border-slate-800 rounded-lg focus:outline-none focus:border-sky-500"
+              className="w-full sm:flex-1 min-w-0 px-3 py-2 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg focus:outline-none focus:border-sky-500"
             />
             <button
               type="submit"
               disabled={submittingLog || selectedRooms.length === 0}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap disabled:opacity-50"
             >
               <Plus className="w-3.5 h-3.5" />
               {submittingLog ? 'Salvataggio...' : 'Salva accensione'}
@@ -654,10 +654,10 @@ export function DomoticsView({
         })()}
 
         {/* Sessions Table correlated with real e-distribuzione kWh */}
-        <div className="pt-4 border-t border-slate-800 overflow-x-auto">
+        <div className="pt-4 border-t border-slate-200 dark:border-slate-800 overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-slate-800 text-[11px] font-medium text-slate-400">
+              <tr className="border-b border-slate-200 dark:border-slate-800 text-[11px] font-medium text-slate-600 dark:text-slate-400">
                 <SortableTh
                   sortKey="date"
                   currentSort={domoticsSort}
@@ -711,7 +711,7 @@ export function DomoticsView({
                 {!readOnly && <th className="py-2 px-3 text-right">Azioni</th>}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/70 text-xs">
+            <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70 text-xs">
               {sortedLogs.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-6 px-3 text-center text-slate-500">
@@ -729,7 +729,7 @@ export function DomoticsView({
                   if (editingId === log.id) {
                     const allDayEdit = isAllDaySlots(editTimeSlots);
                     return (
-                      <tr key={log.id} className="bg-slate-950/90">
+                      <tr key={log.id} className="bg-slate-50 dark:bg-slate-950/90">
                         <td colSpan={7} className="p-3">
                           <div className="space-y-2.5">
                             <div className="flex flex-wrap items-center gap-2">
@@ -737,16 +737,16 @@ export function DomoticsView({
                                 type="date"
                                 value={editDate}
                                 onChange={(e) => setEditDate(e.target.value)}
-                                className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                                className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                               />
-                              <div className="inline-flex rounded-lg bg-slate-900 border border-slate-800 p-0.5">
+                              <div className="inline-flex rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-0.5">
                                 <button
                                   type="button"
                                   onClick={() => setEditMode('riscaldamento')}
                                   className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md transition-colors ${
                                     editMode === 'riscaldamento'
-                                      ? 'bg-amber-500 text-slate-950'
-                                      : 'text-slate-400 hover:text-slate-100'
+                                      ? 'bg-orange-600 text-white dark:bg-orange-500/25 dark:text-orange-200'
+                                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                                   }`}
                                 >
                                   <Flame className="w-3.5 h-3.5" />
@@ -757,8 +757,8 @@ export function DomoticsView({
                                   onClick={() => setEditMode('raffrescamento')}
                                   className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md transition-colors ${
                                     editMode === 'raffrescamento'
-                                      ? 'bg-sky-500 text-slate-950'
-                                      : 'text-slate-400 hover:text-slate-100'
+                                      ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                                   }`}
                                 >
                                   <Snowflake className="w-3.5 h-3.5" />
@@ -773,17 +773,17 @@ export function DomoticsView({
                                   max="30"
                                   value={editTemp}
                                   onChange={(e) => setEditTemp(e.target.value)}
-                                  className="w-16 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                                  className="w-16 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                                 />
-                                <span className="text-slate-400 font-mono">°C</span>
+                                <span className="text-slate-500 dark:text-slate-400 font-mono">°C</span>
                               </div>
                               <button
                                 type="button"
                                 onClick={() => setEditVmcMax((v) => !v)}
                                 className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border font-semibold transition-colors ${
                                   editVmcMax
-                                    ? 'bg-fuchsia-500/20 border-fuchsia-400 text-fuchsia-200'
-                                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                                    ? 'bg-fuchsia-100 dark:bg-fuchsia-500/20 border-fuchsia-400 text-fuchsia-800 dark:text-fuchsia-200'
+                                    : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                                 }`}
                               >
                                 <Wind className="w-3.5 h-3.5" />
@@ -794,13 +794,13 @@ export function DomoticsView({
                                 value={editNotes}
                                 onChange={(e) => setEditNotes(e.target.value)}
                                 placeholder="Note..."
-                                className="flex-1 min-w-[140px] bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-500"
+                                className="flex-1 min-w-[140px] bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:border-sky-500"
                               />
                               <div className="flex items-center gap-1.5 ml-auto">
                                 <button
                                   type="button"
                                   onClick={() => setEditingId(null)}
-                                  className="px-2.5 py-1 text-xs text-slate-400 hover:text-slate-100 rounded-lg"
+                                  className="px-2.5 py-1 text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 rounded-lg"
                                 >
                                   Annulla
                                 </button>
@@ -808,7 +808,7 @@ export function DomoticsView({
                                   type="button"
                                   disabled={savingEdit || editRooms.length === 0}
                                   onClick={() => void saveEditRow(log.id)}
-                                  className="px-3 py-1 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 disabled:opacity-50 rounded-lg transition-colors"
+                                  className="px-3 py-1 text-xs font-semibold text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300 disabled:opacity-50 rounded-lg transition-colors"
                                 >
                                   {savingEdit ? 'Salvo...' : 'Salva'}
                                 </button>
@@ -827,8 +827,8 @@ export function DomoticsView({
                                 }}
                                 className={`px-2 py-1 text-xs rounded-lg border font-medium transition-colors ${
                                   allDayEdit
-                                    ? 'bg-sky-500/20 border-sky-400 text-sky-300'
-                                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                                    ? 'bg-sky-100 dark:bg-sky-500/20 border-sky-400 text-sky-700 dark:text-sky-300'
+                                    : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                                 }`}
                               >
                                 Tutto il giorno (24h)
@@ -837,7 +837,7 @@ export function DomoticsView({
                                 editTimeSlots.map((slot, idx) => (
                                   <div
                                     key={idx}
-                                    className="inline-flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1"
+                                    className="inline-flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg px-2 py-1"
                                   >
                                     <span className="text-[10px] font-mono text-slate-500">
                                       #{idx + 1}
@@ -848,7 +848,7 @@ export function DomoticsView({
                                       onChange={(e) =>
                                         updateEditSlot(idx, { startTime: e.target.value })
                                       }
-                                      className="bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                                      className="bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded px-1.5 py-0.5 text-xs font-mono text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                                     />
                                     <span className="text-slate-500">–</span>
                                     <input
@@ -857,14 +857,14 @@ export function DomoticsView({
                                       onChange={(e) =>
                                         updateEditSlot(idx, { endTime: e.target.value })
                                       }
-                                      className="bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                                      className="bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded px-1.5 py-0.5 text-xs font-mono text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                                     />
                                     {editTimeSlots.length > 1 && (
                                       <button
                                         type="button"
                                         onClick={() => removeEditSlot(idx)}
                                         aria-label={`Rimuovi fascia ${idx + 1}`}
-                                        className="p-0.5 text-slate-500 hover:text-rose-400"
+                                        className="p-0.5 text-slate-500 hover:text-rose-500 dark:hover:text-rose-400"
                                       >
                                         <X className="w-3 h-3" />
                                       </button>
@@ -875,7 +875,7 @@ export function DomoticsView({
                                 <button
                                   type="button"
                                   onClick={addEditExtraSlot}
-                                  className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-lg border bg-sky-500/15 border-sky-400/40 text-sky-300 hover:bg-sky-500/25 font-medium"
+                                  className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-lg border bg-sky-50 dark:bg-sky-500/15 border-sky-300 dark:border-sky-400/40 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-500/25 font-medium"
                                 >
                                   <Plus className="w-3 h-3" />
                                   Aggiungi fascia
@@ -884,7 +884,7 @@ export function DomoticsView({
                             </div>
 
                             <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="text-[11px] text-slate-400 mr-1">
+                              <span className="text-[11px] text-slate-600 dark:text-slate-400 mr-1">
                                 Stanze:
                               </span>
                               {HOME_ROOMS.map((room) => {
@@ -896,8 +896,8 @@ export function DomoticsView({
                                     onClick={() => toggleEditRoom(room.id)}
                                     className={`px-2 py-0.5 text-xs rounded border transition-colors ${
                                       active
-                                        ? 'bg-sky-500/20 border-sky-400 text-sky-200 font-medium'
-                                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                                        ? 'bg-sky-100 dark:bg-sky-500/20 border-sky-400 text-sky-800 dark:text-sky-200 font-medium'
+                                        : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                                     }`}
                                   >
                                     {room.label}
@@ -911,58 +911,58 @@ export function DomoticsView({
                     );
                   }
                   return (
-                    <tr key={log.id} className="hover:bg-slate-800/40">
-                      <td className="py-2.5 px-3 font-mono text-slate-200 tabular-nums whitespace-nowrap">
+                    <tr key={log.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                      <td className="py-2.5 px-3 font-mono text-slate-800 dark:text-slate-200 tabular-nums whitespace-nowrap">
                         {formatReadingDate(log.date)}
                       </td>
                       <td className="py-2.5 px-3 whitespace-nowrap">
                         {log.mode === 'riscaldamento' ? (
-                          <span className="inline-flex items-center gap-1 text-amber-400">
+                          <span className="inline-flex items-center gap-1 text-orange-600 dark:text-amber-400 font-medium">
                             <Flame className="w-3.5 h-3.5" />
                             Riscaldamento
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-sky-400">
+                          <span className="inline-flex items-center gap-1 text-sky-600 dark:text-sky-400 font-medium">
                             <Snowflake className="w-3.5 h-3.5" />
                             Raffrescamento
                           </span>
                         )}
                       </td>
-                      <td className="py-2.5 px-3 text-slate-300 whitespace-nowrap">
+                      <td className="py-2.5 px-3 text-slate-700 dark:text-slate-300 whitespace-nowrap">
                         <div className="inline-flex items-center gap-1.5">
                           {isAllDaySlots(slots) ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[11px] font-medium">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-50 dark:bg-sky-500/15 border border-sky-200 dark:border-sky-500/30 text-sky-700 dark:text-sky-300 text-[11px] font-medium">
                               <Clock className="w-3 h-3" />
                               Tutto il giorno · 24h
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 font-mono">
-                              <Clock className="w-3 h-3 text-slate-500" />
+                              <Clock className="w-3 h-3 text-slate-400 dark:text-slate-500" />
                               <span>{formatSlotsSummary(slots)}</span>
                               {durationStr && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
                                   {durationStr}
                                 </span>
                               )}
                             </span>
                           )}
                           {rowVmcMax && (
-                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-fuchsia-500/20 border border-fuchsia-400/50 text-fuchsia-200 text-[10px] font-semibold">
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-fuchsia-100 dark:bg-fuchsia-500/20 border border-fuchsia-300 dark:border-fuchsia-400/50 text-fuchsia-800 dark:text-fuchsia-200 text-[10px] font-semibold">
                               <Wind className="w-2.5 h-2.5" />
                               VMC Max
                             </span>
                           )}
                         </div>
                       </td>
-                      <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-100 tabular-nums">
+                      <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
                         {log.targetTemp > 0 ? `${log.targetTemp.toFixed(1)} °C` : '? °C'}
                       </td>
-                      <td className="py-2.5 px-3 text-slate-300">
+                      <td className="py-2.5 px-3 text-slate-700 dark:text-slate-300">
                         {log.rooms.map((r) => ROOM_LABELS[r] || r).join(', ')}
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap">
                         {dayReading ? (
-                          <span className="text-sky-400 font-semibold">
+                          <span className="text-sky-600 dark:text-sky-400 font-semibold">
                             {dayReading.totalKwh.toFixed(2)} kWh
                             <span className="text-slate-500 font-normal">
                               {' '}
@@ -970,7 +970,7 @@ export function DomoticsView({
                             </span>
                           </span>
                         ) : (
-                          <span className="text-slate-500">—</span>
+                          <span className="text-slate-400 dark:text-slate-500">—</span>
                         )}
                       </td>
                       {!readOnly && (
@@ -981,7 +981,7 @@ export function DomoticsView({
                             onClick={() => startEditRow(log)}
                             aria-label="Modifica sessione"
                             title="Modifica"
-                            className="p-1 text-slate-400 hover:text-sky-400 rounded"
+                            className="p-1 text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 rounded"
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
@@ -990,7 +990,7 @@ export function DomoticsView({
                             onClick={() => setPendingDeleteLog(log)}
                             aria-label="Elimina sessione"
                             title="Elimina"
-                            className="p-1 text-slate-500 hover:text-rose-400 rounded"
+                            className="p-1 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 rounded"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1008,30 +1008,30 @@ export function DomoticsView({
 
       <div className={`grid grid-cols-1 lg:grid-cols-2 gap-6 ${readOnly ? 'pointer-events-none opacity-85' : ''}`}>
         {/* Ariston Heat Pump Panel */}
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
-          <div className="flex items-start justify-between gap-4 pb-4 border-b border-slate-800">
+        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-6 shadow-xs dark:shadow-none">
+          <div className="flex items-start justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
             <div>
-              <h3 className="text-base font-semibold text-slate-100">
+              <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                 Pompa di Calore Ariston
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
                 Impianto radiante a pavimento e Acqua Calda Sanitaria
               </p>
             </div>
             <div>
               {config.aristonMode === 'raffrescamento' ? (
-                <Snowflake className="w-5 h-5 text-sky-400" />
+                <Snowflake className="w-5 h-5 text-sky-600 dark:text-sky-400" />
               ) : (
-                <Flame className="w-5 h-5 text-amber-400" />
+                <Flame className="w-5 h-5 text-orange-500 dark:text-amber-400" />
               )}
             </div>
           </div>
 
           <div className="space-y-2">
-            <label className="block text-xs font-medium text-slate-300">
+            <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
               Modalità operativa
             </label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1 bg-slate-950 border border-slate-800 rounded-lg">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg">
               {ARISTON_MODES.map((m) => (
                 <button
                   key={m.value}
@@ -1048,8 +1048,8 @@ export function DomoticsView({
                   }}
                   className={`px-3 py-2 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
                     config.aristonMode === m.value
-                      ? 'bg-sky-500 text-slate-950'
-                      : 'text-slate-400 hover:text-slate-100'
+                      ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                   }`}
                 >
                   {m.label}
@@ -1059,10 +1059,10 @@ export function DomoticsView({
           </div>
 
           <div className="space-y-2">
-            <label className="block text-xs font-medium text-slate-300">
+            <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
               Profilo energetico
             </label>
-            <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-950 border border-slate-800 rounded-lg">
+            <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg">
               {ARISTON_PROFILES.map((p) => (
                 <button
                   key={p.value}
@@ -1071,8 +1071,8 @@ export function DomoticsView({
                   onClick={() => applyChange({ aristonProfile: p.value })}
                   className={`px-3 py-2 text-xs font-medium rounded-md transition-colors ${
                     config.aristonProfile === p.value
-                      ? 'bg-slate-800 text-slate-100'
-                      : 'text-slate-400 hover:text-slate-100'
+                      ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs dark:shadow-none'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                   }`}
                 >
                   {p.label}
@@ -1083,10 +1083,10 @@ export function DomoticsView({
 
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-medium text-slate-300">
+              <span className="font-medium text-slate-700 dark:text-slate-300">
                 Temperatura mandata pavimento
               </span>
-              <span className="font-mono font-semibold text-slate-100 tabular-nums">
+              <span className="font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
                 {config.floorFlowTemp} °C
               </span>
             </div>
@@ -1099,16 +1099,16 @@ export function DomoticsView({
               onChange={(e) =>
                 applyChange({ floorFlowTemp: Number(e.target.value) })
               }
-              className="w-full accent-sky-400 cursor-pointer"
+              className="w-full accent-sky-600 dark:accent-sky-400 cursor-pointer"
             />
           </div>
 
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-medium text-slate-300">
+              <span className="font-medium text-slate-700 dark:text-slate-300">
                 Acqua Calda Sanitaria (ACS)
               </span>
-              <span className="font-mono font-semibold text-slate-100 tabular-nums">
+              <span className="font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
                 {config.dhwTargetTemp} °C
               </span>
             </div>
@@ -1121,31 +1121,31 @@ export function DomoticsView({
               onChange={(e) =>
                 applyChange({ dhwTargetTemp: Number(e.target.value) })
               }
-              className="w-full accent-sky-400 cursor-pointer"
+              className="w-full accent-sky-600 dark:accent-sky-400 cursor-pointer"
             />
           </div>
         </section>
 
         {/* NeaSmart Dehumidifier Panel */}
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
-          <div className="flex items-start justify-between gap-4 pb-4 border-b border-slate-800">
+        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-6 shadow-xs dark:shadow-none">
+          <div className="flex items-start justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
             <div>
-              <h3 className="text-base font-semibold text-slate-100">
+              <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                 Deumidificatore NeaSmart
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
                 Controllo igrometrico e sicurezza raffrescamento radiante
               </p>
             </div>
-            <Droplets className="w-5 h-5 text-sky-400" />
+            <Droplets className="w-5 h-5 text-sky-600 dark:text-sky-400" />
           </div>
 
           <div className="flex items-center justify-between py-2">
             <div>
-              <div className="text-sm font-medium text-slate-100">
+              <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
                 Stato unità NeaSmart
               </div>
-              <div className="text-xs text-slate-400">
+              <div className="text-xs text-slate-600 dark:text-slate-400">
                 {config.neasmartPower
                   ? 'Deumidificazione attiva secondo setpoint'
                   : 'Unità spenta / in standby'}
@@ -1157,7 +1157,7 @@ export function DomoticsView({
               aria-checked={config.neasmartPower}
               onClick={() => applyChange({ neasmartPower: !config.neasmartPower })}
               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                config.neasmartPower ? 'bg-sky-500' : 'bg-slate-700'
+                config.neasmartPower ? 'bg-sky-600 dark:bg-sky-500' : 'bg-slate-300 dark:bg-slate-700'
               }`}
             >
               <span
@@ -1170,10 +1170,10 @@ export function DomoticsView({
 
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-medium text-slate-300">
+              <span className="font-medium text-slate-700 dark:text-slate-300">
                 Umidità relativa target (UR)
               </span>
-              <span className="font-mono font-semibold text-slate-100 tabular-nums">
+              <span className="font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
                 {config.neasmartTargetHumidity} %
               </span>
             </div>
@@ -1186,15 +1186,15 @@ export function DomoticsView({
               onChange={(e) =>
                 applyChange({ neasmartTargetHumidity: Number(e.target.value) })
               }
-              className="w-full accent-sky-400 cursor-pointer"
+              className="w-full accent-sky-600 dark:accent-sky-400 cursor-pointer"
             />
           </div>
 
           <div className="space-y-2">
-            <label className="block text-xs font-medium text-slate-300">
+            <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
               Velocità ventilazione
             </label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1 bg-slate-950 border border-slate-800 rounded-lg">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg">
               {FAN_SPEEDS.map((f) => (
                 <button
                   key={f.value}
@@ -1203,8 +1203,8 @@ export function DomoticsView({
                   onClick={() => applyChange({ neasmartFanSpeed: f.value })}
                   className={`px-3 py-2 text-xs font-medium rounded-md transition-colors ${
                     config.neasmartFanSpeed === f.value
-                      ? 'bg-slate-800 text-slate-100'
-                      : 'text-slate-400 hover:text-slate-100'
+                      ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs dark:shadow-none'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                   }`}
                 >
                   {f.label}
@@ -1213,14 +1213,14 @@ export function DomoticsView({
             </div>
           </div>
 
-          <div className="pt-4 border-t border-slate-800 flex items-start justify-between gap-4">
+          <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
-              <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+              <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
               <div>
-                <div className="text-sm font-medium text-slate-100">
+                <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
                   Protezione Punto di Rugiada
                 </div>
-                <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 leading-relaxed">
                   Mantiene attiva la deumidificazione durante il raffrescamento a pavimento.
                 </p>
               </div>
@@ -1233,7 +1233,7 @@ export function DomoticsView({
                 applyChange({ dewPointProtection: !config.dewPointProtection })
               }
               className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-                config.dewPointProtection ? 'bg-emerald-500' : 'bg-slate-700'
+                config.dewPointProtection ? 'bg-emerald-600 dark:bg-emerald-500' : 'bg-slate-300 dark:bg-slate-700'
               }`}
             >
               <span
@@ -1252,25 +1252,25 @@ export function DomoticsView({
       </div>
 
       {pendingDeleteLog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-rose-500/15 text-rose-400 shrink-0">
+              <div className="p-2 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-600 dark:text-rose-400 shrink-0">
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-sm font-semibold text-slate-100">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   Attenzione: conferma eliminazione
                 </h3>
-                <p className="text-xs text-slate-300 leading-relaxed">
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
                   Vuoi davvero eliminare l&apos;accensione{' '}
-                  <span className="font-medium text-slate-100">
+                  <span className="font-medium text-slate-900 dark:text-slate-100">
                     {pendingDeleteLog.mode === 'riscaldamento'
                       ? 'Riscaldamento'
                       : 'Raffrescamento'}
                   </span>{' '}
                   del{' '}
-                  <span className="font-mono font-semibold text-slate-100">
+                  <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">
                     {formatReadingDate(pendingDeleteLog.date)}
                   </span>{' '}
                   ({formatSlotsSummary(getSessionTimeSlots(pendingDeleteLog))} ·{' '}
@@ -1279,12 +1279,12 @@ export function DomoticsView({
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 disabled={deletingLog}
                 onClick={() => setPendingDeleteLog(null)}
-                className="px-3.5 py-2 text-xs font-medium text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+                className="px-3.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
               >
                 Annulla
               </button>

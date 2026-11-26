@@ -74,27 +74,27 @@ const CATEGORY_STYLE: Record<
 > = {
   'Mutuo & Casa': {
     icon: Building2,
-    badge: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+    badge: 'bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30',
   },
   'Internet & Wi-Fi': {
     icon: Wifi,
-    badge: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+    badge: 'bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/30',
   },
   'Contratti & Utenze': {
     icon: FileText,
-    badge: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+    badge: 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30',
   },
   Assicurazioni: {
     icon: Shield,
-    badge: 'bg-violet-500/15 text-violet-300 border-violet-500/30',
+    badge: 'bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30',
   },
   'Fiscale & Identità': {
     icon: FileCheck2,
-    badge: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
+    badge: 'bg-cyan-50 dark:bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-200 dark:border-cyan-500/30',
   },
   Altro: {
     icon: FolderOpen,
-    badge: 'bg-slate-700/60 text-slate-300 border-slate-600/50',
+    badge: 'bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700',
   },
 };
 
@@ -431,11 +431,11 @@ export function DocumentsView({
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-            <FolderOpen className="w-5 h-5 text-sky-400" />
+          <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+            <FolderOpen className="w-5 h-5 text-sky-600 dark:text-sky-400" />
             Archivio Documenti Casa &amp; Contratti
           </h1>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
             Mutuo, contratto Wi-Fi WindTre, rogito, assicurazioni, identità e tutte le bollette pronti da scaricare o condividere.
           </p>
         </div>
@@ -444,7 +444,7 @@ export function DocumentsView({
           <button
             type="button"
             onClick={() => openNewForm()}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 rounded-lg transition-colors"
           >
             <Plus className="w-4 h-4" />
             Aggiungi Documento
@@ -470,47 +470,47 @@ export function DocumentsView({
 
       {/* KPI */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="bg-slate-900/75 border border-slate-800 rounded-xl p-3.5">
-          <div className="text-[10px] uppercase tracking-wider text-slate-400">
+        <div className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
             Documenti Salvati
           </div>
-          <div className="text-xl font-bold font-mono text-slate-100 mt-0.5">
+          <div className="text-xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-0.5">
             {documents.length}
           </div>
         </div>
-        <div className="bg-slate-900/75 border border-slate-800 rounded-xl p-3.5">
-          <div className="text-[10px] uppercase tracking-wider text-slate-400">
+        <div className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
             Con File Allegato
           </div>
-          <div className="text-xl font-bold font-mono text-emerald-300 mt-0.5">
+          <div className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-300 mt-0.5">
             {attachedDocsCount}
           </div>
         </div>
-        <div className="bg-slate-900/75 border border-slate-800 rounded-xl p-3.5">
-          <div className="text-[10px] uppercase tracking-wider text-slate-400">
+        <div className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
             In Evidenza
           </div>
-          <div className="text-xl font-bold font-mono text-amber-300 mt-0.5">
+          <div className="text-xl font-bold font-mono text-indigo-600 dark:text-indigo-300 mt-0.5">
             {pinnedDocsCount}
           </div>
         </div>
-        <div className="bg-slate-900/75 border border-slate-800 rounded-xl p-3.5">
-          <div className="text-[10px] uppercase tracking-wider text-slate-400">
+        <div className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
             Bollette Condivisibili
           </div>
-          <div className="text-xl font-bold font-mono text-sky-300 mt-0.5">
+          <div className="text-xl font-bold font-mono text-sky-600 dark:text-sky-300 mt-0.5">
             {totalShareableBillsCount}
           </div>
         </div>
       </div>
 
       {statusNotice && (
-        <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-4 py-2.5 text-xs text-emerald-200 flex items-center justify-between gap-2">
+        <div className="bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 rounded-xl px-4 py-2.5 text-xs text-emerald-800 dark:text-emerald-200 flex items-center justify-between gap-2">
           <span>{statusNotice}</span>
           <button
             type="button"
             onClick={() => setStatusNotice(null)}
-            className="text-slate-400 hover:text-slate-100"
+            className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -519,8 +519,8 @@ export function DocumentsView({
 
       {/* Quick Starter Templates */}
       {!readOnly && (
-        <section className="bg-slate-900/60 border border-slate-800 rounded-xl p-3.5 space-y-2">
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+        <section className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-2 shadow-xs dark:shadow-none">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
             Aggiunta rapida documenti essenziali di casa
           </div>
           <div className="flex flex-wrap gap-2">
@@ -529,9 +529,9 @@ export function DocumentsView({
                 key={tpl.title}
                 type="button"
                 onClick={() => openNewForm(tpl)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-950/80 hover:bg-slate-800 border border-slate-800 hover:border-sky-500/40 text-slate-200 rounded-lg transition-colors"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-950/80 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 hover:border-sky-500/40 text-slate-800 dark:text-slate-200 rounded-lg transition-colors"
               >
-                <Plus className="w-3 h-3 text-sky-400" />
+                <Plus className="w-3 h-3 text-sky-600 dark:text-sky-400" />
                 {tpl.title}
               </button>
             ))}
@@ -547,8 +547,8 @@ export function DocumentsView({
             onClick={() => setActiveTab('all')}
             className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
               activeTab === 'all'
-                ? 'bg-sky-500 text-slate-950 border-sky-400'
-                : 'bg-slate-900 text-slate-300 border-slate-800 hover:text-slate-100'
+                ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-500 dark:text-slate-950 dark:border-sky-400'
+                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
             }`}
           >
             Tutti i Documenti ({documents.length + totalShareableBillsCount})
@@ -563,8 +563,8 @@ export function DocumentsView({
                 onClick={() => setActiveTab(cat)}
                 className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
                   activeTab === cat
-                    ? 'bg-sky-500 text-slate-950 border-sky-400'
-                    : 'bg-slate-900 text-slate-300 border-slate-800 hover:text-slate-100'
+                    ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-500 dark:text-slate-950 dark:border-sky-400'
+                    : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
                 {cat} ({count})
@@ -577,8 +577,8 @@ export function DocumentsView({
             onClick={() => setActiveTab('bollette')}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
               activeTab === 'bollette'
-                ? 'bg-amber-400 text-slate-950 border-amber-300'
-                : 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
+                ? 'bg-indigo-600 text-white border-indigo-600 dark:bg-indigo-500 dark:text-white dark:border-indigo-400'
+                : 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30 hover:bg-indigo-100 dark:hover:bg-indigo-500/20'
             }`}
           >
             <Receipt className="w-3.5 h-3.5" />
@@ -587,13 +587,13 @@ export function DocumentsView({
         </div>
 
         <div className="relative w-full sm:w-64">
-          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+          <Search className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Cerca mutuo, WindTre, fattura..."
-            className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+            className="w-full pl-8 pr-3 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
           />
         </div>
       </div>
@@ -602,10 +602,10 @@ export function DocumentsView({
       {showForm && !readOnly && (
         <form
           onSubmit={handleSubmit}
-          className="bg-slate-900 border border-sky-500/40 rounded-xl p-4 sm:p-5 space-y-4 text-xs"
+          className="bg-white dark:bg-slate-900 border border-sky-500/40 rounded-xl p-4 sm:p-5 space-y-4 text-xs shadow-sm dark:shadow-none"
         >
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h2 className="text-sm font-bold text-slate-100">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
               {editingDoc ? `Modifica "${editingDoc.title}"` : 'Nuovo Documento Utile'}
             </h2>
             <button
@@ -614,7 +614,7 @@ export function DocumentsView({
                 setShowForm(false);
                 resetForm();
               }}
-              className="text-slate-400 hover:text-slate-100"
+              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
             >
               Chiudi
             </button>
@@ -622,7 +622,7 @@ export function DocumentsView({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <div className="space-y-1">
-              <label className="block text-slate-400">Titolo documento *</label>
+              <label className="block text-slate-600 dark:text-slate-400">Titolo documento *</label>
               <input
                 type="text"
                 required
@@ -630,16 +630,16 @@ export function DocumentsView({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Es. Contratto Fibra WindTre"
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-400">Categoria *</label>
+              <label className="block text-slate-600 dark:text-slate-400">Categoria *</label>
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value as HomeDocumentCategory)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
               >
                 {DOCUMENT_CATEGORIES.map((c) => (
                   <option key={c} value={c}>
@@ -650,7 +650,7 @@ export function DocumentsView({
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-400">Ente / Banca / Fornitore *</label>
+              <label className="block text-slate-600 dark:text-slate-400">Ente / Banca / Fornitore *</label>
               <input
                 type="text"
                 required
@@ -658,72 +658,72 @@ export function DocumentsView({
                 value={provider}
                 onChange={(e) => setProvider(e.target.value)}
                 placeholder="Es. WindTre, Intesa Sanpaolo..."
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-400">N° Contratto / Pratica / SSID</label>
+              <label className="block text-slate-600 dark:text-slate-400">N° Contratto / Pratica / SSID</label>
               <input
                 type="text"
                 maxLength={80}
                 value={referenceCode}
                 onChange={(e) => setReferenceCode(e.target.value)}
                 placeholder="Es. Cod. cliente o pratica mutuo"
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-400">Data stipula / documento</label>
+              <label className="block text-slate-600 dark:text-slate-400">Data stipula / documento</label>
               <input
                 type="text"
                 maxLength={20}
                 value={issueDate}
                 onChange={(e) => setIssueDate(e.target.value)}
                 placeholder="Es. 15/03/2024"
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-400">Scadenza / Rinnovo</label>
+              <label className="block text-slate-600 dark:text-slate-400">Scadenza / Rinnovo</label>
               <input
                 type="text"
                 maxLength={20}
                 value={expiryDate}
                 onChange={(e) => setExpiryDate(e.target.value)}
                 placeholder="Es. 15/03/2026"
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1 sm:col-span-2">
-              <label className="block text-slate-400">Link Google Drive / Cloud (opz.)</label>
+              <label className="block text-slate-600 dark:text-slate-400">Link Google Drive / Cloud (opz.)</label>
               <input
                 type="url"
                 value={cloudUrl}
                 onChange={(e) => setCloudUrl(e.target.value)}
                 placeholder="https://drive.google.com/..."
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-400">In evidenza</label>
-              <label className="flex items-center gap-2 px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 cursor-pointer">
+              <label className="block text-slate-600 dark:text-slate-400">In evidenza</label>
+              <label className="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-200 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={pinned}
                   onChange={(e) => setPinned(e.target.checked)}
-                  className="h-4 w-4 rounded"
+                  className="h-4 w-4 rounded accent-sky-600 dark:accent-sky-400"
                 />
                 Fissa in alto tra i documenti importanti
               </label>
             </div>
 
             <div className="space-y-1 sm:col-span-2 lg:col-span-3">
-              <label className="block text-slate-400">
+              <label className="block text-slate-600 dark:text-slate-400">
                 Note / Dati utili (password Wi-Fi, codice migrazione, IBAN, rata mutuo...)
               </label>
               <input
@@ -732,18 +732,18 @@ export function DocumentsView({
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Inserisci annotazioni rapide o credenziali utili da trovare subito..."
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             {/* File upload picker */}
-            <div className="sm:col-span-2 lg:col-span-3 bg-slate-950/75 border border-dashed border-sky-500/40 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
+            <div className="sm:col-span-2 lg:col-span-3 bg-slate-50 dark:bg-slate-950/75 border border-dashed border-sky-400/60 dark:border-sky-500/40 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
               <div className="space-y-0.5">
-                <div className="font-semibold text-slate-200 flex items-center gap-1.5">
-                  <Paperclip className="w-3.5 h-3.5 text-sky-400" />
+                <div className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Paperclip className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                   Allega File (PDF, foto, scansione, documento)
                 </div>
-                <div className="text-[11px] text-slate-400">
+                <div className="text-[11px] text-slate-600 dark:text-slate-400">
                   {pendingFile
                     ? `Pronto per Firestore: ${pendingFile.name} (${formatFileSize(pendingFile.size)})`
                     : editingDoc?.fileName
@@ -763,7 +763,7 @@ export function DocumentsView({
                 <button
                   type="button"
                   onClick={() => formFileInputRef.current?.click()}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-sky-300 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 rounded-lg"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 hover:bg-sky-100 dark:hover:bg-sky-500/25 border border-sky-200 dark:border-sky-500/35 rounded-lg"
                 >
                   <Upload className="w-3.5 h-3.5" />
                   {pendingFile || editingDoc?.fileName ? 'Cambia File' : 'Scegli File'}
@@ -772,21 +772,21 @@ export function DocumentsView({
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
               onClick={() => {
                 setShowForm(false);
                 resetForm();
               }}
-              className="px-3.5 py-2 text-slate-400 hover:text-slate-100"
+              className="px-3.5 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
             >
               Annulla
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg"
+              className="px-4 py-2 font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 rounded-lg"
             >
               {saving ? 'Salvataggio...' : editingDoc ? 'Salva modifiche' : 'Salva documento'}
             </button>
@@ -813,15 +813,15 @@ export function DocumentsView({
           (showBillsSection && allBillsForSharing.length > 0);
 
         const billsTable = showBillsSection && (
-          <section className="bg-slate-900/75 border border-slate-800 rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
+          <section className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h2 className="text-sm font-bold text-slate-100">
+                <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
                   {activeTab === 'all'
                     ? `Bollette dell'Archivio (${allBillsForSharing.length})`
                     : `Tutte le Bollette Pronte da Scaricare o Condividere (${allBillsForSharing.length})`}
                 </h2>
-                <p className="text-[11px] text-slate-400">
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
                   {readOnly
                     ? 'Senza accesso puoi scaricare o condividere il riepilogo HTML; i PDF originali restano privati.'
                     : 'Usa Scarica per ottenere il file (PDF originale se presente, oppure riepilogo HTML) e Condividi per inviarlo.'}
@@ -830,13 +830,13 @@ export function DocumentsView({
             </div>
 
             {allBillsForSharing.length === 0 ? (
-              <div className="px-4 py-6 text-center text-xs text-slate-400">
+              <div className="px-4 py-6 text-center text-xs text-slate-500 dark:text-slate-400">
                 Nessuna bolletta trovata con questo filtro.
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs text-left">
-                  <thead className="bg-slate-950/60 text-slate-400 border-b border-slate-800">
+                  <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                     <tr>
                       <th className="px-4 py-2.5 font-medium">Utenza</th>
                       <th className="px-3 py-2.5 font-medium">Periodo</th>
@@ -847,19 +847,19 @@ export function DocumentsView({
                       <th className="px-4 py-2.5 font-medium text-right">Azioni</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/70">
+                  <tbody className="divide-y divide-slate-200/80 dark:divide-slate-800/70">
                     {allBillsForSharing.map((b) => {
                       const localFile = vaultMeta[b.fileKey];
                       return (
-                        <tr key={b.id} className="hover:bg-slate-800/30">
+                        <tr key={b.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
                           <td className="px-4 py-2.5">
                             <span
                               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
                                 b.kind === 'luce'
-                                  ? 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
+                                  ? 'bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-500/30'
                                   : b.kind === 'acqua'
-                                    ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30'
-                                    : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                    ? 'bg-cyan-50 dark:bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-500/30'
+                                    : 'bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30'
                               }`}
                             >
                               {b.kind === 'luce' ? (
@@ -872,13 +872,13 @@ export function DocumentsView({
                               {b.label}
                             </span>
                           </td>
-                          <td className="px-3 py-2.5 font-medium text-slate-100">{b.period}</td>
-                          <td className="px-3 py-2.5 text-slate-300">{b.supplier}</td>
-                          <td className="px-3 py-2.5 font-mono text-slate-400">
+                          <td className="px-3 py-2.5 font-medium text-slate-900 dark:text-slate-100">{b.period}</td>
+                          <td className="px-3 py-2.5 text-slate-700 dark:text-slate-300">{b.supplier}</td>
+                          <td className="px-3 py-2.5 font-mono text-slate-500 dark:text-slate-400">
                             <div>#{b.number}</div>
                             <div className="text-[10px]">{b.date}</div>
                           </td>
-                          <td className="px-3 py-2.5 text-right font-mono font-semibold text-slate-100">
+                          <td className="px-3 py-2.5 text-right font-mono font-semibold text-slate-900 dark:text-slate-100">
                             {b.amount.toFixed(2).replace('.', ',')} €
                           </td>
                           <td className="px-3 py-2.5">
@@ -888,10 +888,10 @@ export function DocumentsView({
                                   localFile.origin === 'firestore'
                                     ? 'Salvato su Firestore (accessibile da tutti i tuoi dispositivi)'
                                     : localFile.origin === 'bundled'
-                                      ? 'PDF incluso nell’app (accessibile da tutti i dispositivi)'
+                                      ? 'PDF incluso nell’app (accessibile da tutti i tuoi dispositivi)'
                                       : 'Solo cache locale su questo browser'
                                 }
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-medium"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 text-[10px] font-medium"
                               >
                                 <FileCheck2 className="w-3 h-3" />
                                 {readOnly
@@ -907,9 +907,9 @@ export function DocumentsView({
                                   setAttachingBillKey(b.fileKey);
                                   billAttachInputRef.current?.click();
                                 }}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px]"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-[10px]"
                               >
-                                <FileUp className="w-3 h-3 text-sky-400" />
+                                <FileUp className="w-3 h-3 text-sky-600 dark:text-sky-400" />
                                 Allega PDF
                               </button>
                             ) : (
@@ -932,9 +932,9 @@ export function DocumentsView({
                                       ? `Scarica PDF originale (${localFile.fileName})`
                                       : 'Scarica riepilogo HTML'
                                 }
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors"
                               >
-                                <Download className="w-3.5 h-3.5 text-sky-400" />
+                                <Download className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                                 Scarica
                               </button>
                               <button
@@ -947,7 +947,7 @@ export function DocumentsView({
                                       ? `Condividi bolletta e PDF (${localFile.fileName})`
                                       : 'Condividi riepilogo bolletta'
                                 }
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-lg transition-colors"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-50 dark:bg-sky-500/15 hover:bg-sky-100 dark:hover:bg-sky-500/25 border border-sky-200 dark:border-sky-500/35 text-sky-700 dark:text-sky-300 rounded-lg transition-colors"
                               >
                                 <Share2 className="w-3.5 h-3.5" />
                                 Condividi
@@ -966,19 +966,19 @@ export function DocumentsView({
 
         if (!hasAnyContent) {
           return (
-            <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-8 text-center space-y-3">
-              <FolderOpen className="w-8 h-8 text-slate-500 mx-auto" />
-              <div className="text-sm font-semibold text-slate-200">
+            <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-8 text-center space-y-3 shadow-xs dark:shadow-none">
+              <FolderOpen className="w-8 h-8 text-slate-400 dark:text-slate-500 mx-auto" />
+              <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">
                 Nessun documento trovato in questa sezione
               </div>
-              <p className="text-xs text-slate-400 max-w-md mx-auto">
+              <p className="text-xs text-slate-600 dark:text-slate-400 max-w-md mx-auto">
                 Aggiungi qui i documenti importanti della casa: contratto del mutuo, contratto Wi-Fi WindTre, rogito, polizze assicurative o documenti d&apos;identità per poterli scaricare e inviare in qualsiasi momento.
               </p>
               {!readOnly && (
                 <button
                   type="button"
                   onClick={() => openNewForm(DOCUMENT_STARTER_TEMPLATES[0])}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 rounded-lg"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Inserisci primo documento
@@ -1001,7 +1001,7 @@ export function DocumentsView({
                   return (
                     <article
                       key={doc.id}
-                      className="bg-slate-900/75 border border-slate-800 hover:border-slate-700 rounded-xl p-4 flex flex-col justify-between gap-3 transition-colors"
+                      className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 rounded-xl p-4 flex flex-col justify-between gap-3 transition-colors shadow-xs dark:shadow-none"
                     >
                       <div className="space-y-2.5">
                         <div className="flex items-start justify-between gap-2">
@@ -1016,9 +1016,9 @@ export function DocumentsView({
                             {doc.pinned && (
                               <span
                                 title="In evidenza"
-                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 rounded"
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-semibold bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30 rounded"
                               >
-                                <Star className="w-2.5 h-2.5 fill-amber-300" />
+                                <Star className="w-2.5 h-2.5 fill-indigo-600 dark:fill-indigo-300" />
                                 Top
                               </span>
                             )}
@@ -1029,14 +1029,14 @@ export function DocumentsView({
                                     ? 'Salvato su Firestore (scaricabile anche da altri dispositivi)'
                                     : 'Solo cache locale su questo browser'
                                 }
-                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 rounded"
                               >
                                 <FileCheck2 className="w-3 h-3" />
                                 {localFile.origin === 'firestore' ? 'Cloud · ' : ''}
                                 {formatFileSize(localFile.size) || 'File'}
                               </span>
                             ) : doc.fileName ? (
-                              <span className="px-2 py-0.5 text-[10px] bg-slate-800 text-slate-400 rounded">
+                              <span className="px-2 py-0.5 text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded">
                                 {doc.fileName}
                               </span>
                             ) : null}
@@ -1044,16 +1044,16 @@ export function DocumentsView({
                         </div>
 
                         <div>
-                          <h3 className="text-sm font-bold text-slate-100">{doc.title}</h3>
-                          <div className="text-xs text-sky-300 font-medium mt-0.5">{doc.provider}</div>
+                          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">{doc.title}</h3>
+                          <div className="text-xs text-sky-700 dark:text-sky-300 font-medium mt-0.5">{doc.provider}</div>
                         </div>
 
                         {(doc.referenceCode || doc.issueDate || doc.expiryDate) && (
-                          <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 text-[11px] space-y-1">
+                          <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 rounded-lg p-2.5 text-[11px] space-y-1">
                             {doc.referenceCode && (
                               <div className="flex justify-between gap-2">
                                 <span className="text-slate-500">Codice / Pratica:</span>
-                                <span className="font-mono text-slate-200 truncate">
+                                <span className="font-mono text-slate-800 dark:text-slate-200 truncate">
                                   {doc.referenceCode}
                                 </span>
                               </div>
@@ -1061,20 +1061,20 @@ export function DocumentsView({
                             {doc.issueDate && (
                               <div className="flex justify-between gap-2">
                                 <span className="text-slate-500">Data:</span>
-                                <span className="font-mono text-slate-300">{doc.issueDate}</span>
+                                <span className="font-mono text-slate-700 dark:text-slate-300">{doc.issueDate}</span>
                               </div>
                             )}
                             {doc.expiryDate && (
                               <div className="flex justify-between gap-2">
                                 <span className="text-slate-500">Scadenza:</span>
-                                <span className="font-mono text-amber-300">{doc.expiryDate}</span>
+                                <span className="font-mono text-indigo-700 dark:text-indigo-300">{doc.expiryDate}</span>
                               </div>
                             )}
                           </div>
                         )}
 
                         {doc.notes && (
-                          <p className="text-xs text-slate-400 leading-relaxed">{doc.notes}</p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">{doc.notes}</p>
                         )}
 
                         {doc.cloudUrl && (
@@ -1082,7 +1082,7 @@ export function DocumentsView({
                             href={doc.cloudUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300"
+                            className="inline-flex items-center gap-1 text-[11px] text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300"
                           >
                             <ExternalLink className="w-3 h-3" />
                             Apri su Cloud / Drive
@@ -1090,7 +1090,7 @@ export function DocumentsView({
                         )}
                       </div>
 
-                      <div className="pt-2.5 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                      <div className="pt-2.5 border-t border-slate-200 dark:border-slate-800/80 flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5">
                           <button
                             type="button"
@@ -1101,15 +1101,15 @@ export function DocumentsView({
                                   : sharePayload
                               )
                             }
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors"
                           >
-                            <Download className="w-3.5 h-3.5 text-sky-400" />
+                            <Download className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                             Scarica
                           </button>
                           <button
                             type="button"
                             onClick={() => setShareItem(sharePayload)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-lg"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-50 dark:bg-sky-500/15 hover:bg-sky-100 dark:hover:bg-sky-500/25 border border-sky-200 dark:border-sky-500/35 text-sky-700 dark:text-sky-300 rounded-lg"
                           >
                             <Share2 className="w-3.5 h-3.5" />
                             Condividi
@@ -1122,7 +1122,7 @@ export function DocumentsView({
                               type="button"
                               onClick={() => openEditForm(doc)}
                               aria-label="Modifica documento"
-                              className="p-1.5 text-slate-400 hover:text-sky-300 rounded-lg"
+                              className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-300 rounded-lg"
                             >
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
@@ -1130,7 +1130,7 @@ export function DocumentsView({
                               type="button"
                               onClick={() => setPendingDelete(doc)}
                               aria-label="Elimina documento"
-                              className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg"
+                              className="p-1.5 text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -1152,27 +1152,27 @@ export function DocumentsView({
       )}
 
       {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/75 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-rose-500/15 text-rose-400 shrink-0">
+              <div className="p-2 rounded-lg bg-rose-50 dark:bg-rose-500/15 text-rose-600 dark:text-rose-400 shrink-0">
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-sm font-semibold text-slate-100">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   Eliminare &quot;{pendingDelete.title}&quot;?
                 </h3>
-                <p className="text-xs text-slate-300 leading-relaxed">
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
                   Verrà rimosso sia dall&apos;archivio su Firebase che l&apos;eventuale file allegato locale.
                 </p>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 disabled={deleting}
                 onClick={() => setPendingDelete(null)}
-                className="px-3.5 py-2 text-xs font-medium text-slate-300 bg-slate-800 rounded-lg"
+                className="px-3.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg"
               >
                 Annulla
               </button>

@@ -1,9 +1,10 @@
 """
 Prelievo automatico del CSV "Dettaglio curve di carico" (FORNUTAIT...csv),
-bollette Edison PDF e avvisi TARI PDF dalla INBOX di Gmail -> Firebase Firestore.
+bollette Edison/Acqua PDF e avvisi TARI PDF dalla INBOX di Gmail -> Firebase Firestore.
 Mittente e-distribuzione: notifichemailped@enel.com | Oggetto: Dettaglio curve di carico
-Supporta qualsiasi formato di data (D/M/YYYY, DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD) e
-qualsiasi intestazione quartoraria (00:00 - 00:15, 00:15, Q1..Q96, 1..96).
+Mittenti bollette: fatturazione@edisonenergia.it, acegasapsamga.it, tassa_rifiuti@acegasapsamga.it
+Le email delle bollette NON vengono spostate nel Cestino: vengono solo analizzate e gestite
+ignorando senza errori qualsiasi tipo di file o allegato non valido.
 """
 
 import csv
@@ -20,6 +21,13 @@ from typing import Any, Dict, List, Optional
 
 POD_CODE = os.environ.get("POD_CODE", "IT001E11251419")
 TARIFF_EUR_PER_KWH = float(os.environ.get("TARIFF_EUR_PER_KWH", "0.24"))
+
+
+def is_valid_pdf_bytes(raw: Optional[bytes]) -> bool:
+    """Verifica che il payload inizi con l'intestazione binaria reale %PDF- (scarta HTML/testo/altro)."""
+    if not raw or len(raw) < 8:
+        return False
+    return raw.lstrip().startswith(b"%PDF-")
 
 
 def parse_it_float(raw: Optional[str]) -> float:
@@ -226,25 +234,31 @@ def extract_csvs_from_gmail() -> tuple[Dict[bytes, List[Dict[str, Any]]], Option
         msg_readings: List[Dict[str, Any]] = []
 
         for part in msg.walk():
-            filename = (part.get_filename() or "").lower()
+            if part.get_content_maintype() == "multipart":
+                continue
+            filename = (part.get_filename() or "").strip().lower()
             if not filename:
                 continue
 
-            payload = part.get_payload(decode=True)
-            if not payload:
-                continue
+            try:
+                payload = part.get_payload(decode=True)
+                if not payload:
+                    continue
 
-            if filename.endswith(".csv"):
-                print(f"Elaborazione allegato CSV: {filename}")
-                text = payload.decode("utf-8-sig", errors="replace")
-                msg_readings.extend(parse_csv_content(text))
-            elif filename.endswith(".zip"):
-                print(f"Elaborazione allegato ZIP: {filename}")
-                with zipfile.ZipFile(io.BytesIO(payload)) as zf:
-                    for name in zf.namelist():
-                        if name.lower().endswith(".csv"):
-                            text = zf.read(name).decode("utf-8-sig", errors="replace")
-                            msg_readings.extend(parse_csv_content(text))
+                if filename.endswith(".csv"):
+                    print(f"Elaborazione allegato CSV: {filename}")
+                    text = payload.decode("utf-8-sig", errors="replace")
+                    msg_readings.extend(parse_csv_content(text))
+                elif filename.endswith(".zip"):
+                    print(f"Elaborazione allegato ZIP: {filename}")
+                    with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+                        for name in zf.namelist():
+                            if name.lower().endswith(".csv"):
+                                text = zf.read(name).decode("utf-8-sig", errors="replace")
+                                msg_readings.extend(parse_csv_content(text))
+            except Exception as exc:
+                print(f"Allegato CSV/ZIP '{filename}' ignorato senza errori: {exc}")
+                continue
 
         if msg_readings:
             readings_by_msg[msg_id] = msg_readings
@@ -262,7 +276,7 @@ def delete_processed_emails(mail: Optional[imaplib.IMAP4_SSL], msg_ids: List[byt
                 mail.store(msg_id, "+X-GM-LABELS", "\\Trash")
                 mail.store(msg_id, "+FLAGS", "\\Deleted")
             mail.expunge()
-            print(f"Eliminate {len(msg_ids)} email elaborate dalla INBOX (spostate nel Cestino).")
+            print(f"Eliminate {len(msg_ids)} email e-distribuzione elaborate dalla INBOX (spostate nel Cestino).")
     finally:
         try:
             mail.logout()
@@ -271,14 +285,21 @@ def delete_processed_emails(mail: Optional[imaplib.IMAP4_SSL], msg_ids: List[byt
 
 
 def parse_edison_pdf_bytes(pdf_bytes: bytes) -> Optional[Dict[str, Any]]:
+    if not is_valid_pdf_bytes(pdf_bytes):
+        return None
     try:
         from pypdf import PdfReader
     except ImportError:
         print("Modulo pypdf non installato: salto estrazione bollette PDF.")
         return None
 
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    text = "\n".join((page.extract_text() or "") for page in reader.pages[:2])
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        text = "\n".join((page.extract_text() or "") for page in reader.pages[:3])
+    except Exception as exc:
+        print(f"File Edison ignorato (PDF non leggibile): {exc}")
+        return None
+
     if not text.strip():
         return None
 
@@ -375,34 +396,47 @@ def extract_edison_bills_from_gmail(
         print("Nessuna bolletta Edison trovata nella INBOX.")
         return {}
 
-    msg_ids = data[0].split()[-12:]
+    msg_ids = data[0].split()[-15:]
     print(f"Trovate {len(msg_ids)} email di fatturazione Edison Energia nella INBOX.")
     for msg_id in msg_ids:
-        _, msg_data = mail.fetch(msg_id, "(RFC822)")
-        if not msg_data or not isinstance(msg_data[0], tuple):
-            continue
-        msg = email.message_from_bytes(msg_data[0][1])
-        msg_bills: List[tuple[Dict[str, Any], bytes, str]] = []
-        for part in msg.walk():
-            raw_name = part.get_filename() or "bolletta_edison.pdf"
-            filename = raw_name.lower()
-            if not filename.endswith(".pdf"):
+        try:
+            _, msg_data = mail.fetch(msg_id, "(RFC822)")
+            if not msg_data or not isinstance(msg_data[0], tuple):
                 continue
-            payload = part.get_payload(decode=True)
-            if not payload:
-                continue
-            print(f"Elaborazione bolletta PDF Edison: {raw_name}")
-            parsed = parse_edison_pdf_bytes(payload)
-            if parsed:
-                msg_bills.append((parsed, payload, raw_name))
-        if msg_bills:
-            bills_by_msg[msg_id] = msg_bills
+            msg = email.message_from_bytes(msg_data[0][1])
+            msg_bills: List[tuple[Dict[str, Any], bytes, str]] = []
+            for part in msg.walk():
+                if part.get_content_maintype() == "multipart":
+                    continue
+                raw_name = (part.get_filename() or "").strip()
+                filename = raw_name.lower()
+                content_type = (part.get_content_type() or "").lower()
+                # Non trattare mai parti HTML/testo anonime come PDF: accetta solo allegati .pdf o application/pdf reali
+                if not (filename.endswith(".pdf") or content_type == "application/pdf"):
+                    continue
+                payload = part.get_payload(decode=True)
+                if not payload:
+                    continue
+                if not is_valid_pdf_bytes(payload):
+                    print(f"Allegato Edison '{raw_name or content_type}' ignorato (non è un PDF valido).")
+                    continue
+                safe_name = raw_name or "bolletta_edison.pdf"
+                print(f"Elaborazione bolletta PDF Edison: {safe_name}")
+                parsed = parse_edison_pdf_bytes(payload)
+                if parsed:
+                    msg_bills.append((parsed, payload, safe_name))
+            if msg_bills:
+                bills_by_msg[msg_id] = msg_bills
+        except Exception as exc:
+            print(f"Email Edison ignorata senza errori: {exc}")
     return bills_by_msg
 
 
 def parse_tari_pdf_bytes(
     pdf_bytes: bytes, msg_subject: str = "", msg_date: str = ""
 ) -> Optional[Dict[str, Any]]:
+    if not is_valid_pdf_bytes(pdf_bytes):
+        return None
     try:
         from pypdf import PdfReader
     except ImportError:
@@ -516,18 +550,21 @@ def extract_tari_bills_from_gmail(
             msg_date = str(msg.get("Date", ""))
             msg_tari: List[tuple[Dict[str, Any], bytes, str]] = []
             for part in msg.walk():
-                raw_name = part.get_filename() or "avviso_tari.pdf"
+                if part.get_content_maintype() == "multipart":
+                    continue
+                raw_name = (part.get_filename() or "").strip()
                 filename = raw_name.lower()
                 content_type = (part.get_content_type() or "").lower()
                 if not (filename.endswith(".pdf") or content_type == "application/pdf"):
                     continue
                 payload = part.get_payload(decode=True)
-                if not payload:
+                if not payload or not is_valid_pdf_bytes(payload):
                     continue
-                print(f"Elaborazione PDF TARI: {raw_name}")
+                safe_name = raw_name or "avviso_tari.pdf"
+                print(f"Elaborazione PDF TARI: {safe_name}")
                 parsed = parse_tari_pdf_bytes(payload, subj, msg_date)
                 if parsed:
-                    msg_tari.append((parsed, payload, raw_name))
+                    msg_tari.append((parsed, payload, safe_name))
             if msg_tari:
                 tari_by_msg[msg_id] = msg_tari
     except Exception as exc:
@@ -539,6 +576,8 @@ def extract_tari_bills_from_gmail(
 def parse_water_pdf_bytes(
     pdf_bytes: bytes, msg_subject: str = "", msg_date: str = ""
 ) -> Optional[Dict[str, Any]]:
+    if not is_valid_pdf_bytes(pdf_bytes):
+        return None
     try:
         from pypdf import PdfReader
     except ImportError:
@@ -601,7 +640,7 @@ def extract_water_bills_from_gmail(
         status, data = mail.search(None, '(OR FROM "acegasapsamga.it" SUBJECT "servizio idrico")')
         if status != "OK" or not data or not data[0]:
             return {}
-        msg_ids = data[0].split()[-10:]
+        msg_ids = data[0].split()[-15:]
         for msg_id in msg_ids:
             _, msg_data = mail.fetch(msg_id, "(RFC822)")
             if not msg_data or not isinstance(msg_data[0], tuple):
@@ -613,15 +652,19 @@ def extract_water_bills_from_gmail(
                 continue
             items: List[tuple[Dict[str, Any], bytes, str]] = []
             for part in msg.walk():
-                raw_name = part.get_filename() or "bolletta_acqua.pdf"
-                if not (raw_name.lower().endswith(".pdf") or (part.get_content_type() or "").lower() == "application/pdf"):
+                if part.get_content_maintype() == "multipart":
+                    continue
+                raw_name = (part.get_filename() or "").strip()
+                content_type = (part.get_content_type() or "").lower()
+                if not (raw_name.lower().endswith(".pdf") or content_type == "application/pdf"):
                     continue
                 payload = part.get_payload(decode=True)
-                if not payload:
+                if not payload or not is_valid_pdf_bytes(payload):
                     continue
+                safe_name = raw_name or "bolletta_acqua.pdf"
                 parsed = parse_water_pdf_bytes(payload, subj, msg_date)
                 if parsed:
-                    items.append((parsed, payload, raw_name))
+                    items.append((parsed, payload, safe_name))
             if items:
                 water_by_msg[msg_id] = items
     except Exception as exc:
@@ -772,17 +815,57 @@ def main() -> None:
         verified_msgs_to_delete: List[bytes] = []
         user_ref = db_client.collection("users").document(owner_id)
 
-        # 1. Consumi e-distribuzione -> Firestore energyReadings
+        # 1. Consumi e-distribuzione -> Firestore energyReadings (ignora i giorni già presenti su DB)
         readings_col = user_ref.collection("energyReadings")
+        latest_db_date: Optional[str] = None
+        if readings_by_msg:
+            try:
+                latest_docs = list(
+                    readings_col.order_by("date", direction=fb_firestore.Query.DESCENDING)
+                    .limit(1)
+                    .stream()
+                )
+                if latest_docs:
+                    raw_latest = str((latest_docs[0].to_dict() or {}).get("date", "")).strip()
+                    if re.match(r"^\d{4}-\d{2}-\d{2}$", raw_latest):
+                        latest_db_date = raw_latest
+            except Exception as exc:
+                print(f"Avviso controllo ultima data consumi su Firestore: {exc}")
+            if latest_db_date:
+                print(
+                    f"Consumi già presenti su Firestore fino al {latest_db_date}: "
+                    "verranno inseriti solo i consumi successivi."
+                )
+
+        pending_readings_by_date: Dict[str, Dict[str, Any]] = {}
+        skipped_existing_count = 0
         for msg_id, msg_readings in readings_by_msg.items():
             valid_items = [
                 r for r in msg_readings if re.match(r"^\d{4}-\d{2}-\d{2}$", str(r.get("date", "")))
             ]
             if not valid_items:
                 continue
-            for i in range(0, len(valid_items), 350):
+            msg_new_count = 0
+            for r in valid_items:
+                date_str = str(r["date"])
+                if latest_db_date and date_str <= latest_db_date:
+                    skipped_existing_count += 1
+                    continue
+                pending_readings_by_date[date_str] = r
+                msg_new_count += 1
+            if msg_new_count == 0 and latest_db_date:
+                print(
+                    f"Email consumi già coperta fino al {latest_db_date}: nessuna scrittura su Firestore."
+                )
+            verified_msgs_to_delete.append(msg_id)
+
+        if pending_readings_by_date:
+            items_to_save = [
+                pending_readings_by_date[d] for d in sorted(pending_readings_by_date.keys())
+            ]
+            for i in range(0, len(items_to_save), 350):
                 batch = db_client.batch()
-                for r in valid_items[i : i + 350]:
+                for r in items_to_save[i : i + 350]:
                     date_str = str(r["date"])
                     total_kwh = round(float(r.get("totalKwh", 0.0)), 2)
                     doc_id = f"day_{date_str.replace('-', '')}"
@@ -802,24 +885,42 @@ def main() -> None:
                         },
                     )
                 batch.commit()
-            print(f"Salvate {len(valid_items)} giornate consumi su Firestore.")
-            verified_msgs_to_delete.append(msg_id)
+            extra_note = (
+                f" (ignorate {skipped_existing_count} già presenti fino al {latest_db_date})"
+                if skipped_existing_count > 0 and latest_db_date
+                else ""
+            )
+            print(f"Salvate {len(items_to_save)} nuove giornate consumi su Firestore{extra_note}.")
+        elif skipped_existing_count > 0 and latest_db_date:
+            print(
+                f"Nessun nuovo consumo dopo il {latest_db_date} "
+                f"(ignorate {skipped_existing_count} righe già presenti: 0 scritture Firestore)."
+            )
 
-        # 2. Bollette Luce Edison -> Firestore electricityBills + Vault PDF
+        # 2. Bollette Luce Edison -> Firestore electricityBills + Vault PDF (resta in INBOX, mai nel Cestino; salta se già presente)
         elec_col = user_ref.collection("electricityBills")
-        for msg_id, msg_bills in bills_by_msg.items():
-            all_ok = True
+        vault_files_col = user_ref.collection("vaultFiles")
+        for _msg_id, msg_bills in bills_by_msg.items():
             for b, pdf_bytes, file_name in msg_bills:
                 inv = str(b.get("invoiceNumber", "")).strip()
                 if not inv:
-                    all_ok = False
                     continue
                 slug = re.sub(r"[^a-zA-Z0-9_-]", "", inv)
                 doc_id = f"edison_{slug}"
+                file_key = f"bill_elec_{slug}"
+                if elec_col.document(doc_id).get().exists and vault_files_col.document(file_key).get().exists:
+                    print(f"Bolletta Luce {inv} già presente su Firestore: salto riscrittura.")
+                    continue
+                vault_ok = save_pdf_to_vault_firestore(
+                    db_client, fb_firestore, owner_id, file_key, file_name, pdf_bytes
+                )
+                if not vault_ok:
+                    continue
                 elec_col.document(doc_id).set(
                     {
                         "ownerId": owner_id,
                         "invoiceNumber": inv[:40],
+                        "pdfFileKey": file_key,
                         "issueDate": str(b.get("issueDate", ""))[:20],
                         "sortKey": str(b.get("sortKey", ""))[:16],
                         "year": int(b.get("year", datetime.now(timezone.utc).year)),
@@ -835,27 +936,31 @@ def main() -> None:
                         "createdAt": fb_firestore.SERVER_TIMESTAMP,
                     }
                 )
-                save_pdf_to_vault_firestore(
-                    db_client, fb_firestore, owner_id, f"bill_elec_{slug}", file_name, pdf_bytes
-                )
-            if all_ok:
-                verified_msgs_to_delete.append(msg_id)
+                print(f"Bolletta Luce {inv} salvata su Firestore (email conservata in INBOX).")
 
-        # 3. Bollette Acqua Acegas -> Firestore waterBills + Vault PDF
+        # 3. Bollette Acqua Acegas -> Firestore waterBills + Vault PDF (resta in INBOX, mai nel Cestino; salta se già presente)
         water_col = user_ref.collection("waterBills")
-        for msg_id, msg_items in water_by_msg.items():
-            all_ok = True
+        for _msg_id, msg_items in water_by_msg.items():
             for w, pdf_bytes, file_name in msg_items:
                 inv = str(w.get("invoiceNumber", "")).strip()
                 if not inv:
-                    all_ok = False
                     continue
                 slug = re.sub(r"[^a-zA-Z0-9_-]", "", inv)
                 doc_id = f"acegas_{slug}"
+                file_key = f"bill_water_{slug}"
+                if water_col.document(doc_id).get().exists and vault_files_col.document(file_key).get().exists:
+                    print(f"Bolletta Acqua {inv} già presente su Firestore: salto riscrittura.")
+                    continue
+                vault_ok = save_pdf_to_vault_firestore(
+                    db_client, fb_firestore, owner_id, file_key, file_name, pdf_bytes
+                )
+                if not vault_ok:
+                    continue
                 water_col.document(doc_id).set(
                     {
                         "ownerId": owner_id,
                         "invoiceNumber": inv[:40],
+                        "pdfFileKey": file_key,
                         "issueDate": str(w.get("issueDate", ""))[:20],
                         "year": int(w.get("year", datetime.now(timezone.utc).year)),
                         "period": str(w.get("period", ""))[:80],
@@ -866,27 +971,31 @@ def main() -> None:
                         "createdAt": fb_firestore.SERVER_TIMESTAMP,
                     }
                 )
-                save_pdf_to_vault_firestore(
-                    db_client, fb_firestore, owner_id, f"bill_water_{slug}", file_name, pdf_bytes
-                )
-            if all_ok:
-                verified_msgs_to_delete.append(msg_id)
+                print(f"Bolletta Acqua {inv} salvata su Firestore (email conservata in INBOX).")
 
-        # 4. Avvisi TARI -> Firestore tariBills + Vault PDF
+        # 4. Avvisi TARI -> Firestore tariBills + Vault PDF (resta in INBOX, mai nel Cestino; salta se già presente)
         tari_col = user_ref.collection("tariBills")
-        for msg_id, msg_tari in tari_by_msg.items():
-            all_ok = True
+        for _msg_id, msg_tari in tari_by_msg.items():
             for t, pdf_bytes, file_name in msg_tari:
                 notice = str(t.get("noticeNumber", "")).strip()
                 if not notice:
-                    all_ok = False
                     continue
                 slug = re.sub(r"[^a-zA-Z0-9_-]", "", notice)
                 doc_id = f"tari_{slug}"
+                file_key = f"bill_tari_{slug}"
+                if tari_col.document(doc_id).get().exists and vault_files_col.document(file_key).get().exists:
+                    print(f"Avviso TARI {notice} già presente su Firestore: salto riscrittura.")
+                    continue
+                vault_ok = save_pdf_to_vault_firestore(
+                    db_client, fb_firestore, owner_id, file_key, file_name, pdf_bytes
+                )
+                if not vault_ok:
+                    continue
                 tari_col.document(doc_id).set(
                     {
                         "ownerId": owner_id,
                         "noticeNumber": notice[:50],
+                        "pdfFileKey": file_key,
                         "issueDate": str(t.get("issueDate", "—"))[:20],
                         "dueDate": str(t.get("dueDate", "—"))[:20],
                         "year": int(t.get("year", datetime.now(timezone.utc).year)),
@@ -899,17 +1008,13 @@ def main() -> None:
                         "createdAt": fb_firestore.SERVER_TIMESTAMP,
                     }
                 )
-                save_pdf_to_vault_firestore(
-                    db_client, fb_firestore, owner_id, f"bill_tari_{slug}", file_name, pdf_bytes
-                )
-            if all_ok:
-                verified_msgs_to_delete.append(msg_id)
+                print(f"Avviso TARI {notice} salvato su Firestore (email conservata in INBOX).")
 
-        # 5. Sposta nel Cestino solo le email salvate su Firestore
+        # 5. Sposta nel Cestino solo le email CSV e-distribuzione salvate (le bollette restano SEMPRE in INBOX)
         if verified_msgs_to_delete:
             delete_processed_emails(mail, list(set(verified_msgs_to_delete)))
         else:
-            print("Nessuna nuova email da elaborare nella INBOX.")
+            print("Nessuna email CSV e-distribuzione da spostare (le bollette restano sempre in INBOX).")
             if mail:
                 try:
                     mail.logout()

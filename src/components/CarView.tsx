@@ -79,27 +79,27 @@ const ENTRY_TYPE_META: Record<
 > = {
   manutenzione: {
     label: 'Tagliando / Manutenzione',
-    badgeClass: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+    badgeClass: 'bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/30',
     icon: Wrench,
   },
   scadenza: {
     label: 'Bollo / Assicurazione / Revisione',
-    badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+    badgeClass: 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30',
     icon: Calendar,
   },
   gomme: {
     label: 'Pneumatici',
-    badgeClass: 'bg-violet-500/15 text-violet-300 border-violet-500/30',
+    badgeClass: 'bg-violet-50 dark:bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-500/30',
     icon: Gauge,
   },
   rifornimento: {
     label: 'Rifornimento',
-    badgeClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+    badgeClass: 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30',
     icon: Fuel,
   },
   spesa_auto: {
     label: 'Altra spesa / Accessori',
-    badgeClass: 'bg-slate-700/60 text-slate-300 border-slate-600/50',
+    badgeClass: 'bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-600/50',
     icon: Car,
   },
 };
@@ -545,11 +545,11 @@ export function CarView({
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-            <Car className="w-5 h-5 text-sky-400" />
+          <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+            <Car className="w-5 h-5 text-sky-600 dark:text-sky-400" />
             Macchina — {insurancePolicy.vehicleFullName || `${profile.brand} ${profile.model}`}
           </h1>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
             Polizza ConTe.it, garanzie spiegate in modo semplice, archivio documenti auto con compilazione automatica delle schede e storico manutenzioni.
           </p>
         </div>
@@ -559,17 +559,17 @@ export function CarView({
             <button
               type="button"
               onClick={openEditPolicy}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-200 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 rounded-lg transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-700 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-500/15 hover:bg-emerald-100 dark:hover:bg-emerald-500/25 border border-emerald-300 dark:border-emerald-500/35 rounded-lg transition-colors"
             >
-              <Shield className="w-3.5 h-3.5 text-emerald-400" />
+              <Shield className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
               Modifica polizza
             </button>
             <button
               type="button"
               onClick={openEditProfile}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-200 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg transition-colors"
             >
-              <Pencil className="w-3.5 h-3.5 text-sky-400" />
+              <Pencil className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
               Dati veicolo
             </button>
             <button
@@ -578,7 +578,7 @@ export function CarView({
                 resetLogForm();
                 setShowLogForm(true);
               }}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg transition-colors"
             >
               <Plus className="w-4 h-4" />
               Registra intervento
@@ -603,16 +603,16 @@ export function CarView({
           role={docNotice.tone === 'err' ? 'alert' : 'status'}
           className={`rounded-xl border px-4 py-3 text-xs flex items-start justify-between gap-3 ${
             docNotice.tone === 'err'
-              ? 'bg-rose-500/10 border-rose-500/30 text-rose-200'
+              ? 'bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/30 text-rose-800 dark:text-rose-200'
               : docNotice.tone === 'ok'
-                ? 'bg-emerald-500/10 border-emerald-500/35 text-emerald-200'
-                : 'bg-sky-500/10 border-sky-500/30 text-sky-200'
+                ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/35 text-emerald-800 dark:text-emerald-200'
+                : 'bg-sky-50 dark:bg-sky-500/10 border-sky-200 dark:border-sky-500/30 text-sky-800 dark:text-sky-200'
           }`}
         >
           <div className="space-y-1.5">
             <div className="font-semibold flex items-center gap-2">
               {docNotice.tone === 'ok' ? (
-                <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+                <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
               ) : (
                 <AlertTriangle className="w-4 h-4 shrink-0" />
               )}
@@ -623,7 +623,7 @@ export function CarView({
                 {docNotice.details.map((item, i) => (
                   <span
                     key={i}
-                    className="px-2 py-0.5 rounded bg-slate-950/60 border border-emerald-500/25 text-[11px] font-mono text-emerald-200"
+                    className="px-2 py-0.5 rounded bg-white dark:bg-slate-950/60 border border-emerald-200 dark:border-emerald-500/25 text-[11px] font-mono text-emerald-700 dark:text-emerald-200"
                   >
                     {item}
                   </span>
@@ -634,7 +634,7 @@ export function CarView({
           <button
             type="button"
             onClick={() => setDocNotice(null)}
-            className="text-slate-400 hover:text-white p-0.5 shrink-0"
+            className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white p-0.5 shrink-0"
             aria-label="Chiudi avviso documento"
           >
             <X className="w-4 h-4" />
@@ -643,7 +643,7 @@ export function CarView({
       )}
 
       {/* Hero Scheda Veicolo + Targa Italiana + Scadenze */}
-      <section className="bg-gradient-to-br from-slate-900 via-slate-900 to-sky-950/40 border border-slate-800 rounded-xl p-4 sm:p-5 space-y-4">
+      <section className="bg-gradient-to-br from-white via-white to-sky-50/70 dark:from-slate-900 dark:via-slate-900 dark:to-sky-950/40 border border-slate-200 dark:border-slate-800 rounded-xl p-4 sm:p-5 space-y-4 shadow-xs dark:shadow-none">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-4">
             <div className="inline-flex items-stretch rounded-md overflow-hidden border-2 border-slate-300 bg-white shadow-md select-all shrink-0">
@@ -657,28 +657,28 @@ export function CarView({
             </div>
 
             <div>
-              <div className="text-base font-bold text-slate-100">
+              <div className="text-base font-semibold text-slate-900 dark:text-slate-100">
                 {insurancePolicy.vehicleFullName || `${profile.brand} ${profile.model}`}
               </div>
-              <div className="text-xs text-slate-400 flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5 tabular-nums">
+              <div className="text-xs text-slate-600 dark:text-slate-400 flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5 tabular-nums">
                 <span>
                   Immatricolazione:{' '}
-                  <strong className="text-slate-200">
+                  <strong className="text-slate-800 dark:text-slate-200">
                     {insurancePolicy.registrationDate || profile.year || '15/02/2010'}
                   </strong>
                 </span>
                 <span>
                   Alimentazione:{' '}
-                  <strong className="text-slate-200">{profile.fuelType || 'Benzina'}</strong>
+                  <strong className="text-slate-800 dark:text-slate-200">{profile.fuelType || 'Benzina'}</strong>
                 </span>
                 <span>
                   Valore stimato:{' '}
-                  <strong className="text-slate-200 font-mono">
+                  <strong className="text-slate-800 dark:text-slate-200 font-mono">
                     {formatEur(insurancePolicy.vehicleValueEur)}
                   </strong>
                 </span>
                 <span>
-                  Ricovero: <strong className="text-slate-200">{insurancePolicy.overnightParking}</strong>
+                  Ricovero: <strong className="text-slate-800 dark:text-slate-200">{insurancePolicy.overnightParking}</strong>
                 </span>
               </div>
             </div>
@@ -689,7 +689,7 @@ export function CarView({
               href="https://www.ilportaledellautomobilista.it/web/portale-automobilista/verifica-ultima-revisione"
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 rounded-lg"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/10 hover:bg-sky-100 dark:hover:bg-sky-500/20 border border-sky-200 dark:border-sky-500/30 rounded-lg"
             >
               <ExternalLink className="w-3.5 h-3.5" />
               Verifica Revisione ({profile.plate})
@@ -698,7 +698,7 @@ export function CarView({
               href="https://online.aci.it/acinet/calcolobollo/"
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-800/80 hover:bg-slate-800 border border-slate-700 rounded-lg"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg"
             >
               <ExternalLink className="w-3.5 h-3.5" />
               Calcolo Bollo ACI
@@ -717,26 +717,26 @@ export function CarView({
                 key={d.label}
                 className={`rounded-xl p-3.5 border ${
                   expired
-                    ? 'bg-rose-950/30 border-rose-500/40'
+                    ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-500/40'
                     : urgent
-                      ? 'bg-amber-950/30 border-amber-500/40'
-                      : 'bg-slate-950/70 border-slate-800'
+                      ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-500/40'
+                      : 'bg-slate-50 dark:bg-slate-950/70 border-slate-200 dark:border-slate-800'
                 }`}
               >
-                <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   {d.label}
                 </div>
-                <div className="text-base font-bold font-mono tabular-nums text-slate-100 mt-0.5">
+                <div className="text-base font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100 mt-0.5">
                   {d.value || 'Da inserire'}
                 </div>
-                <div className="text-[11px] text-slate-400 mt-0.5 truncate">
+                <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 truncate">
                   {days !== null ? (
                     expired ? (
-                      <span className="text-rose-300 font-medium">
+                      <span className="text-rose-700 dark:text-rose-300 font-medium">
                         Scaduta da {Math.abs(days)} gg · {d.sub}
                       </span>
                     ) : (
-                      <span className={urgent ? 'text-amber-300 font-medium' : 'text-emerald-300'}>
+                      <span className={urgent ? 'text-amber-700 dark:text-amber-300 font-medium' : 'text-emerald-700 dark:text-emerald-300'}>
                         Tra {days} giorni · {d.sub}
                       </span>
                     )
@@ -748,17 +748,17 @@ export function CarView({
             );
           })}
 
-          <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5">
-            <div className="text-[10px] uppercase tracking-wider text-slate-400">
+          <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Premio Polizza / Percorrenza
             </div>
-            <div className="text-base font-bold font-mono tabular-nums text-emerald-300 mt-0.5">
+            <div className="text-base font-bold font-mono tabular-nums text-emerald-700 dark:text-emerald-300 mt-0.5">
               {formatEur(insurancePolicy.totalPremiumEur)}{' '}
-              <span className="text-xs font-normal text-slate-400">
+              <span className="text-xs font-normal text-slate-500 dark:text-slate-400">
                 / {insurancePolicy.paymentFrequency}
               </span>
             </div>
-            <div className="text-[11px] text-slate-400 mt-0.5">
+            <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
               Dichiarati {insurancePolicy.annualKm.toLocaleString('it-IT')} km/anno
               {totals.displayKm > 0
                 ? ` · Odometro ${totals.displayKm.toLocaleString('it-IT')} km`
@@ -768,15 +768,15 @@ export function CarView({
         </div>
 
         {(profile.vin || profile.notes || profile.tireSize) && (
-          <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-slate-400">
+          <div className="pt-2 border-t border-slate-200 dark:border-slate-800/80 flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-slate-600 dark:text-slate-400">
             {profile.tireSize && (
               <span>
-                Pneumatici: <span className="font-mono text-slate-200">{profile.tireSize}</span>
+                Pneumatici: <span className="font-mono text-slate-800 dark:text-slate-200">{profile.tireSize}</span>
               </span>
             )}
             {profile.vin && (
               <span>
-                Telaio / VIN: <span className="font-mono text-slate-200">{profile.vin}</span>
+                Telaio / VIN: <span className="font-mono text-slate-800 dark:text-slate-200">{profile.vin}</span>
               </span>
             )}
             {profile.notes && <span className="italic">{profile.notes}</span>}
@@ -785,28 +785,28 @@ export function CarView({
       </section>
 
       {/* Polizza Assicurativa ConTe.it & Garanzie con spiegazioni */}
-      <section className="bg-slate-900/75 border border-slate-800 rounded-xl overflow-hidden">
-        <div className="px-4 sm:px-5 py-4 border-b border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+      <section className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
+        <div className="px-4 sm:px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <h2 className="text-sm font-bold text-slate-100">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                 Polizza Assicurativa {insurancePolicy.company}
               </h2>
-              <span className="px-2 py-0.5 text-[10px] font-mono font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded">
+              <span className="px-2 py-0.5 text-[10px] font-mono font-semibold bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 rounded">
                 Classe CU {insurancePolicy.classCu} · Classe Admiral {insurancePolicy.classInternal}
               </span>
               {insurancePolicy.policyNumber && (
-                <span className="px-2 py-0.5 text-[10px] font-mono bg-slate-800 text-slate-300 rounded">
+                <span className="px-2 py-0.5 text-[10px] font-mono bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded">
                   Polizza #{insurancePolicy.policyNumber}
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-400 mt-1 tabular-nums">
-              Decorrenza <strong className="text-slate-200">{insurancePolicy.startDate}</strong> → Scadenza{' '}
-              <strong className="text-slate-200">{insurancePolicy.endDate}</strong> · Frazionamento{' '}
-              <strong className="text-slate-200">{insurancePolicy.paymentFrequency}</strong> · Premio totale{' '}
-              <strong className="text-emerald-300 font-mono">
+            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 tabular-nums">
+              Decorrenza <strong className="text-slate-800 dark:text-slate-200">{insurancePolicy.startDate}</strong> → Scadenza{' '}
+              <strong className="text-slate-800 dark:text-slate-200">{insurancePolicy.endDate}</strong> · Frazionamento{' '}
+              <strong className="text-slate-800 dark:text-slate-200">{insurancePolicy.paymentFrequency}</strong> · Premio totale{' '}
+              <strong className="text-emerald-700 dark:text-emerald-300 font-mono">
                 {formatEur(insurancePolicy.totalPremiumEur)}
               </strong>
             </p>
@@ -818,8 +818,8 @@ export function CarView({
               onClick={() => setShowGlossary((v) => !v)}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
                 showGlossary
-                  ? 'bg-sky-500 text-slate-950 border-sky-400'
-                  : 'bg-sky-500/10 text-sky-300 border-sky-500/30 hover:bg-sky-500/20'
+                  ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-400 dark:text-slate-950 dark:border-sky-400'
+                  : 'bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/30 hover:bg-sky-100 dark:hover:bg-sky-500/20'
               }`}
             >
               <BookOpen className="w-3.5 h-3.5" />
@@ -829,7 +829,7 @@ export function CarView({
               <button
                 type="button"
                 onClick={openEditPolicy}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg"
               >
                 <Pencil className="w-3.5 h-3.5" />
                 Modifica voci
@@ -850,23 +850,23 @@ export function CarView({
               return (
                 <div
                   key={cov.id}
-                  className="bg-slate-950/75 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between gap-2"
+                  className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 flex flex-col justify-between gap-2"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <div className="text-xs font-bold text-slate-100">{cov.name}</div>
-                      <div className="text-[11px] text-slate-400 mt-0.5 tabular-nums">
+                      <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">{cov.name}</div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 tabular-nums">
                         Incidenza sul premio: {pct}%
                       </div>
                     </div>
                     <div className="text-right shrink-0">
-                      <div className="text-sm font-bold font-mono tabular-nums text-emerald-300">
+                      <div className="text-sm font-bold font-mono tabular-nums text-emerald-700 dark:text-emerald-300">
                         {formatEur(cov.premiumEur)}
                       </div>
                       <button
                         type="button"
                         onClick={() => toggleCoverageInfo(cov.id)}
-                        className="inline-flex items-center gap-1 text-[10px] text-sky-400 hover:text-sky-300 mt-0.5"
+                        className="inline-flex items-center gap-1 text-[10px] text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 mt-0.5"
                       >
                         <HelpCircle className="w-3 h-3" />
                         {isExpanded ? 'Nascondi info' : 'Cos’è?'}
@@ -875,7 +875,7 @@ export function CarView({
                   </div>
 
                   {cov.note && isExpanded && (
-                    <p className="text-[11px] text-slate-300 leading-relaxed pt-2 border-t border-slate-800/80">
+                    <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed pt-2 border-t border-slate-200 dark:border-slate-800/80">
                       {cov.note}
                     </p>
                   )}
@@ -884,34 +884,34 @@ export function CarView({
             })}
 
             {/* Totale riepilogo */}
-            <div className="bg-emerald-950/20 border border-emerald-500/30 rounded-xl p-3.5 flex flex-col justify-between gap-2">
+            <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-500/30 rounded-xl p-3.5 flex flex-col justify-between gap-2">
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-emerald-300 font-semibold">
+                <div className="text-[10px] uppercase tracking-wider text-emerald-700 dark:text-emerald-300 font-semibold">
                   Totale Polizza ({insurancePolicy.paymentFrequency})
                 </div>
-                <div className="text-xl font-black font-mono tabular-nums text-emerald-300 mt-0.5">
+                <div className="text-xl font-black font-mono tabular-nums text-emerald-700 dark:text-emerald-300 mt-0.5">
                   {formatEur(insurancePolicy.totalPremiumEur)}
                 </div>
               </div>
-              <p className="text-[11px] text-slate-300 leading-relaxed">
+              <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
                 Comprende tutte le {activeCoverages.length} garanzie attive. Scadenza il{' '}
-                <strong className="text-slate-100">{insurancePolicy.endDate}</strong> (+15 gg di comporto solo RCA in Italia).
+                <strong className="text-slate-900 dark:text-slate-100">{insurancePolicy.endDate}</strong> (+15 gg di comporto solo RCA in Italia).
               </p>
             </div>
           </div>
 
           {/* Glossario completo per non esperti */}
           {showGlossary && (
-            <div className="bg-slate-950/80 border border-sky-500/30 rounded-xl p-4 space-y-3">
-              <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
-                <div className="flex items-center gap-2 text-xs font-bold text-sky-300">
+            <div className="bg-slate-50 dark:bg-slate-950/80 border border-sky-200 dark:border-sky-500/30 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-2.5">
+                <div className="flex items-center gap-2 text-xs font-semibold text-sky-700 dark:text-sky-300">
                   <BookOpen className="w-4 h-4" />
                   Guida semplice all&apos;assicurazione auto (spiegata senza gergo tecnico)
                 </div>
                 <button
                   type="button"
                   onClick={() => setShowGlossary(false)}
-                  className="text-xs text-slate-400 hover:text-slate-100"
+                  className="text-xs text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
                 >
                   Chiudi
                 </button>
@@ -920,16 +920,16 @@ export function CarView({
                 {INSURANCE_GLOSSARY.map((item) => (
                   <div
                     key={item.id}
-                    className="bg-slate-900/75 border border-slate-800 rounded-lg p-3 space-y-1.5"
+                    className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-lg p-3 space-y-1.5"
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-xs font-bold text-slate-100">{item.term}</h3>
-                      <span className="px-1.5 py-0.5 text-[10px] font-medium bg-sky-500/10 text-sky-300 rounded">
+                      <h3 className="text-xs font-semibold text-slate-900 dark:text-slate-100">{item.term}</h3>
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-300 rounded">
                         {item.shortTag}
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-300 leading-relaxed">{item.summary}</p>
-                    <p className="text-[11px] text-emerald-300/90 leading-relaxed">
+                    <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">{item.summary}</p>
+                    <p className="text-[11px] text-emerald-700 dark:text-emerald-300/90 leading-relaxed">
                       <strong>Perché conta:</strong> {item.whyItMatters}
                     </p>
                   </div>
@@ -941,8 +941,8 @@ export function CarView({
           {/* 3 Schede Dati Polizza: Dati Veicolo | Dati Assicurativi | Soggetti */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pt-1">
             {/* Dati Veicolo */}
-            <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 space-y-2.5">
-              <div className="flex items-center gap-2 text-xs font-bold text-sky-300 border-b border-slate-800 pb-2">
+            <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-2.5">
+              <div className="flex items-center gap-2 text-xs font-semibold text-sky-700 dark:text-sky-300 border-b border-slate-200 dark:border-slate-800 pb-2">
                 <Car className="w-4 h-4" />
                 Dati Veicolo Dichiarati
               </div>
@@ -960,16 +960,16 @@ export function CarView({
                   ['Antifurto', insurancePolicy.antiTheft],
                 ].map(([label, val]) => (
                   <div key={label} className="flex items-start justify-between gap-2">
-                    <dt className="text-slate-400 shrink-0">{label}</dt>
-                    <dd className="text-slate-100 font-medium text-right tabular-nums">{val}</dd>
+                    <dt className="text-slate-500 dark:text-slate-400 shrink-0">{label}</dt>
+                    <dd className="text-slate-900 dark:text-slate-100 font-medium text-right tabular-nums">{val}</dd>
                   </div>
                 ))}
               </dl>
             </div>
 
             {/* Dati Assicurativi */}
-            <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 space-y-2.5">
-              <div className="flex items-center gap-2 text-xs font-bold text-emerald-300 border-b border-slate-800 pb-2">
+            <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-2.5">
+              <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300 border-b border-slate-200 dark:border-slate-800 pb-2">
                 <ShieldCheck className="w-4 h-4" />
                 Dati Assicurativi &amp; Bonus Malus
               </div>
@@ -989,21 +989,21 @@ export function CarView({
                   ['Sinistri senza colpa (5 anni)', String(insurancePolicy.noFaultClaims5y)],
                 ].map(([label, val]) => (
                   <div key={label} className="flex items-start justify-between gap-2">
-                    <dt className="text-slate-400 shrink-0">{label}</dt>
-                    <dd className="text-slate-100 font-medium text-right tabular-nums">{val}</dd>
+                    <dt className="text-slate-500 dark:text-slate-400 shrink-0">{label}</dt>
+                    <dd className="text-slate-900 dark:text-slate-100 font-medium text-right tabular-nums">{val}</dd>
                   </div>
                 ))}
               </dl>
             </div>
 
             {/* Soggetti (solo proprietario autenticato) */}
-            <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 space-y-2.5">
-              <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-2">
-                <div className="flex items-center gap-2 text-xs font-bold text-violet-300">
+            <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-2.5">
+              <div className="flex items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-violet-700 dark:text-violet-300">
                   <UserCheck className="w-4 h-4" />
                   Soggetti Polizza
                 </div>
-                <span className="inline-flex items-center gap-1 text-[10px] text-slate-400">
+                <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400">
                   <Lock className="w-3 h-3" />
                   Privato
                 </span>
@@ -1011,7 +1011,7 @@ export function CarView({
 
               {!readOnly && insurancePolicy.subject ? (
                 <div className="space-y-2">
-                  <div className="text-[11px] font-semibold text-violet-200 bg-violet-500/10 border border-violet-500/25 rounded-lg px-2.5 py-1.5">
+                  <div className="text-[11px] font-semibold text-violet-800 dark:text-violet-200 bg-violet-100 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/25 rounded-lg px-2.5 py-1.5">
                     {insurancePolicy.subject.role}
                   </div>
                   <dl className="space-y-1.5 text-xs">
@@ -1031,8 +1031,8 @@ export function CarView({
                       ['Titolo di studi', insurancePolicy.subject.education],
                     ].map(([label, val]) => (
                       <div key={label} className="flex items-start justify-between gap-2">
-                        <dt className="text-slate-400 shrink-0">{label}</dt>
-                        <dd className="text-slate-100 font-medium text-right break-words">
+                        <dt className="text-slate-500 dark:text-slate-400 shrink-0">{label}</dt>
+                        <dd className="text-slate-900 dark:text-slate-100 font-medium text-right break-words">
                           {val}
                         </dd>
                       </div>
@@ -1041,15 +1041,15 @@ export function CarView({
                 </div>
               ) : (
                 <div className="py-6 text-center space-y-2.5">
-                  <Lock className="w-6 h-6 text-slate-600 mx-auto" />
-                  <p className="text-xs text-slate-400 leading-relaxed">
+                  <Lock className="w-6 h-6 text-slate-400 dark:text-slate-600 mx-auto" />
+                  <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
                     I dati anagrafici completi (Codice Fiscale, residenza, data di nascita) di Proprietario, Conducente e Contraente sono protetti e visibili solo dopo l&apos;accesso.
                   </p>
                   {onSignIn && (
                     <button
                       type="button"
                       onClick={onSignIn}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-sky-400 hover:bg-sky-300 text-slate-950 rounded-lg"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-400 dark:hover:bg-sky-300 dark:text-slate-950 rounded-lg"
                     >
                       Accedi per visualizzare
                     </button>
@@ -1062,14 +1062,14 @@ export function CarView({
       </section>
 
       {/* Archivio Documenti Assicurazione & Veicolo (con auto-compilazione schede) */}
-      <section className="bg-slate-900/75 border border-slate-800 rounded-xl overflow-hidden">
-        <div className="px-4 sm:px-5 py-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <section className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
+        <div className="px-4 sm:px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h2 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-              <FileCheck2 className="w-4 h-4 text-sky-400" />
+            <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <FileCheck2 className="w-4 h-4 text-sky-600 dark:text-sky-400" />
               Documenti Assicurazione &amp; Veicolo ({carDocuments.length})
             </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
+            <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
               Carica Certificato di Assicurazione, Attestato di Rischio, Polizza, Carta Verde o Libretto: i PDF vengono letti in automatico per aggiornare le schede sopra e salvati nel vault Firebase (anche in Documenti).
             </p>
           </div>
@@ -1078,7 +1078,7 @@ export function CarView({
               type="button"
               disabled={uploadingDoc}
               onClick={() => triggerUploadForSlot('polizza_contratto')}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 disabled:opacity-60 rounded-lg shrink-0"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300 disabled:opacity-60 rounded-lg shrink-0"
             >
               <Upload className="w-3.5 h-3.5" />
               {uploadingDoc ? 'Lettura e salvataggio...' : 'Carica documento (PDF/Foto)'}
@@ -1098,38 +1098,38 @@ export function CarView({
                 key={slot.slotType}
                 className={`rounded-xl border p-3.5 flex flex-col justify-between gap-3 ${
                   hasDoc
-                    ? 'bg-emerald-950/15 border-emerald-500/35'
-                    : 'bg-slate-950/60 border-slate-800'
+                    ? 'bg-emerald-50/70 dark:bg-emerald-950/15 border-emerald-200 dark:border-emerald-500/35'
+                    : 'bg-slate-50 dark:bg-slate-950/60 border-slate-200 dark:border-slate-800'
                 }`}
               >
                 <div className="space-y-1.5">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2">
                       {hasDoc ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                       ) : (
-                        <FileText className="w-4 h-4 text-slate-500 shrink-0" />
+                        <FileText className="w-4 h-4 text-slate-400 dark:text-slate-500 shrink-0" />
                       )}
-                      <h3 className="text-xs font-bold text-slate-100">{slot.title}</h3>
+                      <h3 className="text-xs font-semibold text-slate-900 dark:text-slate-100">{slot.title}</h3>
                     </div>
                     {slot.requiredInCar && (
-                      <span className="px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30 rounded shrink-0">
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30 rounded shrink-0">
                         In auto
                       </span>
                     )}
                   </div>
-                  <div className="text-[11px] font-medium text-sky-300">{slot.categoryHint}</div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">{slot.description}</p>
+                  <div className="text-[11px] font-medium text-sky-700 dark:text-sky-300">{slot.categoryHint}</div>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">{slot.description}</p>
                 </div>
 
-                <div className="space-y-2 pt-2 border-t border-slate-800/70">
+                <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800/70">
                   {matchedDocs.map((docItem) => (
                     <div
                       key={docItem.id}
-                      className="flex items-center justify-between gap-2 bg-slate-900/90 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[11px]"
+                      className="flex items-center justify-between gap-2 bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 text-[11px]"
                     >
                       <div className="min-w-0">
-                        <div className="font-medium text-slate-200 truncate">
+                        <div className="font-medium text-slate-800 dark:text-slate-200 truncate">
                           {docItem.fileName || docItem.title}
                         </div>
                         <div className="text-[10px] text-slate-500 tabular-nums">
@@ -1142,17 +1142,17 @@ export function CarView({
                           type="button"
                           disabled={downloadingDocId === docItem.id}
                           onClick={() => void handleDownloadDoc(docItem)}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-md transition-colors"
+                          className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-md transition-colors"
                           title="Scarica documento"
                           aria-label={`Scarica ${docItem.fileName || docItem.title}`}
                         >
-                          <Download className="w-3 h-3 text-sky-400" />
+                          <Download className="w-3 h-3 text-sky-600 dark:text-sky-400" />
                           Scarica
                         </button>
                         <button
                           type="button"
                           onClick={() => setShareDocItem(buildDocumentSharePayload(docItem))}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-md transition-colors"
+                          className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-sky-50 dark:bg-sky-500/15 hover:bg-sky-100 dark:hover:bg-sky-500/25 border border-sky-200 dark:border-sky-500/35 text-sky-700 dark:text-sky-300 rounded-md transition-colors"
                           title="Condividi documento"
                           aria-label={`Condividi ${docItem.fileName || docItem.title}`}
                         >
@@ -1163,7 +1163,7 @@ export function CarView({
                           <button
                             type="button"
                             onClick={() => setPendingDeleteDoc(docItem)}
-                            className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded"
+                            className="p-1 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
                             title="Elimina documento"
                             aria-label={`Elimina ${docItem.fileName || docItem.title}`}
                           >
@@ -1179,9 +1179,9 @@ export function CarView({
                       type="button"
                       disabled={uploadingDoc}
                       onClick={() => triggerUploadForSlot(slot.slotType)}
-                      className="w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-200 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg transition-colors disabled:opacity-60"
+                      className="w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg transition-colors disabled:opacity-60"
                     >
-                      <Upload className="w-3.5 h-3.5 text-sky-400" />
+                      <Upload className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                       {hasDoc ? 'Carica nuova versione' : `Carica ${slot.title.split(' ')[0]}`}
                     </button>
                   )}
@@ -1194,7 +1194,7 @@ export function CarView({
         {/* Eventuali altri documenti auto caricati senza slot specifico */}
         {carDocuments.some((d) => parseCarDocumentRef(d.referenceCode)?.slotType === 'altro') && (
           <div className="px-4 sm:px-5 pb-4 space-y-2">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Altri documenti auto allegati
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -1203,11 +1203,11 @@ export function CarView({
                 .map((docItem) => (
                   <div
                     key={docItem.id}
-                    className="flex items-center justify-between gap-2 bg-slate-950/70 border border-slate-800 rounded-lg px-3 py-2 text-xs"
+                    className="flex items-center justify-between gap-2 bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs"
                   >
                     <div className="min-w-0">
-                      <div className="font-semibold text-slate-200 truncate">{docItem.title}</div>
-                      <div className="text-[11px] text-slate-400 truncate">
+                      <div className="font-semibold text-slate-800 dark:text-slate-200 truncate">{docItem.title}</div>
+                      <div className="text-[11px] text-slate-600 dark:text-slate-400 truncate">
                         {docItem.fileName} {docItem.fileSize ? `(${formatFileSize(docItem.fileSize)})` : ''}
                       </div>
                     </div>
@@ -1216,15 +1216,15 @@ export function CarView({
                         type="button"
                         disabled={downloadingDocId === docItem.id}
                         onClick={() => void handleDownloadDoc(docItem)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-lg transition-colors"
                       >
-                        <Download className="w-3.5 h-3.5 text-sky-400" />
+                        <Download className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                         Scarica
                       </button>
                       <button
                         type="button"
                         onClick={() => setShareDocItem(buildDocumentSharePayload(docItem))}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-lg transition-colors"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-50 dark:bg-sky-500/15 hover:bg-sky-100 dark:hover:bg-sky-500/25 border border-sky-200 dark:border-sky-500/35 text-sky-700 dark:text-sky-300 rounded-lg transition-colors"
                       >
                         <Share2 className="w-3.5 h-3.5" />
                         Condividi
@@ -1233,7 +1233,7 @@ export function CarView({
                         <button
                           type="button"
                           onClick={() => setPendingDeleteDoc(docItem)}
-                          className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg"
+                          className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
                           aria-label="Elimina documento"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -1251,16 +1251,16 @@ export function CarView({
       {editingPolicy && !readOnly && (
         <form
           onSubmit={handleSubmitPolicy}
-          className="bg-slate-900 border border-emerald-500/40 rounded-xl p-4 sm:p-5 space-y-4 text-xs"
+          className="bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-500/40 rounded-xl p-4 sm:p-5 space-y-4 text-xs shadow-xs dark:shadow-none"
         >
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h3 className="text-sm font-semibold text-slate-100">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
               Modifica Polizza Assicurativa ({policyDraft.company})
             </h3>
             <button
               type="button"
               onClick={() => setEditingPolicy(false)}
-              className="text-slate-400 hover:text-slate-100"
+              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
             >
               Chiudi
             </button>
@@ -1268,45 +1268,45 @@ export function CarView({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <label className="space-y-1">
-              <span className="text-slate-400">Compagnia</span>
+              <span className="text-slate-600 dark:text-slate-400">Compagnia</span>
               <input
                 type="text"
                 value={policyDraft.company}
                 onChange={(e) => setPolicyDraft({ ...policyDraft, company: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Numero Polizza (opz.)</span>
+              <span className="text-slate-600 dark:text-slate-400">Numero Polizza (opz.)</span>
               <input
                 type="text"
                 value={policyDraft.policyNumber || ''}
                 onChange={(e) =>
                   setPolicyDraft({ ...policyDraft, policyNumber: e.target.value || undefined })
                 }
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Decorrenza (GG/MM/AAAA)</span>
+              <span className="text-slate-600 dark:text-slate-400">Decorrenza (GG/MM/AAAA)</span>
               <input
                 type="text"
                 value={policyDraft.startDate}
                 onChange={(e) => setPolicyDraft({ ...policyDraft, startDate: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Scadenza (GG/MM/AAAA)</span>
+              <span className="text-slate-600 dark:text-slate-400">Scadenza (GG/MM/AAAA)</span>
               <input
                 type="text"
                 value={policyDraft.endDate}
                 onChange={(e) => setPolicyDraft({ ...policyDraft, endDate: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Premio totale (€)</span>
+              <span className="text-slate-600 dark:text-slate-400">Premio totale (€)</span>
               <input
                 type="number"
                 step="0.01"
@@ -1314,40 +1314,40 @@ export function CarView({
                 onChange={(e) =>
                   setPolicyDraft({ ...policyDraft, totalPremiumEur: Number(e.target.value) || 0 })
                 }
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Frazionamento</span>
+              <span className="text-slate-600 dark:text-slate-400">Frazionamento</span>
               <input
                 type="text"
                 value={policyDraft.paymentFrequency}
                 onChange={(e) =>
                   setPolicyDraft({ ...policyDraft, paymentFrequency: e.target.value })
                 }
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Classe CU</span>
+              <span className="text-slate-600 dark:text-slate-400">Classe CU</span>
               <input
                 type="text"
                 value={policyDraft.classCu}
                 onChange={(e) => setPolicyDraft({ ...policyDraft, classCu: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Classe Admiral</span>
+              <span className="text-slate-600 dark:text-slate-400">Classe Admiral</span>
               <input
                 type="text"
                 value={policyDraft.classInternal}
                 onChange={(e) => setPolicyDraft({ ...policyDraft, classInternal: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Valore Veicolo (€)</span>
+              <span className="text-slate-600 dark:text-slate-400">Valore Veicolo (€)</span>
               <input
                 type="number"
                 step="1"
@@ -1355,11 +1355,11 @@ export function CarView({
                 onChange={(e) =>
                   setPolicyDraft({ ...policyDraft, vehicleValueEur: Number(e.target.value) || 0 })
                 }
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Km annui</span>
+              <span className="text-slate-600 dark:text-slate-400">Km annui</span>
               <input
                 type="number"
                 step="100"
@@ -1367,40 +1367,40 @@ export function CarView({
                 onChange={(e) =>
                   setPolicyDraft({ ...policyDraft, annualKm: Number(e.target.value) || 0 })
                 }
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Ricovero notturno</span>
+              <span className="text-slate-600 dark:text-slate-400">Ricovero notturno</span>
               <input
                 type="text"
                 value={policyDraft.overnightParking}
                 onChange={(e) =>
                   setPolicyDraft({ ...policyDraft, overnightParking: e.target.value })
                 }
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Modifiche veicolo</span>
+              <span className="text-slate-600 dark:text-slate-400">Modifiche veicolo</span>
               <input
                 type="text"
                 value={policyDraft.vehicleModified}
                 onChange={(e) =>
                   setPolicyDraft({ ...policyDraft, vehicleModified: e.target.value })
                 }
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </label>
           </div>
 
-          <div className="space-y-2 pt-2 border-t border-slate-800">
-            <div className="font-semibold text-slate-200">Garanzie attive e premi (€)</div>
+          <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+            <div className="font-semibold text-slate-800 dark:text-slate-200">Garanzie attive e premi (€)</div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {policyDraft.coverages.map((cov, idx) => (
                 <div
                   key={cov.id}
-                  className="flex items-center justify-between gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2"
+                  className="flex items-center justify-between gap-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2"
                 >
                   <label className="flex items-center gap-2 min-w-0 cursor-pointer">
                     <input
@@ -1411,9 +1411,9 @@ export function CarView({
                         updated[idx] = { ...cov, active: e.target.checked };
                         setPolicyDraft({ ...policyDraft, coverages: updated });
                       }}
-                      className="rounded border-slate-700 bg-slate-900 text-emerald-500"
+                      className="rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-500"
                     />
-                    <span className="text-slate-200 truncate">{cov.name}</span>
+                    <span className="text-slate-800 dark:text-slate-200 truncate">{cov.name}</span>
                   </label>
                   <input
                     type="number"
@@ -1424,25 +1424,25 @@ export function CarView({
                       updated[idx] = { ...cov, premiumEur: Number(e.target.value) || 0 };
                       setPolicyDraft({ ...policyDraft, coverages: updated });
                     }}
-                    className="w-24 px-2 py-1 bg-slate-900 border border-slate-700 rounded font-mono text-right text-slate-100"
+                    className="w-24 px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded font-mono text-right text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                   />
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
               onClick={() => setEditingPolicy(false)}
-              className="px-3.5 py-2 text-slate-400 hover:text-slate-100"
+              className="px-3.5 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
             >
               Annulla
             </button>
             <button
               type="submit"
               disabled={savingPolicy}
-              className="px-4 py-2 font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg"
+              className="px-4 py-2 font-semibold text-white dark:text-slate-950 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:hover:bg-emerald-300 rounded-lg"
             >
               {savingPolicy ? 'Salvataggio...' : 'Salva polizza su Firestore'}
             </button>
@@ -1454,16 +1454,16 @@ export function CarView({
       {editingProfile && !readOnly && (
         <form
           onSubmit={handleSubmitProfile}
-          className="bg-slate-900 border border-sky-500/40 rounded-xl p-4 sm:p-5 space-y-4 text-xs"
+          className="bg-white dark:bg-slate-900 border border-sky-300 dark:border-sky-500/40 rounded-xl p-4 sm:p-5 space-y-4 text-xs shadow-xs dark:shadow-none"
         >
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h3 className="text-sm font-semibold text-slate-100">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
               Modifica Scheda Veicolo ({profile.plate})
             </h3>
             <button
               type="button"
               onClick={() => setEditingProfile(false)}
-              className="text-slate-400 hover:text-slate-100"
+              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
             >
               Chiudi
             </button>
@@ -1471,160 +1471,160 @@ export function CarView({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <label className="space-y-1">
-              <span className="text-slate-400">Marca *</span>
+              <span className="text-slate-600 dark:text-slate-400">Marca *</span>
               <input
                 type="text"
                 required
                 value={brand}
                 onChange={(e) => setBrand(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Modello *</span>
+              <span className="text-slate-600 dark:text-slate-400">Modello *</span>
               <input
                 type="text"
                 required
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Targa *</span>
+              <span className="text-slate-600 dark:text-slate-400">Targa *</span>
               <input
                 type="text"
                 required
                 value={plate}
                 onChange={(e) => setPlate(e.target.value.toUpperCase())}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100 uppercase"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 uppercase focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Anno immatricolazione</span>
+              <span className="text-slate-600 dark:text-slate-400">Anno immatricolazione</span>
               <input
                 type="text"
                 placeholder="Es. 2010"
                 value={year}
                 onChange={(e) => setYear(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Alimentazione</span>
+              <span className="text-slate-600 dark:text-slate-400">Alimentazione</span>
               <input
                 type="text"
                 placeholder="Es. Benzina"
                 value={fuelType}
                 onChange={(e) => setFuelType(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Motorizzazione / CV</span>
+              <span className="text-slate-600 dark:text-slate-400">Motorizzazione / CV</span>
               <input
                 type="text"
                 placeholder="Es. 1.2 69 CV"
                 value={engine}
                 onChange={(e) => setEngine(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Misura Pneumatici</span>
+              <span className="text-slate-600 dark:text-slate-400">Misura Pneumatici</span>
               <input
                 type="text"
                 placeholder="Es. 175/65 R14"
                 value={tireSize}
                 onChange={(e) => setTireSize(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Chilometraggio attuale (km)</span>
+              <span className="text-slate-600 dark:text-slate-400">Chilometraggio attuale (km)</span>
               <input
                 type="number"
                 placeholder="Es. 135000"
                 value={currentKm}
                 onChange={(e) => setCurrentKm(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Compagnia Assicurazione</span>
+              <span className="text-slate-600 dark:text-slate-400">Compagnia Assicurazione</span>
               <input
                 type="text"
                 placeholder="Es. ConTe.it"
                 value={insuranceCompany}
                 onChange={(e) => setInsuranceCompany(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Scadenza Assicurazione</span>
+              <span className="text-slate-600 dark:text-slate-400">Scadenza Assicurazione</span>
               <input
                 type="text"
                 placeholder="GG/MM/AAAA"
                 value={insuranceExpiry}
                 onChange={(e) => setInsuranceExpiry(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Scadenza Bollo</span>
+              <span className="text-slate-600 dark:text-slate-400">Scadenza Bollo</span>
               <input
                 type="text"
                 placeholder="GG/MM/AAAA"
                 value={bolloExpiry}
                 onChange={(e) => setBolloExpiry(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Scadenza Revisione</span>
+              <span className="text-slate-600 dark:text-slate-400">Scadenza Revisione</span>
               <input
                 type="text"
                 placeholder="GG/MM/AAAA"
                 value={revisioneExpiry}
                 onChange={(e) => setRevisioneExpiry(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1 sm:col-span-2">
-              <span className="text-slate-400">Telaio (VIN)</span>
+              <span className="text-slate-600 dark:text-slate-400">Telaio (VIN)</span>
               <input
                 type="text"
                 placeholder="ZFA169..."
                 value={vin}
                 onChange={(e) => setVin(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1 sm:col-span-2">
-              <span className="text-slate-400">Note libretto / dotazioni</span>
+              <span className="text-slate-600 dark:text-slate-400">Note libretto / dotazioni</span>
               <input
                 type="text"
                 maxLength={240}
                 placeholder="Es. Classe Euro, pressione gomme, codice autoradio, officina..."
                 value={profileNotes}
                 onChange={(e) => setProfileNotes(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
               onClick={() => setEditingProfile(false)}
-              className="px-3.5 py-2 text-slate-400 hover:text-slate-100"
+              className="px-3.5 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
             >
               Annulla
             </button>
             <button
               type="submit"
               disabled={savingProfile}
-              className="px-4 py-2 font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg"
+              className="px-4 py-2 font-semibold text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg"
             >
               {savingProfile ? 'Salvataggio...' : 'Salva dati Panda'}
             </button>
@@ -1636,10 +1636,10 @@ export function CarView({
       {showLogForm && !readOnly && (
         <form
           onSubmit={handleSubmitLog}
-          className="bg-slate-900 border border-emerald-500/40 rounded-xl p-4 sm:p-5 space-y-4 text-xs"
+          className="bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-500/40 rounded-xl p-4 sm:p-5 space-y-4 text-xs shadow-xs dark:shadow-none"
         >
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h3 className="text-sm font-semibold text-slate-100">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
               {editingLogId ? 'Modifica voce veicolo' : 'Nuovo intervento, tagliando o spesa Panda EA218ES'}
             </h3>
             <button
@@ -1648,7 +1648,7 @@ export function CarView({
                 setShowLogForm(false);
                 resetLogForm();
               }}
-              className="text-slate-400 hover:text-slate-100"
+              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
             >
               Chiudi
             </button>
@@ -1656,11 +1656,11 @@ export function CarView({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <label className="space-y-1">
-              <span className="text-slate-400">Categoria *</span>
+              <span className="text-slate-600 dark:text-slate-400">Categoria *</span>
               <select
                 value={lType}
                 onChange={(e) => setLType(e.target.value as CarEntryType)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark]"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
               >
                 {Object.entries(ENTRY_TYPE_META).map(([k, m]) => (
                   <option key={k} value={k}>
@@ -1670,7 +1670,7 @@ export function CarView({
               </select>
             </label>
             <label className="space-y-1 sm:col-span-2">
-              <span className="text-slate-400">Descrizione *</span>
+              <span className="text-slate-600 dark:text-slate-400">Descrizione *</span>
               <input
                 type="text"
                 required
@@ -1678,88 +1678,88 @@ export function CarView({
                 placeholder="Es. Tagliando completo olio + filtri / Cambio gomme..."
                 value={lTitle}
                 onChange={(e) => setLTitle(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Data *</span>
+              <span className="text-slate-600 dark:text-slate-400">Data *</span>
               <input
                 type="text"
                 required
                 placeholder="GG/MM/AAAA"
                 value={lDate}
                 onChange={(e) => setLDate(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Km al momento</span>
+              <span className="text-slate-600 dark:text-slate-400">Km al momento</span>
               <input
                 type="number"
                 placeholder="Es. 135400"
                 value={lKm}
                 onChange={(e) => setLKm(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Costo (€)</span>
+              <span className="text-slate-600 dark:text-slate-400">Costo (€)</span>
               <input
                 type="text"
                 placeholder="Es. 145.00"
                 value={lCost}
                 onChange={(e) => setLCost(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Officina / Ente</span>
+              <span className="text-slate-600 dark:text-slate-400">Officina / Ente</span>
               <input
                 type="text"
                 placeholder="Es. Officina Rossi / ConTe.it..."
                 value={lWorkshop}
                 onChange={(e) => setLWorkshop(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Prossima scadenza (opz.)</span>
+              <span className="text-slate-600 dark:text-slate-400">Prossima scadenza (opz.)</span>
               <input
                 type="text"
                 placeholder="GG/MM/AAAA"
                 value={lDueDate}
                 onChange={(e) => setLDueDate(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1 sm:col-span-2 lg:col-span-4">
-              <span className="text-slate-400">Note dettagliate (opz.)</span>
+              <span className="text-slate-600 dark:text-slate-400">Note dettagliate (opz.)</span>
               <input
                 type="text"
                 maxLength={240}
                 placeholder="Ricambi sostituiti, olio 5W-40, garanzia..."
                 value={lNotes}
                 onChange={(e) => setLNotes(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
               onClick={() => {
                 setShowLogForm(false);
                 resetLogForm();
               }}
-              className="px-3.5 py-2 text-slate-400 hover:text-slate-100"
+              className="px-3.5 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
             >
               Annulla
             </button>
             <button
               type="submit"
               disabled={savingLog}
-              className="px-4 py-2 font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg"
+              className="px-4 py-2 font-semibold text-white dark:text-slate-950 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:hover:bg-emerald-300 rounded-lg"
             >
               {savingLog ? 'Salvataggio...' : editingLogId ? 'Salva modifiche' : 'Salva su Firebase'}
             </button>
@@ -1768,14 +1768,14 @@ export function CarView({
       )}
 
       {/* Filtri Storico Veicolo */}
-      <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-900 border border-slate-800 rounded-lg w-fit">
+      <div className="flex flex-wrap items-center gap-1.5 p-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg w-fit shadow-xs dark:shadow-none">
         <button
           type="button"
           onClick={() => setFilterType('all')}
-          className={`px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
+          className={`px-2.5 py-1.5 text-xs font-semibold rounded-md transition-colors ${
             filterType === 'all'
-              ? 'bg-sky-500 text-slate-950'
-              : 'text-slate-400 hover:text-slate-100'
+              ? 'bg-sky-600 text-white dark:bg-sky-400 dark:text-slate-950'
+              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
           }`}
         >
           Tutti ({logs.length})
@@ -1787,10 +1787,10 @@ export function CarView({
               key={t}
               type="button"
               onClick={() => setFilterType(t)}
-              className={`px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
+              className={`px-2.5 py-1.5 text-xs font-semibold rounded-md transition-colors ${
                 filterType === t
-                  ? 'bg-sky-500 text-slate-950'
-                  : 'text-slate-400 hover:text-slate-100'
+                  ? 'bg-sky-600 text-white dark:bg-sky-400 dark:text-slate-950'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
               }`}
             >
               {ENTRY_TYPE_META[t].label.split(' / ')[0]} ({count})
@@ -1800,37 +1800,37 @@ export function CarView({
       </div>
 
       {/* Storico Manutenzioni & Spese */}
-      <div className="bg-slate-900/70 border border-slate-800 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
-            <Wrench className="w-4 h-4 text-sky-400" />
+      <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
+        <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+            <Wrench className="w-4 h-4 text-sky-600 dark:text-sky-400" />
             Storico Interventi, Tagliandi &amp; Spese ({sortedLogs.length})
           </h2>
           {totals.totalCost > 0 && (
-            <span className="text-xs font-mono text-slate-300 tabular-nums">
-              Totale spese registrate: <strong className="text-slate-100">{formatEur(totals.totalCost)}</strong>
+            <span className="text-xs font-mono text-slate-600 dark:text-slate-300 tabular-nums">
+              Totale spese registrate: <strong className="text-slate-900 dark:text-slate-100">{formatEur(totals.totalCost)}</strong>
             </span>
           )}
         </div>
 
         {sortedLogs.length === 0 ? (
-          <div className="p-8 text-center text-xs text-slate-400 space-y-2">
+          <div className="p-8 text-center text-xs text-slate-500 dark:text-slate-400 space-y-2">
             <p>Nessun intervento o spesa registrata per Fiat Panda {profile.plate}.</p>
             {!readOnly && (
               <p className="text-slate-500">
-                Usa <strong className="text-slate-300">&quot;Registra intervento&quot;</strong> per annotare tagliandi, gomme, bollo o spese.
+                Usa <strong className="text-slate-700 dark:text-slate-300">&quot;Registra intervento&quot;</strong> per annotare tagliandi, gomme, bollo o spese.
               </p>
             )}
           </div>
         ) : (
-          <div className="divide-y divide-slate-800/70">
+          <div className="divide-y divide-slate-200 dark:divide-slate-800/70">
             {sortedLogs.map((log) => {
               const meta = ENTRY_TYPE_META[log.entryType] || ENTRY_TYPE_META.manutenzione;
               const Icon = meta.icon;
               return (
                 <div
                   key={log.id}
-                  className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-800/25 text-xs"
+                  className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50 dark:hover:bg-slate-800/25 text-xs"
                 >
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -1840,22 +1840,22 @@ export function CarView({
                         <Icon className="w-3 h-3" />
                         {meta.label}
                       </span>
-                      <span className="font-mono text-slate-400 tabular-nums">{log.date}</span>
+                      <span className="font-mono text-slate-500 dark:text-slate-400 tabular-nums">{log.date}</span>
                       {log.km !== undefined && (
-                        <span className="font-mono text-sky-300 tabular-nums">
+                        <span className="font-mono text-sky-700 dark:text-sky-300 tabular-nums">
                           {log.km.toLocaleString('it-IT')} km
                         </span>
                       )}
                       {log.dueDate && (
-                        <span className="font-mono text-amber-300 tabular-nums">
+                        <span className="font-mono text-amber-700 dark:text-amber-300 tabular-nums">
                           Prossima: {log.dueDate}
                         </span>
                       )}
                     </div>
 
-                    <div className="text-sm font-semibold text-slate-100">{log.title}</div>
+                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{log.title}</div>
                     {(log.workshop || log.notes) && (
-                      <div className="text-[11px] text-slate-400">
+                      <div className="text-[11px] text-slate-600 dark:text-slate-400">
                         {log.workshop ? `${log.workshop}${log.notes ? ' · ' : ''}` : ''}
                         {log.notes}
                       </div>
@@ -1864,7 +1864,7 @@ export function CarView({
 
                   <div className="flex items-center gap-3 self-end sm:self-center">
                     {log.costEur !== undefined && (
-                      <div className="font-mono tabular-nums text-sm font-bold text-slate-100">
+                      <div className="font-mono tabular-nums text-sm font-bold text-slate-900 dark:text-slate-100">
                         {formatEur(log.costEur)}
                       </div>
                     )}
@@ -1873,7 +1873,7 @@ export function CarView({
                         <button
                           type="button"
                           onClick={() => openEditLog(log)}
-                          className="p-1.5 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
+                          className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
                           aria-label="Modifica voce"
                         >
                           <Pencil className="w-3.5 h-3.5" />
@@ -1881,7 +1881,7 @@ export function CarView({
                         <button
                           type="button"
                           onClick={() => setPendingDelete(log)}
-                          className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded"
+                          className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
                           aria-label="Elimina voce"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -1898,27 +1898,27 @@ export function CarView({
 
       {/* Modal Elimina Documento Auto */}
       {pendingDeleteDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-rose-500/15 text-rose-400 shrink-0">
+              <div className="p-2 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-600 dark:text-rose-400 shrink-0">
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-sm font-semibold text-slate-100">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   Eliminare &quot;{pendingDeleteDoc.fileName || pendingDeleteDoc.title}&quot;?
                 </h3>
-                <p className="text-xs text-slate-300">
+                <p className="text-xs text-slate-600 dark:text-slate-300">
                   Il documento verrà rimosso dall&apos;archivio della macchina e dal vault Firebase.
                 </p>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 disabled={deletingDoc}
                 onClick={() => setPendingDeleteDoc(null)}
-                className="px-3.5 py-2 text-xs text-slate-300 bg-slate-800 rounded-lg"
+                className="px-3.5 py-2 text-xs text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg"
               >
                 Annulla
               </button>
@@ -1937,27 +1937,27 @@ export function CarView({
 
       {/* Modal Elimina Log */}
       {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-rose-500/15 text-rose-400 shrink-0">
+              <div className="p-2 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-600 dark:text-rose-400 shrink-0">
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-sm font-semibold text-slate-100">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   Eliminare &quot;{pendingDelete.title}&quot;?
                 </h3>
-                <p className="text-xs text-slate-300">
+                <p className="text-xs text-slate-600 dark:text-slate-300">
                   Verrà rimossa dallo storico della Panda ({profile.plate}) su Firebase.
                 </p>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 disabled={deleting}
                 onClick={() => setPendingDelete(null)}
-                className="px-3.5 py-2 text-xs text-slate-300 bg-slate-800 rounded-lg"
+                className="px-3.5 py-2 text-xs text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg"
               >
                 Annulla
               </button>

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { signOut, User } from 'firebase/auth';
 import {
   collection,
-  deleteDoc as rawDeleteDoc,
   deleteField,
   doc,
   getDoc,
@@ -10,9 +9,7 @@ import {
   onSnapshot,
   query,
   serverTimestamp,
-  setDoc as rawSetDoc,
   where,
-  writeBatch as rawWriteBatch,
 } from 'firebase/firestore';
 import {
   AlertTriangle,
@@ -20,17 +17,21 @@ import {
   Car,
   CheckCircle2,
   Database,
+  FlaskConical,
   FolderOpen,
   Home,
   LayoutDashboard,
   LogOut,
   Mail,
   Menu,
+  Moon,
   Package,
   Receipt,
   RefreshCw,
   Search,
+  Settings,
   ShoppingCart,
+  Sun,
   Thermometer,
   Trash2,
   WifiOff,
@@ -43,16 +44,21 @@ import {
   db,
   dismissFirestoreQuotaExceeded,
   FIREBASE_PROJECT_ID,
+  FirestoreWriteStats,
   getGmailAccessToken,
   GMAIL_OAUTH_PROJECT_ID,
+  guardedDeleteDoc as deleteDoc,
+  guardedSetDoc as setDoc,
+  guardedWriteBatch as writeBatch,
   handleFirestoreError,
   isFirestoreQuotaExceededActive,
+  isFirestoreWritesDisabled,
   notifyFirestoreQuotaExceeded,
   OperationType,
-  raceWithFirestoreQuotaAbort,
   signInPrimaryOwner,
   subscribeAuthWithGmailCleanup,
   subscribeFirestoreQuotaExceeded,
+  subscribeFirestoreWriteStats,
 } from './firebase';
 import {
   ArticleAttachmentType,
@@ -134,6 +140,7 @@ import {
   sanitizeVaultFileKey,
   saveVaultFile,
   SYSTEM_ROOM_DOCUMENTS,
+  triggerBlobDownload,
 } from './utils/documentVault';
 import {
   addDaysIso,
@@ -160,6 +167,7 @@ import {
   ResearchRoomId,
   sanitizeColorImagesMap,
 } from './utils/researchHelpers';
+import { getAppSettings, useAppSettings } from './utils/appSettings';
 import { OverviewView } from './components/OverviewView';
 import { DomoticsView } from './components/DomoticsView';
 import { EnergyDatabaseView } from './components/EnergyDatabaseView';
@@ -171,26 +179,8 @@ import { GroceryView } from './components/GroceryView';
 import { DocumentsView } from './components/DocumentsView';
 import { ClimateAutopilotInput } from './components/ClimateAutopilotCard';
 import { InfoGuideView } from './components/InfoGuideView';
+import { SettingsView } from './components/SettingsView';
 import { VaultCloudNotice } from './components/VaultCloudNotice';
-
-const setDoc: typeof rawSetDoc = ((...args: unknown[]) =>
-  raceWithFirestoreQuotaAbort(
-    (rawSetDoc as (...inner: unknown[]) => Promise<void>)(...args)
-  )) as typeof rawSetDoc;
-
-const deleteDoc: typeof rawDeleteDoc = ((...args: unknown[]) =>
-  raceWithFirestoreQuotaAbort(
-    (rawDeleteDoc as (...inner: unknown[]) => Promise<void>)(...args)
-  )) as typeof rawDeleteDoc;
-
-const writeBatch: typeof rawWriteBatch = ((...args: unknown[]) => {
-  const batch = (rawWriteBatch as (...inner: unknown[]) => ReturnType<typeof rawWriteBatch>)(
-    ...args
-  );
-  const origCommit = batch.commit.bind(batch);
-  batch.commit = () => raceWithFirestoreQuotaAbort(origCommit());
-  return batch;
-}) as typeof rawWriteBatch;
 
 const EXTENDED_ROOM_OVERRIDES_KEY = 'myhome_research_terrace_rooms_v1';
 
@@ -270,6 +260,7 @@ const NAV_ITEMS: { id: NavSection; label: string; icon: typeof LayoutDashboard }
   { id: 'macchina', label: 'Macchina', icon: Car },
   { id: 'spesa', label: 'Spesa', icon: ShoppingCart },
   { id: 'info', label: 'Info Utili', icon: BookOpen },
+  { id: 'impostazioni', label: 'Impostazioni', icon: Settings },
 ];
 
 const VALID_NAV_SECTIONS = new Set<NavSection>(NAV_ITEMS.map((item) => item.id));
@@ -280,6 +271,10 @@ function resolveInitialNavSection(): NavSection {
     const hashRaw = window.location.hash.replace(/^#\/?/, '').trim().toLowerCase() as NavSection;
     if (VALID_NAV_SECTIONS.has(hashRaw)) {
       return hashRaw;
+    }
+    const startSetting = getAppSettings().defaultStartSection;
+    if (startSetting !== 'remember_last' && VALID_NAV_SECTIONS.has(startSetting)) {
+      return startSetting;
     }
     try {
       const saved = window.localStorage.getItem(ACTIVE_NAV_STORAGE_KEY) as NavSection | null;
@@ -328,6 +323,14 @@ const AVAILABLE_YEARS = Array.from(
 const PUBLIC_GROCERY_CACHE_KEY = 'myhome_spesa_cache_public';
 
 export default function App() {
+  const { settings: appSettings, updateSettings: updateAppSettings } = useAppSettings();
+  const [writeStats, setWriteStats] = useState<FirestoreWriteStats>({
+    writesDisabled: appSettings.firestoreWritesDisabled,
+    writesSavedCount: 0,
+    writesExecutedCount: 0,
+    lastActionLabel: null,
+    lastActionAt: null,
+  });
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -341,6 +344,10 @@ export default function App() {
     return subscribeFirestoreQuotaExceeded((active) => {
       setFirestoreQuotaExceeded(active);
     });
+  }, []);
+
+  useEffect(() => {
+    return subscribeFirestoreWriteStats(setWriteStats);
   }, []);
 
   const navigateToSection = useCallback((section: NavSection) => {
@@ -480,6 +487,7 @@ export default function App() {
   // Registra l'ownerUid su appMeta/owner solo se mancante o diverso, evitando scritture ridondanti a ogni avvio
   useEffect(() => {
     if (!authReady || !user || user.email !== 'mauminieri@gmail.com') return;
+    if (isFirestoreWritesDisabled()) return;
     let cancelled = false;
     const ownerRef = doc(db, 'appMeta', 'owner');
     void getDoc(ownerRef)
@@ -1485,6 +1493,29 @@ export default function App() {
         }
         await batch.commit();
       }
+      if (isFirestoreWritesDisabled()) {
+        setFirestoreReadings((prev) => {
+          const map = new Map(prev.map((r) => [r.date, r]));
+          for (const item of items) {
+            const docId = `day_${item.date.replace(/-/g, '')}`;
+            map.set(item.date, {
+              id: docId,
+              ownerId: user.uid,
+              date: item.date,
+              f1Kwh: item.f1Kwh,
+              f2Kwh: item.f2Kwh,
+              f3Kwh: item.f3Kwh,
+              totalKwh: item.totalKwh,
+              peakKw: item.peakKw,
+              estimatedCostEur:
+                Math.round(item.totalKwh * homeConfig.tariffEurPerKwh * 100) / 100,
+              source: 'e-distribuzione-csv',
+              notes: item.notes ? item.notes.slice(0, 240) : undefined,
+            });
+          }
+          return Array.from(map.values());
+        });
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, basePath);
     }
@@ -1501,6 +1532,9 @@ export default function App() {
           batch.delete(doc(db, basePath, r.id));
         }
         await batch.commit();
+      }
+      if (isFirestoreWritesDisabled()) {
+        setFirestoreReadings([]);
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, basePath);
@@ -1551,6 +1585,27 @@ export default function App() {
     }
   }
 
+  const latestReadingsRef = useRef<EnergyReading[]>(firestoreReadings);
+  const latestElecBillsRef = useRef<BillRecord[]>(electricityBills);
+  const latestWaterBillsRef = useRef<WaterBillRecord[]>(waterBills);
+  const latestTariBillsRef = useRef<TariBillRecord[]>(tariBills);
+
+  useEffect(() => {
+    latestReadingsRef.current = firestoreReadings;
+  }, [firestoreReadings]);
+
+  useEffect(() => {
+    latestElecBillsRef.current = electricityBills;
+  }, [electricityBills]);
+
+  useEffect(() => {
+    latestWaterBillsRef.current = waterBills;
+  }, [waterBills]);
+
+  useEffect(() => {
+    latestTariBillsRef.current = tariBills;
+  }, [tariBills]);
+
   const runGmailSyncWithToken = useCallback(
     async (currentUser: User, token: string, isAuto = false) => {
       if (gmailSyncInFlightRef.current) return;
@@ -1559,7 +1614,38 @@ export default function App() {
       if (!isAuto) setGmailNotice(null);
 
       try {
-        const scan = await scanGmailInbox(token);
+        const existingReadingDates = new Set(
+          latestReadingsRef.current
+            .map((r) => r.date)
+            .filter((d): d is string => Boolean(d))
+        );
+        const maxExistingDate = latestReadingsRef.current.reduce(
+          (max, r) => (r.date && r.date > max ? r.date : max),
+          ''
+        );
+        const existingElectricityInvoices = new Set(
+          latestElecBillsRef.current
+            .filter((b) => Boolean(b.pdfFileKey) && Boolean(b.invoiceNumber))
+            .map((b) => b.invoiceNumber.trim())
+        );
+        const existingWaterInvoices = new Set(
+          latestWaterBillsRef.current
+            .filter((b) => Boolean(b.pdfFileKey) && Boolean(b.invoiceNumber))
+            .map((b) => b.invoiceNumber.trim())
+        );
+        const existingTariNotices = new Set(
+          latestTariBillsRef.current
+            .filter((b) => Boolean(b.pdfFileKey) && Boolean(b.noticeNumber))
+            .map((b) => b.noticeNumber.trim())
+        );
+
+        const scan = await scanGmailInbox(token, {
+          minReadingDateExclusive: maxExistingDate || undefined,
+          existingReadingDates,
+          existingElectricityInvoices,
+          existingWaterInvoices,
+          existingTariNotices,
+        });
 
         if (
           scan.readings.length === 0 &&
@@ -1571,7 +1657,10 @@ export default function App() {
           if (!isAuto) {
             setGmailNotice({
               tone: 'info',
-              text: 'INBOX Gmail controllata: nessuna nuova email di consumi o bollette da importare.',
+              text:
+                scan.ignoredReadingsCount > 0 && maxExistingDate
+                  ? `INBOX Gmail controllata: nessun nuovo consumo dopo il ${maxExistingDate} (ignorate ${scan.ignoredReadingsCount} giornate già presenti su Firestore, 0 scritture DB).`
+                  : 'INBOX Gmail controllata: nessuna nuova email di consumi o bollette da importare.',
             });
           }
           return;
@@ -1745,16 +1834,79 @@ export default function App() {
           savedParts.push(`${scan.pdfAttachments.length} PDF archiviati`);
         }
 
-        setGmailNotice({
-          tone: 'ok',
-          text: `Dati salvati: ${savedParts.join(', ')}.`,
-        });
+        const skippedNote =
+          scan.ignoredReadingsCount > 0 && maxExistingDate
+            ? ` (ignorati ${scan.ignoredReadingsCount} giorni già salvati fino al ${maxExistingDate})`
+            : '';
 
-        const toPrompt = scan.processedMessages.filter(
-          (m) => !skippedTrashIdsRef.current.has(m.id)
-        );
-        if (toPrompt.length > 0) {
-          setPendingTrashMessages(toPrompt);
+        if (isFirestoreWritesDisabled()) {
+          if (scan.readings.length > 0) {
+            setFirestoreReadings((prev) => {
+              const map = new Map(prev.map((r) => [r.date, r]));
+              for (const item of scan.readings) {
+                map.set(item.date, {
+                  id: `day_${item.date.replace(/-/g, '')}`,
+                  ownerId: currentUser.uid,
+                  date: item.date.slice(0, 20),
+                  f1Kwh: item.f1Kwh,
+                  f2Kwh: item.f2Kwh,
+                  f3Kwh: item.f3Kwh,
+                  totalKwh: item.totalKwh,
+                  peakKw: item.peakKw,
+                  estimatedCostEur:
+                    Math.round(item.totalKwh * homeConfig.tariffEurPerKwh * 100) / 100,
+                  source: 'e-distribuzione-api',
+                  notes: item.notes ? item.notes.slice(0, 240) : undefined,
+                });
+              }
+              return Array.from(map.values());
+            });
+          }
+          if (scan.electricityBills.length > 0) {
+            setElectricityBills((prev) => [
+              ...prev,
+              ...scan.electricityBills.map((b) => ({
+                ...b,
+                pdfFileKey: getElectricityBillFileKey(b.invoiceNumber),
+              })),
+            ]);
+          }
+          if (scan.waterBills.length > 0) {
+            setWaterBills((prev) => [
+              ...prev,
+              ...scan.waterBills.map((w) => ({
+                ...w,
+                id: `acegas_${w.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '') || Date.now()}`,
+                pdfFileKey: getWaterBillFileKey(w.invoiceNumber),
+              })),
+            ]);
+          }
+          if (scan.tariBills.length > 0) {
+            setTariBills((prev) => [
+              ...prev,
+              ...scan.tariBills.map((t) => ({
+                ...t,
+                id: `tari_${t.noticeNumber.replace(/[^a-zA-Z0-9_-]/g, '') || Date.now()}`,
+                pdfFileKey: getTariBillFileKey(t.noticeNumber),
+              })),
+            ]);
+          }
+          setGmailNotice({
+            tone: 'info',
+            text: `Modalità Test attiva — simulati in locale: ${savedParts.join(', ')}${skippedNote} (0 scritture su Firestore).`,
+          });
+        } else {
+          setGmailNotice({
+            tone: 'ok',
+            text: `Dati salvati: ${savedParts.join(', ')}${skippedNote}.`,
+          });
+
+          const toPrompt = scan.processedMessages.filter(
+            (m) => !m.isBill && !skippedTrashIdsRef.current.has(m.id)
+          );
+          if (toPrompt.length > 0) {
+            setPendingTrashMessages(toPrompt);
+          }
         }
       } catch (err) {
         if (err instanceof GmailAuthExpiredError) {
@@ -1856,14 +2008,21 @@ export default function App() {
     setPendingTrashMessages([]);
   }
 
-  // Periodic automatic Gmail INBOX scan every 10 minutes while user & Gmail token are active
+  // Periodic automatic Gmail INBOX scan while user & Gmail token are active
   useEffect(() => {
-    if (!user || !gmailToken) return;
+    if (!user || !gmailToken || !appSettings.autoGmailSyncEnabled) return;
+    const intervalMs = appSettings.autoGmailSyncIntervalMinutes * 60 * 1000;
     const intervalId = window.setInterval(() => {
       void runGmailSyncWithToken(user, gmailToken, true);
-    }, 10 * 60 * 1000);
+    }, intervalMs);
     return () => window.clearInterval(intervalId);
-  }, [user, gmailToken, runGmailSyncWithToken]);
+  }, [
+    user,
+    gmailToken,
+    appSettings.autoGmailSyncEnabled,
+    appSettings.autoGmailSyncIntervalMinutes,
+    runGmailSyncWithToken,
+  ]);
 
   async function handleAddClimateLog(
     session: Omit<ClimateSession, 'id' | 'ownerId'>
@@ -1901,6 +2060,26 @@ export default function App() {
         });
       }
       await batch.commit();
+      if (isFirestoreWritesDisabled()) {
+        setClimateLogs((prev) => [
+          ...prev,
+          {
+            id: docId,
+            ownerId: user.uid,
+            ...session,
+          },
+        ]);
+        if (typeof session.vmcMax === 'boolean') {
+          const vmcDocId = `vmc_${session.date.replace(/-/g, '')}`;
+          setVmcDays((prev) => {
+            const filtered = prev.filter((v) => v.date !== session.date);
+            return [
+              ...filtered,
+              { id: vmcDocId, ownerId: user.uid, date: session.date, enabled: Boolean(session.vmcMax) },
+            ];
+          });
+        }
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
     }
@@ -1940,6 +2119,21 @@ export default function App() {
         });
       }
       await batch.commit();
+      if (isFirestoreWritesDisabled()) {
+        setClimateLogs((prev) =>
+          prev.map((log) => (log.id === id ? { ...log, ...session } : log))
+        );
+        if (typeof session.vmcMax === 'boolean') {
+          const vmcDocId = `vmc_${session.date.replace(/-/g, '')}`;
+          setVmcDays((prev) => {
+            const filtered = prev.filter((v) => v.date !== session.date);
+            return [
+              ...filtered,
+              { id: vmcDocId, ownerId: user.uid, date: session.date, enabled: Boolean(session.vmcMax) },
+            ];
+          });
+        }
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
     }
@@ -1950,6 +2144,9 @@ export default function App() {
     const path = `users/${user.uid}/climateLogs/${id}`;
     try {
       await deleteDoc(doc(db, path));
+      if (isFirestoreWritesDisabled()) {
+        setClimateLogs((prev) => prev.filter((l) => l.id !== id));
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
     }
@@ -1981,6 +2178,22 @@ export default function App() {
         }
       }
       await batch.commit();
+      if (isFirestoreWritesDisabled()) {
+        const dateSet = new Set(validDates);
+        setVmcDays((prev) => {
+          const kept = prev.filter((v) => !dateSet.has(v.date));
+          const added = validDates.map((d) => ({
+            id: `vmc_${d.replace(/-/g, '')}`,
+            ownerId: user.uid,
+            date: d,
+            enabled: Boolean(enabled),
+          }));
+          return [...kept, ...added];
+        });
+        setClimateLogs((prev) =>
+          prev.map((l) => (dateSet.has(l.date) ? { ...l, vmcMax: Boolean(enabled) } : l))
+        );
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, vmcPath);
     }
@@ -2071,7 +2284,37 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, basePath, docId), payload);
-      writeExtendedRoomOverride(docId, urlTrim, 'clear');
+      if (isFirestoreWritesDisabled()) {
+        setProductResearches((prev) => [
+          {
+            id: docId,
+            ownerId: user.uid,
+            url: urlTrim,
+            title: String(payload.title),
+            store: String(payload.store),
+            category: item.category,
+            status: payload.status as ProductResearchStatus,
+            room: normalizedRoom,
+            priceEur: typeof payload.priceEur === 'number' ? payload.priceEur : undefined,
+            paidPriceEur:
+              typeof payload.paidPriceEur === 'number' ? payload.paidPriceEur : undefined,
+            imageUrl: typeof payload.imageUrl === 'string' ? payload.imageUrl : undefined,
+            brand: typeof payload.brand === 'string' ? payload.brand : undefined,
+            color: typeof payload.color === 'string' ? payload.color : undefined,
+            availableColors: cleanColors.length > 0 ? cleanColors : undefined,
+            colorImages: cleanColorImages || undefined,
+            size: typeof payload.size === 'string' ? payload.size : undefined,
+            availableSizes: cleanSizes.length > 0 ? cleanSizes : undefined,
+            model: typeof payload.model === 'string' ? payload.model : undefined,
+            specs: typeof payload.specs === 'string' ? payload.specs : undefined,
+            notes: typeof payload.notes === 'string' ? payload.notes : undefined,
+            createdAtMs: Date.now(),
+          },
+          ...prev,
+        ]);
+      } else {
+        writeExtendedRoomOverride(docId, urlTrim, 'clear');
+      }
       return docId;
     } catch (error) {
       if (
@@ -2162,7 +2405,36 @@ export default function App() {
     };
     try {
       await setDoc(doc(db, path), payload, { merge: true });
-      if (!normalizedRoom && /\bkomodo(?:\s*5)?\b/i.test(`${item.title} ${urlTrim}`)) {
+      if (isFirestoreWritesDisabled()) {
+        setProductResearches((prev) =>
+          prev.map((r) =>
+            r.id === id
+              ? {
+                  ...r,
+                  url: urlTrim,
+                  title: String(payload.title),
+                  store: String(payload.store),
+                  category: item.category,
+                  status: normalizedStatus,
+                  room: normalizedRoom,
+                  priceEur: typeof payload.priceEur === 'number' ? payload.priceEur : undefined,
+                  paidPriceEur:
+                    typeof payload.paidPriceEur === 'number' ? payload.paidPriceEur : undefined,
+                  imageUrl: typeof payload.imageUrl === 'string' ? payload.imageUrl : undefined,
+                  brand: typeof payload.brand === 'string' ? payload.brand : undefined,
+                  color: typeof payload.color === 'string' ? payload.color : undefined,
+                  availableColors: cleanColors.length > 0 ? cleanColors : undefined,
+                  colorImages: cleanColorImages || undefined,
+                  size: typeof payload.size === 'string' ? payload.size : undefined,
+                  availableSizes: cleanSizes.length > 0 ? cleanSizes : undefined,
+                  model: typeof payload.model === 'string' ? payload.model : undefined,
+                  specs: typeof payload.specs === 'string' ? payload.specs : undefined,
+                  notes: typeof payload.notes === 'string' ? payload.notes : undefined,
+                }
+              : r
+          )
+        );
+      } else if (!normalizedRoom && /\bkomodo(?:\s*5)?\b/i.test(`${item.title} ${urlTrim}`)) {
         writeExtendedRoomOverride(id, urlTrim, '__none__');
       } else {
         writeExtendedRoomOverride(id, urlTrim, 'clear');
@@ -2209,6 +2481,13 @@ export default function App() {
       if (keysToDelete.length > 0) {
         await deleteVaultFiles(keysToDelete, user.uid);
       }
+      if (isFirestoreWritesDisabled()) {
+        setProductResearches((prev) => prev.filter((r) => r.id !== id));
+        if (linkedDocs.length > 0) {
+          const linkedIds = new Set(linkedDocs.map((d) => d.id));
+          setHomeArticles((prev) => prev.filter((a) => !linkedIds.has(a.id)));
+        }
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
       throw error;
@@ -2224,10 +2503,12 @@ export default function App() {
       ownerId: user.uid,
     };
     setHomeConfig(nextConfig);
-    try {
-      localStorage.setItem(`myhome_config_cache_${user.uid}`, JSON.stringify(nextConfig));
-    } catch {
-      // ignore
+    if (!isFirestoreWritesDisabled()) {
+      try {
+        localStorage.setItem(`myhome_config_cache_${user.uid}`, JSON.stringify(nextConfig));
+      } catch {
+        // ignore
+      }
     }
     try {
       await setDoc(doc(db, configPath), {
@@ -2296,6 +2577,9 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, basePath, docId), payload);
+      if (isFirestoreWritesDisabled()) {
+        setElectricityBills((prev) => [...prev, { ...bill, pdfFileKey }]);
+      }
     } catch (error) {
       await deleteVaultFiles([pdfFileKey], user.uid);
       handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
@@ -2305,6 +2589,15 @@ export default function App() {
 
   async function handleDeleteElectricityBill(bill: BillRecord) {
     if (!user) return;
+    const fileKey = getElectricityBillFileKey(bill.invoiceNumber);
+    if (isFirestoreWritesDisabled()) {
+      await deleteVaultFile(fileKey, user.uid);
+      setElectricityBills((prev) =>
+        prev.filter((b) => b.invoiceNumber !== bill.invoiceNumber)
+      );
+      return;
+    }
+
     const basePath = `users/${user.uid}/electricityBills`;
     const billsSnap = await getDocs(
       query(collection(db, basePath), where('ownerId', '==', user.uid))
@@ -2316,7 +2609,6 @@ export default function App() {
       throw new Error('La bolletta non è stata trovata nell’archivio Firebase.');
     }
 
-    const fileKey = getElectricityBillFileKey(bill.invoiceNumber);
     const fileMetaRef = doc(db, `users/${user.uid}/vaultFiles`, fileKey);
     const fileMetaSnap = await getDoc(fileMetaRef);
     const batch = writeBatch(db);
@@ -2430,13 +2722,15 @@ export default function App() {
       setWaterBills([]);
       setTariBills([]);
       setGsePayments([]);
-      try {
-        localStorage.setItem(`myhome_elec_bills_cache_${uid}`, '[]');
-        localStorage.setItem(`myhome_water_bills_cache_${uid}`, '[]');
-        localStorage.setItem(`myhome_tari_bills_cache_${uid}`, '[]');
-        localStorage.setItem(`myhome_gse_payments_cache_${uid}`, '[]');
-      } catch {
-        // Firebase remains the source of truth if the local cache is unavailable.
+      if (!isFirestoreWritesDisabled()) {
+        try {
+          localStorage.setItem(`myhome_elec_bills_cache_${uid}`, '[]');
+          localStorage.setItem(`myhome_water_bills_cache_${uid}`, '[]');
+          localStorage.setItem(`myhome_tari_bills_cache_${uid}`, '[]');
+          localStorage.setItem(`myhome_gse_payments_cache_${uid}`, '[]');
+        } catch {
+          // Firebase remains the source of truth if the local cache is unavailable.
+        }
       }
     } finally {
       clearingBillArchiveRef.current = false;
@@ -2468,6 +2762,9 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, basePath, docId), payload);
+      if (isFirestoreWritesDisabled()) {
+        setWaterBills((prev) => [...prev, { ...bill, id: docId, pdfFileKey }]);
+      }
     } catch (error) {
       await deleteVaultFiles([pdfFileKey], user.uid);
       handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
@@ -2502,6 +2799,9 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, basePath, docId), payload);
+      if (isFirestoreWritesDisabled()) {
+        setTariBills((prev) => [...prev, { ...bill, id: docId, pdfFileKey }]);
+      }
     } catch (error) {
       await deleteVaultFiles([pdfFileKey], user.uid);
       handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
@@ -2536,6 +2836,13 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, basePath, docId), payload);
+      if (isFirestoreWritesDisabled()) {
+        setTariBills((prev) =>
+          prev.map((t) =>
+            t.id === bill.id || t.noticeNumber === bill.noticeNumber ? { ...t, paid: !t.paid } : t
+          )
+        );
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `${basePath}/${docId}`);
     }
@@ -2552,6 +2859,9 @@ export default function App() {
           target.pdfFileKey || getTariBillFileKey(target.noticeNumber),
           user.uid
         );
+      }
+      if (isFirestoreWritesDisabled()) {
+        setTariBills((prev) => prev.filter((t) => t.id !== id));
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
@@ -2586,6 +2896,9 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, basePath, docId), payload);
+      if (isFirestoreWritesDisabled()) {
+        setGsePayments((prev) => [...prev, { ...payment, id: docId }]);
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
       throw error;
@@ -2619,6 +2932,11 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, path), payload);
+      if (isFirestoreWritesDisabled()) {
+        setGsePayments((prev) =>
+          prev.map((p) => (p.id === id ? { ...payment, id } : p))
+        );
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
       throw error;
@@ -2633,6 +2951,9 @@ export default function App() {
       await deleteDoc(doc(db, path));
       if (payment?.attachmentFileKey) {
         await deleteVaultFiles([payment.attachmentFileKey], user.uid);
+      }
+      if (isFirestoreWritesDisabled()) {
+        setGsePayments((prev) => prev.filter((p) => p.id !== id));
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
@@ -2715,6 +3036,17 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, basePath, docId), payload);
+      if (isFirestoreWritesDisabled()) {
+        setHomeArticles((prev) => [
+          ...prev,
+          {
+            ...article,
+            id: docId,
+            manualFileKey: uploadedManual?.key ?? article.manualFileKey,
+            manualFileName: uploadedManual?.fileName ?? article.manualFileName,
+          },
+        ]);
+      }
       return docId;
     } catch (error) {
       if (uploadedManual) {
@@ -2812,6 +3144,15 @@ export default function App() {
 
     try {
       await setDoc(doc(db, basePath, docId), payload);
+      if (isFirestoreWritesDisabled()) {
+        setHomeArticles((prev) => [
+          ...prev,
+          {
+            ...articlePayload,
+            id: docId,
+          },
+        ]);
+      }
     } catch (error) {
       await deleteVaultFiles([attachmentKey], user.uid);
       handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
@@ -3002,6 +3343,7 @@ export default function App() {
   // Auto-seed ConTe.it car policy once for owner if not yet persisted
   useEffect(() => {
     if (!user || !homeArticlesLoaded || carPolicySeededRef.current) return;
+    if (isFirestoreWritesDisabled()) return;
     if (homeArticles.some((a) => a.id === CAR_POLICY_ID)) {
       carPolicySeededRef.current = true;
       return;
@@ -3148,6 +3490,22 @@ export default function App() {
     try {
       lastAutopilotSyncKeyRef.current = `${user.uid}:${todayIso}:${nextCfg.startDate}:${nextCfg.mode}:${slotsKey}:${nextCfg.vmcMax ? 1 : 0}:${nextCfg.targetTemp}`;
       await batch.commit();
+      if (isFirestoreWritesDisabled()) {
+        setHomeArticles((prev) => {
+          const rest = prev.filter((a) => a.id !== CLIMATE_AUTOPILOT_DOC_ID);
+          return [...rest, { ...artPayload, id: CLIMATE_AUTOPILOT_DOC_ID }];
+        });
+        setClimateLogs((prev) => {
+          const filtered = prev.filter(
+            (l) => !(applyDateSet.has(l.date) && l.id !== getAutoClimateDocId(l.date))
+          );
+          const existingAutoIds = new Set(filtered.map((l) => l.id));
+          const additions = datesToApply
+            .map((d) => buildAutopilotSessionForDate(d, nextCfg, user.uid))
+            .filter((s) => !existingAutoIds.has(s.id));
+          return [...filtered, ...additions];
+        });
+      }
     } catch (error) {
       if (!isResilientFirestoreOutage(error)) {
         handleFirestoreError(error, OperationType.WRITE, statePath);
@@ -3192,6 +3550,15 @@ export default function App() {
 
     try {
       await batch.commit();
+      if (isFirestoreWritesDisabled()) {
+        setHomeArticles((prev) => {
+          const rest = prev.filter((a) => a.id !== CLIMATE_AUTOPILOT_DOC_ID);
+          return [...rest, { ...artPayload, id: CLIMATE_AUTOPILOT_DOC_ID, familyWarranty: false }];
+        });
+        if (removeTodayAutoSession) {
+          setClimateLogs((prev) => prev.filter((l) => l.date !== todayIso));
+        }
+      }
     } catch (error) {
       if (!isResilientFirestoreOutage(error)) {
         handleFirestoreError(error, OperationType.WRITE, statePath);
@@ -3202,6 +3569,7 @@ export default function App() {
   // Automatic daily propagation of the active climate combination across subsequent days
   useEffect(() => {
     if (!user || !climateAutopilot || !climateAutopilot.active) return;
+    if (isFirestoreWritesDisabled()) return;
     if (climateAutopilot.startDate > todayIso) return;
     if (autopilotSyncInFlightRef.current) return;
 
@@ -3332,6 +3700,20 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, path), payload);
+      if (isFirestoreWritesDisabled()) {
+        setHomeArticles((prev) => {
+          const exists = prev.some((entry) => entry.id === id);
+          const updated: HomeArticleRecord = {
+            ...article,
+            id,
+            manualFileKey: uploadedManual?.key ?? article.manualFileKey,
+            manualFileName: uploadedManual?.fileName ?? article.manualFileName,
+          };
+          return exists
+            ? prev.map((entry) => (entry.id === id ? updated : entry))
+            : [...prev, updated];
+        });
+      }
     } catch (error) {
       if (uploadedManual) {
         await deleteVaultFile(uploadedManual.key, user.uid);
@@ -3353,6 +3735,9 @@ export default function App() {
       await deleteDoc(doc(db, path));
       if (targetDoc?.attachmentKey) {
         await deleteVaultFiles([targetDoc.attachmentKey], user.uid);
+      }
+      if (isFirestoreWritesDisabled()) {
+        setHomeArticles((prev) => prev.filter((a) => a.id !== docId));
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
@@ -3380,6 +3765,10 @@ export default function App() {
       if (keysToDelete.length > 0) {
         await deleteVaultFiles(keysToDelete, user.uid);
       }
+      if (isFirestoreWritesDisabled()) {
+        const deletedIds = new Set([id, ...linkedDocs.map((d) => d.id)]);
+        setHomeArticles((prev) => prev.filter((a) => !deletedIds.has(a.id)));
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
       throw error;
@@ -3401,35 +3790,75 @@ export default function App() {
     window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1_000);
   }
 
+  function handleExportFullBackup() {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      projectId: FIREBASE_PROJECT_ID,
+      homeConfig,
+      settings: appSettings,
+      readings,
+      climateLogs,
+      vmcDays,
+      electricityBills,
+      waterBills,
+      tariBills,
+      gsePayments,
+      articles: visibleHomeArticles,
+      researches: productResearches,
+      documents: homeDocuments,
+      carProfile,
+      carPolicy,
+      carLogs,
+      groceries: groceryProducts,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json;charset=utf-8',
+    });
+    triggerBlobDownload(blob, `my-home-backup-${getLocalTodayIso()}.json`);
+  }
+
   if (!authReady) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="text-xs text-slate-400">Caricamento sistema domotico...</div>
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center">
+        <div className="text-xs text-slate-600 dark:text-slate-400">
+          Caricamento sistema domotico...
+        </div>
       </div>
     );
   }
 
   const currentNavLabel =
     NAV_ITEMS.find((n) => n.id === activeNav)?.label || 'Consumi Annuali';
+  const sidebarPinned = appSettings.sidebarAlwaysExpanded;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex">
-      {/* Desktop Sidebar (chiusa di default, si apre al passaggio del mouse) */}
-      <aside className="group hidden md:flex md:w-14 hover:md:w-60 md:flex-col md:fixed md:inset-y-0 left-0 z-40 bg-slate-900/95 backdrop-blur-sm border-r border-slate-800 transition-all duration-200 overflow-hidden hover:shadow-2xl hover:shadow-black/60">
-        <div className="h-14 px-3.5 flex items-center border-b border-slate-800">
+    <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 flex transition-colors duration-150">
+      {/* Desktop Sidebar */}
+      <aside
+        className={`group hidden md:flex md:flex-col md:fixed md:inset-y-0 left-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm border-r border-slate-200 dark:border-slate-800 transition-all duration-200 overflow-hidden ${
+          sidebarPinned
+            ? 'md:w-60'
+            : 'md:w-14 hover:md:w-60 hover:shadow-2xl hover:shadow-slate-900/15 dark:hover:shadow-black/60'
+        }`}
+      >
+        <div className="h-14 px-3.5 flex items-center border-b border-slate-200 dark:border-slate-800">
           <button
             type="button"
             onClick={() => navigateToSection('panoramica')}
-            className="inline-flex items-center gap-3 text-slate-100 font-bold tracking-tight text-base whitespace-nowrap"
+            className="inline-flex items-center gap-3 text-slate-900 dark:text-slate-100 font-bold tracking-tight text-base whitespace-nowrap"
           >
-            <Home className="w-5 h-5 text-sky-400 shrink-0" />
-            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+            <Home className="w-5 h-5 text-sky-600 dark:text-sky-400 shrink-0" />
+            <span
+              className={`transition-opacity duration-150 ${
+                sidebarPinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+              }`}
+            >
               my-home
             </span>
           </button>
         </div>
 
-        <nav className="flex-1 p-2 space-y-1">
+        <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const active = activeNav === item.id;
@@ -3441,12 +3870,16 @@ export default function App() {
                 onClick={() => navigateToSection(item.id)}
                 className={`w-full flex items-center gap-3 px-2.5 py-2.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
                   active
-                    ? 'bg-sky-500 text-slate-950'
-                    : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
+                    ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950 shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
                 }`}
               >
                 <Icon className="w-4 h-4 shrink-0" />
-                <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                <span
+                  className={`transition-opacity duration-150 ${
+                    sidebarPinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                  }`}
+                >
                   {item.label}
                 </span>
               </button>
@@ -3454,14 +3887,18 @@ export default function App() {
           })}
         </nav>
 
-        <div className="p-2.5 border-t border-slate-800 flex items-center justify-between gap-2">
+        <div className="p-2.5 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
           {user ? (
             <>
-              <div className="min-w-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pl-1">
-                <div className="text-xs font-medium text-slate-100 truncate">
+              <div
+                className={`min-w-0 transition-opacity duration-150 pl-1 ${
+                  sidebarPinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                }`}
+              >
+                <div className="text-xs font-medium text-slate-900 dark:text-slate-100 truncate">
                   {user.displayName || 'Proprietario'}
                 </div>
-                <div className="text-[11px] text-slate-400 truncate">
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
                   {user.email}
                 </div>
               </div>
@@ -3470,7 +3907,7 @@ export default function App() {
                 onClick={() => signOut(auth)}
                 aria-label="Esci"
                 title="Esci"
-                className="p-2 text-slate-400 hover:text-slate-100 rounded-lg transition-colors shrink-0"
+                className="p-2 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 rounded-lg transition-colors shrink-0"
               >
                 <LogOut className="w-4 h-4" />
               </button>
@@ -3480,10 +3917,14 @@ export default function App() {
               type="button"
               onClick={handleSignIn}
               title="Accedi con Google per modificare"
-              className="w-full flex items-center justify-center gap-2 py-2 px-2 text-xs font-medium text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap overflow-hidden"
+              className="w-full flex items-center justify-center gap-2 py-2 px-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap overflow-hidden"
             >
-              <span className="group-hover:hidden font-bold">G</span>
-              <span className="hidden group-hover:inline">Accedi con Google</span>
+              <span className={`${sidebarPinned ? 'hidden' : 'group-hover:hidden'} font-bold`}>
+                G
+              </span>
+              <span className={sidebarPinned ? 'inline' : 'hidden group-hover:inline'}>
+                Accedi con Google
+              </span>
             </button>
           )}
         </div>
@@ -3493,21 +3934,21 @@ export default function App() {
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-40 md:hidden flex">
           <div
-            className="fixed inset-0 bg-black/60"
+            className="fixed inset-0 bg-slate-950/60 dark:bg-black/70 backdrop-blur-sm"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <div className="relative w-64 max-w-[80vw] bg-slate-900 h-full flex flex-col border-r border-slate-800 z-50">
-            <div className="h-14 px-4 flex items-center justify-between border-b border-slate-800">
-              <span className="font-bold text-slate-100 text-sm">my-home</span>
+          <div className="relative w-64 max-w-[80vw] bg-white dark:bg-slate-900 h-full flex flex-col border-r border-slate-200 dark:border-slate-800 z-50">
+            <div className="h-14 px-4 flex items-center justify-between border-b border-slate-200 dark:border-slate-800">
+              <span className="font-bold text-slate-900 dark:text-slate-100 text-sm">my-home</span>
               <button
                 type="button"
                 onClick={() => setMobileMenuOpen(false)}
-                className="p-1.5 text-slate-400"
+                className="p-1.5 text-slate-500 dark:text-slate-400"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <nav className="flex-1 p-3 space-y-1">
+            <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
                 const active = activeNav === item.id;
@@ -3521,8 +3962,8 @@ export default function App() {
                     }}
                     className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg ${
                       active
-                        ? 'bg-sky-500 text-slate-950'
-                        : 'text-slate-400 hover:bg-slate-800'
+                        ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                        : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
                     }`}
                   >
                     <Icon className="w-4 h-4 shrink-0" />
@@ -3536,100 +3977,174 @@ export default function App() {
       )}
 
       {/* Main Content */}
-      <div className="flex-1 md:pl-14 flex flex-col min-w-0">
-        <header className="h-14 bg-slate-900/90 backdrop-blur-xs border-b border-slate-800 px-4 sm:px-6 flex items-center justify-between gap-4 sticky top-0 z-30">
+      <div
+        className={`flex-1 flex flex-col min-w-0 transition-[padding] duration-200 ${
+          sidebarPinned ? 'md:pl-60' : 'md:pl-14'
+        }`}
+      >
+        <header className="h-14 bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 flex items-center justify-between gap-4 sticky top-0 z-30">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
               onClick={() => setMobileMenuOpen(true)}
               aria-label="Apri menu"
-              className="md:hidden p-1.5 text-slate-400 hover:text-slate-100 rounded-lg"
+              className="md:hidden p-1.5 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 rounded-lg"
             >
               <Menu className="w-5 h-5" />
             </button>
-            <div className="flex items-center gap-2 text-xs text-slate-400 truncate">
+            <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 truncate">
               <span className="hidden sm:inline">mauriziominieri.github.io</span>
               <span className="hidden sm:inline">/</span>
               <span className="hidden sm:inline">my-home</span>
               <span className="hidden sm:inline">/</span>
-              <span className="font-semibold text-slate-100 truncate">
+              <span className="font-semibold text-slate-900 dark:text-slate-100 truncate">
                 {currentNavLabel}
               </span>
             </div>
           </div>
 
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="hidden sm:block text-xs font-mono text-slate-400 whitespace-nowrap">
-                POD <span className="text-sky-400">{homeConfig.podCode}</span> · 6 kW
-              </div>
-              {canEdit ? (
-                <button
-                  type="button"
-                  onClick={handleManualGmailSync}
-                  disabled={gmailSyncing}
-                  title={
-                    gmailToken
-                      ? 'Controlla ora la INBOX di Gmail (auto ogni 10 min)'
-                      : 'Collega e sincronizza ora la INBOX di Gmail'
-                  }
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-100 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60"
-                >
-                  {gmailSyncing ? (
-                    <RefreshCw className="w-3.5 h-3.5 text-sky-400 animate-spin" />
-                  ) : (
-                    <Mail className="w-3.5 h-3.5 text-sky-400" />
-                  )}
-                  <span>
-                    {gmailSyncing
-                      ? 'Controllo Gmail...'
-                      : gmailToken
-                        ? 'Sincronizza Gmail'
-                        : 'Collega Gmail'}
-                  </span>
-                </button>
+          <div className="flex items-center gap-2.5 shrink-0">
+            <div className="hidden md:block text-xs font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">
+              POD <span className="text-sky-600 dark:text-sky-400">{homeConfig.podCode}</span> · 6 kW
+            </div>
+
+            {appSettings.firestoreWritesDisabled && (
+              <button
+                type="button"
+                onClick={() => navigateToSection('impostazioni')}
+                title="Modalità Test attiva: le scritture su Firestore sono bloccate"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 dark:bg-indigo-500/15 dark:text-indigo-200 dark:border-indigo-500/35 dark:hover:bg-indigo-500/25 transition-colors whitespace-nowrap"
+              >
+                <FlaskConical className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden sm:inline">Test DB ({writeStats.writesSavedCount})</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() =>
+                updateAppSettings({
+                  theme: appSettings.theme === 'dark' ? 'light' : 'dark',
+                })
+              }
+              title={
+                appSettings.theme === 'dark'
+                  ? 'Passa a Light Mode'
+                  : 'Passa a Dark Mode'
+              }
+              aria-label={
+                appSettings.theme === 'dark'
+                  ? 'Passa a Light Mode'
+                  : 'Passa a Dark Mode'
+              }
+              className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100/80 hover:bg-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
+            >
+              {appSettings.theme === 'dark' ? (
+                <Sun className="w-3.5 h-3.5 text-sky-400" />
               ) : (
+                <Moon className="w-3.5 h-3.5 text-sky-600" />
+              )}
+            </button>
+
+            {canEdit ? (
+              <button
+                type="button"
+                onClick={handleManualGmailSync}
+                disabled={gmailSyncing}
+                title={
+                  gmailToken
+                    ? appSettings.autoGmailSyncEnabled
+                      ? `Controlla ora la INBOX di Gmail (auto ogni ${appSettings.autoGmailSyncIntervalMinutes} min)`
+                      : 'Controlla ora la INBOX di Gmail'
+                    : 'Collega e sincronizza ora la INBOX di Gmail'
+                }
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-100 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60"
+              >
+                {gmailSyncing ? (
+                  <RefreshCw className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 animate-spin" />
+                ) : (
+                  <Mail className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                )}
+                <span>
+                  {gmailSyncing
+                    ? 'Controllo Gmail...'
+                    : gmailToken
+                      ? 'Sincronizza Gmail'
+                      : 'Collega Gmail'}
+                </span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSignIn}
+                className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-slate-900 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg shadow-xs transition-colors whitespace-nowrap"
+              >
+                <svg
+                  className="w-3.5 h-3.5 shrink-0"
+                  viewBox="0 0 48 48"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    fill="#EA4335"
+                    d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+                  />
+                  <path
+                    fill="#4285F4"
+                    d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+                  />
+                </svg>
+                <span>Sign in with Google</span>
+              </button>
+            )}
+          </div>
+        </header>
+
+        {appSettings.firestoreWritesDisabled && (
+          <div className="px-4 sm:px-6 py-2 bg-indigo-50 border-b border-indigo-200 text-xs text-indigo-900 dark:bg-indigo-950/60 dark:border-indigo-500/35 dark:text-indigo-100 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <FlaskConical className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-300 shrink-0" />
+              <span>
+                <strong>Modalità Test Browser attiva:</strong> tutte le scritture su Firestore sono disattivate (0 quota consumata · {writeStats.writesSavedCount} operazioni simulate in questa sessione).
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => updateAppSettings({ firestoreWritesDisabled: false })}
+                className="px-2.5 py-1 text-[11px] font-semibold rounded-md bg-indigo-600 hover:bg-indigo-700 text-white dark:bg-indigo-500 dark:hover:bg-indigo-400 dark:text-slate-950 transition-colors"
+              >
+                Riattiva scritture DB
+              </button>
+              {activeNav !== 'impostazioni' && (
                 <button
                   type="button"
-                  onClick={handleSignIn}
-                  className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-slate-900 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg shadow-xs transition-colors whitespace-nowrap"
+                  onClick={() => navigateToSection('impostazioni')}
+                  className="px-2 py-1 text-[11px] font-medium underline text-indigo-700 dark:text-indigo-300 hover:opacity-80"
                 >
-                  <svg
-                    className="w-3.5 h-3.5 shrink-0"
-                    viewBox="0 0 48 48"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      fill="#EA4335"
-                      d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-                    />
-                    <path
-                      fill="#4285F4"
-                      d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-                    />
-                  </svg>
-                  <span>Sign in with Google</span>
+                  Impostazioni
                 </button>
               )}
             </div>
-        </header>
+          </div>
+        )}
 
         {firestoreQuotaExceeded && (
           <div
             role="alert"
-            className="sticky top-14 z-30 px-4 sm:px-6 py-2.5 bg-amber-950/95 backdrop-blur-xs border-b border-amber-500/50 text-xs text-amber-100 flex flex-wrap items-center justify-between gap-2.5 shadow-md"
+            className="sticky top-14 z-30 px-4 sm:px-6 py-2.5 bg-amber-50/95 border-b border-amber-300 text-amber-950 dark:bg-amber-950/95 backdrop-blur-sm dark:border-amber-500/50 text-xs dark:text-amber-100 flex flex-wrap items-center justify-between gap-2.5 shadow-md"
           >
             <div className="flex items-start sm:items-center gap-2 min-w-0">
-              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5 sm:mt-0" />
+              <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5 sm:mt-0" />
               <span className="leading-relaxed">
-                <strong className="font-semibold text-amber-200">
+                <strong className="font-semibold text-amber-900 dark:text-amber-200">
                   Quota gratuita giornaliera Firestore esaurita:
                 </strong>{' '}
                 i nuovi salvataggi e il caricamento file su cloud sono bloccati fino al reset automatico di domani.{' '}
@@ -3637,7 +4152,7 @@ export default function App() {
                   href="https://firebase.google.com/pricing#cloud-firestore"
                   target="_blank"
                   rel="noreferrer"
-                  className="underline text-amber-300 hover:text-amber-100 font-medium"
+                  className="underline text-amber-700 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-100 font-medium"
                 >
                   Dettagli limiti Spark
                 </a>
@@ -3646,7 +4161,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => dismissFirestoreQuotaExceeded()}
-              className="text-amber-200/80 hover:text-amber-100 p-1 rounded shrink-0"
+              className="text-amber-700 hover:text-amber-950 dark:text-amber-200/80 dark:hover:text-amber-100 p-1 rounded shrink-0"
               aria-label="Chiudi avviso quota Firestore"
             >
               <X className="w-3.5 h-3.5" />
@@ -3655,12 +4170,12 @@ export default function App() {
         )}
 
         {authError && (
-          <div className="px-5 py-2 bg-rose-500/10 border-b border-rose-500/30 text-xs text-rose-200 flex items-center justify-between gap-2">
+          <div className="px-5 py-2 bg-rose-50 border-b border-rose-200 text-rose-800 dark:bg-rose-500/10 dark:border-rose-500/30 text-xs dark:text-rose-200 flex items-center justify-between gap-2">
             <span>{authError}</span>
             <button
               type="button"
               onClick={() => setAuthError(null)}
-              className="text-rose-300/80 hover:text-rose-100 p-0.5 shrink-0"
+              className="text-rose-600 hover:text-rose-900 dark:text-rose-300/80 dark:hover:text-rose-100 p-0.5 shrink-0"
               aria-label="Chiudi errore autenticazione"
             >
               <X className="w-3.5 h-3.5" />
@@ -3672,10 +4187,10 @@ export default function App() {
           <div
             className={`px-5 py-2 border-b text-xs flex items-center justify-between gap-2 ${
               gmailNotice.tone === 'ok'
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-900 dark:bg-emerald-500/10 dark:border-emerald-500/30 dark:text-emerald-200'
                 : gmailNotice.tone === 'warn'
-                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-200'
-                  : 'bg-sky-500/10 border-sky-500/30 text-sky-200'
+                  ? 'bg-amber-50 border-amber-200 text-amber-900 dark:bg-amber-500/10 dark:border-amber-500/30 dark:text-amber-200'
+                  : 'bg-sky-50 border-sky-200 text-sky-900 dark:bg-sky-500/10 dark:border-sky-500/30 dark:text-sky-200'
             }`}
           >
             <div className="flex items-center gap-2">
@@ -3685,7 +4200,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setGmailNotice(null)}
-              className="text-slate-400 hover:text-slate-100 p-0.5"
+              className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 p-0.5"
               aria-label="Chiudi avviso"
             >
               <X className="w-3.5 h-3.5" />
@@ -3694,8 +4209,8 @@ export default function App() {
         )}
 
         {firestoreFallbackNotice && (
-          <div className="px-5 py-2 bg-amber-500/10 border-b border-amber-500/30 text-xs text-amber-200 flex items-center gap-2">
-            <WifiOff className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+          <div className="px-5 py-2 bg-amber-50 border-b border-amber-200 text-amber-900 dark:bg-amber-500/10 dark:border-amber-500/30 text-xs dark:text-amber-200 flex items-center gap-2">
+            <WifiOff className="w-3.5 h-3.5 text-amber-600 dark:text-amber-300 shrink-0" />
             <span>{firestoreFallbackNotice}</span>
           </div>
         )}
@@ -3703,11 +4218,11 @@ export default function App() {
         <VaultCloudNotice />
 
         {user && !readingsLoading && !migrationCompleted && !migrationDismissed && (
-          <div className="px-5 py-2.5 bg-sky-500/10 border-b border-sky-500/30 text-xs text-sky-100 flex flex-wrap items-center justify-between gap-3">
+          <div className="px-5 py-2.5 bg-sky-50 border-b border-sky-200 text-sky-900 dark:bg-sky-500/10 dark:border-sky-500/30 text-xs dark:text-sky-100 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-start sm:items-center gap-2 min-w-0">
-              <Database className="w-4 h-4 text-sky-300 shrink-0 mt-0.5 sm:mt-0" />
+              <Database className="w-4 h-4 text-sky-600 dark:text-sky-300 shrink-0 mt-0.5 sm:mt-0" />
               <div>
-                <span className="font-semibold text-sky-200">
+                <span className="font-semibold text-sky-800 dark:text-sky-200">
                   Nuovo DB unificato attivo (gen-lang-client-0721850501):
                 </span>{' '}
                 <span>
@@ -3722,7 +4237,7 @@ export default function App() {
                 type="button"
                 onClick={() => void handleRunLegacyMigration()}
                 disabled={migratingDb}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold bg-sky-500 hover:bg-sky-400 text-slate-950 rounded-md transition-colors disabled:opacity-60"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-500 dark:hover:bg-sky-400 dark:text-slate-950 rounded-md transition-colors disabled:opacity-60"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${migratingDb ? 'animate-spin' : ''}`} />
                 <span>
@@ -3733,7 +4248,7 @@ export default function App() {
                 type="button"
                 onClick={() => setMigrationDismissed(true)}
                 disabled={migratingDb}
-                className="p-1 text-sky-200/70 hover:text-sky-100"
+                className="p-1 text-sky-700/70 hover:text-sky-900 dark:text-sky-200/70 dark:hover:text-sky-100"
                 aria-label="Nascondi banner migrazione"
               >
                 <X className="w-3.5 h-3.5" />
@@ -3743,19 +4258,19 @@ export default function App() {
         )}
 
         {pendingTrashMessages.length > 0 && (
-          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
+          <div className="fixed inset-0 z-50 bg-slate-950/60 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-lg bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-300 shrink-0">
+                  <div className="w-9 h-9 rounded-lg bg-rose-100 border border-rose-200 text-rose-700 dark:bg-rose-500/15 dark:border-rose-500/30 flex items-center justify-center dark:text-rose-300 shrink-0">
                     <Trash2 className="w-4 h-4" />
                   </div>
                   <div>
-                    <h2 className="text-sm font-bold text-slate-100">
+                    <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
                       Spostare {pendingTrashMessages.length}{' '}
                       {pendingTrashMessages.length === 1 ? 'email' : 'email'} nel Cestino di Gmail?
                     </h2>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
                       I dati estratti sono già stati salvati su Firebase Firestore.
                     </p>
                   </div>
@@ -3764,7 +4279,7 @@ export default function App() {
                   type="button"
                   onClick={handleKeepMessagesInInbox}
                   disabled={trashingEmails}
-                  className="p-1 text-slate-400 hover:text-slate-100 rounded"
+                  className="p-1 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 rounded"
                   aria-label="Annulla"
                 >
                   <X className="w-4 h-4" />
@@ -3775,10 +4290,14 @@ export default function App() {
                 {pendingTrashMessages.map((msg) => (
                   <div
                     key={msg.id}
-                    className="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5 text-xs space-y-0.5"
+                    className="bg-slate-50 border border-slate-200 dark:bg-slate-950/70 dark:border-slate-800 rounded-lg p-2.5 text-xs space-y-0.5"
                   >
-                    <div className="font-medium text-slate-100 truncate">{msg.subject}</div>
-                    <div className="text-[11px] text-emerald-300">{msg.summary}</div>
+                    <div className="font-medium text-slate-900 dark:text-slate-100 truncate">
+                      {msg.subject}
+                    </div>
+                    <div className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                      {msg.summary}
+                    </div>
                     <div className="text-[10px] text-slate-500 truncate">{msg.from}</div>
                   </div>
                 ))}
@@ -3789,7 +4308,7 @@ export default function App() {
                   type="button"
                   onClick={handleKeepMessagesInInbox}
                   disabled={trashingEmails}
-                  className="px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 dark:text-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors"
                 >
                   Mantieni in INBOX
                 </button>
@@ -3811,7 +4330,11 @@ export default function App() {
           </div>
         )}
 
-        <main className="flex-1 min-w-0 overflow-x-hidden px-3 sm:px-5 py-4 sm:py-5 max-w-[1800px] w-full mx-auto">
+        <main
+          className={`flex-1 min-w-0 overflow-x-hidden max-w-[1800px] w-full mx-auto ${
+            appSettings.compactDensity ? 'px-2.5 sm:px-4 py-3' : 'px-3 sm:px-5 py-4 sm:py-5'
+          }`}
+        >
           {activeNav === 'panoramica' && (
             <OverviewView
               config={homeConfig}
@@ -4047,6 +4570,32 @@ export default function App() {
           )}
 
           {activeNav === 'info' && <InfoGuideView />}
+
+          {activeNav === 'impostazioni' && (
+            <SettingsView
+              homeConfig={homeConfig}
+              readOnly={!canEdit}
+              userEmail={user?.email || null}
+              isGmailConnected={Boolean(gmailToken)}
+              gmailSyncing={gmailSyncing}
+              onConnectOrSyncGmail={handleManualGmailSync}
+              onUpdateConfig={handleUpdateConfig}
+              onExportBackup={handleExportFullBackup}
+              countsSummary={{
+                readings: readings.length,
+                climateLogs: climateLogs.length,
+                electricityBills: electricityBills.length,
+                waterBills: waterBills.length,
+                tariBills: tariBills.length,
+                gsePayments: gsePayments.length,
+                articles: visibleHomeArticles.length,
+                researches: productResearches.length,
+                documents: homeDocuments.length,
+                carLogs: carLogs.length,
+                groceries: groceryProducts.length,
+              }}
+            />
+          )}
         </main>
       </div>
     </div>

@@ -29,6 +29,7 @@ export interface GmailProcessedMessage {
   from: string;
   date: string;
   summary: string;
+  isBill?: boolean;
 }
 
 export interface GmailPdfAttachment {
@@ -38,8 +39,17 @@ export interface GmailPdfAttachment {
   mimeType: string;
 }
 
+export interface GmailScanOptions {
+  minReadingDateExclusive?: string;
+  existingReadingDates?: Set<string>;
+  existingElectricityInvoices?: Set<string>;
+  existingWaterInvoices?: Set<string>;
+  existingTariNotices?: Set<string>;
+}
+
 export interface GmailScanResult {
   readings: ParsedReadingInput[];
+  ignoredReadingsCount: number;
   electricityBills: BillRecord[];
   waterBills: Omit<WaterBillRecord, 'id'>[];
   tariBills: Omit<TariBillRecord, 'id'>[];
@@ -74,6 +84,22 @@ function decodeBase64UrlToBytes(b64Url: string): Uint8Array {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
+}
+
+function isValidPdfBytes(bytes: Uint8Array): boolean {
+  if (!bytes || bytes.length < 5) return false;
+  let start = 0;
+  while (start < bytes.length && start < 1024 && bytes[start] <= 0x20) {
+    start++;
+  }
+  return (
+    start + 5 <= bytes.length &&
+    bytes[start] === 0x25 && // %
+    bytes[start + 1] === 0x50 && // P
+    bytes[start + 2] === 0x44 && // D
+    bytes[start + 3] === 0x46 && // F
+    bytes[start + 4] === 0x2d // -
+  );
 }
 
 function decodeBytesUtf8(bytes: Uint8Array): string {
@@ -131,8 +157,20 @@ async function gmailFetchJson<T>(url: string, accessToken: string, init?: Reques
  * Scans strictly Gmail INBOX (never Trash) for e-distribuzione load curves,
  * electricity PDFs (Edison, Octopus...), Acegas Water PDFs, and TARI PDFs,
  * saving each original PDF bytes locally at zero AI credit cost.
+ * Arbitrary non-PDF / HTML / image attachments are safely ignored without crashing.
  */
-export async function scanGmailInbox(accessToken: string): Promise<GmailScanResult> {
+export async function scanGmailInbox(
+  accessToken: string,
+  options: GmailScanOptions = {}
+): Promise<GmailScanResult> {
+  const minReadingDateExclusive = (options.minReadingDateExclusive || '').trim();
+  const isAlreadyStoredReading = (dateStr: string): boolean => {
+    if (!dateStr) return true;
+    if (minReadingDateExclusive && dateStr <= minReadingDateExclusive) return true;
+    if (options.existingReadingDates?.has(dateStr)) return true;
+    return false;
+  };
+
   const query =
     'in:inbox (from:notifichemailped@enel.com OR subject:"Dettaglio curve di carico" OR from:fatturazione@edisonenergia.it OR subject:"Fattura Edison Energia" OR from:octopusenergy.it OR subject:"Octopus Energy" OR from:tassa_rifiuti@acegasapsamga.it OR from:acegasapsamga.it OR subject:"Avviso di pagamento TARI")';
 
@@ -146,6 +184,7 @@ export async function scanGmailInbox(accessToken: string): Promise<GmailScanResu
   if (messageRefs.length === 0) {
     return {
       readings: [],
+      ignoredReadingsCount: 0,
       electricityBills: [],
       waterBills: [],
       tariBills: [],
@@ -155,6 +194,7 @@ export async function scanGmailInbox(accessToken: string): Promise<GmailScanResu
   }
 
   const readingsByDate = new Map<string, ParsedReadingInput>();
+  let ignoredReadingsCount = 0;
   const elecByInvoice = new Map<string, BillRecord>();
   const waterByInvoice = new Map<string, Omit<WaterBillRecord, 'id'>>();
   const tariByNotice = new Map<string, Omit<TariBillRecord, 'id'>>();
@@ -162,10 +202,17 @@ export async function scanGmailInbox(accessToken: string): Promise<GmailScanResu
   const processedMessages: GmailProcessedMessage[] = [];
 
   for (const ref of messageRefs) {
-    const msg = await gmailFetchJson<GmailMessageResponse>(
-      `${GMAIL_API_BASE}/messages/${encodeURIComponent(ref.id)}?format=full`,
-      accessToken
-    );
+    let msg: GmailMessageResponse;
+    try {
+      msg = await gmailFetchJson<GmailMessageResponse>(
+        `${GMAIL_API_BASE}/messages/${encodeURIComponent(ref.id)}?format=full`,
+        accessToken
+      );
+    } catch (err) {
+      if (err instanceof GmailAuthExpiredError) throw err;
+      console.warn('Errore lettura messaggio Gmail:', err);
+      continue;
+    }
 
     // Extra safety check: skip if somehow in Trash or not in INBOX
     if (msg.labelIds?.includes('TRASH') || !msg.labelIds?.includes('INBOX')) {
@@ -183,49 +230,56 @@ export async function scanGmailInbox(accessToken: string): Promise<GmailScanResu
     let msgTariCount = 0;
 
     for (const att of attachments) {
-      const lowerName = att.filename.toLowerCase();
-      const isCsv = lowerName.endsWith('.csv') || att.mimeType.includes('csv');
-      const isZip = lowerName.endsWith('.zip') || att.mimeType.includes('zip');
-      const isPdf = lowerName.endsWith('.pdf') || att.mimeType === 'application/pdf';
+      try {
+        const lowerName = att.filename.toLowerCase();
+        const isCsv = lowerName.endsWith('.csv') || att.mimeType.includes('csv');
+        const isZip = lowerName.endsWith('.zip') || att.mimeType.includes('zip');
+        const isPdf = lowerName.endsWith('.pdf') || att.mimeType === 'application/pdf';
 
-      if (!isCsv && !isZip && !isPdf) continue;
+        if (!isCsv && !isZip && !isPdf) continue;
 
-      let rawData = att.data || '';
-      if (!rawData && att.attachmentId) {
-        const attRes = await gmailFetchJson<{ data?: string }>(
-          `${GMAIL_API_BASE}/messages/${encodeURIComponent(msg.id)}/attachments/${encodeURIComponent(att.attachmentId)}`,
-          accessToken
-        );
-        rawData = attRes.data || '';
-      }
-      if (!rawData) continue;
-
-      const bytes = decodeBase64UrlToBytes(rawData);
-
-      if (isCsv) {
-        const parsed = parseEDistribuzioneCsv(decodeBytesUtf8(bytes));
-        for (const r of parsed) {
-          readingsByDate.set(r.date, r);
-          msgReadingsCount++;
+        let rawData = att.data || '';
+        if (!rawData && att.attachmentId) {
+          const attRes = await gmailFetchJson<{ data?: string }>(
+            `${GMAIL_API_BASE}/messages/${encodeURIComponent(msg.id)}/attachments/${encodeURIComponent(att.attachmentId)}`,
+            accessToken
+          );
+          rawData = attRes.data || '';
         }
-      } else if (isZip) {
-        try {
+        if (!rawData) continue;
+
+        const bytes = decodeBase64UrlToBytes(rawData);
+
+        if (isCsv) {
+          const parsed = parseEDistribuzioneCsv(decodeBytesUtf8(bytes));
+          for (const r of parsed) {
+            if (isAlreadyStoredReading(r.date)) {
+              ignoredReadingsCount++;
+              continue;
+            }
+            readingsByDate.set(r.date, r);
+            msgReadingsCount++;
+          }
+        } else if (isZip) {
           const zip = await JSZip.loadAsync(bytes);
           for (const [entryName, entry] of Object.entries(zip.files)) {
             if (!entry.dir && entryName.toLowerCase().endsWith('.csv')) {
               const csvText = await entry.async('string');
               const parsed = parseEDistribuzioneCsv(csvText);
               for (const r of parsed) {
+                if (isAlreadyStoredReading(r.date)) {
+                  ignoredReadingsCount++;
+                  continue;
+                }
                 readingsByDate.set(r.date, r);
                 msgReadingsCount++;
               }
             }
           }
-        } catch (err) {
-          console.warn('Errore lettura allegato ZIP Gmail:', err);
-        }
-      } else if (isPdf) {
-        try {
+        } else if (isPdf) {
+          if (!isValidPdfBytes(bytes)) {
+            continue;
+          }
           const pdfText = await extractPdfTextFromBytes(bytes.slice(), 4);
           const hay = `${from}\n${subject}\n${lowerName}\n${pdfText.slice(0, 3500)}`.toLowerCase();
           const safeFileName = att.filename || 'bolletta.pdf';
@@ -262,7 +316,7 @@ export async function scanGmailInbox(accessToken: string): Promise<GmailScanResu
                 const generic = parseGenericElectricityPdfText(pdfText, safeFileName);
                 return generic.confidence !== 'manuale' ? generic.bill : null;
               })();
-            if (bill) {
+            if (bill && !options.existingElectricityInvoices?.has(bill.invoiceNumber.trim())) {
               elecByInvoice.set(bill.invoiceNumber, bill);
               pdfByKey.set(getElectricityBillFileKey(bill.invoiceNumber), {
                 key: getElectricityBillFileKey(bill.invoiceNumber),
@@ -274,7 +328,10 @@ export async function scanGmailInbox(accessToken: string): Promise<GmailScanResu
             }
           } else if (isWaterCandidate) {
             const parsedWater = parseGenericWaterPdfText(pdfText, safeFileName);
-            if (parsedWater.confidence !== 'manuale') {
+            if (
+              parsedWater.confidence !== 'manuale' &&
+              !options.existingWaterInvoices?.has(parsedWater.bill.invoiceNumber.trim())
+            ) {
               waterByInvoice.set(parsedWater.bill.invoiceNumber, parsedWater.bill);
               pdfByKey.set(getWaterBillFileKey(parsedWater.bill.invoiceNumber), {
                 key: getWaterBillFileKey(parsedWater.bill.invoiceNumber),
@@ -286,7 +343,7 @@ export async function scanGmailInbox(accessToken: string): Promise<GmailScanResu
             }
           } else if (isTariCandidate) {
             const tari = parseTariPdfText(pdfText, subject, date);
-            if (tari) {
+            if (tari && !options.existingTariNotices?.has(tari.noticeNumber.trim())) {
               tariByNotice.set(tari.noticeNumber, tari);
               pdfByKey.set(getTariBillFileKey(tari.noticeNumber), {
                 key: getTariBillFileKey(tari.noticeNumber),
@@ -297,9 +354,10 @@ export async function scanGmailInbox(accessToken: string): Promise<GmailScanResu
               msgTariCount++;
             }
           }
-        } catch (err) {
-          console.warn('Errore lettura allegato PDF Gmail:', err);
         }
+      } catch (err) {
+        if (err instanceof GmailAuthExpiredError) throw err;
+        console.warn(`Allegato Gmail ignorato (${att.filename || 'sconosciuto'}):`, err);
       }
     }
 
@@ -315,12 +373,14 @@ export async function scanGmailInbox(accessToken: string): Promise<GmailScanResu
         from,
         date,
         summary: parts.join(', '),
+        isBill: msgElecCount > 0 || msgWaterCount > 0 || msgTariCount > 0,
       });
     }
   }
 
   return {
     readings: Array.from(readingsByDate.values()),
+    ignoredReadingsCount,
     electricityBills: Array.from(elecByInvoice.values()),
     waterBills: Array.from(waterByInvoice.values()),
     tariBills: Array.from(tariByNotice.values()),

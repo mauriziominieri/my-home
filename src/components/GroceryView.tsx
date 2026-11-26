@@ -49,18 +49,18 @@ const SUPERMARKET_META: Record<
 > = {
   ins: {
     label: "IN'S",
-    colorClass: 'text-amber-300',
-    badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/35',
+    colorClass: 'text-amber-700 dark:text-amber-300',
+    badgeClass: 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/35',
   },
   md: {
     label: 'MD',
-    colorClass: 'text-sky-300',
-    badgeClass: 'bg-sky-500/15 text-sky-300 border-sky-500/35',
+    colorClass: 'text-sky-700 dark:text-sky-300',
+    badgeClass: 'bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/35',
   },
   conad: {
     label: 'CONAD',
-    colorClass: 'text-rose-300',
-    badgeClass: 'bg-rose-500/15 text-rose-300 border-rose-500/35',
+    colorClass: 'text-rose-700 dark:text-rose-300',
+    badgeClass: 'bg-rose-50 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-500/35',
   },
 };
 
@@ -443,11 +443,11 @@ export function GroceryView({
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-            <ShoppingCart className="w-5 h-5 text-emerald-400" />
+          <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+            <ShoppingCart className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
             Spesa Alimentare — IN&apos;S · MD · CONAD ({products.length})
           </h1>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
             Lista prodotti alimentari con confronto prezzi su IN&apos;S, MD e CONAD salvata su Firebase Firestore.
           </p>
         </div>
@@ -458,16 +458,16 @@ export function GroceryView({
               type="button"
               onClick={() => void handleCopyShoppingList()}
               title="Copia la lista da comprare negli appunti per incollarla in Bring!, WhatsApp o Note"
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-800 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors"
             >
               {copiedList ? (
                 <>
-                  <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="text-emerald-300">Lista copiata!</span>
+                  <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <span className="text-emerald-700 dark:text-emerald-300">Lista copiata!</span>
                 </>
               ) : (
                 <>
-                  <Copy className="w-3.5 h-3.5 text-sky-400" />
+                  <Copy className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                   <span>Copia lista ({shoppingListItems.length})</span>
                 </>
               )}
@@ -477,7 +477,7 @@ export function GroceryView({
             <button
               type="button"
               onClick={openNewForm}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 rounded-lg transition-colors"
             >
               <Plus className="w-4 h-4" />
               Aggiungi prodotto alimentare
@@ -498,71 +498,71 @@ export function GroceryView({
 
       {/* KPI Confronto Carrello 3 Supermercati */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="bg-slate-900/70 border border-amber-500/30 rounded-xl p-3.5">
-          <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-amber-300 font-semibold">
+        <div className="bg-white dark:bg-slate-900/70 border border-amber-200 dark:border-amber-500/30 rounded-xl p-3.5 shadow-xs dark:shadow-none">
+          <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-amber-700 dark:text-amber-300 font-semibold">
             <span>IN&apos;S Mercato</span>
             <span>
               {basketSummary.insCount}/{basketSummary.totalItems} prezzi
             </span>
           </div>
-          <div className="text-lg font-bold font-mono text-slate-100 mt-1">
+          <div className="text-lg font-bold font-mono text-slate-900 dark:text-slate-100 mt-1">
             {basketSummary.insCount > 0
               ? `${basketSummary.insTotal.toFixed(2).replace('.', ',')} €`
               : '—'}
           </div>
-          <div className="text-[10px] text-slate-400 mt-0.5">
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
             {basketSummary.isShoppingList ? 'Su lista da comprare' : 'Su tutti i prodotti'}
           </div>
         </div>
 
-        <div className="bg-slate-900/70 border border-sky-500/30 rounded-xl p-3.5">
-          <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-sky-300 font-semibold">
+        <div className="bg-white dark:bg-slate-900/70 border border-sky-200 dark:border-sky-500/30 rounded-xl p-3.5 shadow-xs dark:shadow-none">
+          <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-sky-700 dark:text-sky-300 font-semibold">
             <span>MD</span>
             <span>
               {basketSummary.mdCount}/{basketSummary.totalItems} prezzi
             </span>
           </div>
-          <div className="text-lg font-bold font-mono text-slate-100 mt-1">
+          <div className="text-lg font-bold font-mono text-slate-900 dark:text-slate-100 mt-1">
             {basketSummary.mdCount > 0
               ? `${basketSummary.mdTotal.toFixed(2).replace('.', ',')} €`
               : '—'}
           </div>
-          <div className="text-[10px] text-slate-400 mt-0.5">
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
             {basketSummary.isShoppingList ? 'Su lista da comprare' : 'Su tutti i prodotti'}
           </div>
         </div>
 
-        <div className="bg-slate-900/70 border border-rose-500/30 rounded-xl p-3.5">
-          <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-rose-300 font-semibold">
+        <div className="bg-white dark:bg-slate-900/70 border border-rose-200 dark:border-rose-500/30 rounded-xl p-3.5 shadow-xs dark:shadow-none">
+          <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-rose-700 dark:text-rose-300 font-semibold">
             <span>CONAD</span>
             <span>
               {basketSummary.conadCount}/{basketSummary.totalItems} prezzi
             </span>
           </div>
-          <div className="text-lg font-bold font-mono text-slate-100 mt-1">
+          <div className="text-lg font-bold font-mono text-slate-900 dark:text-slate-100 mt-1">
             {basketSummary.conadCount > 0
               ? `${basketSummary.conadTotal.toFixed(2).replace('.', ',')} €`
               : '—'}
           </div>
-          <div className="text-[10px] text-slate-400 mt-0.5">
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
             {basketSummary.isShoppingList ? 'Su lista da comprare' : 'Su tutti i prodotti'}
           </div>
         </div>
 
-        <div className="bg-gradient-to-br from-emerald-950/60 to-slate-900 border border-emerald-500/40 rounded-xl p-3.5">
-          <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-emerald-300 font-semibold">
+        <div className="bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/60 dark:to-slate-900 border border-emerald-200 dark:border-emerald-500/40 rounded-xl p-3.5 shadow-xs dark:shadow-none">
+          <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-emerald-700 dark:text-emerald-300 font-semibold">
             <span className="inline-flex items-center gap-1">
               <Award className="w-3.5 h-3.5" />
               Spesa Ottimale
             </span>
             <span>{basketSummary.optimalCount} prezzati</span>
           </div>
-          <div className="text-lg font-bold font-mono text-emerald-300 mt-1">
+          <div className="text-lg font-bold font-mono text-emerald-700 dark:text-emerald-300 mt-1">
             {basketSummary.optimalCount > 0
               ? `${basketSummary.optimalTotal.toFixed(2).replace('.', ',')} €`
               : '—'}
           </div>
-          <div className="text-[10px] text-slate-400 mt-0.5">
+          <div className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">
             Prendendo ogni prodotto dove costa meno
           </div>
         </div>
@@ -572,10 +572,10 @@ export function GroceryView({
       {showForm && !readOnly && (
         <form
           onSubmit={handleSubmit}
-          className="bg-slate-900 border border-emerald-500/40 rounded-xl p-4 sm:p-5 space-y-4 text-xs"
+          className="bg-white dark:bg-slate-900 border border-sky-300 dark:border-sky-500/40 rounded-xl p-4 sm:p-5 space-y-4 text-xs shadow-sm dark:shadow-none"
         >
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h3 className="text-sm font-semibold text-slate-100">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
               {editingId ? 'Modifica prodotto alimentare' : 'Nuovo prodotto alimentare'}
             </h3>
             <button
@@ -584,7 +584,7 @@ export function GroceryView({
                 setShowForm(false);
                 resetForm();
               }}
-              className="text-slate-400 hover:text-slate-100"
+              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
             >
               Chiudi
             </button>
@@ -592,7 +592,7 @@ export function GroceryView({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <label className="space-y-1">
-              <span className="text-slate-400">Nome prodotto *</span>
+              <span className="text-slate-600 dark:text-slate-400">Nome prodotto *</span>
               <input
                 type="text"
                 required
@@ -600,15 +600,15 @@ export function GroceryView({
                 placeholder="Es. Biscotti, Latte, Zucchine, Pasta..."
                 value={name}
                 onChange={(e) => handleNameChange(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100"
               />
             </label>
 
             <label className="space-y-1">
-              <span className="text-slate-400 flex items-center justify-between gap-2">
+              <span className="text-slate-600 dark:text-slate-400 flex items-center justify-between gap-2">
                 <span>Categoria</span>
                 {categoryAutoDetected && (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-300">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-300">
                     <Sparkles className="w-3 h-3" />
                     Auto
                   </span>
@@ -621,7 +621,7 @@ export function GroceryView({
                   setCategoryManuallyPicked(true);
                   setCategoryAutoDetected(false);
                 }}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark]"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark]"
               >
                 {categoriesPresent.map((cat) => (
                   <option key={cat} value={cat}>
@@ -632,19 +632,19 @@ export function GroceryView({
             </label>
 
             <label className="space-y-1">
-              <span className="text-slate-400">Formato / Quantità (default 1 kg)</span>
+              <span className="text-slate-600 dark:text-slate-400">Formato / Quantità (default 1 kg)</span>
               <input
                 type="text"
                 maxLength={80}
                 placeholder="1 kg (es. 1 kg, 1 L, 1 pz)"
                 value={unit}
                 onChange={(e) => setUnit(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100"
               />
             </label>
 
             <label className="space-y-1">
-              <span className="text-amber-300 font-semibold">
+              <span className="text-amber-700 dark:text-amber-300 font-semibold">
                 Prezzo IN&apos;S (€{unit.trim() === '1 kg' ? '/kg' : ''})
               </span>
               <input
@@ -652,12 +652,12 @@ export function GroceryView({
                 placeholder="Es. 2,79 (vuoto se assente)"
                 value={priceIns}
                 onChange={(e) => setPriceIns(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-amber-500/30 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-amber-300 dark:border-amber-500/30 rounded-lg font-mono text-slate-900 dark:text-slate-100"
               />
             </label>
 
             <label className="space-y-1">
-              <span className="text-sky-300 font-semibold">
+              <span className="text-sky-700 dark:text-sky-300 font-semibold">
                 Prezzo MD (€{unit.trim() === '1 kg' ? '/kg' : ''})
               </span>
               <input
@@ -665,12 +665,12 @@ export function GroceryView({
                 placeholder="Es. 2,49 (vuoto se assente)"
                 value={priceMd}
                 onChange={(e) => setPriceMd(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-sky-500/30 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-sky-300 dark:border-sky-500/30 rounded-lg font-mono text-slate-900 dark:text-slate-100"
               />
             </label>
 
             <label className="space-y-1">
-              <span className="text-rose-300 font-semibold">
+              <span className="text-rose-700 dark:text-rose-300 font-semibold">
                 Prezzo CONAD (€{unit.trim() === '1 kg' ? '/kg' : ''})
               </span>
               <input
@@ -678,19 +678,19 @@ export function GroceryView({
                 placeholder="Es. 3,45 (vuoto se assente)"
                 value={priceConad}
                 onChange={(e) => setPriceConad(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-rose-500/30 rounded-lg font-mono text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-rose-300 dark:border-rose-500/30 rounded-lg font-mono text-slate-900 dark:text-slate-100"
               />
             </label>
 
             <label className="space-y-1 sm:col-span-2">
-              <span className="text-slate-400">Note / Marca preferita</span>
+              <span className="text-slate-600 dark:text-slate-400">Note / Marca preferita</span>
               <input
                 type="text"
                 maxLength={240}
                 placeholder="Es. Marca Granarolo, spesso in offerta il giovedì..."
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100"
               />
             </label>
 
@@ -699,27 +699,27 @@ export function GroceryView({
                 type="checkbox"
                 checked={inShoppingList}
                 onChange={(e) => setInShoppingList(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-emerald-500"
+                className="h-4 w-4 rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 accent-sky-600 dark:accent-sky-400"
               />
-              <span className="text-slate-200">Includi nella lista da comprare</span>
+              <span className="text-slate-800 dark:text-slate-200">Includi nella lista da comprare</span>
             </label>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
               onClick={() => {
                 setShowForm(false);
                 resetForm();
               }}
-              className="px-3.5 py-2 text-slate-400 hover:text-slate-100"
+              className="px-3.5 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
             >
               Annulla
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg"
+              className="px-4 py-2 font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 rounded-lg"
             >
               {saving ? 'Salvataggio...' : editingId ? 'Salva modifiche' : 'Salva prodotto'}
             </button>
@@ -735,8 +735,8 @@ export function GroceryView({
             onClick={() => setOnlyShoppingList((v) => !v)}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
               onlyShoppingList
-                ? 'bg-emerald-500 text-slate-950 border-emerald-400'
-                : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
+                ? 'bg-emerald-600 text-white border-emerald-600 dark:bg-emerald-500 dark:text-slate-950 dark:border-emerald-400'
+                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
             }`}
           >
             <ShoppingBasket className="w-3.5 h-3.5" />
@@ -746,7 +746,7 @@ export function GroceryView({
           <select
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
-            className="px-3 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-slate-200 [color-scheme:dark]"
+            className="px-3 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-800 dark:text-slate-200 [color-scheme:light] dark:[color-scheme:dark]"
           >
             <option value="all">Tutte le categorie</option>
             {categoriesPresent.map((c) => (
@@ -756,14 +756,14 @@ export function GroceryView({
             ))}
           </select>
 
-          <div className="flex items-center gap-1 p-1 bg-slate-900 border border-slate-800 rounded-lg text-xs">
+          <div className="flex items-center gap-1 p-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs">
             <button
               type="button"
               onClick={() => setBestStoreFilter('all')}
               className={`px-2 py-1 rounded ${
                 bestStoreFilter === 'all'
-                  ? 'bg-slate-700 text-slate-100'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-slate-100 font-medium'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
               Tutti
@@ -775,8 +775,8 @@ export function GroceryView({
                 onClick={() => setBestStoreFilter(sid)}
                 className={`px-2 py-1 rounded font-semibold ${
                   bestStoreFilter === sid
-                    ? 'bg-emerald-500 text-slate-950'
-                    : `${SUPERMARKET_META[sid].colorClass} hover:bg-slate-800`
+                    ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                    : `${SUPERMARKET_META[sid].colorClass} hover:bg-slate-100 dark:hover:bg-slate-800`
                 }`}
               >
                 Conviene {SUPERMARKET_META[sid].label}
@@ -786,22 +786,22 @@ export function GroceryView({
         </div>
 
         <div className="relative w-full lg:w-64">
-          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+          <Search className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Cerca prodotto alimentare..."
-            className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
+            className="w-full pl-8 pr-3 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
           />
         </div>
       </div>
 
       {/* Tabella Confronto Prezzi */}
-      <div className="bg-slate-900/70 border border-slate-800 rounded-xl overflow-hidden">
+      <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
         <div className="overflow-x-auto">
           <table className="w-full text-xs text-left">
-            <thead className="bg-slate-950/70 text-slate-400 border-b border-slate-800">
+            <thead className="bg-slate-50 dark:bg-slate-950/70 text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
               <tr>
                 <th className="px-3 py-2.5 font-medium w-10 text-center">Lista</th>
                 <SortableTh
@@ -825,7 +825,7 @@ export function GroceryView({
                   currentSort={sort}
                   onSort={(k) => setSort((prev) => toggleSort(prev, k, 'asc'))}
                   align="right"
-                  className="px-3 py-2.5 font-medium text-right text-amber-300"
+                  className="px-3 py-2.5 font-medium text-right text-amber-700 dark:text-amber-300"
                 >
                   IN&apos;S
                 </SortableTh>
@@ -834,7 +834,7 @@ export function GroceryView({
                   currentSort={sort}
                   onSort={(k) => setSort((prev) => toggleSort(prev, k, 'asc'))}
                   align="right"
-                  className="px-3 py-2.5 font-medium text-right text-sky-300"
+                  className="px-3 py-2.5 font-medium text-right text-sky-700 dark:text-sky-300"
                 >
                   MD
                 </SortableTh>
@@ -843,7 +843,7 @@ export function GroceryView({
                   currentSort={sort}
                   onSort={(k) => setSort((prev) => toggleSort(prev, k, 'asc'))}
                   align="right"
-                  className="px-3 py-2.5 font-medium text-right text-rose-300"
+                  className="px-3 py-2.5 font-medium text-right text-rose-700 dark:text-rose-300"
                 >
                   CONAD
                 </SortableTh>
@@ -858,14 +858,14 @@ export function GroceryView({
                 {!readOnly && <th className="px-3 py-2.5 font-medium text-right">Azioni</th>}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/70">
+            <tbody className="divide-y divide-slate-200/80 dark:divide-slate-800/70">
               {filteredProducts.length === 0 ? (
                 <tr>
-                  <td colSpan={readOnly ? 7 : 8} className="px-4 py-8 text-center text-slate-400 space-y-2">
+                  <td colSpan={readOnly ? 7 : 8} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400 space-y-2">
                     <p>Nessun prodotto alimentare ancora inserito o trovato.</p>
                     {!readOnly && products.length === 0 && (
                       <p className="text-[11px] text-slate-500">
-                        Clicca <strong className="text-emerald-300">&quot;Aggiungi prodotto alimentare&quot;</strong> per inserire il primo alimento con i prezzi di IN&apos;S, MD e CONAD.
+                        Clicca <strong className="text-sky-700 dark:text-sky-300">&quot;Aggiungi prodotto alimentare&quot;</strong> per inserire il primo alimento con i prezzi di IN&apos;S, MD e CONAD.
                       </p>
                     )}
                   </td>
@@ -874,13 +874,13 @@ export function GroceryView({
                 filteredProducts.map((item) => {
                   if (editingId === item.id && !readOnly) {
                     return (
-                      <tr key={item.id} className="bg-slate-950/60">
+                      <tr key={item.id} className="bg-slate-50 dark:bg-slate-950/60">
                         <td colSpan={8} className="p-3">
                           <form
                             onSubmit={handleSubmit}
-                            className="rounded-lg border border-sky-500/30 bg-slate-900 p-3 space-y-3"
+                            className="rounded-lg border border-sky-300 dark:border-sky-500/30 bg-white dark:bg-slate-900 p-3 space-y-3"
                           >
-                            <div className="text-xs font-semibold text-slate-100">
+                            <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">
                               Modifica {item.name}
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
@@ -891,7 +891,7 @@ export function GroceryView({
                                 aria-label="Nome prodotto"
                                 value={name}
                                 onChange={(event) => handleNameChange(event.target.value)}
-                                className="min-w-0 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-md text-xs text-slate-100"
+                                className="min-w-0 px-2.5 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-xs text-slate-900 dark:text-slate-100"
                               />
                               <select
                                 value={category}
@@ -900,7 +900,7 @@ export function GroceryView({
                                   setCategoryManuallyPicked(true);
                                   setCategoryAutoDetected(false);
                                 }}
-                                className="min-w-0 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-md text-xs text-slate-100"
+                                className="min-w-0 px-2.5 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-xs text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark]"
                               >
                                 {categoriesPresent.map((entry) => (
                                   <option key={entry} value={entry}>
@@ -913,7 +913,7 @@ export function GroceryView({
                                 aria-label="Unità"
                                 value={unit}
                                 onChange={(event) => setUnit(event.target.value)}
-                                className="min-w-0 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-md text-xs text-slate-100"
+                                className="min-w-0 px-2.5 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-xs text-slate-900 dark:text-slate-100"
                               />
                               <input
                                 type="text"
@@ -921,7 +921,7 @@ export function GroceryView({
                                 placeholder="IN'S (€)"
                                 value={priceIns}
                                 onChange={(event) => setPriceIns(event.target.value)}
-                                className="min-w-0 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-md text-xs text-slate-100"
+                                className="min-w-0 px-2.5 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-xs text-slate-900 dark:text-slate-100"
                               />
                               <input
                                 type="text"
@@ -929,7 +929,7 @@ export function GroceryView({
                                 placeholder="MD (€)"
                                 value={priceMd}
                                 onChange={(event) => setPriceMd(event.target.value)}
-                                className="min-w-0 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-md text-xs text-slate-100"
+                                className="min-w-0 px-2.5 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-xs text-slate-900 dark:text-slate-100"
                               />
                               <input
                                 type="text"
@@ -937,7 +937,7 @@ export function GroceryView({
                                 placeholder="CONAD (€)"
                                 value={priceConad}
                                 onChange={(event) => setPriceConad(event.target.value)}
-                                className="min-w-0 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-md text-xs text-slate-100"
+                                className="min-w-0 px-2.5 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-xs text-slate-900 dark:text-slate-100"
                               />
                               <input
                                 type="text"
@@ -945,14 +945,14 @@ export function GroceryView({
                                 placeholder="Note"
                                 value={notes}
                                 onChange={(event) => setNotes(event.target.value)}
-                                className="min-w-0 px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-md text-xs text-slate-100"
+                                className="min-w-0 px-2.5 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-xs text-slate-900 dark:text-slate-100"
                               />
-                              <label className="flex items-center gap-2 px-2 text-xs text-slate-300">
+                              <label className="flex items-center gap-2 px-2 text-xs text-slate-700 dark:text-slate-300">
                                 <input
                                   type="checkbox"
                                   checked={inShoppingList}
                                   onChange={(event) => setInShoppingList(event.target.checked)}
-                                  className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-emerald-500"
+                                  className="h-4 w-4 rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 accent-sky-600 dark:accent-sky-400"
                                 />
                                 Nella lista da comprare
                               </label>
@@ -961,14 +961,14 @@ export function GroceryView({
                               <button
                                 type="button"
                                 onClick={resetForm}
-                                className="px-3 py-1.5 text-xs text-slate-300 hover:text-white"
+                                className="px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
                               >
                                 Annulla
                               </button>
                               <button
                                 type="submit"
                                 disabled={saving}
-                                className="px-3 py-1.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-md disabled:opacity-50"
+                                className="px-3 py-1.5 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 rounded-md disabled:opacity-50"
                               >
                                 {saving ? 'Salvataggio...' : 'Salva'}
                               </button>
@@ -987,22 +987,22 @@ export function GroceryView({
                           <span
                             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded ${
                               isBest
-                                ? 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/35'
-                                : 'text-slate-200'
+                                ? 'bg-emerald-50 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-200 dark:border-emerald-500/35'
+                                : 'text-slate-800 dark:text-slate-200'
                             }`}
                           >
                             {isBest && <Check className="w-3 h-3" />}
                             {val.toFixed(2).replace('.', ',')} €
                           </span>
                         ) : (
-                          <span className="text-slate-600">—</span>
+                          <span className="text-slate-400 dark:text-slate-600">—</span>
                         )}
                       </td>
                     );
                   };
 
                   return (
-                    <tr key={item.id} className="hover:bg-slate-800/30">
+                    <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
                       <td className="px-3 py-2.5 text-center">
                         <button
                           type="button"
@@ -1022,28 +1022,28 @@ export function GroceryView({
                           } ${
                             item.inShoppingList
                               ? readOnly
-                                ? 'text-emerald-400'
-                                : 'text-emerald-400 hover:bg-emerald-500/15'
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/15'
                               : readOnly
-                                ? 'text-slate-600'
-                                : 'text-slate-600 hover:text-slate-300'
+                                ? 'text-slate-400 dark:text-slate-600'
+                                : 'text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300'
                           }`}
                         >
                           <CheckCircle2 className="w-4 h-4" />
                         </button>
                       </td>
                       <td className="px-3 py-2.5">
-                        <div className="font-semibold text-slate-100">
+                        <div className="font-semibold text-slate-900 dark:text-slate-100">
                           {item.name}{' '}
-                          <span className="text-[11px] font-normal text-slate-400">
+                          <span className="text-[11px] font-normal text-slate-500 dark:text-slate-400">
                             ({item.unit})
                           </span>
                         </div>
                         {item.notes && (
-                          <div className="text-[10px] text-slate-400">{item.notes}</div>
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400">{item.notes}</div>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 text-slate-400">{item.category}</td>
+                      <td className="px-3 py-2.5 text-slate-600 dark:text-slate-400">{item.category}</td>
                       {renderPriceCell('ins', item.priceIns)}
                       {renderPriceCell('md', item.priceMd)}
                       {renderPriceCell('conad', item.priceConad)}
@@ -1059,13 +1059,13 @@ export function GroceryView({
                               </span>
                             ))}
                             {best.savingEur > 0 && (
-                              <span className="text-[10px] font-mono text-emerald-300">
+                              <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-300">
                                 (-{best.savingEur.toFixed(2).replace('.', ',')}€)
                               </span>
                             )}
                           </div>
                         ) : (
-                          <span className="text-slate-600">—</span>
+                          <span className="text-slate-400 dark:text-slate-600">—</span>
                         )}
                       </td>
                       {!readOnly && (
@@ -1075,7 +1075,7 @@ export function GroceryView({
                               type="button"
                               onClick={() => openEditForm(item)}
                               aria-label={`Modifica ${item.name}`}
-                              className="p-1 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded"
+                              className="p-1 text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
                             >
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
@@ -1083,7 +1083,7 @@ export function GroceryView({
                               type="button"
                               onClick={() => setPendingDelete(item)}
                               aria-label={`Elimina ${item.name}`}
-                              className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded"
+                              className="p-1 text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -1100,27 +1100,27 @@ export function GroceryView({
       </div>
 
       {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/75 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-rose-500/15 text-rose-400 shrink-0">
+              <div className="p-2 rounded-lg bg-rose-50 dark:bg-rose-500/15 text-rose-600 dark:text-rose-400 shrink-0">
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-sm font-semibold text-slate-100">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   Eliminare {pendingDelete.name}?
                 </h3>
-                <p className="text-xs text-slate-300">
+                <p className="text-xs text-slate-600 dark:text-slate-300">
                   Verrà rimosso dalla tua lista spesa su Firebase.
                 </p>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 disabled={deleting}
                 onClick={() => setPendingDelete(null)}
-                className="px-3.5 py-2 text-xs text-slate-300 bg-slate-800 rounded-lg"
+                className="px-3.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg"
               >
                 Annulla
               </button>

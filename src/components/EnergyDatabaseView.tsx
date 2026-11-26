@@ -126,11 +126,11 @@ interface EnergyDatabaseViewProps {
 }
 
 function getHeatColor(kwh: number | undefined): string {
-  if (kwh === undefined) return 'bg-slate-800/40 text-slate-600';
-  if (kwh < 5) return 'bg-emerald-500/25 text-emerald-300 border-emerald-500/30';
-  if (kwh < 12) return 'bg-sky-500/30 text-sky-200 border-sky-500/40';
-  if (kwh < 20) return 'bg-amber-500/35 text-amber-200 border-amber-500/40';
-  return 'bg-rose-500/40 text-rose-200 border-rose-500/50';
+  if (kwh === undefined) return 'bg-slate-100 dark:bg-slate-800/40 text-slate-400 dark:text-slate-600';
+  if (kwh < 5) return 'bg-emerald-500/15 dark:bg-emerald-500/25 text-emerald-800 dark:text-emerald-300 border-emerald-500/30';
+  if (kwh < 12) return 'bg-sky-500/15 dark:bg-sky-500/30 text-sky-800 dark:text-sky-200 border-sky-500/35 dark:border-sky-500/40';
+  if (kwh < 20) return 'bg-amber-500/20 dark:bg-amber-500/35 text-amber-800 dark:text-amber-200 border-amber-500/35 dark:border-amber-500/40';
+  return 'bg-rose-500/20 dark:bg-rose-500/40 text-rose-800 dark:text-rose-200 border-rose-500/40 dark:border-rose-500/50';
 }
 
 function getDefaultModeForIso(iso: string): ClimateMode {
@@ -903,8 +903,8 @@ export function EnergyDatabaseView({
       const code = String.fromCharCode(65 + (idx % 26)); // A, B, C...
       const badgeClass =
         entry.mode === 'riscaldamento'
-          ? 'bg-amber-400 text-slate-950'
-          : 'bg-cyan-400 text-slate-950';
+          ? 'bg-orange-500 text-white dark:bg-amber-400 dark:text-slate-950'
+          : 'bg-cyan-600 text-white dark:bg-cyan-400 dark:text-slate-950';
       map.set(entry.key, { code, badgeClass });
     });
     return map;
@@ -1168,17 +1168,17 @@ export function EnergyDatabaseView({
     const tot = row.total > 0 ? row.total : row.F1 + row.F2 + row.F3;
     const comboCode = dayLogs.length > 0 ? comboMetaByKey.get(getDayComboKey(dayLogs))?.code : undefined;
     return (
-      <div className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs shadow-xl space-y-1 min-w-[210px]">
-        <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-1">
-          <span className="font-semibold text-slate-100">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-xs shadow-xl space-y-1 min-w-[210px]">
+        <div className="flex items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-1">
+          <span className="font-semibold text-slate-900 dark:text-slate-100">
             {formatReadingDate(row.iso)}
           </span>
           {dayLogs.length > 0 && (
             <span
               className={`text-[10px] font-medium ${
                 dayLogs[0].mode === 'riscaldamento'
-                  ? 'text-amber-300'
-                  : 'text-cyan-300'
+                  ? 'text-orange-700 dark:text-amber-300'
+                  : 'text-cyan-700 dark:text-cyan-300'
               }`}
             >
               {dayLogs[0].mode === 'riscaldamento' ? 'Riscald.' : 'Raffresc.'}
@@ -1187,29 +1187,29 @@ export function EnergyDatabaseView({
           )}
         </div>
         <div className="flex items-center justify-between gap-4 font-mono tabular-nums">
-          <span className="inline-flex items-center gap-1.5 text-sky-300">
-            <span className="w-2 h-2 rounded-xs bg-sky-400" />
+          <span className="inline-flex items-center gap-1.5 text-sky-700 dark:text-sky-300">
+            <span className="w-2 h-2 rounded-xs bg-sky-500 dark:bg-sky-400" />
             F3 (Fuori punta)
           </span>
-          <span className="text-slate-100">{row.F3.toFixed(2)} kWh</span>
+          <span className="text-slate-900 dark:text-slate-100">{row.F3.toFixed(2)} kWh</span>
         </div>
         <div className="flex items-center justify-between gap-4 font-mono tabular-nums">
-          <span className="inline-flex items-center gap-1.5 text-amber-300">
-            <span className="w-2 h-2 rounded-xs bg-amber-400" />
+          <span className="inline-flex items-center gap-1.5 text-amber-700 dark:text-amber-300">
+            <span className="w-2 h-2 rounded-xs bg-amber-500 dark:bg-amber-400" />
             F2 (Intermedia)
           </span>
-          <span className="text-slate-100">{row.F2.toFixed(2)} kWh</span>
+          <span className="text-slate-900 dark:text-slate-100">{row.F2.toFixed(2)} kWh</span>
         </div>
         <div className="flex items-center justify-between gap-4 font-mono tabular-nums">
-          <span className="inline-flex items-center gap-1.5 text-rose-300">
+          <span className="inline-flex items-center gap-1.5 text-rose-700 dark:text-rose-300">
             <span className="w-2 h-2 rounded-xs bg-rose-500" />
             F1 (Punta)
           </span>
-          <span className="text-slate-100">{row.F1.toFixed(2)} kWh</span>
+          <span className="text-slate-900 dark:text-slate-100">{row.F1.toFixed(2)} kWh</span>
         </div>
-        <div className="flex items-center justify-between gap-4 font-mono tabular-nums pt-1 border-t border-slate-800 font-semibold">
-          <span className="text-slate-200">Totale giorno</span>
-          <span className="text-emerald-400">
+        <div className="flex items-center justify-between gap-4 font-mono tabular-nums pt-1 border-t border-slate-200 dark:border-slate-800 font-semibold">
+          <span className="text-slate-700 dark:text-slate-200">Totale giorno</span>
+          <span className="text-emerald-600 dark:text-emerald-400">
             {tot.toFixed(2)} kWh
             {row.costEur !== null ? ` (€ ${row.costEur.toFixed(2)})` : ''}
           </span>
@@ -1223,10 +1223,10 @@ export function EnergyDatabaseView({
       {/* Header + Live HVAC Status + Year + Zoom */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
-          <h2 className="text-lg font-semibold text-slate-100">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             Consumi Reali e-distribuzione
           </h2>
-          <div className="flex items-center gap-1 p-1 bg-slate-900 border border-slate-800 rounded-lg">
+          <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg">
             {availableYears.map((yr) => {
               const yrCount = readings.filter((r) => r.date.startsWith(`${yr}-`)).length;
               return (
@@ -1241,8 +1241,8 @@ export function EnergyDatabaseView({
                   }}
                   className={`px-2.5 py-1 text-xs font-mono font-medium rounded-md transition-colors ${
                     selectedYear === yr
-                      ? 'bg-sky-500 text-slate-950'
-                      : 'text-slate-400 hover:text-slate-100'
+                      ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                   }`}
                 >
                   {yr}
@@ -1257,9 +1257,9 @@ export function EnergyDatabaseView({
             className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs ${
               liveStatus.isOn
                 ? liveStatus.activeSession?.mode === 'riscaldamento'
-                  ? 'bg-amber-500/15 border-amber-400/40 text-amber-200'
-                  : 'bg-cyan-500/15 border-cyan-400/40 text-cyan-200'
-                : 'bg-slate-900 border-slate-800 text-slate-300'
+                  ? 'bg-orange-500/10 dark:bg-amber-500/15 border-orange-500/35 dark:border-amber-400/40 text-orange-800 dark:text-amber-200'
+                  : 'bg-cyan-500/10 dark:bg-cyan-500/15 border-cyan-500/35 dark:border-cyan-400/40 text-cyan-800 dark:text-cyan-200'
+                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
             }`}
             title={liveStatus.detailLabel}
           >
@@ -1268,8 +1268,8 @@ export function EnergyDatabaseView({
                 <span
                   className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
                     liveStatus.activeSession?.mode === 'riscaldamento'
-                      ? 'bg-amber-400'
-                      : 'bg-cyan-400'
+                      ? 'bg-orange-500 dark:bg-amber-400'
+                      : 'bg-cyan-500 dark:bg-cyan-400'
                   }`}
                 />
               )}
@@ -1277,9 +1277,9 @@ export function EnergyDatabaseView({
                 className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
                   liveStatus.isOn
                     ? liveStatus.activeSession?.mode === 'riscaldamento'
-                      ? 'bg-amber-400'
-                      : 'bg-cyan-400'
-                    : 'bg-slate-500'
+                      ? 'bg-orange-500 dark:bg-amber-400'
+                      : 'bg-cyan-500 dark:bg-cyan-400'
+                    : 'bg-slate-400 dark:bg-slate-500'
                 }`}
               />
             </span>
@@ -1293,7 +1293,7 @@ export function EnergyDatabaseView({
         <div className="flex flex-wrap items-center gap-2">
           {/* Controlli Zoom */}
           <div
-            className="inline-flex items-center gap-1 p-1 bg-slate-900 border border-slate-800 rounded-lg text-xs"
+            className="inline-flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs"
             title="Zooma o riduci Mappa Annuale e Classifica per vederle insieme"
           >
             <button
@@ -1301,14 +1301,14 @@ export function EnergyDatabaseView({
               disabled={zoomIdx <= 0}
               onClick={() => zoomIdx > 0 && setZoomStep(ZOOM_STEPS[zoomIdx - 1])}
               aria-label="Riduci zoom"
-              className="p-1 text-slate-400 hover:text-slate-100 disabled:opacity-35 rounded"
+              className="p-1 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-35 rounded"
             >
               <ZoomOut className="w-3.5 h-3.5" />
             </button>
             <button
               type="button"
               onClick={() => setZoomStep(zoomStep === 75 ? 100 : 75)}
-              className="px-2 py-0.5 font-mono text-[11px] text-slate-200 hover:text-sky-300 rounded"
+              className="px-2 py-0.5 font-mono text-[11px] text-slate-800 dark:text-slate-200 hover:text-sky-600 dark:hover:text-sky-300 rounded"
               title="Clicca per passare rapidamente tra 75% (vista intera) e 100%"
             >
               {zoomStep}%
@@ -1321,7 +1321,7 @@ export function EnergyDatabaseView({
                 setZoomStep(ZOOM_STEPS[zoomIdx + 1])
               }
               aria-label="Aumenta zoom"
-              className="p-1 text-slate-400 hover:text-slate-100 disabled:opacity-35 rounded"
+              className="p-1 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-35 rounded"
             >
               <ZoomIn className="w-3.5 h-3.5" />
             </button>
@@ -1348,7 +1348,7 @@ export function EnergyDatabaseView({
                     }
               )
             }
-            className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-slate-100 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-lg transition-colors whitespace-nowrap"
+            className="px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 rounded-lg transition-colors whitespace-nowrap"
           >
             {allSectionsOpen ? 'Chiudi schede secondarie' : 'Espandi tutte le schede'}
           </button>
@@ -1383,35 +1383,35 @@ export function EnergyDatabaseView({
 
       <div className={`space-y-6 ${ZOOM_CLASS_MAP[zoomStep]}`}>
       {/* Annual 12 Months x 31 Days Matrix */}
-      <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
         <div
           onClick={() => toggleSection('mappa')}
-          className="px-5 py-4 flex flex-wrap items-center justify-between gap-3 cursor-pointer hover:bg-slate-800/30 transition-colors"
+          className="px-5 py-4 flex flex-wrap items-center justify-between gap-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors"
         >
           <div className="flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-2">
               {openSections.mappa ? (
-                <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+                <ChevronDown className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
               ) : (
-                <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+                <ChevronRight className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
               )}
-              <Calendar className="w-4 h-4 text-sky-400 shrink-0" />
-              <h3 className="text-sm font-semibold text-slate-100">
+              <Calendar className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                 Mappa Annuale {selectedYear} — Tutti i giorni di tutti i 12 mesi
               </h3>
             </div>
             {openSections.mappa && (
               <div
                 onClick={(e) => e.stopPropagation()}
-                className="inline-flex items-center p-0.5 bg-slate-950 border border-slate-800 rounded-lg text-[11px]"
+                className="inline-flex items-center p-0.5 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px]"
               >
                 <button
                   type="button"
                   onClick={() => setMapViewMode('grid')}
                   className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${
                     mapViewMode === 'grid'
-                      ? 'bg-sky-500 text-slate-950'
-                      : 'text-slate-400 hover:text-slate-100'
+                      ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                   }`}
                 >
                   <LayoutGrid className="w-3 h-3" />
@@ -1422,8 +1422,8 @@ export function EnergyDatabaseView({
                   onClick={() => setMapViewMode('bars')}
                   className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${
                     mapViewMode === 'bars'
-                      ? 'bg-sky-500 text-slate-950'
-                      : 'text-slate-400 hover:text-slate-100'
+                      ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                   }`}
                 >
                   <BarChart3 className="w-3 h-3" />
@@ -1433,9 +1433,9 @@ export function EnergyDatabaseView({
             )}
           </div>
           {openSections.mappa && (
-          <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
+          <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-600 dark:text-slate-400">
             {highlightedComboKeys.length > 0 && (
-              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-semibold">
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-500/15 dark:bg-emerald-500/20 border border-emerald-500/35 dark:border-emerald-400/40 text-emerald-700 dark:text-emerald-300 font-semibold">
                 Evidenziati:{' '}
                 {highlightedComboKeys
                   .map((k) =>
@@ -1446,41 +1446,41 @@ export function EnergyDatabaseView({
                   .join(', ')}
               </span>
             )}
-            <span className="inline-flex items-center gap-1.5 text-amber-300 font-medium">
-              <span className="relative w-3 h-3 rounded-xs bg-slate-800 border-2 border-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.5)]">
-                <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-amber-400" />
+            <span className="inline-flex items-center gap-1.5 text-orange-700 dark:text-amber-300 font-medium">
+              <span className="relative w-3 h-3 rounded-xs bg-slate-100 dark:bg-slate-800 border-2 border-orange-500 dark:border-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.4)]">
+                <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-orange-500 dark:bg-amber-400" />
               </span>
               Riscaldamento ON
             </span>
-            <span className="inline-flex items-center gap-1.5 text-cyan-300 font-medium">
-              <span className="relative w-3 h-3 rounded-xs bg-slate-800 border-2 border-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.5)]">
-                <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-cyan-400" />
+            <span className="inline-flex items-center gap-1.5 text-cyan-700 dark:text-cyan-300 font-medium">
+              <span className="relative w-3 h-3 rounded-xs bg-slate-100 dark:bg-slate-800 border-2 border-cyan-500 dark:border-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.4)]">
+                <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-cyan-500 dark:bg-cyan-400" />
               </span>
               Raffrescamento ON
             </span>
             <span
-              className="inline-flex items-center gap-1.5 text-fuchsia-300 font-medium"
+              className="inline-flex items-center gap-1.5 text-fuchsia-700 dark:text-fuchsia-300 font-medium"
               title="VMC Max: Ventilazione Meccanica Controllata (ricambio d'aria) accesa al massimo"
             >
-              <span className="relative w-3 h-3 rounded-xs bg-slate-800 border-2 border-dashed border-fuchsia-400">
-                <span className="absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-fuchsia-400" />
+              <span className="relative w-3 h-3 rounded-xs bg-slate-100 dark:bg-slate-800 border-2 border-dashed border-fuchsia-500 dark:border-fuchsia-400">
+                <span className="absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-fuchsia-500 dark:bg-fuchsia-400" />
               </span>
               VMC Max
             </span>
-            <span className="text-slate-700">|</span>
-            <span className="inline-flex items-center gap-1.5 text-rose-300">
-              <span className="relative w-3.5 h-3.5 rounded-xs bg-slate-800/80 border-2 border-dashed border-amber-400/80 overflow-hidden">
-                <span className="absolute bottom-0 inset-x-0 h-[2.5px] bg-rose-400" />
+            <span className="text-slate-300 dark:text-slate-700">|</span>
+            <span className="inline-flex items-center gap-1.5 text-rose-700 dark:text-rose-300">
+              <span className="relative w-3.5 h-3.5 rounded-xs bg-slate-100 dark:bg-slate-800/80 border-2 border-dashed border-orange-500/80 dark:border-amber-400/80 overflow-hidden">
+                <span className="absolute bottom-0 inset-x-0 h-[2.5px] bg-rose-500 dark:bg-rose-400" />
               </span>
               1° Prima accensione
             </span>
-            <span className="inline-flex items-center gap-1.5 text-amber-200">
-              <span className="relative w-3.5 h-3.5 rounded-xs bg-slate-800/80 border-2 border-dotted border-amber-400/80 overflow-hidden">
-                <span className="absolute bottom-0 inset-x-0 h-[2.5px] bg-amber-300" />
+            <span className="inline-flex items-center gap-1.5 text-amber-700 dark:text-amber-200">
+              <span className="relative w-3.5 h-3.5 rounded-xs bg-slate-100 dark:bg-slate-800/80 border-2 border-dotted border-orange-500/80 dark:border-amber-400/80 overflow-hidden">
+                <span className="absolute bottom-0 inset-x-0 h-[2.5px] bg-amber-500 dark:bg-amber-300" />
               </span>
               2° Assestamento
             </span>
-            <span className="text-slate-700">|</span>
+            <span className="text-slate-300 dark:text-slate-700">|</span>
             <span className="inline-flex items-center gap-1">
               <span className="w-2.5 h-2.5 rounded-xs bg-emerald-500/30 border border-emerald-500/40" />
               &lt;5 kWh
@@ -1523,7 +1523,7 @@ export function EnergyDatabaseView({
             return (
               <div className="space-y-4">
                 {/* Selettore Mese + Controlli Scala Y e Info Fasce (identico a Dettaglio Mensile) */}
-                <div className="pt-1 pb-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                <div className="pt-1 pb-3 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-1">
                     {MONTHS_SHORT_IT.map((mLabel, idx) => {
                       const monthChart = annualMonthlyCharts[idx];
@@ -1546,17 +1546,17 @@ export function EnergyDatabaseView({
                           onClick={() => setSelectedMonth(idx)}
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
                             selectedMonth === idx
-                              ? 'bg-sky-500 text-slate-950'
+                              ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
                               : monthChart?.hasReadings
-                                ? 'text-slate-300 hover:text-slate-100 hover:bg-slate-800'
-                                : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/60'
+                                ? 'text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+                                : 'text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60'
                           }`}
                         >
                           <span>{mLabel}</span>
                           {hasComboMatch && (
                             <span
                               className={`w-1.5 h-1.5 rounded-full ${
-                                selectedMonth === idx ? 'bg-slate-950' : 'bg-emerald-400'
+                                selectedMonth === idx ? 'bg-white dark:bg-slate-950' : 'bg-emerald-500 dark:bg-emerald-400'
                               }`}
                             />
                           )}
@@ -1566,14 +1566,14 @@ export function EnergyDatabaseView({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <div className="inline-flex items-center p-0.5 bg-slate-950 border border-slate-800 rounded-lg text-[11px]">
+                    <div className="inline-flex items-center p-0.5 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px]">
                       <button
                         type="button"
                         onClick={() => setFixedYAxisMax(false)}
                         className={`px-2.5 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${
                           !fixedYAxisMax
-                            ? 'bg-sky-500 text-slate-950'
-                            : 'text-slate-400 hover:text-slate-100'
+                            ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                         }`}
                       >
                         Scala Y: Variabile
@@ -1583,15 +1583,15 @@ export function EnergyDatabaseView({
                         onClick={() => setFixedYAxisMax(true)}
                         className={`px-2.5 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${
                           fixedYAxisMax
-                            ? 'bg-sky-500 text-slate-950'
-                            : 'text-slate-400 hover:text-slate-100'
+                            ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                         }`}
                       >
                         Scala Y: Fisso 30 kWh
                       </button>
                     </div>
                     {fixedYAxisMax && monthMaxDayKwh > 30 && (
-                      <span className="text-[11px] text-amber-300 font-mono tabular-nums">
+                      <span className="text-[11px] text-amber-700 dark:text-amber-300 font-mono tabular-nums">
                         (picco reale {monthMaxDayKwh.toFixed(1)} kWh &gt; 30)
                       </span>
                     )}
@@ -1600,8 +1600,8 @@ export function EnergyDatabaseView({
                       onClick={() => setShowFasciaInfo((v) => !v)}
                       className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-lg border transition-colors whitespace-nowrap ${
                         showFasciaInfo
-                          ? 'bg-sky-500/15 border-sky-400/50 text-sky-300'
-                          : 'bg-slate-950 border-slate-800 text-slate-300 hover:text-slate-100'
+                          ? 'bg-sky-500/15 border-sky-500/40 text-sky-700 dark:text-sky-300'
+                          : 'bg-slate-100 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100'
                       }`}
                     >
                       <Info className="w-3.5 h-3.5" />
@@ -1612,39 +1612,39 @@ export function EnergyDatabaseView({
 
                 {/* Riepilogo mese selezionato */}
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="font-semibold text-slate-100">
+                  <div className="font-semibold text-slate-900 dark:text-slate-100">
                     {activeChart.monthName} {selectedYear}
                   </div>
                   <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono tabular-nums">
-                    <span className="text-slate-400">
+                    <span className="text-slate-500 dark:text-slate-400">
                       OFF:{' '}
-                      <span className="text-slate-200 font-semibold">
+                      <span className="text-slate-800 dark:text-slate-200 font-semibold">
                         {activeMonthTotal.offCount > 0
                           ? `${(activeMonthTotal.offKwh / activeMonthTotal.offCount).toFixed(1)}`
                           : '—'}
                       </span>
                     </span>
-                    <span className="text-slate-400">
+                    <span className="text-slate-500 dark:text-slate-400">
                       ON Real.:{' '}
-                      <span className="text-emerald-400 font-semibold">
+                      <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
                         {activeMonthTotal.onRealCount > 0
                           ? `${(activeMonthTotal.onRealKwh / activeMonthTotal.onRealCount).toFixed(1)}`
                           : '—'}
                       </span>
                     </span>
-                    <span className="text-slate-400">
+                    <span className="text-slate-500 dark:text-slate-400">
                       ON Tot.:{' '}
-                      <span className="text-sky-300 font-semibold">
+                      <span className="text-sky-700 dark:text-sky-300 font-semibold">
                         {activeMonthTotal.transientCount > 0 && activeMonthTotal.onTotCount > 0
                           ? `${(activeMonthTotal.onTotKwh / activeMonthTotal.onTotCount).toFixed(1)}`
                           : '—'}
                       </span>
                     </span>
-                    <span className="text-slate-700">|</span>
-                    <span className="text-sky-400 font-semibold">
+                    <span className="text-slate-300 dark:text-slate-700">|</span>
+                    <span className="text-sky-600 dark:text-sky-400 font-semibold">
                       {activeChart.stats.totalKwh.toFixed(1)} kWh
                     </span>
-                    <span className="text-emerald-400">
+                    <span className="text-emerald-600 dark:text-emerald-400">
                       € {activeChart.stats.totalCost.toFixed(2)}
                     </span>
                   </div>
@@ -1653,58 +1653,58 @@ export function EnergyDatabaseView({
                 {/* Legenda colori F1 / F2 / F3 allineata alla barra */}
                 <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
                   <div className="flex flex-wrap items-center gap-4">
-                    <span className="inline-flex items-center gap-1.5 text-slate-200">
+                    <span className="inline-flex items-center gap-1.5 text-slate-800 dark:text-slate-200">
                       <span className="w-3 h-3 rounded-xs bg-rose-500 shrink-0" />
-                      <strong className="text-rose-300">F1</strong>
-                      <span className="text-slate-400">Ore di punta (lun–ven 8–19)</span>
+                      <strong className="text-rose-700 dark:text-rose-300">F1</strong>
+                      <span className="text-slate-500 dark:text-slate-400">Ore di punta (lun–ven 8–19)</span>
                     </span>
-                    <span className="inline-flex items-center gap-1.5 text-slate-200">
-                      <span className="w-3 h-3 rounded-xs bg-amber-400 shrink-0" />
-                      <strong className="text-amber-300">F2</strong>
-                      <span className="text-slate-400">Intermedia (sera/sabato)</span>
+                    <span className="inline-flex items-center gap-1.5 text-slate-800 dark:text-slate-200">
+                      <span className="w-3 h-3 rounded-xs bg-amber-500 dark:bg-amber-400 shrink-0" />
+                      <strong className="text-amber-700 dark:text-amber-300">F2</strong>
+                      <span className="text-slate-500 dark:text-slate-400">Intermedia (sera/sabato)</span>
                     </span>
-                    <span className="inline-flex items-center gap-1.5 text-slate-200">
-                      <span className="w-3 h-3 rounded-xs bg-sky-400 shrink-0" />
-                      <strong className="text-sky-300">F3</strong>
-                      <span className="text-slate-400">Fuori punta (notte, dom e festivi)</span>
+                    <span className="inline-flex items-center gap-1.5 text-slate-800 dark:text-slate-200">
+                      <span className="w-3 h-3 rounded-xs bg-sky-500 dark:bg-sky-400 shrink-0" />
+                      <strong className="text-sky-700 dark:text-sky-300">F3</strong>
+                      <span className="text-slate-500 dark:text-slate-400">Fuori punta (notte, dom e festivi)</span>
                     </span>
                   </div>
                   <span className="text-[11px] text-slate-500">
-                    Asse Y in <span className="font-mono text-slate-300">kWh</span> · Barra dal basso: F1 → F2 → F3
+                    Asse Y in <span className="font-mono text-slate-700 dark:text-slate-300">kWh</span> · Barra dal basso: F1 → F2 → F3
                   </span>
                 </div>
 
                 {showFasciaInfo && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3.5 rounded-lg bg-slate-950/80 border border-slate-800 text-xs">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 text-xs">
                     <div className="space-y-1">
-                      <div className="flex items-center gap-1.5 font-semibold text-rose-300">
+                      <div className="flex items-center gap-1.5 font-semibold text-rose-700 dark:text-rose-300">
                         <span className="w-2.5 h-2.5 rounded-xs bg-rose-500" />
                         Fascia F1 — Ore di punta
                       </div>
-                      <p className="text-slate-400 leading-relaxed">
-                        Lunedì–Venerdì dalle <span className="font-mono text-slate-200">08:00</span> alle{' '}
-                        <span className="font-mono text-slate-200">19:00</span> (esclusi i festivi nazionali). Storicamente è la fascia più costosa nelle tariffe multiorarie.
+                      <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
+                        Lunedì–Venerdì dalle <span className="font-mono text-slate-800 dark:text-slate-200">08:00</span> alle{' '}
+                        <span className="font-mono text-slate-800 dark:text-slate-200">19:00</span> (esclusi i festivi nazionali). Storicamente è la fascia più costosa nelle tariffe multiorarie.
                       </p>
                     </div>
                     <div className="space-y-1">
-                      <div className="flex items-center gap-1.5 font-semibold text-amber-300">
-                        <span className="w-2.5 h-2.5 rounded-xs bg-amber-400" />
+                      <div className="flex items-center gap-1.5 font-semibold text-amber-700 dark:text-amber-300">
+                        <span className="w-2.5 h-2.5 rounded-xs bg-amber-500 dark:bg-amber-400" />
                         Fascia F2 — Ore intermedie
                       </div>
-                      <p className="text-slate-400 leading-relaxed">
-                        Lunedì–Venerdì <span className="font-mono text-slate-200">07:00–08:00</span> e{' '}
-                        <span className="font-mono text-slate-200">19:00–23:00</span>, più il Sabato dalle{' '}
-                        <span className="font-mono text-slate-200">07:00</span> alle <span className="font-mono text-slate-200">23:00</span> (esclusi festivi).
+                      <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
+                        Lunedì–Venerdì <span className="font-mono text-slate-800 dark:text-slate-200">07:00–08:00</span> e{' '}
+                        <span className="font-mono text-slate-800 dark:text-slate-200">19:00–23:00</span>, più il Sabato dalle{' '}
+                        <span className="font-mono text-slate-800 dark:text-slate-200">07:00</span> alle <span className="font-mono text-slate-800 dark:text-slate-200">23:00</span> (esclusi festivi).
                       </p>
                     </div>
                     <div className="space-y-1">
-                      <div className="flex items-center gap-1.5 font-semibold text-sky-300">
-                        <span className="w-2.5 h-2.5 rounded-xs bg-sky-400" />
+                      <div className="flex items-center gap-1.5 font-semibold text-sky-700 dark:text-sky-300">
+                        <span className="w-2.5 h-2.5 rounded-xs bg-sky-500 dark:bg-sky-400" />
                         Fascia F3 — Ore fuori punta
                       </div>
-                      <p className="text-slate-400 leading-relaxed">
-                        Tutti i giorni dalle <span className="font-mono text-slate-200">23:00</span> alle{' '}
-                        <span className="font-mono text-slate-200">07:00</span>, più tutte le <strong className="text-slate-200">Domeniche</strong> e i <strong className="text-slate-200">festivi nazionali</strong> (24h). Con Edison monoraria F0 paghi lo stesso prezzo in F1/F2/F3, ma il contatore le misura comunque separatamente.
+                      <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
+                        Tutti i giorni dalle <span className="font-mono text-slate-800 dark:text-slate-200">23:00</span> alle{' '}
+                        <span className="font-mono text-slate-800 dark:text-slate-200">07:00</span>, più tutte le <strong className="text-slate-900 dark:text-slate-200">Domeniche</strong> e i <strong className="text-slate-900 dark:text-slate-200">festivi nazionali</strong> (24h). Con Edison monoraria F0 paghi lo stesso prezzo in F1/F2/F3, ma il contatore le misura comunque separatamente.
                       </p>
                     </div>
                   </div>
@@ -1712,9 +1712,9 @@ export function EnergyDatabaseView({
 
                 <div className="h-56">
                   {loading ? (
-                    <div className="h-full w-full bg-slate-800/50 rounded-lg animate-pulse" />
+                    <div className="h-full w-full bg-slate-200 dark:bg-slate-800/50 rounded-lg animate-pulse" />
                   ) : !activeChart.hasReadings ? (
-                    <div className="h-full flex items-center justify-center rounded-lg border border-dashed border-slate-800 text-xs text-slate-500">
+                    <div className="h-full flex items-center justify-center rounded-lg border border-dashed border-slate-300 dark:border-slate-800 text-xs text-slate-500">
                       Nessun consumo reale registrato per {activeChart.monthName} {selectedYear}.
                     </div>
                   ) : (
@@ -1723,11 +1723,11 @@ export function EnergyDatabaseView({
                         data={activeChart.data}
                         margin={{ top: 10, right: 10, left: 4, bottom: 0 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" vertical={false} />
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
                         <XAxis
                           dataKey="day"
-                          tick={{ fontSize: 11, fill: '#94A3B8' }}
-                          axisLine={{ stroke: '#1E293B' }}
+                          tick={{ fontSize: 11, fill: 'var(--chart-tick)' }}
+                          axisLine={{ stroke: 'var(--chart-grid)' }}
                           tickLine={false}
                         />
                         <YAxis
@@ -1735,7 +1735,7 @@ export function EnergyDatabaseView({
                           tickFormatter={(v) => `${v} kWh`}
                           domain={fixedYAxisMax ? [0, 30] : [0, 'auto']}
                           allowDataOverflow={fixedYAxisMax}
-                          tick={{ fontSize: 11, fill: '#94A3B8' }}
+                          tick={{ fontSize: 11, fill: 'var(--chart-tick)' }}
                           axisLine={false}
                           tickLine={false}
                         />
@@ -1827,19 +1827,19 @@ export function EnergyDatabaseView({
                   )}
                 </div>
 
-                <div className="pt-2 mt-1 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+                <div className="pt-2 mt-1 border-t border-slate-200 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
                   <div className="flex flex-wrap items-center gap-4">
-                    <span className="text-slate-400">
+                    <span className="text-slate-500 dark:text-slate-400">
                       Media realistica {selectedYear} ({annualRealisticStats.count} g):{' '}
-                      <span className="text-emerald-400 font-semibold tabular-nums">
+                      <span className="text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">
                         {annualRealisticStats.avg !== null
                           ? `${annualRealisticStats.avg.toFixed(1)} kWh/g`
                           : '—'}
                       </span>
                     </span>
-                    <span className="text-slate-400">
+                    <span className="text-slate-500 dark:text-slate-400">
                       Media giornaliera {selectedYear} ({yearReadings.length} g):{' '}
-                      <span className="text-sky-400 font-semibold tabular-nums">
+                      <span className="text-sky-600 dark:text-sky-400 font-semibold tabular-nums">
                         {yearReadings.length > 0
                           ? `${(annualTotalKwh / yearReadings.length).toFixed(1)} kWh/g`
                           : '—'}
@@ -1862,19 +1862,19 @@ export function EnergyDatabaseView({
                 <div key={i}>{i + 1}</div>
               ))}
               <div
-                className="text-right pr-1 text-slate-400 font-semibold"
+                className="text-right pr-1 text-slate-500 dark:text-slate-400 font-semibold"
                 title="Media dei soli giorni a impianto spento (OFF)"
               >
                 OFF
               </div>
               <div
-                className="text-right pr-1 text-emerald-400/90 font-semibold"
+                className="text-right pr-1 text-emerald-600 dark:text-emerald-400/90 font-semibold"
                 title="Media realistica: soli giorni acceso a regime (esclusi 1° giorno e assestamento)"
               >
                 ON Real.
               </div>
               <div
-                className="text-right pr-1 text-sky-400/90 font-semibold"
+                className="text-right pr-1 text-sky-600 dark:text-sky-400/90 font-semibold"
                 title="Media totale dei giorni acceso (inclusi 1° giorno e assestamento)"
               >
                 ON Tot.
@@ -1897,8 +1897,8 @@ export function EnergyDatabaseView({
                     onClick={() => setSelectedMonth(mIdx)}
                     className={`text-left text-xs sm:text-sm font-medium px-1.5 py-1.5 rounded transition-colors ${
                       isSelectedMonth
-                        ? 'text-sky-400 bg-slate-800'
-                        : 'text-slate-400 hover:text-slate-100'
+                        ? 'text-sky-700 dark:text-sky-400 bg-sky-50 dark:bg-slate-800'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                     }`}
                   >
                     {mLabel}
@@ -2036,37 +2036,37 @@ export function EnergyDatabaseView({
                               : 'border border-transparent'
                         } ${
                           matchesHighlightedCombo
-                            ? 'ring-2 ring-emerald-300 ring-offset-1 ring-offset-slate-900 scale-105 z-10'
+                            ? 'ring-2 ring-emerald-500 dark:ring-emerald-300 ring-offset-1 ring-offset-white dark:ring-offset-slate-900 scale-105 z-10'
                             : isPicked
-                              ? 'ring-2 ring-white ring-offset-1 ring-offset-slate-900 z-10'
+                              ? 'ring-2 ring-sky-600 dark:ring-white ring-offset-1 ring-offset-white dark:ring-offset-slate-900 z-10'
                               : ''
                         }`}
                       >
                         {r ? r.totalKwh.toFixed(1) : '·'}
                         {hasClimate && comboMeta && (
                           <span
-                            className={`absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full ring-2 ring-slate-900 text-[8px] font-sans font-extrabold flex items-center justify-center leading-none ${comboMeta.badgeClass}`}
+                            className={`absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full ring-2 ring-white dark:ring-slate-900 text-[8px] font-sans font-extrabold flex items-center justify-center leading-none ${comboMeta.badgeClass}`}
                           >
                             {comboMeta.code}
                           </span>
                         )}
                         {isVmcOnlyOff && (
                           <span
-                            className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-fuchsia-400 ring-2 ring-slate-900"
+                            className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-fuchsia-500 dark:bg-fuchsia-400 ring-2 ring-white dark:ring-slate-900"
                             title="VMC accesa al massimo"
                           />
                         )}
                         {isVmcWithClimate && (
                           <span
-                            className="absolute -bottom-1 -right-1 w-2.5 h-2.5 rounded-full bg-fuchsia-400 ring-2 ring-slate-900"
+                            className="absolute -bottom-1 -right-1 w-2.5 h-2.5 rounded-full bg-fuchsia-500 dark:bg-fuchsia-400 ring-2 ring-white dark:ring-slate-900"
                             title="VMC accesa al massimo"
                           />
                         )}
                         {hasClimate && dayPhase === 'prima_accensione' && (
-                          <span className="absolute bottom-0.5 inset-x-1 h-[2.5px] rounded-full bg-rose-400" />
+                          <span className="absolute bottom-0.5 inset-x-1 h-[2.5px] rounded-full bg-rose-500 dark:bg-rose-400" />
                         )}
                         {hasClimate && dayPhase === 'assestamento' && (
-                          <span className="absolute bottom-0.5 inset-x-1 h-[2.5px] rounded-full bg-amber-300" />
+                          <span className="absolute bottom-0.5 inset-x-1 h-[2.5px] rounded-full bg-amber-500 dark:bg-amber-300" />
                         )}
                       </button>
                     );
@@ -2081,11 +2081,11 @@ export function EnergyDatabaseView({
                     }
                   >
                     {monthTotal.offCount > 0 ? (
-                      <span className="text-slate-300 font-semibold">
+                      <span className="text-slate-700 dark:text-slate-300 font-semibold">
                         {(monthTotal.offKwh / monthTotal.offCount).toFixed(1)}
                       </span>
                     ) : (
-                      <span className="text-slate-600">—</span>
+                      <span className="text-slate-400 dark:text-slate-600">—</span>
                     )}
                   </div>
 
@@ -2098,11 +2098,11 @@ export function EnergyDatabaseView({
                     }
                   >
                     {monthTotal.onRealCount > 0 ? (
-                      <span className="text-emerald-400 font-semibold">
+                      <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
                         {(monthTotal.onRealKwh / monthTotal.onRealCount).toFixed(1)}
                       </span>
                     ) : (
-                      <span className="text-slate-600">—</span>
+                      <span className="text-slate-400 dark:text-slate-600">—</span>
                     )}
                   </div>
 
@@ -2115,30 +2115,30 @@ export function EnergyDatabaseView({
                     }
                   >
                     {monthTotal.transientCount > 0 && monthTotal.onTotCount > 0 ? (
-                      <span className="text-sky-300 font-semibold">
+                      <span className="text-sky-700 dark:text-sky-300 font-semibold">
                         {(monthTotal.onTotKwh / monthTotal.onTotCount).toFixed(1)}
                       </span>
                     ) : (
-                      <span className="text-slate-600">—</span>
+                      <span className="text-slate-400 dark:text-slate-600">—</span>
                     )}
                   </div>
                 </div>
               );
             })}
 
-            <div className="pt-2 mt-1 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+            <div className="pt-2 mt-1 border-t border-slate-200 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
               <div className="flex flex-wrap items-center gap-4">
-                <span className="text-slate-400">
+                <span className="text-slate-500 dark:text-slate-400">
                   Media realistica {selectedYear} ({annualRealisticStats.count} g):{' '}
-                  <span className="text-emerald-400 font-semibold tabular-nums">
+                  <span className="text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">
                     {annualRealisticStats.avg !== null
                       ? `${annualRealisticStats.avg.toFixed(1)} kWh/g`
                       : '—'}
                   </span>
                 </span>
-                <span className="text-slate-400">
+                <span className="text-slate-500 dark:text-slate-400">
                   Media giornaliera {selectedYear} ({yearReadings.length} g):{' '}
-                  <span className="text-sky-400 font-semibold tabular-nums">
+                  <span className="text-sky-600 dark:text-sky-400 font-semibold tabular-nums">
                     {yearReadings.length > 0
                       ? `${(annualTotalKwh / yearReadings.length).toFixed(1)} kWh/g`
                       : '—'}
@@ -2155,16 +2155,16 @@ export function EnergyDatabaseView({
         {selectedDayIso && (
           <div
             ref={selectedDayPanelRef}
-            className="pt-3 border-t border-slate-800 space-y-2 text-xs"
+            className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2 text-xs"
           >
             <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-2 text-slate-300">
+              <div className="flex flex-wrap items-center gap-2 text-slate-700 dark:text-slate-300">
                 {selectedDayIsos.length > 1 ? (
                   <>
-                    <span className="font-semibold text-white">
+                    <span className="font-semibold text-slate-900 dark:text-white">
                       {selectedDayIsos.length} giorni selezionati
                     </span>
-                    <span className="font-mono text-slate-400">
+                    <span className="font-mono text-slate-500 dark:text-slate-400">
                       ({formatReadingDate(selectedDayIsos[0])} →{' '}
                       {formatReadingDate(selectedDayIsos[selectedDayIsos.length - 1])})
                     </span>
@@ -2172,7 +2172,7 @@ export function EnergyDatabaseView({
                       <button
                         type="button"
                         onClick={() => void pasteSessionToDays(selectedDayIsos)}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30 font-medium transition-colors"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 dark:bg-emerald-500/20 border border-emerald-500/35 dark:border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/25 font-medium transition-colors"
                       >
                         Incolla su {selectedDayIsos.length} giorni (Ctrl+V)
                       </button>
@@ -2183,7 +2183,7 @@ export function EnergyDatabaseView({
                           type="button"
                           disabled={togglingVmc}
                           onClick={() => void handleToggleVmcForDates(selectedDayIsos, true)}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-fuchsia-500/20 border border-fuchsia-400/40 text-fuchsia-200 hover:bg-fuchsia-500/30 font-medium transition-colors disabled:opacity-50"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-fuchsia-500/15 dark:bg-fuchsia-500/20 border border-fuchsia-500/35 dark:border-fuchsia-400/40 text-fuchsia-700 dark:text-fuchsia-200 hover:bg-fuchsia-500/25 font-medium transition-colors disabled:opacity-50"
                         >
                           <Wind className="w-3 h-3" />
                           VMC Max ON ({selectedDayIsos.length}g)
@@ -2192,7 +2192,7 @@ export function EnergyDatabaseView({
                           type="button"
                           disabled={togglingVmc}
                           onClick={() => void handleToggleVmcForDates(selectedDayIsos, false)}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 hover:text-slate-100 font-medium transition-colors disabled:opacity-50"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 font-medium transition-colors disabled:opacity-50"
                         >
                           VMC Max OFF
                         </button>
@@ -2203,7 +2203,7 @@ export function EnergyDatabaseView({
                   <>
                     <span>
                       Giorno selezionato:{' '}
-                      <span className="font-mono font-semibold text-slate-100">
+                      <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">
                         {formatReadingDate(selectedDayIso)}
                       </span>
                     </span>
@@ -2212,7 +2212,7 @@ export function EnergyDatabaseView({
                       vmcDaysMap,
                       climateByDate.get(selectedDayIso)
                     ) && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-fuchsia-500/20 border border-fuchsia-400/50 text-fuchsia-200 text-[11px] font-semibold">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-fuchsia-500/15 dark:bg-fuchsia-500/20 border border-fuchsia-500/40 dark:border-fuchsia-400/50 text-fuchsia-700 dark:text-fuchsia-200 text-[11px] font-semibold">
                         <Wind className="w-3 h-3" />
                         VMC al massimo
                       </span>
@@ -2232,8 +2232,8 @@ export function EnergyDatabaseView({
                           }
                           className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-medium transition-colors disabled:opacity-50 ${
                             activeVmc
-                              ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-slate-100'
-                              : 'bg-fuchsia-500/15 border-fuchsia-400/40 text-fuchsia-200 hover:bg-fuchsia-500/25'
+                              ? 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100'
+                              : 'bg-fuchsia-500/10 dark:bg-fuchsia-500/15 border-fuchsia-500/35 dark:border-fuchsia-400/40 text-fuchsia-700 dark:text-fuchsia-200 hover:bg-fuchsia-500/20'
                           }`}
                         >
                           <Wind className="w-3 h-3" />
@@ -2245,15 +2245,15 @@ export function EnergyDatabaseView({
                 )}
               </div>
               {activeDayReading ? (
-                <div className="flex flex-wrap items-center gap-4 font-mono tabular-nums text-slate-300">
+                <div className="flex flex-wrap items-center gap-4 font-mono tabular-nums text-slate-700 dark:text-slate-300">
                   <span>F1: {activeDayReading.f1Kwh.toFixed(2)} kWh</span>
                   <span>F2: {activeDayReading.f2Kwh.toFixed(2)} kWh</span>
                   <span>F3: {activeDayReading.f3Kwh.toFixed(2)} kWh</span>
-                  <span className="text-sky-400 font-semibold">
+                  <span className="text-sky-600 dark:text-sky-400 font-semibold">
                     Totale: {activeDayReading.totalKwh.toFixed(2)} kWh
                   </span>
                   <span>Picco: {activeDayReading.peakKw.toFixed(1)} kW</span>
-                  <span className="text-emerald-400">
+                  <span className="text-emerald-600 dark:text-emerald-400">
                     € {activeDayReading.estimatedCostEur.toFixed(2)}
                   </span>
                 </div>
@@ -2269,21 +2269,21 @@ export function EnergyDatabaseView({
               const inlineFormElement = (
                 <form
                   onSubmit={handleSaveInlineClimate}
-                  className="bg-slate-950/90 border border-slate-700/80 rounded-lg p-3.5 space-y-3"
+                  className="bg-slate-50 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700/80 rounded-lg p-3.5 space-y-3"
                 >
                   <div className="flex flex-wrap items-end gap-3">
                     <div className="space-y-1">
-                      <label className="block text-[11px] text-slate-400">
+                      <label className="block text-[11px] text-slate-600 dark:text-slate-400">
                         Modalità
                       </label>
-                      <div className="inline-flex rounded-lg bg-slate-900 border border-slate-800 p-0.5">
+                      <div className="inline-flex rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-0.5">
                         <button
                           type="button"
                           onClick={() => setInlineMode('riscaldamento')}
                           className={`inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
                             inlineMode === 'riscaldamento'
-                              ? 'bg-amber-500 text-slate-950'
-                              : 'text-slate-400 hover:text-slate-100'
+                              ? 'bg-orange-600 text-white dark:bg-orange-500/25 dark:text-orange-200'
+                              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                           }`}
                         >
                           <Flame className="w-3.5 h-3.5" />
@@ -2294,8 +2294,8 @@ export function EnergyDatabaseView({
                           onClick={() => setInlineMode('raffrescamento')}
                           className={`inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
                             inlineMode === 'raffrescamento'
-                              ? 'bg-sky-500 text-slate-950'
-                              : 'text-slate-400 hover:text-slate-100'
+                              ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                           }`}
                         >
                           <Snowflake className="w-3.5 h-3.5" />
@@ -2305,13 +2305,13 @@ export function EnergyDatabaseView({
                     </div>
 
                     <div className="space-y-1">
-                      <label className="block text-[11px] text-slate-400">
+                      <label className="block text-[11px] text-slate-600 dark:text-slate-400">
                         Temp. (°C)
                       </label>
                       <select
                         value={inlineTargetTemp}
                         onChange={(e) => setInlineTargetTemp(e.target.value)}
-                        className="w-28 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                        className="w-28 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                       >
                         <option value="0">? °C (N/D)</option>
                         {Array.from({ length: 31 }, (_, i) => {
@@ -2326,7 +2326,7 @@ export function EnergyDatabaseView({
                     </div>
 
                     <div className="space-y-1">
-                      <label className="block text-[11px] text-slate-400">
+                      <label className="block text-[11px] text-slate-600 dark:text-slate-400">
                         VMC (Ricambio Aria)
                       </label>
                       <button
@@ -2334,8 +2334,8 @@ export function EnergyDatabaseView({
                         onClick={() => setInlineVmcMax((v) => !v)}
                         className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
                           inlineVmcMax
-                            ? 'bg-fuchsia-500/20 border-fuchsia-400 text-fuchsia-200'
-                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                            ? 'bg-fuchsia-500/15 dark:bg-fuchsia-500/20 border-fuchsia-500 dark:border-fuchsia-400 text-fuchsia-700 dark:text-fuchsia-200'
+                            : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                         }`}
                       >
                         <Wind className="w-3.5 h-3.5" />
@@ -2344,7 +2344,7 @@ export function EnergyDatabaseView({
                     </div>
 
                     <div className="flex-1 min-w-[160px] space-y-1">
-                      <label className="block text-[11px] text-slate-400">
+                      <label className="block text-[11px] text-slate-600 dark:text-slate-400">
                         Note (opzionale)
                       </label>
                       <input
@@ -2352,15 +2352,15 @@ export function EnergyDatabaseView({
                         value={inlineNotes}
                         onChange={(e) => setInlineNotes(e.target.value)}
                         placeholder="Es. prima accensione, ospiti..."
-                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-500"
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:border-sky-500"
                       />
                     </div>
                   </div>
 
                   {/* Multi-slot fasce orarie */}
-                  <div className="space-y-2 bg-slate-900/60 border border-slate-800 rounded-lg p-2.5">
+                  <div className="space-y-2 bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <label className="text-[11px] text-slate-400">
+                      <label className="text-[11px] text-slate-600 dark:text-slate-400">
                         Fasce Orarie (aggiungi più fasce se l&apos;impianto è stato acceso in momenti diversi, es. 09:00–12:00 e 15:00–20:00)
                       </label>
                       <div className="flex items-center gap-2">
@@ -2375,8 +2375,8 @@ export function EnergyDatabaseView({
                           }}
                           className={`px-2 py-0.5 text-[10px] rounded border font-medium transition-colors ${
                             allDayInline
-                              ? 'bg-sky-500/20 border-sky-400 text-sky-300'
-                              : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                              ? 'bg-sky-500/15 dark:bg-sky-500/20 border-sky-500 dark:border-sky-400 text-sky-700 dark:text-sky-300'
+                              : 'bg-slate-100 dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                           }`}
                         >
                           {allDayInline
@@ -2387,7 +2387,7 @@ export function EnergyDatabaseView({
                           <button
                             type="button"
                             onClick={addInlineExtraSlot}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded border bg-sky-500/15 border-sky-400/40 text-sky-300 hover:bg-sky-500/25 font-medium"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded border bg-sky-500/10 dark:bg-sky-500/15 border-sky-500/35 dark:border-sky-400/40 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 dark:hover:bg-sky-500/25 font-medium"
                           >
                             <Plus className="w-3 h-3" />
                             Aggiungi fascia
@@ -2397,7 +2397,7 @@ export function EnergyDatabaseView({
                     </div>
 
                     {allDayInline ? (
-                      <div className="flex items-center gap-2 bg-sky-500/10 border border-sky-500/30 rounded-lg px-3 py-1.5 text-xs font-medium text-sky-300">
+                      <div className="flex items-center gap-2 bg-sky-500/10 border border-sky-500/30 rounded-lg px-3 py-1.5 text-xs font-medium text-sky-700 dark:text-sky-300">
                         <Clock className="w-3.5 h-3.5 shrink-0" />
                         <span>Acceso tutto il giorno (24h)</span>
                       </div>
@@ -2406,7 +2406,7 @@ export function EnergyDatabaseView({
                         {inlineTimeSlots.map((slot, idx) => (
                           <div
                             key={idx}
-                            className="inline-flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1"
+                            className="inline-flex items-center gap-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1"
                           >
                             <span className="text-[10px] font-mono text-slate-500">
                               #{idx + 1}
@@ -2418,7 +2418,7 @@ export function EnergyDatabaseView({
                                 updateInlineSlot(idx, { startTime: e.target.value })
                               }
                               required
-                              className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                              className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded px-2 py-1 text-xs font-mono text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                             />
                             <span className="text-slate-500">→</span>
                             <input
@@ -2428,14 +2428,14 @@ export function EnergyDatabaseView({
                                 updateInlineSlot(idx, { endTime: e.target.value })
                               }
                               required
-                              className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs font-mono text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                              className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded px-2 py-1 text-xs font-mono text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                             />
                             {inlineTimeSlots.length > 1 && (
                               <button
                                 type="button"
                                 onClick={() => removeInlineSlot(idx)}
                                 aria-label={`Rimuovi fascia ${idx + 1}`}
-                                className="p-0.5 text-slate-500 hover:text-rose-400"
+                                className="p-0.5 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400"
                               >
                                 <X className="w-3.5 h-3.5" />
                               </button>
@@ -2448,7 +2448,7 @@ export function EnergyDatabaseView({
 
                   <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-[11px] text-slate-400 mr-1">
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400 mr-1">
                         Stanze:
                       </span>
                       {HOME_ROOMS.map((room) => {
@@ -2460,8 +2460,8 @@ export function EnergyDatabaseView({
                             onClick={() => toggleInlineRoom(room.id)}
                             className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
                               active
-                                ? 'bg-sky-500/20 border-sky-400 text-sky-200 font-medium'
-                                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                                ? 'bg-sky-500/15 dark:bg-sky-500/20 border-sky-500 dark:border-sky-400 text-sky-700 dark:text-sky-200 font-medium'
+                                : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                             }`}
                           >
                             {room.label}
@@ -2477,7 +2477,7 @@ export function EnergyDatabaseView({
                               : HOME_ROOMS.map((r) => r.id)
                           )
                         }
-                        className="px-2 py-1 text-[11px] text-slate-400 hover:text-slate-200 underline"
+                        className="px-2 py-1 text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 underline"
                       >
                         {inlineRooms.length === HOME_ROOMS.length
                           ? 'Nessuna'
@@ -2492,14 +2492,14 @@ export function EnergyDatabaseView({
                           setShowInlineForm(false);
                           setEditingLogId(null);
                         }}
-                        className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-100 rounded-lg"
+                        className="px-3 py-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 rounded-lg"
                       >
                         Annulla
                       </button>
                       <button
                         type="submit"
                         disabled={inlineSaving || inlineRooms.length === 0}
-                        className="px-3.5 py-1.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 disabled:opacity-50 rounded-lg transition-colors"
+                        className="px-3.5 py-1.5 text-xs font-semibold text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300 disabled:opacity-50 rounded-lg transition-colors"
                       >
                         {inlineSaving
                           ? 'Salvataggio...'
@@ -2531,53 +2531,53 @@ export function EnergyDatabaseView({
                         ) : (
                           <div
                             key={log.id}
-                            className="flex flex-wrap items-center justify-between gap-2.5 bg-slate-950/70 border border-slate-800 rounded-lg px-3 py-2 text-xs"
+                            className="flex flex-wrap items-center justify-between gap-2.5 bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs"
                           >
                             <div className="flex flex-wrap items-center gap-2.5">
                               {log.mode === 'riscaldamento' ? (
-                                <span className="inline-flex items-center gap-1 font-medium text-amber-400">
+                                <span className="inline-flex items-center gap-1 font-medium text-orange-700 dark:text-amber-400">
                                   <Flame className="w-3.5 h-3.5" />
                                   Riscaldamento
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 font-medium text-sky-400">
+                                <span className="inline-flex items-center gap-1 font-medium text-sky-600 dark:text-sky-400">
                                   <Snowflake className="w-3.5 h-3.5" />
                                   Raffrescamento
                                 </span>
                               )}
                               {isAllDaySlots(slots) ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[11px] font-medium">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-500/10 dark:bg-sky-500/15 border border-sky-500/25 dark:border-sky-500/30 text-sky-700 dark:text-sky-300 text-[11px] font-medium">
                                   <Clock className="w-3 h-3" />
                                   Tutto il giorno · 24h
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1.5 font-mono text-slate-200">
+                                <span className="inline-flex items-center gap-1.5 font-mono text-slate-800 dark:text-slate-200">
                                   <span>{formatSlotsSummary(slots)}</span>
                                   {durationStr && (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
                                       {durationStr}
                                     </span>
                                   )}
                                 </span>
                               )}
-                              <span className="text-slate-600">·</span>
-                              <span className="font-mono font-semibold text-slate-100">
+                              <span className="text-slate-400 dark:text-slate-600">·</span>
+                              <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">
                                 {formatTargetTemp(log.targetTemp)}
                               </span>
                               {rowVmcMax && (
-                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-fuchsia-500/20 border border-fuchsia-400/50 text-fuchsia-200 text-[10px] font-semibold">
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-fuchsia-500/15 dark:bg-fuchsia-500/20 border border-fuchsia-500/40 dark:border-fuchsia-400/50 text-fuchsia-700 dark:text-fuchsia-200 text-[10px] font-semibold">
                                   <Wind className="w-3 h-3" />
                                   VMC Max
                                 </span>
                               )}
-                              <span className="text-slate-600">·</span>
-                              <span className="text-slate-300">
+                              <span className="text-slate-400 dark:text-slate-600">·</span>
+                              <span className="text-slate-700 dark:text-slate-300">
                                 {log.rooms.map((r) => ROOM_LABELS[r] || r).join(', ')}
                               </span>
                               {phaseByDate.get(selectedDayIso) && (
                                 <>
-                                  <span className="text-slate-600">·</span>
-                                  <span className="text-[11px] font-medium text-emerald-400">
+                                  <span className="text-slate-400 dark:text-slate-600">·</span>
+                                  <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
                                     {phaseByDate.get(selectedDayIso) === 'prima_accensione'
                                       ? '1° giorno (Prima accensione)'
                                       : phaseByDate.get(selectedDayIso) === 'assestamento'
@@ -2593,7 +2593,7 @@ export function EnergyDatabaseView({
                                 type="button"
                                 onClick={() => copySessionFromLog(log)}
                                 title="Copia combinazione (Ctrl+C)"
-                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-300 hover:text-slate-100 hover:bg-slate-800 rounded transition-colors"
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-800 rounded transition-colors"
                               >
                                 <Copy className="w-3 h-3" />
                                 Copia
@@ -2601,7 +2601,7 @@ export function EnergyDatabaseView({
                               <button
                                 type="button"
                                 onClick={() => openEditInlineForm(log)}
-                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-sky-400 hover:text-sky-300 hover:bg-slate-800 rounded transition-colors"
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 hover:bg-slate-200 dark:hover:bg-slate-800 rounded transition-colors"
                               >
                                 <Pencil className="w-3 h-3" />
                                 Modifica
@@ -2609,7 +2609,7 @@ export function EnergyDatabaseView({
                               <button
                                 type="button"
                                 onClick={() => setPendingDeleteLog(log)}
-                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-rose-400 hover:text-rose-300 hover:bg-slate-800 rounded transition-colors"
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300 hover:bg-slate-200 dark:hover:bg-slate-800 rounded transition-colors"
                               >
                                 <Trash2 className="w-3 h-3" />
                                 Elimina
@@ -2622,14 +2622,14 @@ export function EnergyDatabaseView({
                     </div>
                   ) : (
                     !showInlineForm && (
-                      <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-950/50 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-400">
+                      <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-600 dark:text-slate-400">
                         <div className="space-y-0.5">
                           <span>
                             Nessuna accensione NeaSmart registrata per il{' '}
                             {formatReadingDate(selectedDayIso)} (impianto climatizzazione spento).
                           </span>
                           {isVmcMaxForDate(selectedDayIso, vmcDaysMap) && (
-                            <div className="flex items-center gap-1.5 text-[11px] text-fuchsia-300 font-medium">
+                            <div className="flex items-center gap-1.5 text-[11px] text-fuchsia-700 dark:text-fuchsia-300 font-medium">
                               <Wind className="w-3.5 h-3.5 shrink-0" />
                               Climatizzazione spenta ma Ventilazione Meccanica (VMC) impostata al massimo su questa giornata.
                             </div>
@@ -2642,7 +2642,7 @@ export function EnergyDatabaseView({
                               type="button"
                               onClick={() => void pasteSessionToDay(selectedDayIso)}
                               title="Incolla combinazione copiata (Ctrl+V)"
-                              className="inline-flex items-center gap-1 text-emerald-400 hover:text-emerald-300 font-medium whitespace-nowrap"
+                              className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 font-medium whitespace-nowrap"
                             >
                               <ClipboardPaste className="w-3.5 h-3.5" />
                               Incolla ({formatReadingDate(copiedSession.sourceDate)})
@@ -2651,7 +2651,7 @@ export function EnergyDatabaseView({
                           <button
                             type="button"
                             onClick={() => openNewInlineForm(selectedDayIso)}
-                            className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 font-medium whitespace-nowrap"
+                            className="inline-flex items-center gap-1 text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 font-medium whitespace-nowrap"
                           >
                             <Plus className="w-3.5 h-3.5" />
                             Registra accensione NeaSmart
@@ -2663,7 +2663,7 @@ export function EnergyDatabaseView({
                   )}
 
                   {clipboardNotice && (
-                    <div className="text-[11px] font-medium text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-1.5">
+                    <div className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-1.5">
                       {clipboardNotice}
                     </div>
                   )}
@@ -2679,23 +2679,23 @@ export function EnergyDatabaseView({
       </section>
 
       {/* Classifica Combinazioni Migliori (Media Realistica a regime) */}
-      <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
         <div
           onClick={() => toggleSection('classifica')}
-          className="px-5 py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 cursor-pointer hover:bg-slate-800/30 transition-colors"
+          className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors"
         >
           <div className="flex items-center gap-2.5">
             {openSections.classifica ? (
-              <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+              <ChevronDown className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
             ) : (
-              <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+              <ChevronRight className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
             )}
-            <Trophy className="w-4 h-4 text-emerald-400 shrink-0" />
+            <Trophy className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
             <div>
-              <h3 className="text-sm font-semibold text-slate-100">
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                 Classifica Combinazioni Migliori {selectedYear}
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 Clicca, trascina col mouse o usa Ctrl/Cmd+clic su una o più righe per evidenziarne i giorni sulla Mappa Annuale (e viceversa).
               </p>
             </div>
@@ -2703,15 +2703,15 @@ export function EnergyDatabaseView({
 
           <div
             onClick={(e) => e.stopPropagation()}
-            className="inline-flex rounded-lg bg-slate-950 border border-slate-800 p-0.5 text-xs"
+            className="inline-flex rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-0.5 text-xs"
           >
             <button
               type="button"
               onClick={() => setRankingFilter('all')}
               className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
                 rankingFilter === 'all'
-                  ? 'bg-sky-500 text-slate-950'
-                  : 'text-slate-400 hover:text-slate-100'
+                  ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
               }`}
             >
               Tutte
@@ -2721,8 +2721,8 @@ export function EnergyDatabaseView({
               onClick={() => setRankingFilter('riscaldamento')}
               className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-colors ${
                 rankingFilter === 'riscaldamento'
-                  ? 'bg-amber-500 text-slate-950'
-                  : 'text-slate-400 hover:text-slate-100'
+                  ? 'bg-orange-600 text-white dark:bg-orange-500/25 dark:text-orange-200'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
               }`}
             >
               <Flame className="w-3 h-3" />
@@ -2733,8 +2733,8 @@ export function EnergyDatabaseView({
               onClick={() => setRankingFilter('raffrescamento')}
               className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-colors ${
                 rankingFilter === 'raffrescamento'
-                  ? 'bg-cyan-400 text-slate-950'
-                  : 'text-slate-400 hover:text-slate-100'
+                  ? 'bg-cyan-600 text-white dark:bg-cyan-500/25 dark:text-cyan-200'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
               }`}
             >
               <Snowflake className="w-3 h-3" />
@@ -2747,7 +2747,7 @@ export function EnergyDatabaseView({
         <div className="overflow-x-auto">
           <table className={`w-full text-left border-collapse ${rowDragAnchorKey ? 'select-none' : ''}`}>
             <thead>
-              <tr className="border-b border-slate-800 text-[11px] font-medium text-slate-400">
+              <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 text-[11px] font-medium text-slate-500 dark:text-slate-400">
                 <SortableTh
                   sortKey="rank"
                   currentSort={comboSort}
@@ -2802,7 +2802,7 @@ export function EnergyDatabaseView({
                   currentSort={comboSort}
                   onSort={(k) => setComboSort((prev) => toggleSort(prev, k, 'asc'))}
                   align="right"
-                  className="py-2.5 px-4 text-right text-emerald-400"
+                  className="py-2.5 px-4 text-right text-emerald-600 dark:text-emerald-400"
                 >
                   Media Realistica
                 </SortableTh>
@@ -2811,19 +2811,19 @@ export function EnergyDatabaseView({
                   currentSort={comboSort}
                   onSort={(k) => setComboSort((prev) => toggleSort(prev, k, 'asc'))}
                   align="right"
-                  className="py-2.5 px-4 text-right text-slate-400"
+                  className="py-2.5 px-4 text-right text-slate-500 dark:text-slate-400"
                   title="Media non affidabile: include 1° giorno di accensione e assestamento (oppure anomalie VMC)"
                 >
                   <span className="inline-flex flex-col items-end leading-tight">
                     <span>Media con accensione</span>
-                    <span className="text-[9px] font-normal text-amber-400/80">
+                    <span className="text-[9px] font-normal text-amber-700 dark:text-amber-400/80">
                       non affidabile · incl. avvio
                     </span>
                   </span>
                 </SortableTh>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/70 text-xs">
+            <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70 text-xs">
               {/* Riga speciale consumo da SPENTO (OFF) prima del 1° posto */}
               {offDaySummary.allCount > 0 && (
                 <tr
@@ -2831,32 +2831,32 @@ export function EnergyDatabaseView({
                   onMouseDown={(e) => handleComboRowMouseDown('__OFF__', e)}
                   onMouseEnter={() => handleComboRowMouseEnter('__OFF__')}
                   onClick={handleComboRowClick}
-                  className={`cursor-pointer transition-colors border-b-2 border-slate-800 select-none ${
+                  className={`cursor-pointer transition-colors border-b-2 border-slate-200 dark:border-slate-800 select-none ${
                     effectiveHighlightedComboKeys.includes('__OFF__')
-                      ? 'bg-slate-800/90 ring-2 ring-inset ring-emerald-400/70'
-                      : 'bg-slate-950/60 hover:bg-slate-800/50'
+                      ? 'bg-sky-50 dark:bg-slate-800/90 ring-2 ring-inset ring-emerald-500/70 dark:ring-emerald-400/70'
+                      : 'bg-slate-50 dark:bg-slate-950/60 hover:bg-slate-100 dark:hover:bg-slate-800/50'
                   }`}
                 >
                   <td className="py-3 px-4 whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-200 font-mono font-bold text-[11px]">
-                      <Power className="w-3 h-3 text-slate-400" />
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 font-mono font-bold text-[11px]">
+                      <Power className="w-3 h-3 text-slate-500 dark:text-slate-400" />
                       OFF · Spento
                     </span>
                   </td>
-                  <td className="py-3 px-4 whitespace-nowrap text-slate-300 font-medium">
+                  <td className="py-3 px-4 whitespace-nowrap text-slate-700 dark:text-slate-300 font-medium">
                     Impianto Spento
                   </td>
                   <td className="py-3 px-4 whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800/80 text-slate-400 text-[11px]">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-200/70 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 text-[11px]">
                       Base casa (ACS + elettrodomestici)
                     </span>
                   </td>
-                  <td className="py-3 px-4 text-right font-mono text-slate-500">—</td>
-                  <td className="py-3 px-4 text-slate-400">
+                  <td className="py-3 px-4 text-right font-mono text-slate-400 dark:text-slate-500">—</td>
+                  <td className="py-3 px-4 text-slate-600 dark:text-slate-400">
                     <div>Nessuna zona attiva</div>
                     {offDaySummary.vmcCount > 0 && (
                       <div
-                        className="inline-flex items-center gap-1 text-[11px] text-fuchsia-300 mt-0.5 cursor-help"
+                        className="inline-flex items-center gap-1 text-[11px] text-fuchsia-700 dark:text-fuchsia-300 mt-0.5 cursor-help"
                         title="VMC = Ventilazione Meccanica Controllata (ricambio d'aria continuo con recupero di calore). Se lasciata alla velocità massima consuma molto di più anche a clima spento."
                       >
                         <Wind className="w-3 h-3 shrink-0" />
@@ -2867,13 +2867,13 @@ export function EnergyDatabaseView({
                       </div>
                     )}
                   </td>
-                  <td className="py-3 px-4 text-slate-400 whitespace-nowrap">
-                    <span className="font-mono text-slate-300">
+                  <td className="py-3 px-4 text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                    <span className="font-mono text-slate-800 dark:text-slate-300">
                       {offDaySummary.cleanCount}g
                     </span>{' '}
                     puliti
                     {offDaySummary.vmcCount > 0 && (
-                      <span className="text-fuchsia-300 ml-1">
+                      <span className="text-fuchsia-700 dark:text-fuchsia-300 ml-1">
                         (+{offDaySummary.vmcCount}g VMC max)
                       </span>
                     )}
@@ -2881,7 +2881,7 @@ export function EnergyDatabaseView({
                   <td className="py-3 px-4 text-right font-mono tabular-nums whitespace-nowrap">
                     {offDaySummary.cleanAvgKwh !== null ? (
                       <>
-                        <span className="font-semibold text-emerald-300">
+                        <span className="font-semibold text-emerald-700 dark:text-emerald-300">
                           {offDaySummary.cleanAvgKwh.toFixed(2)} kWh/g
                         </span>
                         <span className="text-slate-500 ml-1.5">
@@ -2892,16 +2892,16 @@ export function EnergyDatabaseView({
                       <span className="text-slate-500">—</span>
                     )}
                   </td>
-                  <td className="py-3 px-4 text-right font-mono tabular-nums whitespace-nowrap text-slate-400">
+                  <td className="py-3 px-4 text-right font-mono tabular-nums whitespace-nowrap text-slate-600 dark:text-slate-400">
                     {offDaySummary.vmcCount > 0 && offDaySummary.allAvgKwh !== null ? (
                       <span title="Media includendo i giorni con VMC al massimo">
                         {offDaySummary.allAvgKwh.toFixed(2)} kWh/g
-                        <span className="block text-[10px] font-sans text-fuchsia-300/80">
+                        <span className="block text-[10px] font-sans text-fuchsia-700 dark:text-fuchsia-300/80">
                           incl. {offDaySummary.vmcCount}g VMC max
                         </span>
                       </span>
                     ) : (
-                      <span className="text-[11px] text-slate-600 font-sans">Coincide</span>
+                      <span className="text-[11px] text-slate-400 dark:text-slate-600 font-sans">Coincide</span>
                     )}
                   </td>
                 </tr>
@@ -2938,10 +2938,10 @@ export function EnergyDatabaseView({
                       onClick={handleComboRowClick}
                       className={`cursor-pointer transition-colors select-none ${
                         isRowHighlighted
-                          ? 'bg-sky-500/15 ring-2 ring-inset ring-emerald-400/75'
+                          ? 'bg-sky-500/10 dark:bg-sky-500/15 ring-2 ring-inset ring-emerald-500/75 dark:ring-emerald-400/75'
                           : isBest
-                            ? 'bg-emerald-500/10 hover:bg-emerald-500/15'
-                            : 'hover:bg-slate-800/40'
+                            ? 'bg-emerald-500/5 dark:bg-emerald-500/10 hover:bg-emerald-500/10 dark:hover:bg-emerald-500/15'
+                            : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
                       }`}
                     >
                       <td className="py-3 px-4 whitespace-nowrap">
@@ -2956,12 +2956,12 @@ export function EnergyDatabaseView({
                             </span>
                           )}
                           {isBest ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-mono font-bold text-[11px]">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 dark:bg-emerald-500/20 border border-emerald-500/35 dark:border-emerald-400/40 text-emerald-700 dark:text-emerald-300 font-mono font-bold text-[11px]">
                               <Trophy className="w-3 h-3" />
                               #1 Migliore
                             </span>
                           ) : (
-                            <span className="font-mono text-slate-400 font-semibold">
+                            <span className="font-mono text-slate-500 dark:text-slate-400 font-semibold">
                               #{combo.rank}
                             </span>
                           )}
@@ -2969,12 +2969,12 @@ export function EnergyDatabaseView({
                       </td>
                       <td className="py-3 px-4 whitespace-nowrap">
                         {combo.mode === 'riscaldamento' ? (
-                          <span className="inline-flex items-center gap-1 text-amber-400 font-medium">
+                          <span className="inline-flex items-center gap-1 text-orange-700 dark:text-amber-400 font-medium">
                             <Flame className="w-3.5 h-3.5" />
                             Riscaldamento
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-cyan-400 font-medium">
+                          <span className="inline-flex items-center gap-1 text-cyan-700 dark:text-cyan-400 font-medium">
                             <Snowflake className="w-3.5 h-3.5" />
                             Raffrescamento
                           </span>
@@ -2982,35 +2982,35 @@ export function EnergyDatabaseView({
                       </td>
                       <td className="py-3 px-4 whitespace-nowrap">
                         {combo.isAllDay ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-sky-500/15 border border-sky-500/30 text-sky-300 font-medium text-[11px]">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-sky-500/10 dark:bg-sky-500/15 border border-sky-500/25 dark:border-sky-500/30 text-sky-700 dark:text-sky-300 font-medium text-[11px]">
                             <Clock className="w-3 h-3 shrink-0" />
                             Tutto il giorno · 24h
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-slate-950/80 border border-slate-800 text-slate-200 font-mono text-[11px] tabular-nums">
-                            <Clock className="w-3 h-3 text-slate-500 shrink-0" />
+                          <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 font-mono text-[11px] tabular-nums">
+                            <Clock className="w-3 h-3 text-slate-400 dark:text-slate-500 shrink-0" />
                             <span>{formatSlotsSummary(combo.slots)}</span>
                             {durationLabel && (
-                              <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px]">
+                              <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-[10px]">
                                 {durationLabel}
                               </span>
                             )}
                           </span>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-right font-mono font-semibold text-slate-100 tabular-nums whitespace-nowrap">
+                      <td className="py-3 px-4 text-right font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums whitespace-nowrap">
                         {formatTargetTemp(combo.targetTemp)}
                       </td>
-                      <td className="py-3 px-4 text-slate-300">
+                      <td className="py-3 px-4 text-slate-700 dark:text-slate-300">
                         {combo.rooms.map((r) => ROOM_LABELS[r] || r).join(', ')}
                       </td>
-                      <td className="py-3 px-4 text-slate-400 whitespace-nowrap">
+                      <td className="py-3 px-4 text-slate-500 dark:text-slate-400 whitespace-nowrap">
                         {combo.monthsList.join(', ')} ·{' '}
-                        <span className="font-mono text-slate-300">
+                        <span className="font-mono text-slate-800 dark:text-slate-300">
                           {combo.daysCount}g
                         </span>
                         {combo.realisticDaysCount > 0 && (
-                          <span className="text-emerald-400/80 ml-1">
+                          <span className="text-emerald-600 dark:text-emerald-400/80 ml-1">
                             ({combo.realisticDaysCount} a regime)
                           </span>
                         )}
@@ -3020,7 +3020,7 @@ export function EnergyDatabaseView({
                           <>
                             <span
                               className={`font-semibold ${
-                                isBest ? 'text-emerald-300' : 'text-sky-400'
+                                isBest ? 'text-emerald-700 dark:text-emerald-300' : 'text-sky-600 dark:text-sky-400'
                               }`}
                             >
                               {combo.realisticAvgKwh.toFixed(2)} kWh/g
@@ -3029,26 +3029,26 @@ export function EnergyDatabaseView({
                               (€ {combo.realisticAvgCostEur!.toFixed(2)})
                             </span>
                             {!isBest && diffKwh > 0.05 && (
-                              <span className="ml-2 text-[11px] text-rose-400/90">
+                              <span className="ml-2 text-[11px] text-rose-600 dark:text-rose-400/90">
                                 +{diffKwh.toFixed(1)} kWh
                               </span>
                             )}
                           </>
                         ) : (
-                          <span className="text-[11px] text-amber-300/80 font-sans">
+                          <span className="text-[11px] text-amber-700 dark:text-amber-300/80 font-sans">
                             Solo avvio/assest.
                           </span>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-right font-mono tabular-nums whitespace-nowrap text-slate-400">
+                      <td className="py-3 px-4 text-right font-mono tabular-nums whitespace-nowrap text-slate-500 dark:text-slate-400">
                         {averagesMatch ? (
-                          <span className="text-[11px] text-slate-600 font-sans">
+                          <span className="text-[11px] text-slate-400 dark:text-slate-600 font-sans">
                             Coincide
                           </span>
                         ) : (
                           <span
                             title="Include i picchi di accensione/assestamento: dato non affidabile a lungo termine"
-                            className="text-amber-300/75"
+                            className="text-amber-700 dark:text-amber-300/75"
                           >
                             {combo.avgKwh.toFixed(2)} kWh/g
                           </span>
@@ -3066,22 +3066,22 @@ export function EnergyDatabaseView({
       </div>
 
       {/* Registro Accensioni NeaSmart */}
-      <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
         <div
           onClick={() => toggleSection('accensioni')}
-          className="px-5 py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 cursor-pointer hover:bg-slate-800/30 transition-colors"
+          className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors"
         >
           <div className="flex items-center gap-2.5">
             {openSections.accensioni ? (
-              <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+              <ChevronDown className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
             ) : (
-              <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+              <ChevronRight className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
             )}
             <div>
-              <h3 className="text-sm font-semibold text-slate-100">
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                 Accensioni NeaSmart {selectedYear}
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 Riepilogo giorni accesi, fascia oraria, temperatura, stanze e fase termica a confronto con i kWh reali.
               </p>
             </div>
@@ -3093,7 +3093,7 @@ export function EnergyDatabaseView({
               e.stopPropagation();
               onNavigate('domotica');
             }}
-            className="px-3 py-1.5 text-xs font-medium text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap"
+            className="px-3 py-1.5 text-xs font-semibold text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap"
           >
             + Nuova accensione
           </button>
@@ -3104,7 +3104,7 @@ export function EnergyDatabaseView({
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-slate-800 bg-slate-950/60 text-[11px] font-medium text-slate-400">
+              <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 text-[11px] font-medium text-slate-500 dark:text-slate-400">
                 <SortableTh
                   sortKey="date"
                   currentSort={logSort}
@@ -3166,7 +3166,7 @@ export function EnergyDatabaseView({
                 <th className="py-2.5 px-4 text-right">Azioni</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/70 text-xs">
+            <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70 text-xs">
               {sortedYearClimateLogs.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-6 px-4 text-center text-slate-500">
@@ -3183,19 +3183,19 @@ export function EnergyDatabaseView({
                       <tr
                         key={log.id}
                         onClick={() => setSelectedDayIso(log.date)}
-                        className="hover:bg-slate-800/40 cursor-pointer"
+                        className="hover:bg-slate-50 dark:hover:bg-slate-800/40 cursor-pointer"
                       >
-                        <td className="py-2.5 px-4 font-mono text-slate-200 tabular-nums whitespace-nowrap">
+                        <td className="py-2.5 px-4 font-mono text-slate-800 dark:text-slate-200 tabular-nums whitespace-nowrap">
                           {formatReadingDate(log.date)}
                         </td>
                         <td className="py-2.5 px-4 whitespace-nowrap">
                           {log.mode === 'riscaldamento' ? (
-                            <span className="inline-flex items-center gap-1 text-amber-400">
+                            <span className="inline-flex items-center gap-1 text-orange-700 dark:text-amber-400">
                               <Flame className="w-3.5 h-3.5" />
                               Riscaldamento
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 text-sky-400">
+                            <span className="inline-flex items-center gap-1 text-sky-600 dark:text-sky-400">
                               <Snowflake className="w-3.5 h-3.5" />
                               Raffrescamento
                             </span>
@@ -3204,29 +3204,29 @@ export function EnergyDatabaseView({
                         <td className="py-2.5 px-4 whitespace-nowrap">
                           <div className="inline-flex items-center gap-1.5">
                             {isAllDaySlots(slots) ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[11px] font-medium">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-500/10 dark:bg-sky-500/15 border border-sky-500/25 dark:border-sky-500/30 text-sky-700 dark:text-sky-300 text-[11px] font-medium">
                                 Tutto il giorno · 24h
                               </span>
                             ) : (
-                              <span className="font-mono text-slate-300 tabular-nums">
+                              <span className="font-mono text-slate-700 dark:text-slate-300 tabular-nums">
                                 {formatSlotsSummary(slots)}
                               </span>
                             )}
                             {rowVmcMax && (
-                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-fuchsia-500/20 border border-fuchsia-400/50 text-fuchsia-200 text-[10px] font-semibold">
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-fuchsia-500/15 dark:bg-fuchsia-500/20 border border-fuchsia-500/40 dark:border-fuchsia-400/50 text-fuchsia-700 dark:text-fuchsia-200 text-[10px] font-semibold">
                                 <Wind className="w-2.5 h-2.5" />
                                 VMC Max
                               </span>
                             )}
                           </div>
                         </td>
-                        <td className="py-2.5 px-4 text-right font-mono font-semibold text-slate-100 tabular-nums">
+                        <td className="py-2.5 px-4 text-right font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
                           {formatTargetTemp(log.targetTemp)}
                         </td>
-                        <td className="py-2.5 px-4 text-slate-300">
+                        <td className="py-2.5 px-4 text-slate-700 dark:text-slate-300">
                           {log.rooms.map((r) => ROOM_LABELS[r] || r).join(', ')}
                         </td>
-                        <td className="py-2.5 px-4 text-[11px] font-medium text-emerald-400 whitespace-nowrap">
+                        <td className="py-2.5 px-4 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                           {phase === 'prima_accensione'
                             ? 'Prima accensione'
                             : phase === 'assestamento'
@@ -3237,7 +3237,7 @@ export function EnergyDatabaseView({
                         </td>
                         <td className="py-2.5 px-4 text-right font-mono tabular-nums whitespace-nowrap">
                           {dayReading ? (
-                            <span className="text-sky-400 font-semibold">
+                            <span className="text-sky-600 dark:text-sky-400 font-semibold">
                               {dayReading.totalKwh.toFixed(2)} kWh
                               <span className="text-slate-500 font-normal">
                                 {' '}
@@ -3257,7 +3257,7 @@ export function EnergyDatabaseView({
                               setPendingDeleteLog(log);
                             }}
                             aria-label="Elimina accensione"
-                            className="p-1 text-slate-500 hover:text-rose-400 rounded"
+                            className="p-1 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 rounded"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -3274,23 +3274,23 @@ export function EnergyDatabaseView({
       </section>
 
       {/* Month tabs + Daily Bar Chart + Full Month Table */}
-      <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
         <div
           onClick={() => toggleSection('dettaglioMensile')}
-          className="px-5 py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 cursor-pointer hover:bg-slate-800/30 transition-colors"
+          className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors"
         >
           <div className="flex items-center gap-2.5">
             {openSections.dettaglioMensile ? (
-              <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+              <ChevronDown className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
             ) : (
-              <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+              <ChevronRight className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
             )}
-            <h3 className="text-sm font-semibold text-slate-100">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
               Dettaglio Mensile e Grafico Giornaliero — {MONTHS_IT[selectedMonth]} {selectedYear}
             </h3>
           </div>
-          <div className="text-xs font-mono tabular-nums text-slate-300">
-            <span className="text-sky-400 font-semibold">
+          <div className="text-xs font-mono tabular-nums text-slate-700 dark:text-slate-300">
+            <span className="text-sky-600 dark:text-sky-400 font-semibold">
               {monthStats.totalKwh.toFixed(2)} kWh
             </span>{' '}
             · € {monthStats.totalCost.toFixed(2)}
@@ -3299,7 +3299,7 @@ export function EnergyDatabaseView({
 
         {openSections.dettaglioMensile && (
         <>
-        <div className="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-1">
             {MONTHS_SHORT_IT.map((mLabel, idx) => (
               <button
@@ -3308,8 +3308,8 @@ export function EnergyDatabaseView({
                 onClick={() => setSelectedMonth(idx)}
                 className={`px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
                   selectedMonth === idx
-                    ? 'bg-sky-500 text-slate-950'
-                    : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'
+                    ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
               >
                 {mLabel}
@@ -3318,14 +3318,14 @@ export function EnergyDatabaseView({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex items-center p-0.5 bg-slate-950 border border-slate-800 rounded-lg text-[11px]">
+            <div className="inline-flex items-center p-0.5 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px]">
               <button
                 type="button"
                 onClick={() => setFixedYAxisMax(false)}
                 className={`px-2.5 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${
                   !fixedYAxisMax
-                    ? 'bg-sky-500 text-slate-950'
-                    : 'text-slate-400 hover:text-slate-100'
+                    ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
                 Scala Y: Variabile
@@ -3335,15 +3335,15 @@ export function EnergyDatabaseView({
                 onClick={() => setFixedYAxisMax(true)}
                 className={`px-2.5 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${
                   fixedYAxisMax
-                    ? 'bg-sky-500 text-slate-950'
-                    : 'text-slate-400 hover:text-slate-100'
+                    ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
                 Scala Y: Fisso 30 kWh
               </button>
             </div>
             {fixedYAxisMax && monthMaxDayKwh > 30 && (
-              <span className="text-[11px] text-amber-300 font-mono tabular-nums">
+              <span className="text-[11px] text-amber-700 dark:text-amber-300 font-mono tabular-nums">
                 (picco reale {monthMaxDayKwh.toFixed(1)} kWh &gt; 30)
               </span>
             )}
@@ -3352,8 +3352,8 @@ export function EnergyDatabaseView({
               onClick={() => setShowFasciaInfo((v) => !v)}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-lg border transition-colors whitespace-nowrap ${
                 showFasciaInfo
-                  ? 'bg-sky-500/15 border-sky-400/50 text-sky-300'
-                  : 'bg-slate-950 border-slate-800 text-slate-300 hover:text-slate-100'
+                  ? 'bg-sky-500/15 border-sky-500/40 text-sky-700 dark:text-sky-300'
+                  : 'bg-slate-100 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100'
               }`}
             >
               <Info className="w-3.5 h-3.5" />
@@ -3362,62 +3362,62 @@ export function EnergyDatabaseView({
           </div>
         </div>
 
-        <div className="p-5 border-b border-slate-800 space-y-3">
+        <div className="p-5 border-b border-slate-200 dark:border-slate-800 space-y-3">
           {/* Legenda colori F1 / F2 / F3 allineata alla barra */}
           <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
             <div className="flex flex-wrap items-center gap-4">
-              <span className="inline-flex items-center gap-1.5 text-slate-200">
+              <span className="inline-flex items-center gap-1.5 text-slate-800 dark:text-slate-200">
                 <span className="w-3 h-3 rounded-xs bg-rose-500 shrink-0" />
-                <strong className="text-rose-300">F1</strong>
-                <span className="text-slate-400">Ore di punta (lun–ven 8–19)</span>
+                <strong className="text-rose-700 dark:text-rose-300">F1</strong>
+                <span className="text-slate-500 dark:text-slate-400">Ore di punta (lun–ven 8–19)</span>
               </span>
-              <span className="inline-flex items-center gap-1.5 text-slate-200">
-                <span className="w-3 h-3 rounded-xs bg-amber-400 shrink-0" />
-                <strong className="text-amber-300">F2</strong>
-                <span className="text-slate-400">Intermedia (sera/sabato)</span>
+              <span className="inline-flex items-center gap-1.5 text-slate-800 dark:text-slate-200">
+                <span className="w-3 h-3 rounded-xs bg-amber-500 dark:bg-amber-400 shrink-0" />
+                <strong className="text-amber-700 dark:text-amber-300">F2</strong>
+                <span className="text-slate-500 dark:text-slate-400">Intermedia (sera/sabato)</span>
               </span>
-              <span className="inline-flex items-center gap-1.5 text-slate-200">
-                <span className="w-3 h-3 rounded-xs bg-sky-400 shrink-0" />
-                <strong className="text-sky-300">F3</strong>
-                <span className="text-slate-400">Fuori punta (notte, dom e festivi)</span>
+              <span className="inline-flex items-center gap-1.5 text-slate-800 dark:text-slate-200">
+                <span className="w-3 h-3 rounded-xs bg-sky-500 dark:bg-sky-400 shrink-0" />
+                <strong className="text-sky-700 dark:text-sky-300">F3</strong>
+                <span className="text-slate-500 dark:text-slate-400">Fuori punta (notte, dom e festivi)</span>
               </span>
             </div>
             <span className="text-[11px] text-slate-500">
-              Asse Y in <span className="font-mono text-slate-300">kWh</span> · Barra dal basso: F1 → F2 → F3
+              Asse Y in <span className="font-mono text-slate-700 dark:text-slate-300">kWh</span> · Barra dal basso: F1 → F2 → F3
             </span>
           </div>
 
           {showFasciaInfo && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3.5 rounded-lg bg-slate-950/80 border border-slate-800 text-xs">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 text-xs">
               <div className="space-y-1">
-                <div className="flex items-center gap-1.5 font-semibold text-rose-300">
+                <div className="flex items-center gap-1.5 font-semibold text-rose-700 dark:text-rose-300">
                   <span className="w-2.5 h-2.5 rounded-xs bg-rose-500" />
                   Fascia F1 — Ore di punta
                 </div>
-                <p className="text-slate-400 leading-relaxed">
-                  Lunedì–Venerdì dalle <span className="font-mono text-slate-200">08:00</span> alle{' '}
-                  <span className="font-mono text-slate-200">19:00</span> (esclusi i festivi nazionali). Storicamente è la fascia più costosa nelle tariffe multiorarie.
+                <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Lunedì–Venerdì dalle <span className="font-mono text-slate-800 dark:text-slate-200">08:00</span> alle{' '}
+                  <span className="font-mono text-slate-800 dark:text-slate-200">19:00</span> (esclusi i festivi nazionali). Storicamente è la fascia più costosa nelle tariffe multiorarie.
                 </p>
               </div>
               <div className="space-y-1">
-                <div className="flex items-center gap-1.5 font-semibold text-amber-300">
-                  <span className="w-2.5 h-2.5 rounded-xs bg-amber-400" />
+                <div className="flex items-center gap-1.5 font-semibold text-amber-700 dark:text-amber-300">
+                  <span className="w-2.5 h-2.5 rounded-xs bg-amber-500 dark:bg-amber-400" />
                   Fascia F2 — Ore intermedie
                 </div>
-                <p className="text-slate-400 leading-relaxed">
-                  Lunedì–Venerdì <span className="font-mono text-slate-200">07:00–08:00</span> e{' '}
-                  <span className="font-mono text-slate-200">19:00–23:00</span>, più il Sabato dalle{' '}
-                  <span className="font-mono text-slate-200">07:00</span> alle <span className="font-mono text-slate-200">23:00</span> (esclusi festivi).
+                <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Lunedì–Venerdì <span className="font-mono text-slate-800 dark:text-slate-200">07:00–08:00</span> e{' '}
+                  <span className="font-mono text-slate-800 dark:text-slate-200">19:00–23:00</span>, più il Sabato dalle{' '}
+                  <span className="font-mono text-slate-800 dark:text-slate-200">07:00</span> alle <span className="font-mono text-slate-800 dark:text-slate-200">23:00</span> (esclusi festivi).
                 </p>
               </div>
               <div className="space-y-1">
-                <div className="flex items-center gap-1.5 font-semibold text-sky-300">
-                  <span className="w-2.5 h-2.5 rounded-xs bg-sky-400" />
+                <div className="flex items-center gap-1.5 font-semibold text-sky-700 dark:text-sky-300">
+                  <span className="w-2.5 h-2.5 rounded-xs bg-sky-500 dark:bg-sky-400" />
                   Fascia F3 — Ore fuori punta
                 </div>
-                <p className="text-slate-400 leading-relaxed">
-                  Tutti i giorni dalle <span className="font-mono text-slate-200">23:00</span> alle{' '}
-                  <span className="font-mono text-slate-200">07:00</span>, più tutte le <strong className="text-slate-200">Domeniche</strong> e i <strong className="text-slate-200">festivi nazionali</strong> (24h). Con Edison monoraria F0 paghi lo stesso prezzo in F1/F2/F3, ma il contatore le misura comunque separatamente.
+                <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Tutti i giorni dalle <span className="font-mono text-slate-800 dark:text-slate-200">23:00</span> alle{' '}
+                  <span className="font-mono text-slate-800 dark:text-slate-200">07:00</span>, più tutte le <strong className="text-slate-900 dark:text-slate-200">Domeniche</strong> e i <strong className="text-slate-900 dark:text-slate-200">festivi nazionali</strong> (24h). Con Edison monoraria F0 paghi lo stesso prezzo in F1/F2/F3, ma il contatore le misura comunque separatamente.
                 </p>
               </div>
             </div>
@@ -3425,15 +3425,15 @@ export function EnergyDatabaseView({
 
           <div className="h-56">
             {loading ? (
-              <div className="h-full w-full bg-slate-800/50 rounded-lg animate-pulse" />
+              <div className="h-full w-full bg-slate-200 dark:bg-slate-800/50 rounded-lg animate-pulse" />
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={dailyChartData} margin={{ top: 10, right: 10, left: 4, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
                   <XAxis
                     dataKey="day"
-                    tick={{ fontSize: 11, fill: '#94A3B8' }}
-                    axisLine={{ stroke: '#1E293B' }}
+                    tick={{ fontSize: 11, fill: 'var(--chart-tick)' }}
+                    axisLine={{ stroke: 'var(--chart-grid)' }}
                     tickLine={false}
                   />
                   <YAxis
@@ -3441,7 +3441,7 @@ export function EnergyDatabaseView({
                     tickFormatter={(v) => `${v} kWh`}
                     domain={fixedYAxisMax ? [0, 30] : [0, 'auto']}
                     allowDataOverflow={fixedYAxisMax}
-                    tick={{ fontSize: 11, fill: '#94A3B8' }}
+                    tick={{ fontSize: 11, fill: 'var(--chart-tick)' }}
                     axisLine={false}
                     tickLine={false}
                   />
@@ -3468,17 +3468,17 @@ export function EnergyDatabaseView({
                       const dayLogs = climateByDate.get(row.iso) || [];
                       const tot = row.total > 0 ? row.total : row.F1 + row.F2 + row.F3;
                       return (
-                        <div className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs shadow-xl space-y-1 min-w-[205px]">
-                          <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-1">
-                            <span className="font-semibold text-slate-100">
+                        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-xs shadow-xl space-y-1 min-w-[205px]">
+                          <div className="flex items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-1">
+                            <span className="font-semibold text-slate-900 dark:text-slate-100">
                               {formatReadingDate(row.iso)}
                             </span>
                             {dayLogs.length > 0 && (
                               <span
                                 className={`text-[10px] font-medium ${
                                   dayLogs[0].mode === 'riscaldamento'
-                                    ? 'text-amber-300'
-                                    : 'text-cyan-300'
+                                    ? 'text-orange-700 dark:text-amber-300'
+                                    : 'text-cyan-700 dark:text-cyan-300'
                                 }`}
                               >
                                 {dayLogs[0].mode === 'riscaldamento' ? 'Riscald.' : 'Raffresc.'}
@@ -3487,29 +3487,29 @@ export function EnergyDatabaseView({
                           </div>
                           {/* Ordine dall'alto verso il basso identico alla barra: F3 -> F2 -> F1 */}
                           <div className="flex items-center justify-between gap-4 font-mono tabular-nums">
-                            <span className="inline-flex items-center gap-1.5 text-sky-300">
-                              <span className="w-2 h-2 rounded-xs bg-sky-400" />
+                            <span className="inline-flex items-center gap-1.5 text-sky-700 dark:text-sky-300">
+                              <span className="w-2 h-2 rounded-xs bg-sky-500 dark:bg-sky-400" />
                               F3 (Fuori punta)
                             </span>
-                            <span className="text-slate-100">{row.F3.toFixed(2)} kWh</span>
+                            <span className="text-slate-900 dark:text-slate-100">{row.F3.toFixed(2)} kWh</span>
                           </div>
                           <div className="flex items-center justify-between gap-4 font-mono tabular-nums">
-                            <span className="inline-flex items-center gap-1.5 text-amber-300">
-                              <span className="w-2 h-2 rounded-xs bg-amber-400" />
+                            <span className="inline-flex items-center gap-1.5 text-amber-700 dark:text-amber-300">
+                              <span className="w-2 h-2 rounded-xs bg-amber-500 dark:bg-amber-400" />
                               F2 (Intermedia)
                             </span>
-                            <span className="text-slate-100">{row.F2.toFixed(2)} kWh</span>
+                            <span className="text-slate-900 dark:text-slate-100">{row.F2.toFixed(2)} kWh</span>
                           </div>
                           <div className="flex items-center justify-between gap-4 font-mono tabular-nums">
-                            <span className="inline-flex items-center gap-1.5 text-rose-300">
+                            <span className="inline-flex items-center gap-1.5 text-rose-700 dark:text-rose-300">
                               <span className="w-2 h-2 rounded-xs bg-rose-500" />
                               F1 (Punta)
                             </span>
-                            <span className="text-slate-100">{row.F1.toFixed(2)} kWh</span>
+                            <span className="text-slate-900 dark:text-slate-100">{row.F1.toFixed(2)} kWh</span>
                           </div>
-                          <div className="flex items-center justify-between gap-4 font-mono tabular-nums pt-1 border-t border-slate-800 font-semibold">
-                            <span className="text-slate-200">Totale giorno</span>
-                            <span className="text-emerald-400">
+                          <div className="flex items-center justify-between gap-4 font-mono tabular-nums pt-1 border-t border-slate-200 dark:border-slate-800 font-semibold">
+                            <span className="text-slate-700 dark:text-slate-200">Totale giorno</span>
+                            <span className="text-emerald-600 dark:text-emerald-400">
                               {tot.toFixed(2)} kWh
                               {row.costEur !== null ? ` (€ ${row.costEur.toFixed(2)})` : ''}
                             </span>
@@ -3530,7 +3530,7 @@ export function EnergyDatabaseView({
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-slate-800 bg-slate-950/60 text-[11px] font-medium text-slate-400">
+              <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 text-[11px] font-medium text-slate-500 dark:text-slate-400">
                 <SortableTh
                   sortKey="iso"
                   currentSort={monthDaySort}
@@ -3603,7 +3603,7 @@ export function EnergyDatabaseView({
                 </SortableTh>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/70 text-xs">
+            <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70 text-xs">
               {sortedMonthDays.map(({ iso, reading }) => {
                 const dayLogs = climateByDate.get(iso) || [];
                 const dayVmc = isVmcMaxForDate(iso, vmcDaysMap, dayLogs);
@@ -3614,31 +3614,31 @@ export function EnergyDatabaseView({
                     className={`cursor-pointer transition-colors ${
                       selectedDayIso === iso
                         ? 'bg-sky-500/10'
-                        : 'hover:bg-slate-800/50'
+                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
                     }`}
                   >
-                    <td className="py-2 px-4 font-mono text-slate-200 tabular-nums whitespace-nowrap">
+                    <td className="py-2 px-4 font-mono text-slate-800 dark:text-slate-200 tabular-nums whitespace-nowrap">
                       {formatReadingDate(iso)}
                     </td>
-                    <td className="py-2 px-4 text-right font-mono text-slate-400 tabular-nums">
+                    <td className="py-2 px-4 text-right font-mono text-slate-600 dark:text-slate-400 tabular-nums">
                       {reading ? reading.f1Kwh.toFixed(2) : '—'}
                     </td>
-                    <td className="py-2 px-4 text-right font-mono text-slate-400 tabular-nums">
+                    <td className="py-2 px-4 text-right font-mono text-slate-600 dark:text-slate-400 tabular-nums">
                       {reading ? reading.f2Kwh.toFixed(2) : '—'}
                     </td>
-                    <td className="py-2 px-4 text-right font-mono text-slate-400 tabular-nums">
+                    <td className="py-2 px-4 text-right font-mono text-slate-600 dark:text-slate-400 tabular-nums">
                       {reading ? reading.f3Kwh.toFixed(2) : '—'}
                     </td>
-                    <td className="py-2 px-4 text-right font-mono font-semibold text-slate-100 tabular-nums">
+                    <td className="py-2 px-4 text-right font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
                       {reading ? reading.totalKwh.toFixed(2) : '—'}
                     </td>
-                    <td className="py-2 px-4 text-right font-mono text-slate-400 tabular-nums">
+                    <td className="py-2 px-4 text-right font-mono text-slate-600 dark:text-slate-400 tabular-nums">
                       {reading ? reading.peakKw.toFixed(1) : '—'}
                     </td>
-                    <td className="py-2 px-4 text-right font-mono text-emerald-400 tabular-nums">
+                    <td className="py-2 px-4 text-right font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
                       {reading ? `€ ${reading.estimatedCostEur.toFixed(2)}` : '—'}
                     </td>
-                    <td className="py-2 px-4 text-slate-300">
+                    <td className="py-2 px-4 text-slate-700 dark:text-slate-300">
                       {dayLogs.length > 0 ? (
                         <div className="space-y-0.5">
                           {dayLogs.map((log) => {
@@ -3646,31 +3646,31 @@ export function EnergyDatabaseView({
                             return (
                               <div key={log.id} className="flex items-center gap-1.5 whitespace-nowrap">
                                 {log.mode === 'riscaldamento' ? (
-                                  <Flame className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                  <Flame className="w-3.5 h-3.5 text-orange-600 dark:text-amber-400 shrink-0" />
                                 ) : (
-                                  <Snowflake className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                                  <Snowflake className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
                                 )}
-                                <span className="font-mono text-slate-200">
+                                <span className="font-mono text-slate-800 dark:text-slate-200">
                                   {isAllDaySlots(slots)
                                     ? '24h (Tutto il giorno)'
                                     : formatSlotsSummary(slots)}
                                 </span>
-                                <span className="text-slate-500">·</span>
-                                <span className="font-mono font-medium text-slate-100">
+                                <span className="text-slate-400 dark:text-slate-500">·</span>
+                                <span className="font-mono font-medium text-slate-900 dark:text-slate-100">
                                   {formatTargetTemp(log.targetTemp, true)}
                                 </span>
                                 {dayVmc && (
-                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-fuchsia-500/20 border border-fuchsia-400/50 text-fuchsia-200 text-[10px] font-semibold">
+                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-fuchsia-500/15 dark:bg-fuchsia-500/20 border border-fuchsia-500/40 dark:border-fuchsia-400/50 text-fuchsia-700 dark:text-fuchsia-200 text-[10px] font-semibold">
                                     <Wind className="w-2.5 h-2.5" />
                                     VMC Max
                                   </span>
                                 )}
-                                <span className="text-slate-500">·</span>
-                                <span className="text-slate-400 truncate max-w-[200px]">
+                                <span className="text-slate-400 dark:text-slate-500">·</span>
+                                <span className="text-slate-500 dark:text-slate-400 truncate max-w-[200px]">
                                   {log.rooms.map((r) => ROOM_LABELS[r] || r).join(', ')}
                                 </span>
                                 {phaseByDate.get(iso) && (
-                                  <span className="text-[11px] text-emerald-400">
+                                  <span className="text-[11px] text-emerald-600 dark:text-emerald-400">
                                     ·{' '}
                                     {phaseByDate.get(iso) === 'prima_accensione'
                                       ? 'Prima accensione'
@@ -3684,12 +3684,12 @@ export function EnergyDatabaseView({
                           })}
                         </div>
                       ) : dayVmc ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-fuchsia-500/20 border border-fuchsia-400/50 text-fuchsia-200 text-[11px] font-semibold">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-fuchsia-500/15 dark:bg-fuchsia-500/20 border border-fuchsia-500/40 dark:border-fuchsia-400/50 text-fuchsia-700 dark:text-fuchsia-200 text-[11px] font-semibold">
                           <Wind className="w-3 h-3" />
                           Clima OFF · VMC Max
                         </span>
                       ) : (
-                        <span className="text-slate-600">—</span>
+                        <span className="text-slate-400 dark:text-slate-600">—</span>
                       )}
                     </td>
                   </tr>
@@ -3699,7 +3699,7 @@ export function EnergyDatabaseView({
           </table>
         </div>
 
-        <div className="px-4 py-3 border-t border-slate-800 bg-slate-950/40 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+        <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
           <span>
             {yearReadings.length} giorni reali salvati nel {selectedYear}
           </span>
@@ -3712,25 +3712,25 @@ export function EnergyDatabaseView({
 
 
       {pendingDeleteLog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-rose-500/15 text-rose-400 shrink-0">
+              <div className="p-2 rounded-lg bg-rose-500/15 text-rose-600 dark:text-rose-400 shrink-0">
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-sm font-semibold text-slate-100">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   Attenzione: conferma eliminazione
                 </h3>
-                <p className="text-xs text-slate-300 leading-relaxed">
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
                   Vuoi davvero eliminare l&apos;accensione{' '}
-                  <span className="font-medium text-slate-100">
+                  <span className="font-medium text-slate-900 dark:text-slate-100">
                     {pendingDeleteLog.mode === 'riscaldamento'
                       ? 'Riscaldamento'
                       : 'Raffrescamento'}
                   </span>{' '}
                   del{' '}
-                  <span className="font-mono font-semibold text-slate-100">
+                  <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">
                     {formatReadingDate(pendingDeleteLog.date)}
                   </span>{' '}
                   ({formatSlotsSummary(getSessionTimeSlots(pendingDeleteLog))} ·{' '}
@@ -3739,12 +3739,12 @@ export function EnergyDatabaseView({
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 disabled={deletingLog}
                 onClick={() => setPendingDeleteLog(null)}
-                className="px-3.5 py-2 text-xs font-medium text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+                className="px-3.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
               >
                 Annulla
               </button>

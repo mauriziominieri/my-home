@@ -7,9 +7,14 @@ import {
   serverTimestamp,
   Timestamp,
   where,
-  writeBatch as rawWriteBatch,
 } from 'firebase/firestore';
-import { auth, db, raceWithFirestoreQuotaAbort } from '../firebase';
+import {
+  auth,
+  db,
+  guardedWriteBatch as writeBatch,
+  isFirestoreWritesDisabled,
+  recordFirestoreWritesSaved,
+} from '../firebase';
 import {
   BillRecord,
   HomeArticleRecord,
@@ -18,15 +23,6 @@ import {
   TariBillRecord,
   WaterBillRecord,
 } from '../types/home';
-
-const writeBatch: typeof rawWriteBatch = ((...args: unknown[]) => {
-  const batch = (rawWriteBatch as (...inner: unknown[]) => ReturnType<typeof rawWriteBatch>)(
-    ...args
-  );
-  const origCommit = batch.commit.bind(batch);
-  batch.commit = () => raceWithFirestoreQuotaAbort(origCommit());
-  return batch;
-}) as typeof rawWriteBatch;
 
 export const SYSTEM_ROOM_DOCUMENTS = '__documenti__';
 
@@ -334,6 +330,20 @@ export async function saveVaultFile(
     cloudTooLarge: false,
   };
 
+  if (isFirestoreWritesDisabled()) {
+    const estimatedChunks = Math.max(1, Math.ceil((file.size * 1.35) / CHUNK_CHAR_SIZE));
+    recordFirestoreWritesSaved(estimatedChunks + 1, `Allegato vault (${safeFileName})`);
+    const localRecord: StoredVaultFile = {
+      ...record,
+      origin: 'local',
+      cloudSynced: true,
+      cloudTooLarge: false,
+    };
+    await putLocalCache(localRecord);
+    notifyVaultUpdated();
+    return localRecord;
+  }
+
   try {
     const base64 = await blobToBase64(file);
     const chunks: string[] = [];
@@ -558,6 +568,12 @@ export async function deleteVaultFile(key: string, ownerUid?: string): Promise<v
   await deleteLocalCache(cleanKey);
   cloudMetaCache.delete(cleanKey);
 
+  if (isFirestoreWritesDisabled()) {
+    recordFirestoreWritesSaved(1, `Eliminazione allegato vault (${cleanKey})`);
+    notifyVaultUpdated();
+    return;
+  }
+
   const uid = getAuthenticatedUid(ownerUid);
   if (uid) {
     try {
@@ -597,6 +613,12 @@ export async function deleteVaultFiles(keys: string[], ownerUid?: string): Promi
   for (const key of cleanKeys) {
     await deleteLocalCache(key);
     cloudMetaCache.delete(key);
+  }
+
+  if (isFirestoreWritesDisabled()) {
+    recordFirestoreWritesSaved(cleanKeys.length * 2, 'Eliminazione allegati vault (test)');
+    notifyVaultUpdated();
+    return;
   }
 
   const keysPerBatch = 23;

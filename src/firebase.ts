@@ -6,7 +6,15 @@ import {
   signInWithPopup,
   User,
 } from 'firebase/auth';
-import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import {
+  deleteDoc as rawDeleteDoc,
+  doc,
+  Firestore,
+  getDocFromServer,
+  getFirestore,
+  setDoc as rawSetDoc,
+  writeBatch as rawWriteBatch,
+} from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Primary unified Firebase project (Auth, Firestore, Gmail OAuth & Admin SDK)
@@ -149,6 +157,161 @@ export function dismissFirestoreQuotaExceeded(): void {
     quotaExceededActive = false;
     quotaExceededListeners.forEach((listener) => listener(false));
   }
+}
+
+export interface FirestoreWriteStats {
+  writesDisabled: boolean;
+  writesSavedCount: number;
+  writesExecutedCount: number;
+  lastActionLabel: string | null;
+  lastActionAt: number | null;
+}
+
+function readInitialWritesDisabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const raw = window.localStorage.getItem('myhome_app_settings_v1');
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as { firestoreWritesDisabled?: unknown };
+    return Boolean(parsed?.firestoreWritesDisabled);
+  } catch {
+    return false;
+  }
+}
+
+let firestoreWriteStats: FirestoreWriteStats = {
+  writesDisabled: readInitialWritesDisabled(),
+  writesSavedCount: 0,
+  writesExecutedCount: 0,
+  lastActionLabel: null,
+  lastActionAt: null,
+};
+
+const writeStatsListeners = new Set<(stats: FirestoreWriteStats) => void>();
+
+function emitWriteStats(): void {
+  const snapshot = { ...firestoreWriteStats };
+  writeStatsListeners.forEach((listener) => listener(snapshot));
+}
+
+export function isFirestoreWritesDisabled(): boolean {
+  return firestoreWriteStats.writesDisabled;
+}
+
+export function setFirestoreWritesDisabled(disabled: boolean): void {
+  const next = Boolean(disabled);
+  if (firestoreWriteStats.writesDisabled === next) return;
+  firestoreWriteStats = {
+    ...firestoreWriteStats,
+    writesDisabled: next,
+  };
+  emitWriteStats();
+}
+
+export function getFirestoreWriteStats(): FirestoreWriteStats {
+  return { ...firestoreWriteStats };
+}
+
+export function subscribeFirestoreWriteStats(
+  listener: (stats: FirestoreWriteStats) => void
+): () => void {
+  writeStatsListeners.add(listener);
+  listener({ ...firestoreWriteStats });
+  return () => {
+    writeStatsListeners.delete(listener);
+  };
+}
+
+export function resetFirestoreWriteStats(): void {
+  firestoreWriteStats = {
+    ...firestoreWriteStats,
+    writesSavedCount: 0,
+    writesExecutedCount: 0,
+    lastActionLabel: null,
+    lastActionAt: null,
+  };
+  emitWriteStats();
+}
+
+export function recordFirestoreWritesSaved(count = 1, label?: string): void {
+  if (count <= 0) return;
+  firestoreWriteStats = {
+    ...firestoreWriteStats,
+    writesSavedCount: firestoreWriteStats.writesSavedCount + count,
+    lastActionLabel: label || 'Test browser (scrittura ignorata)',
+    lastActionAt: Date.now(),
+  };
+  emitWriteStats();
+}
+
+export function recordFirestoreWritesExecuted(count = 1, label?: string): void {
+  if (count <= 0) return;
+  firestoreWriteStats = {
+    ...firestoreWriteStats,
+    writesExecutedCount: firestoreWriteStats.writesExecutedCount + count,
+    lastActionLabel: label || 'Scrittura Firestore completata',
+    lastActionAt: Date.now(),
+  };
+  emitWriteStats();
+}
+
+export const guardedSetDoc: typeof rawSetDoc = (async (...args: unknown[]) => {
+  if (firestoreWriteStats.writesDisabled) {
+    recordFirestoreWritesSaved(1, 'setDoc simulato in modalità test');
+    return;
+  }
+  await raceWithFirestoreQuotaAbort(
+    (rawSetDoc as (...inner: unknown[]) => Promise<void>)(...args)
+  );
+  recordFirestoreWritesExecuted(1, 'setDoc');
+}) as typeof rawSetDoc;
+
+export const guardedDeleteDoc: typeof rawDeleteDoc = (async (...args: unknown[]) => {
+  if (firestoreWriteStats.writesDisabled) {
+    recordFirestoreWritesSaved(1, 'deleteDoc simulato in modalità test');
+    return;
+  }
+  await raceWithFirestoreQuotaAbort(
+    (rawDeleteDoc as (...inner: unknown[]) => Promise<void>)(...args)
+  );
+  recordFirestoreWritesExecuted(1, 'deleteDoc');
+}) as typeof rawDeleteDoc;
+
+export function guardedWriteBatch(firestore: Firestore): ReturnType<typeof rawWriteBatch> {
+  const batch = rawWriteBatch(firestore);
+  let opCount = 0;
+
+  const origSet = batch.set.bind(batch);
+  const origUpdate = batch.update.bind(batch);
+  const origDelete = batch.delete.bind(batch);
+  const origCommit = batch.commit.bind(batch);
+
+  batch.set = ((...args: unknown[]) => {
+    opCount += 1;
+    return (origSet as (...inner: unknown[]) => ReturnType<typeof batch.set>)(...args);
+  }) as typeof batch.set;
+
+  batch.update = ((...args: unknown[]) => {
+    opCount += 1;
+    return (origUpdate as (...inner: unknown[]) => ReturnType<typeof batch.update>)(...args);
+  }) as typeof batch.update;
+
+  batch.delete = ((...args: unknown[]) => {
+    opCount += 1;
+    return (origDelete as (...inner: unknown[]) => ReturnType<typeof batch.delete>)(...args);
+  }) as typeof batch.delete;
+
+  batch.commit = async () => {
+    if (opCount === 0) return;
+    if (firestoreWriteStats.writesDisabled) {
+      recordFirestoreWritesSaved(opCount, `batch (${opCount} op) simulato in modalità test`);
+      return;
+    }
+    await raceWithFirestoreQuotaAbort(origCommit());
+    recordFirestoreWritesExecuted(opCount, `batch (${opCount} op)`);
+  };
+
+  return batch;
 }
 
 export function raceWithFirestoreQuotaAbort<T>(promise: Promise<T>): Promise<T> {

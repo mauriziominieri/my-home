@@ -100,15 +100,15 @@ export function SortableTh<K extends string>({
       <button
         type="button"
         onClick={() => onSort(sortKey)}
-        className={`group/sort inline-flex items-center gap-1 font-medium transition-colors hover:text-slate-100 focus:outline-none ${
+        className={`group/sort inline-flex items-center gap-1 font-medium transition-colors hover:text-slate-900 dark:hover:text-slate-100 focus:outline-none ${
           align === 'right' ? 'justify-end w-full text-right' : 'justify-start text-left'
-        } ${isActive ? 'text-sky-300' : ''}`}
+        } ${isActive ? 'text-sky-700 dark:text-sky-300' : ''}`}
       >
         <span>{children}</span>
         {dir === 'asc' ? (
-          <ArrowUp className="w-3 h-3 shrink-0 text-sky-400" />
+          <ArrowUp className="w-3 h-3 shrink-0 text-sky-600 dark:text-sky-400" />
         ) : dir === 'desc' ? (
-          <ArrowDown className="w-3 h-3 shrink-0 text-sky-400" />
+          <ArrowDown className="w-3 h-3 shrink-0 text-sky-600 dark:text-sky-400" />
         ) : (
           <ArrowUpDown className="w-3 h-3 shrink-0 opacity-35 group-hover/sort:opacity-80 transition-opacity" />
         )}

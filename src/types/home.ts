@@ -14,7 +14,8 @@ export type NavSection =
   | 'documenti'
   | 'macchina'
   | 'spesa'
-  | 'info';
+  | 'info'
+  | 'impostazioni';
 
 export interface BillRecord {
   invoiceNumber: string;

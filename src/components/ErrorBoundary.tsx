@@ -32,29 +32,29 @@ export class ErrorBoundary extends React.Component<
       const isQuotaError =
         lowerMsg.includes('quota') || lowerMsg.includes('resource-exhausted');
       return (
-        <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
-          <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-            <div className="flex items-center gap-3 text-rose-400">
+        <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-6">
+          <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4 shadow-lg dark:shadow-none">
+            <div className="flex items-center gap-3 text-rose-600 dark:text-rose-400">
               <AlertTriangle className="w-5 h-5 shrink-0" />
-              <h1 className="text-base font-semibold text-slate-100">
+              <h1 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                 {isQuotaError
                   ? 'Limite giornaliero Firestore raggiunto'
                   : 'Errore di sincronizzazione'}
               </h1>
             </div>
-            <p className="text-sm text-slate-400 leading-relaxed">
+            <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
               {isQuotaError
                 ? 'La quota gratuita giornaliera di operazioni Firestore per questo progetto è stata superata. La quota si azzera automaticamente il giorno successivo.'
                 : 'Si è verificato un problema durante l\u2019accesso ai dati. Ricarica la pagina o verifica la tua sessione Google.'}
             </p>
-            <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 font-mono text-xs text-slate-400 break-all max-h-32 overflow-auto">
+            <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-3 font-mono text-xs text-slate-700 dark:text-slate-400 break-all max-h-32 overflow-auto">
               {this.state.message}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => window.location.reload()}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-950 bg-sky-400 rounded-lg hover:bg-sky-300 transition-colors"
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 rounded-lg transition-colors"
               >
                 <RotateCcw className="w-4 h-4" />
                 Ricarica applicazione
@@ -64,7 +64,7 @@ export class ErrorBoundary extends React.Component<
                   href="https://firebase.google.com/pricing#cloud-firestore"
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center px-3 py-2 text-xs font-medium text-sky-300 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+                  className="inline-flex items-center px-3 py-2 text-xs font-medium text-sky-700 dark:text-sky-300 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors"
                 >
                   Dettagli limiti Spark
                 </a>

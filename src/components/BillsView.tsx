@@ -742,11 +742,11 @@ export function BillsView({
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-            <Receipt className="w-5 h-5 text-sky-400" />
+          <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+            <Receipt className="w-5 h-5 text-sky-600 dark:text-sky-400" />
             Bollette, TARI &amp; Fotovoltaico GSE
           </h1>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             Archivio completo su Firebase: bollette auto da Gmail (Luce, TARI) e caricamento manuale semplice (Acqua, GSE Scambio sul Posto).
           </p>
         </div>
@@ -756,7 +756,7 @@ export function BillsView({
             <button
               type="button"
               onClick={() => setImportModalKind('auto')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg transition-colors"
             >
               <FileUp className="w-3.5 h-3.5" />
               Importa bolletta
@@ -764,8 +764,8 @@ export function BillsView({
           )}
           {!readOnly && onClearAllBills && (
             confirmClearAllBills ? (
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs bg-rose-500/15 border border-rose-500/40 rounded-lg">
-                <span className="text-rose-200 font-medium">Confermi? (mantiene Octopus)</span>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs bg-rose-500/10 dark:bg-rose-500/15 border border-rose-500/30 dark:border-rose-500/40 rounded-lg">
+                <span className="text-rose-700 dark:text-rose-200 font-medium">Confermi? (mantiene Octopus)</span>
                 <button
                   type="button"
                   onClick={() => void handleClearAllBills()}
@@ -777,7 +777,7 @@ export function BillsView({
                 <button
                   type="button"
                   onClick={() => setConfirmClearAllBills(false)}
-                  className="px-2 py-0.5 text-slate-300 hover:text-white rounded"
+                  className="px-2 py-0.5 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white rounded"
                 >
                   Annulla
                 </button>
@@ -788,7 +788,7 @@ export function BillsView({
                 onClick={() => setConfirmClearAllBills(true)}
                 disabled={clearingAllBills}
                 title="Elimina bollette Luce, Acqua, TARI, bonifici GSE e relativi PDF; mantiene il contratto Octopus"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-200 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg transition-colors disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-700 dark:text-rose-200 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg transition-colors disabled:opacity-50"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 {clearingAllBills ? 'Eliminazione...' : 'Svuota archivio'}
@@ -796,14 +796,14 @@ export function BillsView({
             )
           )}
 
-          <div className="inline-flex flex-wrap bg-slate-900 border border-slate-800 rounded-lg p-0.5 gap-0.5">
+          <div className="inline-flex flex-wrap bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-0.5 gap-0.5">
             <button
               type="button"
               onClick={() => setUtilityTab('luce')}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
                 utilityTab === 'luce'
-                  ? 'bg-sky-500/20 text-sky-300'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-sky-500/15 dark:bg-sky-500/20 text-sky-700 dark:text-sky-300'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
               <Zap className="w-3.5 h-3.5" />
@@ -814,8 +814,8 @@ export function BillsView({
               onClick={() => setUtilityTab('acqua')}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
                 utilityTab === 'acqua'
-                  ? 'bg-cyan-500/20 text-cyan-300'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-cyan-500/15 dark:bg-cyan-500/20 text-cyan-700 dark:text-cyan-300'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
               <Droplets className="w-3.5 h-3.5" />
@@ -826,8 +826,8 @@ export function BillsView({
               onClick={() => setUtilityTab('tari')}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
                 utilityTab === 'tari'
-                  ? 'bg-amber-500/20 text-amber-300'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-indigo-500/15 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
               <Receipt className="w-3.5 h-3.5" />
@@ -838,8 +838,8 @@ export function BillsView({
               onClick={() => setUtilityTab('gse')}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
                 utilityTab === 'gse'
-                  ? 'bg-emerald-500/20 text-emerald-300'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-emerald-500/15 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
               <Sun className="w-3.5 h-3.5" />
@@ -862,17 +862,62 @@ export function BillsView({
           'Segna lo stato pagato/da pagare degli avvisi TARI',
         ]}
         gmailFeatures={[
-          'Scansione automatica INBOX Gmail per nuove bollette Luce/Acqua/TARI e salvataggio PDF su Firestore',
+          'Scansione automatica INBOX Gmail per nuove bollette Luce/Acqua/TARI (le bollette restano sempre in INBOX, mai nel Cestino)',
         ]}
       />
 
+      {/* Riepilogo Email Controllate & Frequenza */}
+      <details className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-xs shadow-xs dark:shadow-none">
+        <summary className="cursor-pointer font-semibold text-slate-800 dark:text-slate-200 flex flex-wrap items-center justify-between gap-2 select-none">
+          <span className="inline-flex items-center gap-2">
+            <Mail className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+            <span>Email controllate in automatico &amp; frequenza sync</span>
+          </span>
+          <span className="px-2 py-0.5 text-[10px] font-mono bg-sky-500/10 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/25 dark:border-sky-500/30 rounded">
+            Ogni ~10 min (GitHub Actions + Sync Gmail · Solo INBOX)
+          </span>
+        </summary>
+        <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-800/80 space-y-2.5 text-[11px] text-slate-600 dark:text-slate-300">
+          <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
+            Il controllo avviene automaticamente <strong className="text-slate-900 dark:text-slate-200">ogni 10 minuti</strong> via GitHub Actions (tempo effettivo coda ~10–30 min, 24/7 sulla sola <strong className="text-slate-900 dark:text-slate-200">INBOX</strong>) e dal browser ogni 10 minuti o con il tasto <strong className="text-slate-900 dark:text-slate-200">&quot;Sincronizza Gmail&quot;</strong>. Le email delle bollette vengono <strong className="text-emerald-700 dark:text-emerald-300">solo analizzate e archiviate senza mai spostarle nel Cestino</strong>; eventuali file non PDF o allegati di altro formato vengono ignorati senza errori.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-0.5">
+              <div className="font-semibold text-sky-700 dark:text-sky-300">Luce — Edison Energia</div>
+              <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">fatturazione@edisonenergia.it</div>
+              <div className="text-slate-500 dark:text-slate-400">Oggetto: &quot;Fattura Edison Energia&quot; · Resta in INBOX</div>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-0.5">
+              <div className="font-semibold text-emerald-700 dark:text-emerald-300">Luce — Octopus Energy</div>
+              <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">octopusenergy.it</div>
+              <div className="text-slate-500 dark:text-slate-400">Oggetto: &quot;Octopus Energy&quot; · Sync Gmail browser · Resta in INBOX</div>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-0.5">
+              <div className="font-semibold text-cyan-700 dark:text-cyan-300">Acqua — AcegasApsAmga</div>
+              <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">acegasapsamga.it</div>
+              <div className="text-slate-500 dark:text-slate-400">Oggetto/testo: &quot;servizio idrico / acquedotto&quot; · Resta in INBOX</div>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-0.5">
+              <div className="font-semibold text-indigo-700 dark:text-indigo-300">TARI — AcegasApsAmga</div>
+              <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">tassa_rifiuti@acegasapsamga.it</div>
+              <div className="text-slate-500 dark:text-slate-400">Oggetto: &quot;Avviso di pagamento TARI&quot; · Resta in INBOX</div>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-0.5 sm:col-span-2 lg:col-span-2">
+              <div className="font-semibold text-slate-800 dark:text-slate-200">Consumi Elettrici — e-distribuzione (CSV / ZIP)</div>
+              <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">notifichemailped@enel.com · oggetto &quot;Dettaglio curve di carico&quot;</div>
+              <div className="text-slate-500 dark:text-slate-400">Unico tipo di email spostato nel Cestino dopo importazione riuscita su Firestore</div>
+            </div>
+          </div>
+        </div>
+      </details>
+
       {attachNotice && (
-        <div className="bg-sky-500/10 border border-sky-500/30 rounded-xl px-4 py-2.5 text-xs text-sky-200 flex items-center justify-between gap-2">
+        <div className="bg-sky-500/10 border border-sky-500/30 rounded-xl px-4 py-2.5 text-xs text-sky-800 dark:text-sky-200 flex items-center justify-between gap-2">
           <span>{attachNotice}</span>
           <button
             type="button"
             onClick={() => setAttachNotice(null)}
-            className="text-slate-400 hover:text-slate-100"
+            className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
           >
             Chiudi
           </button>
@@ -883,19 +928,19 @@ export function BillsView({
       {utilityTab === 'acqua' && (
         <div className="space-y-5">
           {/* Strategia di caricamento + Scheda fornitura Acqua */}
-          <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-4 space-y-3">
+          <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3 shadow-xs dark:shadow-none">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 rounded-md">
+                <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-cyan-500/10 dark:bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/25 dark:border-cyan-500/30 rounded-md">
                   Servizio Idrico · Padova
                 </span>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-slate-800 text-slate-300 border border-slate-700 rounded-md">
-                  <PenLine className="w-3 h-3 text-amber-300" />
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 rounded-md">
+                  <PenLine className="w-3 h-3 text-sky-600 dark:text-sky-400" />
                   Caricamento manuale → Firebase
                 </span>
-                <span className="text-xs font-mono text-slate-400">
-                  Contratto <span className="text-cyan-300">3040787553</span> · Cliente{' '}
-                  <span className="text-slate-300">1014119052</span>
+                <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
+                  Contratto <span className="text-cyan-700 dark:text-cyan-300">3040787553</span> · Cliente{' '}
+                  <span className="text-slate-700 dark:text-slate-300">1014119052</span>
                 </span>
               </div>
 
@@ -903,7 +948,7 @@ export function BillsView({
                 <button
                   type="button"
                   onClick={() => setImportModalKind('acqua')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-lg transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg transition-colors"
                 >
                   <FileUp className="w-3.5 h-3.5" />
                   Importa PDF bolletta acqua
@@ -911,14 +956,14 @@ export function BillsView({
               )}
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-100">
+              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                 AcegasApsAmga — Servizio Acqua (Quadrimestrale)
               </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 Uso domestico residente (2 componenti) · Contatore{' '}
-                <span className="font-mono text-slate-300">365230000000152556</span> · Addebito
+                <span className="font-mono text-slate-700 dark:text-slate-300">365230000000152556</span> · Addebito
                 diretto ING · Prossima bolletta prevista:{' '}
-                <span className="text-slate-200 font-medium">15/03/2027</span> (autolettura dal
+                <span className="text-slate-800 dark:text-slate-200 font-medium">15/03/2027</span> (autolettura dal
                 28/02 al 05/03/2027).
               </p>
             </div>
@@ -928,42 +973,42 @@ export function BillsView({
             <>
           {/* KPI Acqua */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3.5">
-              <div className="text-[10px] uppercase tracking-wider text-slate-400">Totale Pagato</div>
-              <div className="text-lg font-bold font-mono text-slate-100 mt-0.5">
+            <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">Totale Pagato</div>
+              <div className="text-lg font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100 mt-0.5">
                 {waterTotals.total.toFixed(2).replace('.', ',')} €
               </div>
             </div>
-            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3.5">
-              <div className="text-[10px] uppercase tracking-wider text-slate-400">
+            <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Consumo Fatturato
               </div>
-              <div className="text-lg font-bold font-mono text-cyan-300 mt-0.5">
+              <div className="text-lg font-bold font-mono tabular-nums text-cyan-700 dark:text-cyan-300 mt-0.5">
                 {waterTotals.mc.toFixed(1).replace('.', ',')} m³
               </div>
             </div>
-            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3.5">
-              <div className="text-[10px] uppercase tracking-wider text-slate-400">
+            <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Costo Medio Reale
               </div>
-              <div className="text-lg font-bold font-mono text-emerald-300 mt-0.5">
+              <div className="text-lg font-bold font-mono tabular-nums text-emerald-700 dark:text-emerald-300 mt-0.5">
                 {waterTotals.avgPerMc > 0
                   ? `${waterTotals.avgPerMc.toFixed(2).replace('.', ',')} €/m³`
                   : '—'}
               </div>
             </div>
-            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3.5">
-              <div className="text-[10px] uppercase tracking-wider text-slate-400">Bollette</div>
-              <div className="text-lg font-bold font-mono text-slate-100 mt-0.5">
+            <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">Bollette</div>
+              <div className="text-lg font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100 mt-0.5">
                 {filteredWaterBills.length}
               </div>
             </div>
           </div>
 
           {/* Tabella Bollette Acqua */}
-          <div className="bg-slate-900/70 border border-slate-800 rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold text-slate-100">
+          <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                 Storico Bollette Acqua ({filteredWaterBills.length})
               </h3>
               <div className="flex items-center gap-1.5">
@@ -972,8 +1017,8 @@ export function BillsView({
                   onClick={() => setSelectedWaterYear('all')}
                   className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
                     selectedWaterYear === 'all'
-                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                      : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                      ? 'bg-cyan-500/15 dark:bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 border border-cyan-500/35 dark:border-cyan-500/40'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
                   Tutti
@@ -985,8 +1030,8 @@ export function BillsView({
                     onClick={() => setSelectedWaterYear(y)}
                     className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
                       selectedWaterYear === y
-                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                        : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                        ? 'bg-cyan-500/15 dark:bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 border border-cyan-500/35 dark:border-cyan-500/40'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                     }`}
                   >
                     {y}
@@ -997,7 +1042,7 @@ export function BillsView({
 
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left">
-                <thead className="bg-slate-950/60 text-slate-400 border-b border-slate-800">
+                <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                   <tr>
                     <SortableTh
                       sortKey="period"
@@ -1045,28 +1090,28 @@ export function BillsView({
                     <th className="px-3 py-2.5 font-medium text-right">Azioni</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/70">
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70">
                   {sortedWaterBills.map((w) => {
                     const fileKey = getWaterBillFileKey(w.invoiceNumber);
                     const hasPdf = Boolean(vaultMeta[fileKey]);
                     const sharePayload = buildWaterBillSharePayload(w);
                     return (
-                      <tr key={w.id} className="hover:bg-slate-800/30">
-                        <td className="px-4 py-2.5 font-medium text-slate-100">
+                      <tr key={w.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                        <td className="px-4 py-2.5 font-medium text-slate-900 dark:text-slate-100">
                           <div>{w.period}</div>
-                          {w.note && <div className="text-[10px] text-slate-400">{w.note}</div>}
+                          {w.note && <div className="text-[10px] text-slate-500 dark:text-slate-400">{w.note}</div>}
                         </td>
-                        <td className="px-3 py-2.5 font-mono text-slate-400">
+                        <td className="px-3 py-2.5 font-mono text-slate-500 dark:text-slate-400">
                           <div>#{w.invoiceNumber}</div>
                           <div className="text-[10px]">{w.issueDate}</div>
                         </td>
-                        <td className="px-3 py-2.5 text-right font-mono text-cyan-300">
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-cyan-700 dark:text-cyan-300">
                           {w.cubicMeters.toFixed(1).replace('.', ',')} m³
                         </td>
-                        <td className="px-3 py-2.5 text-right font-mono text-slate-300">
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300">
                           {w.fixedCostEur.toFixed(2).replace('.', ',')} €
                         </td>
-                        <td className="px-4 py-2.5 text-right font-mono font-semibold text-slate-100">
+                        <td className="px-4 py-2.5 text-right font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
                           {w.totalPaid.toFixed(2).replace('.', ',')} €
                         </td>
                         <td className="px-3 py-2.5 text-right whitespace-nowrap">
@@ -1087,9 +1132,9 @@ export function BillsView({
                                     ? `Scarica PDF originale (${vaultMeta[fileKey]?.fileName})`
                                     : 'Scarica riepilogo HTML'
                               }
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-lg transition-colors"
                             >
-                              <Download className="w-3.5 h-3.5 text-sky-400" />
+                              <Download className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                               Scarica
                             </button>
                             <button
@@ -1105,7 +1150,7 @@ export function BillsView({
                                     ? `Condividi bolletta e PDF originale (${vaultMeta[fileKey]?.fileName})`
                                     : 'Condividi riepilogo della bolletta'
                               }
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-lg transition-colors"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/10 dark:bg-sky-500/15 hover:bg-sky-500/20 dark:hover:bg-sky-500/25 border border-sky-500/30 dark:border-sky-500/35 text-sky-700 dark:text-sky-300 rounded-lg transition-colors"
                             >
                               <Share2 className="w-3.5 h-3.5" />
                               Condividi
@@ -1121,7 +1166,7 @@ export function BillsView({
           </div>
             </>
           ) : (
-            <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-6 text-center text-sm text-slate-400">
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 px-4 py-6 text-center text-sm text-slate-500 dark:text-slate-400">
               Nessuna bolletta acqua con PDF presente per il periodo selezionato.
               {!readOnly && ' Importa il PDF originale per aggiungerla allo storico.'}
             </div>
@@ -1132,13 +1177,13 @@ export function BillsView({
       {/* TAB TARI */}
       {utilityTab === 'tari' && (
         <div className="space-y-5">
-          <div className="bg-slate-900/70 border border-amber-500/30 rounded-xl p-4 space-y-2.5">
+          <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-2.5 shadow-xs dark:shadow-none">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-amber-500/15 text-amber-300 border border-amber-500/30 rounded-md">
+                <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-indigo-500/10 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-500/25 dark:border-indigo-500/30 rounded-md">
                   Tassa Rifiuti (TARI)
                 </span>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded-md">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 dark:border-emerald-500/30 rounded-md">
                   <Mail className="w-3 h-3" />
                   Auto da Gmail + Manuale
                 </span>
@@ -1148,7 +1193,7 @@ export function BillsView({
                 <button
                   type="button"
                   onClick={() => setImportModalKind('tari')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg transition-colors"
                 >
                   <FileUp className="w-3.5 h-3.5" />
                   Importa PDF TARI
@@ -1156,14 +1201,14 @@ export function BillsView({
               )}
             </div>
 
-            <h2 className="text-base font-bold text-slate-100">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
               AcegasApsAmga / TARI — Avvisi di Pagamento
             </h2>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              <strong className="text-slate-200">Strategia automatica Gmail:</strong> ogni 10 minuti lo script GitHub Actions cerca nella sola INBOX Gmail le email da{' '}
-              <span className="font-mono text-amber-300">tassa_rifiuti@acegasapsamga.it</span>{' '}
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              <strong className="text-slate-800 dark:text-slate-200">Strategia automatica Gmail:</strong> ogni 10 minuti lo script GitHub Actions cerca nella sola INBOX Gmail le email da{' '}
+              <span className="font-mono text-indigo-700 dark:text-indigo-300">tassa_rifiuti@acegasapsamga.it</span>{' '}
               con oggetto contenente{' '}
-              <span className="font-mono text-slate-200">&quot;Avviso di pagamento TARI&quot;</span>, estrae importo, scadenza e numero documento dal PDF allegato, salva su Firebase Firestore e sposta poi l&apos;email nel Cestino.
+              <span className="font-mono text-slate-800 dark:text-slate-200">&quot;Avviso di pagamento TARI&quot;</span>, analizza i PDF validi ignorando qualsiasi altro tipo di file allegato, salva su Firebase Firestore evitando riscritture duplicate e <strong className="text-emerald-700 dark:text-emerald-300">lascia sempre l&apos;email nella tua INBOX</strong> (mai spostata nel Cestino).
             </p>
           </div>
 
@@ -1171,35 +1216,35 @@ export function BillsView({
             <>
           {/* KPI TARI */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3.5">
-              <div className="text-[10px] uppercase tracking-wider text-slate-400">Totale TARI</div>
-              <div className="text-lg font-bold font-mono text-slate-100 mt-0.5">
+            <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">Totale TARI</div>
+              <div className="text-lg font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100 mt-0.5">
                 {tariTotals.total.toFixed(2).replace('.', ',')} €
               </div>
             </div>
-            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3.5">
-              <div className="text-[10px] uppercase tracking-wider text-slate-400">Avvisi Caricati</div>
-              <div className="text-lg font-bold font-mono text-amber-300 mt-0.5">
+            <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">Avvisi Caricati</div>
+              <div className="text-lg font-bold font-mono tabular-nums text-indigo-700 dark:text-indigo-300 mt-0.5">
                 {tariBills.length}
               </div>
             </div>
-            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3.5">
-              <div className="text-[10px] uppercase tracking-wider text-slate-400">Da Pagare</div>
-              <div className="text-lg font-bold font-mono text-rose-300 mt-0.5">
+            <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">Da Pagare</div>
+              <div className="text-lg font-bold font-mono tabular-nums text-rose-600 dark:text-rose-300 mt-0.5">
                 {tariTotals.unpaidCount}
               </div>
             </div>
           </div>
 
-          <div className="bg-slate-900/70 border border-slate-800 rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-800">
-              <h3 className="text-sm font-semibold text-slate-100">
+          <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800">
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                 Storico Avvisi TARI ({tariBills.length})
               </h3>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left">
-                <thead className="bg-slate-950/60 text-slate-400 border-b border-slate-800">
+                <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                   <tr>
                     <SortableTh
                       sortKey="period"
@@ -1253,12 +1298,12 @@ export function BillsView({
                     <th className="px-3 py-2.5 font-medium text-right">Azioni</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/70">
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70">
                   {sortedTariBills.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
                         Nessun avviso TARI ancora salvato. Appena arriva la prossima email da{' '}
-                        <span className="font-mono text-slate-300">tassa_rifiuti@acegasapsamga.it</span>{' '}
+                        <span className="font-mono text-slate-700 dark:text-slate-300">tassa_rifiuti@acegasapsamga.it</span>{' '}
                         verrà estratta automaticamente, oppure puoi inserirne una manualmente qui sopra.
                       </td>
                     </tr>
@@ -1268,18 +1313,18 @@ export function BillsView({
                       const hasPdf = Boolean(vaultMeta[fileKey]);
                       const sharePayload = buildTariBillSharePayload(t);
                       return (
-                        <tr key={t.id} className="hover:bg-slate-800/30">
-                          <td className="px-4 py-2.5 font-medium text-slate-100">
+                        <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                          <td className="px-4 py-2.5 font-medium text-slate-900 dark:text-slate-100">
                             <div>{t.period}</div>
-                            {t.note && <div className="text-[10px] text-slate-400">{t.note}</div>}
+                            {t.note && <div className="text-[10px] text-slate-500 dark:text-slate-400">{t.note}</div>}
                           </td>
-                          <td className="px-3 py-2.5 font-mono text-slate-400">
+                          <td className="px-3 py-2.5 font-mono text-slate-500 dark:text-slate-400">
                             <div>#{t.noticeNumber}</div>
                             <div className="text-[10px]">{t.issueDate}</div>
                           </td>
-                          <td className="px-3 py-2.5 font-mono text-amber-300">{t.dueDate}</td>
+                          <td className="px-3 py-2.5 font-mono tabular-nums text-amber-700 dark:text-amber-300">{t.dueDate}</td>
                           <td className="px-3 py-2.5">
-                            <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300">
+                            <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
                               {t.source === 'gmail-pdf' ? 'Auto Gmail PDF' : 'Manuale'}
                             </span>
                           </td>
@@ -1290,15 +1335,15 @@ export function BillsView({
                               onClick={() => onToggleTariPaid && void onToggleTariPaid(t)}
                               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${
                                 t.paid
-                                  ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                                  : 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                                  ? 'bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 dark:border-emerald-500/30'
+                                  : 'bg-rose-500/10 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/25 dark:border-rose-500/30'
                               }`}
                             >
                               <CheckCircle2 className="w-3 h-3" />
                               {t.paid ? 'Pagato' : 'Da pagare'}
                             </button>
                           </td>
-                          <td className="px-4 py-2.5 text-right font-mono font-semibold text-slate-100">
+                          <td className="px-4 py-2.5 text-right font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
                             {t.totalPaid.toFixed(2).replace('.', ',')} €
                           </td>
                           <td className="px-3 py-2.5 text-right whitespace-nowrap">
@@ -1319,9 +1364,9 @@ export function BillsView({
                                       ? `Scarica PDF originale (${vaultMeta[fileKey]?.fileName})`
                                       : 'Scarica riepilogo HTML'
                                 }
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-lg transition-colors"
                               >
-                                <Download className="w-3.5 h-3.5 text-sky-400" />
+                                <Download className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                                 Scarica
                               </button>
                               <button
@@ -1337,7 +1382,7 @@ export function BillsView({
                                       ? `Condividi avviso e PDF originale (${vaultMeta[fileKey]?.fileName})`
                                       : 'Condividi riepilogo dell’avviso TARI'
                                 }
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-lg transition-colors"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/10 dark:bg-sky-500/15 hover:bg-sky-500/20 dark:hover:bg-sky-500/25 border border-sky-500/30 dark:border-sky-500/35 text-sky-700 dark:text-sky-300 rounded-lg transition-colors"
                               >
                                 <Share2 className="w-3.5 h-3.5" />
                                 Condividi
@@ -1346,7 +1391,7 @@ export function BillsView({
                                 <button
                                   type="button"
                                   onClick={() => void onDeleteTariBill(t.id)}
-                                  className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg"
+                                  className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg"
                                   aria-label="Elimina avviso TARI"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -1364,7 +1409,7 @@ export function BillsView({
           </div>
             </>
           ) : (
-            <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-6 text-center text-sm text-slate-400">
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 px-4 py-6 text-center text-sm text-slate-500 dark:text-slate-400">
               Nessun avviso TARI con PDF presente nell&apos;archivio.
               {!readOnly && ' Importa il PDF originale per aggiungerlo.'}
             </div>
@@ -1375,14 +1420,14 @@ export function BillsView({
       {/* TAB FOTOVOLTAICO / GSE SCAMBIO SUL POSTO */}
       {utilityTab === 'gse' && (
         <div className="space-y-5">
-          <div className="bg-slate-900/70 border border-emerald-500/30 rounded-xl p-4 sm:p-5 space-y-3">
+          <div className="bg-white dark:bg-slate-900/70 border border-emerald-500/30 rounded-xl p-4 sm:p-5 space-y-3 shadow-xs dark:shadow-none">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded-md">
+                <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 dark:border-emerald-500/30 rounded-md">
                   Fotovoltaico + Scambio sul Posto (SSP)
                 </span>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-slate-800 text-slate-300 border border-slate-700 rounded-md">
-                  <PenLine className="w-3 h-3 text-amber-300" />
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 rounded-md">
+                  <PenLine className="w-3 h-3 text-sky-600 dark:text-sky-400" />
                   Inserimento manuale bonifici GSE → Firebase
                 </span>
               </div>
@@ -1391,7 +1436,7 @@ export function BillsView({
                 <button
                   type="button"
                   onClick={() => openGsePaymentEditor()}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white dark:text-slate-950 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:hover:bg-emerald-300 rounded-lg transition-colors"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Registra bonifico GSE
@@ -1400,11 +1445,11 @@ export function BillsView({
             </div>
 
             <div>
-              <h2 className="text-base font-bold text-slate-100">
+              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                 Inverter Huawei SUN2000-4KTL-L1 (4 kW) · Scambio sul Posto GSE
               </h2>
-              <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                Con lo <strong className="text-slate-200">Scambio sul Posto (SSP)</strong> il GSE rimborsa parte dell&apos;energia che immetti in rete rispetto a quella prelevata. I bonifici GSE seguono in genere <strong className="text-slate-200">2 acconti semestrali</strong> (giugno e novembre) e <strong className="text-slate-200">1 conguaglio annuale</strong> (maggio/giugno dell&apos;anno successivo). Questa sezione raccoglie ogni accredito GSE per sottrarlo mentalmente dalla spesa annua netta di casa.
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                Con lo <strong className="text-slate-800 dark:text-slate-200">Scambio sul Posto (SSP)</strong> il GSE rimborsa parte dell&apos;energia che immetti in rete rispetto a quella prelevata. I bonifici GSE seguono in genere <strong className="text-slate-800 dark:text-slate-200">2 acconti semestrali</strong> (giugno e novembre) e <strong className="text-slate-800 dark:text-slate-200">1 conguaglio annuale</strong> (maggio/giugno dell&apos;anno successivo). Questa sezione raccoglie ogni accredito GSE per sottrarlo mentalmente dalla spesa annua netta di casa.
               </p>
             </div>
           </div>
@@ -1412,9 +1457,9 @@ export function BillsView({
           {showGseForm && !readOnly && (
             <form
               onSubmit={handleSubmitGse}
-              className="bg-slate-900 border border-emerald-500/40 rounded-xl p-4 space-y-3 text-xs"
+              className="bg-white dark:bg-slate-900 border border-emerald-500/40 rounded-xl p-4 space-y-3 text-xs shadow-xs dark:shadow-none"
             >
-              <div className="font-semibold text-slate-100">
+              <div className="font-semibold text-slate-900 dark:text-slate-100">
                 {editingGsePayment ? 'Modifica bonifico GSE' : 'Registra bonifico GSE'}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1423,7 +1468,7 @@ export function BillsView({
                   required
                   value={gDate}
                   onChange={(e) => setGDate(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                  className="px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-emerald-500"
                 />
                 <input
                   type="number"
@@ -1433,7 +1478,7 @@ export function BillsView({
                   placeholder="Importo (€)"
                   value={gAmount}
                   onChange={(e) => setGAmount(e.target.value)}
-                  className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100"
+                  className="px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
                 />
               </div>
               <div className="flex justify-end gap-2">
@@ -1445,14 +1490,14 @@ export function BillsView({
                     setGDate('');
                     setGAmount('');
                   }}
-                  className="px-3 py-1.5 text-slate-400 hover:text-slate-100"
+                  className="px-3 py-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
                 >
                   Annulla
                 </button>
                 <button
                   type="submit"
                   disabled={gseSaving}
-                  className="px-4 py-1.5 font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg"
+                  className="px-4 py-1.5 font-semibold text-white dark:text-slate-950 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:hover:bg-emerald-300 rounded-lg"
                 >
                   {gseSaving ? 'Salvataggio...' : editingGsePayment ? 'Salva modifiche' : 'Salva bonifico'}
                 </button>
@@ -1460,15 +1505,15 @@ export function BillsView({
             </form>
           )}
 
-          <div className="bg-slate-900/70 border border-slate-800 rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-800">
-              <h3 className="text-sm font-semibold text-slate-100">
+          <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800">
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                 Storico Bonifici GSE — Scambio sul Posto ({gsePayments.length})
               </h3>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left">
-                <thead className="bg-slate-950/60 text-slate-400 border-b border-slate-800">
+                <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                   <tr>
                     <SortableTh
                       sortKey="date"
@@ -1491,7 +1536,7 @@ export function BillsView({
                     {!readOnly && <th className="px-3 py-2.5 font-medium text-right">Azioni</th>}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/70">
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70">
                   {sortedGsePayments.length === 0 ? (
                     <tr>
                       <td colSpan={readOnly ? 3 : 4} className="px-4 py-6 text-center text-slate-500">
@@ -1500,9 +1545,9 @@ export function BillsView({
                     </tr>
                   ) : (
                     sortedGsePayments.map((p) => (
-                      <tr key={p.id} className="hover:bg-slate-800/30">
-                        <td className="px-4 py-2.5 font-mono text-slate-200">{p.paymentDate}</td>
-                        <td className="px-4 py-2.5 text-right font-mono font-semibold text-emerald-300">
+                      <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                        <td className="px-4 py-2.5 font-mono tabular-nums text-slate-800 dark:text-slate-200">{p.paymentDate}</td>
+                        <td className="px-4 py-2.5 text-right font-mono tabular-nums font-semibold text-emerald-700 dark:text-emerald-300">
                           {p.amountEur.toFixed(2).replace('.', ',')} €
                         </td>
                         <td className="px-3 py-2.5 text-right">
@@ -1519,9 +1564,9 @@ export function BillsView({
                                   attachmentKey: p.attachmentFileKey,
                                 })
                               }
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-lg transition-colors"
                             >
-                              <Download className="w-3.5 h-3.5 text-sky-400" />
+                              <Download className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                               Scarica
                             </button>
                           ) : (
@@ -1538,7 +1583,7 @@ export function BillsView({
                                   setAttachingGsePaymentId(p.id);
                                   gseAttachmentInputRef.current?.click();
                                 }}
-                                className="inline-flex items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
+                                className="inline-flex items-center gap-1 text-xs text-sky-700 dark:text-sky-300 hover:text-sky-600 dark:hover:text-sky-200"
                               >
                                 <Paperclip className="w-3.5 h-3.5" />
                                 {p.attachmentFileKey ? 'Sostituisci' : 'Allega file'}
@@ -1548,7 +1593,7 @@ export function BillsView({
                                   type="button"
                                   title="Modifica bonifico"
                                   onClick={() => openGsePaymentEditor(p)}
-                                  className="p-1 text-slate-400 hover:text-sky-300"
+                                  className="p-1 text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-300"
                                   aria-label="Modifica bonifico GSE"
                                 >
                                   <Pencil className="w-3.5 h-3.5" />
@@ -1570,7 +1615,7 @@ export function BillsView({
                                     <button
                                       type="button"
                                       onClick={() => setConfirmDeleteGseId(null)}
-                                      className="px-1.5 py-0.5 text-[10px] text-slate-300 hover:text-white"
+                                      className="px-1.5 py-0.5 text-[10px] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
                                     >
                                       No
                                     </button>
@@ -1580,7 +1625,7 @@ export function BillsView({
                                     type="button"
                                     title="Elimina bonifico"
                                     onClick={() => setConfirmDeleteGseId(p.id)}
-                                    className="p-1 text-slate-500 hover:text-rose-400"
+                                    className="p-1 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400"
                                     aria-label="Elimina bonifico GSE"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
@@ -1604,14 +1649,14 @@ export function BillsView({
       {utilityTab === 'luce' && (
         <div className="space-y-5">
           {/* Banner Strategia Caricamento Luce */}
-          <div className="bg-slate-900/70 border border-slate-800 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex flex-wrap items-center gap-2 text-slate-300">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded-md">
+          <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs shadow-xs dark:shadow-none">
+            <div className="flex flex-wrap items-center gap-2 text-slate-700 dark:text-slate-300">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 dark:border-emerald-500/30 rounded-md">
                 <Mail className="w-3 h-3" />
                 Sync automatico Gmail
               </span>
               <span>
-                Estrazione PDF automatica da <span className="font-mono text-sky-300">fatturazione@edisonenergia.it</span> ogni 10 min + salvataggio su Firebase (le email elaborate vengono poi spostate nel Cestino).
+                Controllo automatico ogni ~10 min su <span className="font-mono text-sky-700 dark:text-sky-300">fatturazione@edisonenergia.it</span> e <span className="font-mono text-emerald-700 dark:text-emerald-300">octopusenergy.it</span> (solo INBOX, qualsiasi file extra gestito senza errori, le bollette non vengono mai spostate nel Cestino).
               </span>
             </div>
 
@@ -1619,7 +1664,7 @@ export function BillsView({
               <button
                 type="button"
                 onClick={() => setImportModalKind('luce')}
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-sky-300 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded-lg transition-colors"
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-sky-700 dark:text-sky-300 bg-sky-500/10 dark:bg-sky-500/15 hover:bg-sky-500/20 dark:hover:bg-sky-500/25 border border-sky-500/25 dark:border-sky-500/30 rounded-lg transition-colors"
               >
                 <FileUp className="w-3.5 h-3.5" />
                 Importa PDF bolletta
@@ -1631,24 +1676,24 @@ export function BillsView({
           <div className="space-y-4">
             {(!offerSummaries.some((o) => o.supplier.toLowerCase().includes('octopus')) ||
               octopusContractToManage) && (
-              <div className="bg-slate-900/70 border border-emerald-500/30 rounded-xl p-4 space-y-3">
+              <div className="bg-white dark:bg-slate-900/70 border border-emerald-500/30 rounded-xl p-4 space-y-3 shadow-xs dark:shadow-none">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded-md">
+                      <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 dark:border-emerald-500/30 rounded-md">
                         Contratto sottoscritto · avvio 2027
                       </span>
-                      <span className="text-[11px] text-slate-400">
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
                         {offerSummaries.some((o) => o.supplier.toLowerCase().includes('octopus'))
                           ? 'Fornitura attiva · bollette disponibili nello storico'
                           : 'Fornitura in attivazione · bollette dal 2027'}
                       </span>
                     </div>
-                    <h2 className="text-base font-bold text-slate-100 mt-1.5">
+                    <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 mt-1.5">
                       Contratto Octopus Energy — Octopus Fissa 24M
                     </h2>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      Cod. <span className="font-mono text-slate-300">OCTOFIX24v09</span> · 100% rinnovabile · DispBT gratuito · 0 € penali di recesso.{' '}
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                      Cod. <span className="font-mono text-slate-700 dark:text-slate-300">OCTOFIX24v09</span> · 100% rinnovabile · DispBT gratuito · 0 € penali di recesso.{' '}
                       {octopusContractRecords.length > 0
                         ? 'Il documento Octopus archiviato è il contratto, non una bolletta.'
                         : offerSummaries.some((o) => o.supplier.toLowerCase().includes('octopus'))
@@ -1668,15 +1713,15 @@ export function BillsView({
                               buildElectricityBillSharePayload(octopusContractToManage)
                             )
                           }
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-200 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 rounded-lg"
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-200 bg-emerald-500/10 dark:bg-emerald-500/15 hover:bg-emerald-500/20 dark:hover:bg-emerald-500/25 border border-emerald-500/25 dark:border-emerald-500/30 rounded-lg"
                         >
                           <Download className="w-3.5 h-3.5" />
                           Scarica contratto PDF
                         </button>
                       )}
                       {confirmDeleteOctopus ? (
-                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-rose-500/15 border border-rose-500/40 rounded-lg text-[11px]">
-                          <span className="text-rose-200">Rimuovere contratto + PDF?</span>
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-rose-500/10 dark:bg-rose-500/15 border border-rose-500/30 dark:border-rose-500/40 rounded-lg text-[11px]">
+                          <span className="text-rose-700 dark:text-rose-200">Rimuovere contratto + PDF?</span>
                           <button
                             type="button"
                             onClick={() => void handleDeleteOctopusContract()}
@@ -1687,7 +1732,7 @@ export function BillsView({
                           <button
                             type="button"
                             onClick={() => setConfirmDeleteOctopus(false)}
-                            className="px-2 py-0.5 text-slate-300 hover:text-white"
+                            className="px-2 py-0.5 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
                           >
                             Annulla
                           </button>
@@ -1696,7 +1741,7 @@ export function BillsView({
                         <button
                           type="button"
                           onClick={() => setConfirmDeleteOctopus(true)}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-rose-200 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg"
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700 dark:text-rose-200 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                           Rimuovi contratto
@@ -1707,91 +1752,91 @@ export function BillsView({
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                  <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 rounded-lg p-2.5">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                       Materia Prima (Fissa)
                     </div>
-                    <div className="text-sm font-bold font-mono text-emerald-300 mt-0.5">
+                    <div className="text-sm font-bold font-mono text-emerald-700 dark:text-emerald-300 mt-0.5">
                       0,1595 €/kWh
                     </div>
                     <div className="text-[10px] text-slate-500">bloccato 24m · no PUN</div>
                   </div>
-                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                  <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 rounded-lg p-2.5">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                       Fisso Fornitore
                     </div>
-                    <div className="text-sm font-bold font-mono text-sky-300 mt-0.5">
+                    <div className="text-sm font-bold font-mono text-sky-700 dark:text-sky-300 mt-0.5">
                       6,00 €/mese
                     </div>
                     <div className="text-[10px] text-slate-500">72 €/anno (-28 €/a vs Edison)</div>
                   </div>
-                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                  <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 rounded-lg p-2.5">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                       Costo Reale / kWh
                     </div>
-                    <div className="text-sm font-bold font-mono text-violet-300 mt-0.5">
+                    <div className="text-sm font-bold font-mono text-violet-700 dark:text-violet-300 mt-0.5">
                       {octopusEstimate.allInPerKwh !== null
                         ? `~${octopusEstimate.allInPerKwh.toFixed(3).replace('.', ',')} €/kWh`
                         : '—'}
                     </div>
                     <div className="text-[10px] text-slate-500">stima tutto incluso · no TV</div>
                   </div>
-                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                  <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 rounded-lg p-2.5">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                       Speso Solo Luce
                     </div>
-                    <div className="text-sm font-bold font-mono text-slate-400 mt-0.5">
+                    <div className="text-sm font-bold font-mono text-slate-500 dark:text-slate-400 mt-0.5">
                       In attesa
                     </div>
                     <div className="text-[10px] text-slate-500">bollette 2027 · SDD</div>
                   </div>
-                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                  <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 rounded-lg p-2.5">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                       Media Mensile
                     </div>
-                    <div className="text-sm font-bold font-mono text-amber-300 mt-0.5">
+                    <div className="text-sm font-bold font-mono text-amber-700 dark:text-amber-300 mt-0.5">
                       {octopusEstimate.monthlyEur !== null
                         ? `~${octopusEstimate.monthlyEur.toFixed(0)} €/mese`
                         : '—'}
                     </div>
                     <div className="text-[10px] text-slate-500">stima ai tuoi consumi</div>
                   </div>
-                  <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                  <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 rounded-lg p-2.5">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                       Scadenza / Vincoli
                     </div>
-                    <div className="text-sm font-bold font-mono text-slate-200 mt-0.5">
+                    <div className="text-sm font-bold font-mono text-slate-800 dark:text-slate-200 mt-0.5">
                       24 mesi
                     </div>
                     <div className="text-[10px] text-slate-500">0 € penali · ribasso libero</div>
                   </div>
                 </div>
 
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  <strong className="text-slate-200">0,1595 €/kWh non è il PUN</strong>: è il prezzo fisso della materia prima energia (perdite incluse), bloccato per <strong className="text-slate-200">24 mesi</strong>. Si aggiungono solo i 6 €/mese di commercializzazione, il dispacciamento (0,0146 €/kWh) e gli oneri/imposte di legge.
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                  <strong className="text-slate-800 dark:text-slate-200">0,1595 €/kWh non è il PUN</strong>: è il prezzo fisso della materia prima energia (perdite incluse), bloccato per <strong className="text-slate-800 dark:text-slate-200">24 mesi</strong>. Si aggiungono solo i 6 €/mese di commercializzazione, il dispacciamento (0,0146 €/kWh) e gli oneri/imposte di legge.
                 </p>
 
-                <div className="space-y-2 pt-2.5 border-t border-slate-800/80 text-[11px] text-slate-300">
+                <div className="space-y-2 pt-2.5 border-t border-slate-200 dark:border-slate-800/80 text-[11px] text-slate-600 dark:text-slate-300">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5">
-                      <Bell className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <Bell className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                       <span>
-                        Monitor automatico ogni <strong className="text-slate-100">10 min</strong> (Solo Luce ·{' '}
-                        <strong className="text-slate-100">{marketMonitor.competitors.length}</strong> siti tracciati) vs tua{' '}
-                        <span className="font-mono text-emerald-300">
+                        Monitor automatico ogni <strong className="text-slate-900 dark:text-slate-100">10 min</strong> (Solo Luce ·{' '}
+                        <strong className="text-slate-900 dark:text-slate-100">{marketMonitor.competitors.length}</strong> siti tracciati) vs tua{' '}
+                        <span className="font-mono text-emerald-700 dark:text-emerald-300">
                           {marketMonitor.myLockedRate.toFixed(4).replace('.', ',')} €/kWh
                         </span>
                       </span>
                     </div>
                     <div className="flex items-center gap-3">
                       {marketMonitor.currentRate !== null && (
-                        <span className="font-mono text-[11px] text-slate-400">
+                        <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400">
                           Octopus oggi:{' '}
                           <strong
                             className={
                               marketMonitor.currentRate < marketMonitor.myLockedRate
-                                ? 'text-emerald-300'
-                                : 'text-amber-300'
+                                ? 'text-emerald-700 dark:text-emerald-300'
+                                : 'text-amber-700 dark:text-amber-300'
                             }
                           >
                             {marketMonitor.currentRate.toFixed(4).replace('.', ',')} €/kWh
@@ -1807,10 +1852,10 @@ export function BillsView({
                   </div>
 
                   {marketMonitor.competitors.length > 0 && (
-                    <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] uppercase tracking-wider text-slate-400">
+                    <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 rounded-lg p-2.5 space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                         <span>Siti Tracciati Solo Luce (clicca per aprire l&apos;offerta ufficiale)</span>
-                        <span className="font-mono text-slate-300">
+                        <span className="font-mono text-slate-700 dark:text-slate-300">
                           Tuo benchmark: {myAnnualBenchmarkEur.toFixed(0)} €/anno (2.300 kWh + PCV)
                         </span>
                       </div>
@@ -1833,18 +1878,18 @@ export function BillsView({
                               title={`Apri ${comp.offerName} su ${hostname}`}
                               className={`group flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md border transition-colors ${
                                 isCheaper
-                                  ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-200 hover:bg-emerald-500/20'
-                                  : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:border-sky-500/40 hover:bg-slate-900'
+                                  ? 'bg-emerald-500/10 dark:bg-emerald-500/15 border-emerald-500/35 dark:border-emerald-400/40 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-500/15 dark:hover:bg-emerald-500/20'
+                                  : 'bg-white dark:bg-slate-900/80 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-sky-500/40 hover:bg-slate-50 dark:hover:bg-slate-900'
                               }`}
                             >
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5 truncate">
-                                  <strong className="text-slate-100 group-hover:text-sky-300 transition-colors">
+                                  <strong className="text-slate-900 dark:text-slate-100 group-hover:text-sky-600 dark:group-hover:text-sky-300 transition-colors">
                                     {comp.supplier}
                                   </strong>
-                                  <ExternalLink className="w-3 h-3 text-slate-500 group-hover:text-sky-400 shrink-0 transition-colors" />
+                                  <ExternalLink className="w-3 h-3 text-slate-400 dark:text-slate-500 group-hover:text-sky-600 dark:group-hover:text-sky-400 shrink-0 transition-colors" />
                                 </div>
-                                <div className="text-[10px] text-slate-400 truncate">
+                                <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
                                   {comp.offerName}
                                   {hostname ? ` · ${hostname}` : ''}
                                 </div>
@@ -1852,10 +1897,10 @@ export function BillsView({
                               <div className="text-right font-mono shrink-0">
                                 {comp.rateEurKwh !== null ? (
                                   <>
-                                    <div className="text-[11px] font-semibold text-slate-100">
+                                    <div className="text-[11px] font-semibold text-slate-900 dark:text-slate-100">
                                       {comp.rateEurKwh.toFixed(4).replace('.', ',')} €/kWh
                                     </div>
-                                    <div className="text-[10px] text-slate-400">
+                                    <div className="text-[10px] text-slate-500 dark:text-slate-400">
                                       {comp.fixedEurMonth !== null
                                         ? `+ ${comp.fixedEurMonth.toFixed(0)} €/m`
                                         : ''}
@@ -1865,7 +1910,7 @@ export function BillsView({
                                     </div>
                                   </>
                                 ) : (
-                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800/80 text-[10px] text-slate-400 group-hover:text-sky-300">
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800/80 text-[10px] text-slate-600 dark:text-slate-400 group-hover:text-sky-700 dark:group-hover:text-sky-300">
                                     Vedi sul sito
                                   </span>
                                 )}
@@ -1877,7 +1922,7 @@ export function BillsView({
                       {marketMonitor.bestCompetitor &&
                         marketMonitor.bestCompetitor.estAnnualEur !== null &&
                         marketMonitor.bestCompetitor.estAnnualEur < myAnnualBenchmarkEur - 5 && (
-                          <div className="text-[11px] text-emerald-300 font-medium">
+                          <div className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium">
                             Offerta migliore rilevata: {marketMonitor.bestCompetitor.supplier} a{' '}
                             {marketMonitor.bestCompetitor.rateEurKwh?.toFixed(4).replace('.', ',')} €/kWh!
                           </div>
@@ -1893,32 +1938,32 @@ export function BillsView({
           {filteredBills.length > 0 ? (
             <div
               id="storico-bollette-luce"
-              className="bg-slate-900/70 border border-slate-800 rounded-xl overflow-hidden scroll-mt-16"
+              className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden scroll-mt-16 shadow-xs dark:shadow-none"
             >
-            <div className="px-4 py-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h3 className="text-sm font-semibold text-slate-100">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   Storico Bollette Luce ({filteredBills.length})
                 </h3>
-                <p className="text-[11px] text-slate-400">
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
                   {readOnly ? (
                     <>
-                      Senza accesso puoi scaricare o condividere il <strong className="text-sky-300">riepilogo HTML</strong>; il PDF originale non è accessibile pubblicamente.
+                      Senza accesso puoi scaricare o condividere il <strong className="text-sky-700 dark:text-sky-300">riepilogo HTML</strong>; il PDF originale non è accessibile pubblicamente.
                     </>
                   ) : (
                     <>
-                      Scarica l&apos;originale se presente, importalo se manca e usa <strong className="text-sky-300">Condividi</strong> per inviare il riepilogo.
+                      Scarica l&apos;originale se presente, importalo se manca e usa <strong className="text-sky-700 dark:text-sky-300">Condividi</strong> per inviare il riepilogo.
                     </>
                   )}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                <label className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
                   Anno
                   <select
                     value={selectedBillYear}
                     onChange={(event) => setSelectedBillYear(event.target.value)}
-                    className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-slate-200"
+                    className="rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-xs text-slate-800 dark:text-slate-200 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                   >
                     <option value="all">Tutti</option>
                     {billYears.map((year) => (
@@ -1928,12 +1973,12 @@ export function BillsView({
                     ))}
                   </select>
                 </label>
-                <label className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                <label className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
                   Fornitore
                   <select
                     value={selectedBillSupplier}
                     onChange={(event) => setSelectedBillSupplier(event.target.value)}
-                    className="max-w-48 rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-slate-200"
+                    className="max-w-48 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-xs text-slate-800 dark:text-slate-200 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                   >
                     <option value="all">Tutti</option>
                     {billSuppliers.map((supplier) => (
@@ -1947,37 +1992,37 @@ export function BillsView({
             </div>
 
             {/* KPI Bollette */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 border-b border-slate-800/80 bg-slate-950/30">
-              <div className="col-span-2 sm:col-span-4 text-[11px] text-slate-400">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 border-b border-slate-200 dark:border-slate-800/80 bg-slate-50 dark:bg-slate-950/30">
+              <div className="col-span-2 sm:col-span-4 text-[11px] text-slate-500 dark:text-slate-400">
                 Riepilogo filtrato · {selectedBillYear === 'all' ? 'tutti gli anni' : selectedBillYear}
                 {' · '}
                 {selectedBillSupplier === 'all' ? 'tutti i fornitori' : selectedBillSupplier}
               </div>
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   Totale Pagato
                 </div>
-                <div className="text-base font-bold font-mono text-slate-100 mt-0.5">
+                <div className="text-base font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100 mt-0.5">
                   {billsTotals.total.toFixed(2).replace('.', ',')} €
                 </div>
               </div>
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-slate-400">Solo Luce</div>
-                <div className="text-base font-bold font-mono text-sky-300 mt-0.5">
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">Solo Luce</div>
+                <div className="text-base font-bold font-mono tabular-nums text-sky-700 dark:text-sky-300 mt-0.5">
                   {billsTotals.elec.toFixed(2).replace('.', ',')} €
                 </div>
               </div>
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-slate-400">Canone TV</div>
-                <div className="text-base font-bold font-mono text-amber-300 mt-0.5">
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">Canone TV</div>
+                <div className="text-base font-bold font-mono tabular-nums text-amber-700 dark:text-amber-300 mt-0.5">
                   {billsTotals.tv.toFixed(2).replace('.', ',')} €
                 </div>
               </div>
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   kWh / Media Reale
                 </div>
-                <div className="text-base font-bold font-mono text-emerald-300 mt-0.5">
+                <div className="text-base font-bold font-mono tabular-nums text-emerald-700 dark:text-emerald-300 mt-0.5">
                   {billsTotals.kwh} kWh · {billsTotals.avgElecPerKwh.toFixed(2).replace('.', ',')}{' '}
                   €/kWh
                 </div>
@@ -1986,7 +2031,7 @@ export function BillsView({
 
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left">
-                <thead className="bg-slate-950/60 text-slate-400 border-b border-slate-800">
+                <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                   <tr>
                     <SortableTh
                       sortKey="period"
@@ -2051,7 +2096,7 @@ export function BillsView({
                     <th className="px-3 py-2.5 font-medium text-right">Azioni</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/70">
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70">
                   {sortedElecBills.length === 0 && (
                     <tr>
                       <td colSpan={8} className="px-4 py-8 text-center text-sm text-slate-500">
@@ -2070,27 +2115,27 @@ export function BillsView({
                     );
                     const sharePayload = buildElectricityBillSharePayload(b);
                     return (
-                      <tr key={b.invoiceNumber} className="hover:bg-slate-800/30">
-                        <td className="px-4 py-2.5 font-medium text-slate-100">
+                      <tr key={b.invoiceNumber} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                        <td className="px-4 py-2.5 font-medium text-slate-900 dark:text-slate-100">
                           <div>{b.period}</div>
-                          {b.note && <div className="text-[10px] text-emerald-400">{b.note}</div>}
+                          {b.note && <div className="text-[10px] text-emerald-700 dark:text-emerald-400">{b.note}</div>}
                         </td>
-                        <td className="px-3 py-2.5 text-slate-300">
+                        <td className="px-3 py-2.5 text-slate-700 dark:text-slate-300">
                           <div>{b.supplier}</div>
                           <div className="text-[10px] text-slate-500">{b.offerName}</div>
                         </td>
-                        <td className="px-3 py-2.5 font-mono text-slate-400">
+                        <td className="px-3 py-2.5 font-mono text-slate-500 dark:text-slate-400">
                           <div>#{b.invoiceNumber}</div>
                           <div className="text-[10px]">{b.issueDate}</div>
                         </td>
-                        <td className="px-3 py-2.5 text-right font-mono text-slate-200">{b.kwh}</td>
-                        <td className="px-3 py-2.5 text-right font-mono text-slate-300">
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-800 dark:text-slate-200">{b.kwh}</td>
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300">
                           {b.punText}
                         </td>
-                        <td className="px-3 py-2.5 text-right font-mono text-sky-300">
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-sky-700 dark:text-sky-300">
                           {b.electricityOnly.toFixed(2).replace('.', ',')} €
                         </td>
-                        <td className="px-4 py-2.5 text-right font-mono font-semibold text-slate-100">
+                        <td className="px-4 py-2.5 text-right font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
                           {b.totalPaid.toFixed(2).replace('.', ',')} €
                         </td>
                         <td className="px-3 py-2.5 text-right whitespace-nowrap">
@@ -2103,7 +2148,7 @@ export function BillsView({
                                   attachFileInputRef.current?.click();
                                 }}
                                 title="Importa il PDF originale di questa bolletta"
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded-lg transition-colors"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700 dark:text-sky-200 bg-sky-500/10 dark:bg-sky-500/15 hover:bg-sky-500/20 dark:hover:bg-sky-500/25 border border-sky-500/30 rounded-lg transition-colors"
                               >
                                 <FileUp className="w-3.5 h-3.5" />
                                 Importa
@@ -2123,9 +2168,9 @@ export function BillsView({
                                     ? 'Scarica riepilogo HTML'
                                     : `Scarica il PDF originale (${vaultMeta[fileKey]?.fileName})`
                                 }
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-lg transition-colors"
                               >
-                                <Download className="w-3.5 h-3.5 text-sky-400" />
+                                <Download className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                                 Scarica
                               </button>
                             )}
@@ -2136,7 +2181,7 @@ export function BillsView({
                                 setShareBillItem(sharePayload);
                               }}
                               title="Condividi il riepilogo o il PDF della bolletta"
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-lg transition-colors"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/10 dark:bg-sky-500/15 hover:bg-sky-500/20 dark:hover:bg-sky-500/25 border border-sky-500/30 dark:border-sky-500/35 text-sky-700 dark:text-sky-300 rounded-lg transition-colors"
                             >
                               <Share2 className="w-3.5 h-3.5" />
                               Condividi
@@ -2151,35 +2196,35 @@ export function BillsView({
             </div>
           </div>
           ) : (
-            <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-6 text-center text-sm text-slate-400">
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 px-4 py-6 text-center text-sm text-slate-500 dark:text-slate-400">
               Nessuna bolletta luce con PDF presente per i filtri selezionati.
               {!readOnly && ' Importa il PDF originale per aggiungerla allo storico.'}
             </div>
           )}
 
           {/* Guida semplice alla bolletta */}
-          <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
-            <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2 mb-3">
-              <HelpCircle className="w-4 h-4 text-sky-400" />
+          <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-xs dark:shadow-none">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2 mb-3">
+              <HelpCircle className="w-4 h-4 text-sky-600 dark:text-sky-400" />
               La tua bolletta in parole semplici
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-300 leading-relaxed">
-              <div className="bg-slate-950/60 border border-slate-800/80 rounded-lg p-3">
-                <div className="font-semibold text-sky-300 mb-1">1. Prezzo Energia (PUN vs Fisso)</div>
-                <p className="text-slate-400">
-                  Il <strong className="text-slate-200">PUN</strong> è il prezzo all&apos;ingrosso della luce in Italia (cambia ogni mese). Con Edison 2026 la tariffa è monoraria (stesso prezzo giorno e notte) e variabile sul PUN; con una tariffa fissa invece blocchi il prezzo per 12–24 mesi.
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 rounded-lg p-3">
+                <div className="font-semibold text-sky-700 dark:text-sky-300 mb-1">1. Prezzo Energia (PUN vs Fisso)</div>
+                <p className="text-slate-600 dark:text-slate-400">
+                  Il <strong className="text-slate-900 dark:text-slate-200">PUN</strong> è il prezzo all&apos;ingrosso della luce in Italia (cambia ogni mese). Con Edison 2026 la tariffa è monoraria (stesso prezzo giorno e notte) e variabile sul PUN; con una tariffa fissa invece blocchi il prezzo per 12–24 mesi.
                 </p>
               </div>
-              <div className="bg-slate-950/60 border border-slate-800/80 rounded-lg p-3">
-                <div className="font-semibold text-emerald-300 mb-1">2. Costi Fissi (33,35 €/mese)</div>
-                <p className="text-slate-400">
-                  Anche a 0 kWh paghi <strong className="text-slate-200">24,35 €/mese</strong> di luce (fisso fornitore + rete + potenza 6 kW, IVA incl.) + <strong className="text-slate-200">9,00 €/mese</strong> di Canone TV. Quando cambi fornitore cambia solo la quota fissa del fornitore.
+              <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 rounded-lg p-3">
+                <div className="font-semibold text-emerald-700 dark:text-emerald-300 mb-1">2. Costi Fissi (33,35 €/mese)</div>
+                <p className="text-slate-600 dark:text-slate-400">
+                  Anche a 0 kWh paghi <strong className="text-slate-900 dark:text-slate-200">24,35 €/mese</strong> di luce (fisso fornitore + rete + potenza 6 kW, IVA incl.) + <strong className="text-slate-900 dark:text-slate-200">9,00 €/mese</strong> di Canone TV. Quando cambi fornitore cambia solo la quota fissa del fornitore.
                 </p>
               </div>
-              <div className="bg-slate-950/60 border border-slate-800/80 rounded-lg p-3">
-                <div className="font-semibold text-amber-300 mb-1">3. Cosa NON cambia mai</div>
-                <p className="text-slate-400">
-                  <strong className="text-slate-200">Canone TV</strong> (90 €/anno in 10 rate da 9 €) e <strong className="text-slate-200">costi di rete/potenza 6 kW</strong> sono fissati dallo Stato/ARERA: restano identici con qualsiasi fornitore.
+              <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 rounded-lg p-3">
+                <div className="font-semibold text-indigo-700 dark:text-indigo-300 mb-1">3. Cosa NON cambia mai</div>
+                <p className="text-slate-600 dark:text-slate-400">
+                  <strong className="text-slate-900 dark:text-slate-200">Canone TV</strong> (90 €/anno in 10 rate da 9 €) e <strong className="text-slate-900 dark:text-slate-200">costi di rete/potenza 6 kW</strong> sono fissati dallo Stato/ARERA: restano identici con qualsiasi fornitore.
                 </p>
               </div>
             </div>

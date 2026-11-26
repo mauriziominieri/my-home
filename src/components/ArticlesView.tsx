@@ -119,23 +119,23 @@ const ATTACHMENT_TYPE_META: Record<
 > = {
   manuale: {
     label: "Manuale d'uso",
-    badgeClass: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+    badgeClass: 'bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/30',
   },
   scontrino_fattura: {
     label: 'Scontrino / Fattura',
-    badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+    badgeClass: 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30',
   },
   garanzia_extra_family: {
     label: 'Garanzia Extra Family',
-    badgeClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+    badgeClass: 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30',
   },
   targhetta_pnc: {
     label: 'Foto Targhetta / PNC',
-    badgeClass: 'bg-violet-500/15 text-violet-300 border-violet-500/30',
+    badgeClass: 'bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30',
   },
   altro: {
     label: 'Altro documento',
-    badgeClass: 'bg-slate-700/60 text-slate-300 border-slate-600/50',
+    badgeClass: 'bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-600/50',
   },
 };
 
@@ -146,32 +146,32 @@ const CATEGORY_META: Record<
   elettrodomestici: {
     label: 'Elettrodomestici',
     icon: Utensils,
-    badgeClass: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+    badgeClass: 'bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/30',
   },
   elettronica: {
     label: 'Elettronica & TV',
     icon: Tv,
-    badgeClass: 'bg-violet-500/15 text-violet-300 border-violet-500/30',
+    badgeClass: 'bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30',
   },
   sicurezza: {
     label: 'Sicurezza & Allarme',
     icon: ShieldCheck,
-    badgeClass: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
+    badgeClass: 'bg-rose-50 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-500/30',
   },
   fotovoltaico: {
     label: 'Fotovoltaico',
     icon: Sun,
-    badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+    badgeClass: 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30',
   },
   clima: {
     label: 'Clima & Impianti',
     icon: Thermometer,
-    badgeClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+    badgeClass: 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30',
   },
   altro: {
     label: 'Altro',
     icon: Cpu,
-    badgeClass: 'bg-slate-700/60 text-slate-300 border-slate-600/50',
+    badgeClass: 'bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-600/50',
   },
 };
 
@@ -1060,8 +1060,8 @@ export function ArticlesView({
         key={item.id}
         className={
           layoutMode === 'list'
-            ? 'bg-slate-900/75 border border-slate-800 rounded-xl p-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 hover:border-slate-700 transition-colors'
-            : 'bg-slate-900/75 border border-slate-800 rounded-xl p-4 flex flex-col justify-between gap-3 hover:border-slate-700 transition-colors'
+            ? 'bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 hover:border-slate-300 dark:hover:border-slate-700 transition-colors shadow-xs dark:shadow-none'
+            : 'bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-col justify-between gap-3 hover:border-slate-300 dark:hover:border-slate-700 transition-colors shadow-xs dark:shadow-none'
         }
       >
         <div className="space-y-2.5">
@@ -1073,21 +1073,21 @@ export function ArticlesView({
               {meta.label}
             </span>
 
-            <span className="inline-flex items-center gap-1 text-[11px] text-slate-300 bg-slate-800/70 px-2 py-0.5 rounded-md">
-              <Home className="w-3 h-3 text-sky-400" />
+            <span className="inline-flex items-center gap-1 text-[11px] text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/70 px-2 py-0.5 rounded-md">
+              <Home className="w-3 h-3 text-sky-600 dark:text-sky-400" />
               {item.room}
             </span>
           </div>
 
           <div>
-            <h3 className="text-sm font-bold text-slate-100">{item.name}</h3>
-            <div className="text-xs font-mono text-sky-300 mt-0.5">
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">{item.name}</h3>
+            <div className="text-xs font-mono text-sky-700 dark:text-sky-300 mt-0.5">
               {item.brand} · {item.model}
             </div>
           </div>
 
           {item.specs && (
-            <p className="text-xs text-slate-400 leading-relaxed">{item.specs}</p>
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">{item.specs}</p>
           )}
 
           {userNotes && <p className="text-[11px] text-slate-500 italic">{userNotes}</p>}
@@ -1096,8 +1096,8 @@ export function ArticlesView({
         <div
           className={
             layoutMode === 'list'
-              ? 'pt-2.5 lg:pt-0 lg:pl-4 border-t lg:border-t-0 lg:border-l border-slate-800/80 space-y-2 lg:min-w-[300px] shrink-0'
-              : 'pt-2.5 border-t border-slate-800/80 space-y-2'
+              ? 'pt-2.5 lg:pt-0 lg:pl-4 border-t lg:border-t-0 lg:border-l border-slate-200 dark:border-slate-800/80 space-y-2 lg:min-w-[300px] shrink-0'
+              : 'pt-2.5 border-t border-slate-200 dark:border-slate-800/80 space-y-2'
           }
         >
           <div className="flex flex-wrap items-center gap-2 text-[11px]">
@@ -1111,7 +1111,7 @@ export function ArticlesView({
                     ? 'Coperto da Assicurazione Extra Family'
                     : 'Clicca per modificare copertura Assicurazione Extra Family'
                 }
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 font-medium hover:bg-emerald-500/25 disabled:hover:bg-emerald-500/15"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-500/15 border border-emerald-200 dark:border-emerald-500/35 text-emerald-700 dark:text-emerald-300 font-medium hover:bg-emerald-100 dark:hover:bg-emerald-500/25 disabled:opacity-70"
               >
                 <ShieldCheck className="w-3 h-3" />
                 Extra Family
@@ -1122,7 +1122,7 @@ export function ArticlesView({
                   type="button"
                   disabled={togglingFamilyId === item.id}
                   onClick={() => void handleToggleExtraFamily(item)}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 hover:text-emerald-300 hover:border-emerald-500/35 text-[10px] transition-colors"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-emerald-700 dark:hover:text-emerald-300 hover:border-emerald-300 dark:hover:border-emerald-500/35 text-[10px] transition-colors"
                 >
                   <ShieldCheck className="w-3 h-3" />
                   {togglingFamilyId === item.id ? 'Salvataggio...' : '+ Extra Family'}
@@ -1130,24 +1130,24 @@ export function ArticlesView({
               )
             )}
             {typeof item.purchasePriceEur === 'number' && (
-              <span className="font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/25 text-emerald-300">
+              <span className="font-mono px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/25 text-emerald-700 dark:text-emerald-300">
                 Pagato € {item.purchasePriceEur.toFixed(2)}
               </span>
             )}
             {item.warrantyEnd && (
-              <span className="font-mono text-slate-400">Scad. {item.warrantyEnd}</span>
+              <span className="font-mono text-slate-600 dark:text-slate-400">Scad. {item.warrantyEnd}</span>
             )}
             {item.serialNumber && (
-              <span className="font-mono text-slate-400">{item.serialNumber}</span>
+              <span className="font-mono text-slate-600 dark:text-slate-400">{item.serialNumber}</span>
             )}
             {totalDocsCount > 0 ? (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/25 text-[10px] font-medium">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-500/25 text-[10px] font-medium">
                 <Paperclip className="w-3 h-3" />
                 {totalDocsCount} {totalDocsCount === 1 ? 'documento' : 'documenti'}
               </span>
             ) : (
               (manualUrl || guide.sourceType !== 'generated') && (
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-300 border border-sky-500/20 text-[10px]">
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-500/20 text-[10px]">
                   <BookOpen className="w-3 h-3" />
                   Manuale online
                 </span>
@@ -1162,7 +1162,7 @@ export function ArticlesView({
                 setCopiedSheet(false);
                 setActiveSheetArticle(item);
               }}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-sky-300 bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 rounded-lg transition-colors"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 hover:bg-sky-100 dark:hover:bg-sky-500/25 border border-sky-200 dark:border-sky-500/30 rounded-lg transition-colors"
             >
               <FileCheck2 className="w-3.5 h-3.5" />
               Scheda &amp; Documenti ({totalDocsCount})
@@ -1175,7 +1175,7 @@ export function ArticlesView({
                     type="button"
                     disabled={downloadingManualId === item.id}
                     onClick={() => void handleDownloadManual(item)}
-                    className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-emerald-300 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                    className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
                   >
                     <Download className="w-3 h-3" />
                     PDF
@@ -1184,7 +1184,7 @@ export function ArticlesView({
                 <button
                   type="button"
                   onClick={() => openEditForm(item)}
-                  className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-300 hover:text-sky-300 hover:bg-slate-800 rounded transition-colors"
+                  className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-sky-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors"
                 >
                   <Pencil className="w-3 h-3" />
                   Modifica
@@ -1193,7 +1193,7 @@ export function ArticlesView({
                   type="button"
                   onClick={() => setPendingDelete(item)}
                   aria-label={`Elimina ${item.name}`}
-                  className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition-colors"
+                  className="p-1 text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
@@ -1218,14 +1218,14 @@ export function ArticlesView({
       {actionError && (
         <div
           role="alert"
-          className="flex items-start justify-between gap-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200"
+          className="flex items-start justify-between gap-3 rounded-lg border border-rose-200 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-500/10 px-3 py-2 text-xs text-rose-800 dark:text-rose-200"
         >
           <span>{actionError}</span>
           <button
             type="button"
             onClick={() => setActionError('')}
             aria-label="Chiudi messaggio di errore"
-            className="text-rose-300 hover:text-white"
+            className="text-rose-600 dark:text-rose-300 hover:text-rose-900 dark:hover:text-white"
           >
             <X className="h-4 w-4" />
           </button>
@@ -1234,14 +1234,14 @@ export function ArticlesView({
       {actionNotice && (
         <div
           role="status"
-          className="flex items-start justify-between gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200"
+          className="flex items-start justify-between gap-3 rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-200"
         >
           <span>{actionNotice}</span>
           <button
             type="button"
             onClick={() => setActionNotice('')}
             aria-label="Chiudi avviso"
-            className="text-emerald-300 hover:text-white"
+            className="text-emerald-700 dark:text-emerald-300 hover:text-emerald-950 dark:hover:text-white"
           >
             <X className="h-4 w-4" />
           </button>
@@ -1251,11 +1251,11 @@ export function ArticlesView({
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
         <div>
-          <h1 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-            <Package className="w-5 h-5 text-sky-400" />
+          <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+            <Package className="w-5 h-5 text-sky-600 dark:text-sky-400" />
             Articoli di Casa, Catalogo Prodotti &amp; Documenti ({articles.length})
           </h1>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
             Sfoglia il catalogo stile store, aggiungi i tuoi elettrodomestici (inclusi codici Modello e PNC) e allega manuali, scontrini, certificati Extra Family o foto targhetta su Firestore.
           </p>
         </div>
@@ -1266,44 +1266,44 @@ export function ArticlesView({
             <button
               type="button"
               onClick={() => setShowExportMenu((v) => !v)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-200 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors shadow-xs dark:shadow-none"
             >
-              <Download className="w-3.5 h-3.5 text-emerald-400" />
+              <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
               Esporta Schede
             </button>
             {showExportMenu && (
-              <div className="absolute right-0 mt-1.5 w-64 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-1.5 z-30 text-xs">
+              <div className="absolute right-0 mt-1.5 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-1.5 z-30 text-xs">
                 <button
                   type="button"
                   onClick={() => handleExportScope('html')}
-                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-slate-200 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 flex items-center gap-2"
                 >
-                  <FileText className="w-4 h-4 text-sky-400 shrink-0" />
+                  <FileText className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
                   <div>
                     <div className="font-semibold">Dossier Stampabile / PDF (.html)</div>
-                    <div className="text-[10px] text-slate-400">Schede + manuali divisi per stanza</div>
+                    <div className="text-[10px] text-slate-500 dark:text-slate-400">Schede + manuali divisi per stanza</div>
                   </div>
                 </button>
                 <button
                   type="button"
                   onClick={() => handleExportScope('md')}
-                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-slate-200 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 flex items-center gap-2"
                 >
-                  <BookOpen className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <BookOpen className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                   <div>
                     <div className="font-semibold">Manuale Unico Markdown (.md)</div>
-                    <div className="text-[10px] text-slate-400">Ideale per Note, Notion, Obsidian</div>
+                    <div className="text-[10px] text-slate-500 dark:text-slate-400">Ideale per Note, Notion, Obsidian</div>
                   </div>
                 </button>
                 <button
                   type="button"
                   onClick={() => handleExportScope('json')}
-                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-800 text-slate-200 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 flex items-center gap-2"
                 >
-                  <FileCode2 className="w-4 h-4 text-amber-400 shrink-0" />
+                  <FileCode2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
                   <div>
                     <div className="font-semibold">Archivio Dati (.json)</div>
-                    <div className="text-[10px] text-slate-400">Backup completo strutturato</div>
+                    <div className="text-[10px] text-slate-500 dark:text-slate-400">Backup completo strutturato</div>
                   </div>
                 </button>
               </div>
@@ -1314,7 +1314,7 @@ export function ArticlesView({
             <button
               type="button"
               onClick={() => openNewForm()}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 rounded-lg transition-colors"
             >
               <Plus className="w-4 h-4" />
               Nuovo articolo personalizzato
@@ -1324,15 +1324,15 @@ export function ArticlesView({
       </div>
 
       {/* Switcher principale: I miei Articoli in Casa vs Catalogo stile Store */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/90 border border-slate-800 rounded-xl p-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-xl p-2 shadow-xs dark:shadow-none">
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
             onClick={() => setViewTab('casa')}
             className={`inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors ${
               viewTab === 'casa'
-                ? 'bg-sky-500 text-slate-950'
-                : 'text-slate-300 hover:bg-slate-800'
+                ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
             <Home className="w-4 h-4" />
@@ -1343,8 +1343,8 @@ export function ArticlesView({
             onClick={() => setViewTab('catalogo')}
             className={`inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors ${
               viewTab === 'catalogo'
-                ? 'bg-violet-400 text-slate-950'
-                : 'text-slate-300 hover:bg-slate-800'
+                ? 'bg-indigo-600 text-white dark:bg-indigo-500 dark:text-white'
+                : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
             <ShoppingBag className="w-4 h-4" />
@@ -1352,13 +1352,13 @@ export function ArticlesView({
           </button>
         </div>
 
-        <div className="text-[11px] text-slate-400 px-2">
+        <div className="text-[11px] text-slate-600 dark:text-slate-400 px-2">
           Assicurazione Extra Family:{' '}
-          <strong className="text-emerald-300 font-mono">
+          <strong className="text-emerald-700 dark:text-emerald-300 font-mono">
             {extraFamilyCount}/{articles.length}
           </strong>{' '}
           attivi ·{' '}
-          <strong className="text-sky-300 font-mono">{articleDocuments.length}</strong> allegati salvati
+          <strong className="text-sky-700 dark:text-sky-300 font-mono">{articleDocuments.length}</strong> allegati salvati
         </div>
       </div>
 
@@ -1374,18 +1374,18 @@ export function ArticlesView({
       />
 
       {/* Scheda Informativa Assicurazione Extra Family */}
-      <section className="bg-emerald-950/25 border border-emerald-500/30 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <section className="bg-emerald-50/70 dark:bg-emerald-950/25 border border-emerald-200 dark:border-emerald-500/30 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <h2 className="text-sm font-bold text-emerald-200">
+            <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <h2 className="text-sm font-bold text-emerald-900 dark:text-emerald-200">
               {EXTRA_FAMILY_COVERAGE_INFO.title}
             </h2>
-            <span className="px-2 py-0.5 text-[10px] font-mono font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded">
+            <span className="px-2 py-0.5 text-[10px] font-mono font-semibold bg-emerald-100 dark:bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 rounded">
               {extraFamilyCount} / {articles.length} articoli assicurati
             </span>
           </div>
-          <p className="text-xs text-slate-300 leading-relaxed max-w-4xl">
+          <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed max-w-4xl">
             {EXTRA_FAMILY_COVERAGE_INFO.description}
           </p>
         </div>
@@ -1396,8 +1396,8 @@ export function ArticlesView({
             onClick={() => setOnlyExtraFamily((v) => !v)}
             className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border shrink-0 transition-colors ${
               onlyExtraFamily
-                ? 'bg-emerald-400 text-slate-950 border-emerald-300'
-                : 'bg-slate-900/90 text-emerald-300 border-emerald-500/35 hover:bg-emerald-500/15'
+                ? 'bg-emerald-600 text-white border-emerald-600 dark:bg-emerald-500 dark:text-slate-950 dark:border-emerald-400'
+                : 'bg-white dark:bg-slate-900/90 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-500/35 hover:bg-emerald-100/70 dark:hover:bg-emerald-500/15'
             }`}
           >
             <ShieldCheck className="w-3.5 h-3.5" />
@@ -1410,14 +1410,14 @@ export function ArticlesView({
 
       {/* Banner dedicato ai 4 Elettrodomestici Electrolux / AEG recuperati dall'utente */}
       {!readOnly && (
-        <section className="bg-slate-900/75 border border-sky-500/30 rounded-xl p-4 space-y-3">
+        <section className="bg-white dark:bg-slate-900/75 border border-sky-200 dark:border-sky-500/30 rounded-xl p-4 space-y-3 shadow-xs dark:shadow-none">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
-              <div className="flex items-center gap-2 text-xs font-bold text-sky-300">
+              <div className="flex items-center gap-2 text-xs font-bold text-sky-700 dark:text-sky-300">
                 <Sparkles className="w-4 h-4" />
                 I tuoi 4 Elettrodomestici Electrolux / AEG (con Modello No. &amp; Prodotto No. PNC)
               </div>
-              <p className="text-[11px] text-slate-400 mt-0.5">
+              <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
                 Aggiungili subito a Firestore in 1 click oppure personalizzali per allegare scontrino, foto targhetta e manuale.
               </p>
             </div>
@@ -1426,7 +1426,7 @@ export function ArticlesView({
                 type="button"
                 disabled={addingAllElectrolux}
                 onClick={() => void handleAddAllMissingElectrolux()}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 disabled:opacity-60 rounded-lg shrink-0"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 disabled:opacity-60 rounded-lg shrink-0"
               >
                 <Plus className="w-3.5 h-3.5" />
                 {addingAllElectrolux
@@ -1444,21 +1444,21 @@ export function ArticlesView({
                   key={item.id}
                   className={`rounded-lg border p-3 flex flex-col justify-between gap-2 ${
                     saved
-                      ? 'bg-emerald-950/20 border-emerald-500/35'
-                      : 'bg-slate-950/75 border-slate-800'
+                      ? 'bg-emerald-50/70 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-500/35'
+                      : 'bg-slate-50 dark:bg-slate-950/75 border-slate-200 dark:border-slate-800'
                   }`}
                 >
                   <div className="space-y-1">
                     <div className="flex items-center justify-between gap-1 text-[10px] font-mono">
-                      <span className="text-sky-300 font-semibold">{item.brand}</span>
-                      <span className="text-slate-400">PNC {item.pnc}</span>
+                      <span className="text-sky-700 dark:text-sky-300 font-semibold">{item.brand}</span>
+                      <span className="text-slate-500 dark:text-slate-400">PNC {item.pnc}</span>
                     </div>
-                    <div className="text-xs font-bold text-slate-100 leading-snug">{item.name}</div>
-                    <div className="text-[11px] font-mono text-slate-400">Mod. {item.model}</div>
+                    <div className="text-xs font-bold text-slate-900 dark:text-slate-100 leading-snug">{item.name}</div>
+                    <div className="text-[11px] font-mono text-slate-600 dark:text-slate-400">Mod. {item.model}</div>
                   </div>
                   <div className="flex items-center gap-1.5 pt-1">
                     {saved ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-300">
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
                         <Check className="w-3.5 h-3.5" />
                         Salvato in Casa
                       </span>
@@ -1470,7 +1470,7 @@ export function ArticlesView({
                           onClick={() =>
                             void quickSaveSearchResultToFirestore(item, true, item.suggestedRoom)
                           }
-                          className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 text-[11px] font-semibold bg-sky-400 hover:bg-sky-300 text-slate-950 rounded"
+                          className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 text-[11px] font-semibold bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-500 dark:hover:bg-sky-400 dark:text-slate-950 rounded"
                         >
                           <Plus className="w-3 h-3" />
                           Aggiungi
@@ -1478,7 +1478,7 @@ export function ArticlesView({
                         <button
                           type="button"
                           onClick={() => openSearchResultForCustomization(item)}
-                          className="px-2 py-1 text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 rounded"
+                          className="px-2 py-1 text-[11px] font-medium bg-slate-200 hover:bg-slate-300 text-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 rounded"
                           title="Personalizza e allega documenti"
                         >
                           + Doc
@@ -1497,10 +1497,10 @@ export function ArticlesView({
       {showForm && !readOnly && (
         <form
           onSubmit={handleSubmit}
-          className="bg-slate-900 border border-sky-500/40 rounded-xl p-4 sm:p-5 space-y-4"
+          className="bg-white dark:bg-slate-900 border border-sky-300 dark:border-sky-500/40 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm dark:shadow-none"
         >
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h3 className="text-sm font-semibold text-slate-100">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
               {editingId
                 ? 'Modifica articolo, specifiche e documenti associati'
                 : 'Nuovo articolo di casa con documenti associati'}
@@ -1511,7 +1511,7 @@ export function ArticlesView({
                 setShowForm(false);
                 resetForm();
               }}
-              className="text-xs text-slate-400 hover:text-slate-100"
+              className="text-xs text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
             >
               Chiudi
             </button>
@@ -1519,7 +1519,7 @@ export function ArticlesView({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
             <div className="space-y-1">
-              <label className="block text-slate-400">Nome dispositivo *</label>
+              <label className="block text-slate-600 dark:text-slate-400">Nome dispositivo *</label>
               <input
                 type="text"
                 required
@@ -1527,12 +1527,12 @@ export function ArticlesView({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder='Es. Lavatrice ProSteam 8 kg, Smart TV 75"...'
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-400">Marca *</label>
+              <label className="block text-slate-600 dark:text-slate-400">Marca *</label>
               <input
                 type="text"
                 required
@@ -1540,12 +1540,12 @@ export function ArticlesView({
                 value={brand}
                 onChange={(e) => setBrand(e.target.value)}
                 placeholder="Es. Electrolux, AEG, TCL, Bosch..."
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-400">Modello No. *</label>
+              <label className="block text-slate-600 dark:text-slate-400">Modello No. *</label>
               <input
                 type="text"
                 required
@@ -1553,28 +1553,28 @@ export function ArticlesView({
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 placeholder="Es. LR7G86XW, KESC8310L, EIL63443..."
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-400">Prodotto No. (PNC) / Seriale</label>
+              <label className="block text-slate-600 dark:text-slate-400">Prodotto No. (PNC) / Seriale</label>
               <input
                 type="text"
                 maxLength={80}
                 value={serialNumber}
                 onChange={(e) => setSerialNumber(e.target.value)}
                 placeholder="Es. PNC 914 921 766 / S/N..."
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-400">Categoria *</label>
+              <label className="block text-slate-600 dark:text-slate-400">Categoria *</label>
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value as HomeArticleCategory)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
               >
                 {Object.entries(CATEGORY_META).map(([key, meta]) => (
                   <option key={key} value={key}>
@@ -1585,7 +1585,7 @@ export function ArticlesView({
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-400">Stanza di casa *</label>
+              <label className="block text-slate-600 dark:text-slate-400">Stanza di casa *</label>
               <input
                 type="text"
                 required
@@ -1594,7 +1594,7 @@ export function ArticlesView({
                 value={room}
                 onChange={(e) => setRoom(e.target.value)}
                 placeholder="Es. Cucina, Salone, Bagno 1..."
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
               <datalist id="room-presets-datalist">
                 {allRooms.map((r) => (
@@ -1604,19 +1604,19 @@ export function ArticlesView({
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-400">Data acquisto (opz.)</label>
+              <label className="block text-slate-600 dark:text-slate-400">Data acquisto (opz.)</label>
               <input
                 type="text"
                 maxLength={20}
                 value={purchaseDate}
                 onChange={(e) => setPurchaseDate(e.target.value)}
                 placeholder="GG/MM/AAAA"
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-400">Prezzo pagato (€ opz.)</label>
+              <label className="block text-slate-600 dark:text-slate-400">Prezzo pagato (€ opz.)</label>
               <input
                 type="number"
                 step="0.01"
@@ -1625,19 +1625,19 @@ export function ArticlesView({
                 value={purchasePriceEur}
                 onChange={(e) => setPurchasePriceEur(e.target.value)}
                 placeholder="Es. 649.00"
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-400">Scadenza garanzia (opz.)</label>
+              <label className="block text-slate-600 dark:text-slate-400">Scadenza garanzia (opz.)</label>
               <input
                 type="text"
                 maxLength={20}
                 value={warrantyEnd}
                 onChange={(e) => setWarrantyEnd(e.target.value)}
                 placeholder="GG/MM/AAAA"
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
@@ -1647,12 +1647,12 @@ export function ArticlesView({
                 type="checkbox"
                 checked={familyWarranty}
                 onChange={(e) => setFamilyWarranty(e.target.checked)}
-                className="h-4 w-4 mt-0.5 rounded border-slate-700 bg-slate-950 text-emerald-500"
+                className="h-4 w-4 mt-0.5 rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 accent-sky-600 dark:accent-sky-400"
               />
               <div>
                 <label
                   htmlFor="familyWarrantyToggle"
-                  className="text-slate-200 font-medium cursor-pointer block"
+                  className="text-slate-800 dark:text-slate-200 font-medium cursor-pointer block"
                 >
                   Coperto da Assicurazione Extra Family
                 </label>
@@ -1663,51 +1663,51 @@ export function ArticlesView({
             </div>
 
             <div className="sm:col-span-2 lg:col-span-3 space-y-1">
-              <label className="block text-slate-400">Specifiche tecniche</label>
+              <label className="block text-slate-600 dark:text-slate-400">Specifiche tecniche</label>
               <input
                 type="text"
                 maxLength={240}
                 value={specs}
                 onChange={(e) => setSpecs(e.target.value)}
                 placeholder="Es. 8 kg · ProSteam · Classe A · 60 cm..."
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="sm:col-span-2 space-y-1">
-              <label className="block text-slate-400">Link manuale PDF / Supporto (opz.)</label>
+              <label className="block text-slate-600 dark:text-slate-400">Link manuale PDF / Supporto (opz.)</label>
               <input
                 type="url"
                 maxLength={190}
                 value={manualUrlInput}
                 onChange={(e) => setManualUrlInput(e.target.value)}
                 placeholder="https://..."
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg font-mono text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-400">Note aggiuntive (opz.)</label>
+              <label className="block text-slate-600 dark:text-slate-400">Note aggiuntive (opz.)</label>
               <input
                 type="text"
                 maxLength={180}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Negozio, codice installatore..."
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             {/* Sezione Upload Documenti Associati (PDF + Multi-Allegato) */}
-            <div className="sm:col-span-2 lg:col-span-3 bg-slate-950/75 border border-slate-800 rounded-xl p-3.5 space-y-3">
-              <div className="text-xs font-semibold text-slate-200 flex items-center gap-2">
-                <Paperclip className="w-4 h-4 text-sky-400" />
+            <div className="sm:col-span-2 lg:col-span-3 bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-3">
+              <div className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                <Paperclip className="w-4 h-4 text-sky-600 dark:text-sky-400" />
                 Documenti associati all&apos;articolo (Manuale, Scontrino, Certificato Extra Family, Foto Targhetta)
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="block text-[11px] text-slate-400">
+                  <label className="block text-[11px] text-slate-600 dark:text-slate-400">
                     1. Manuale PDF principale (compila i campi dal PDF)
                   </label>
                   <input
@@ -1715,27 +1715,27 @@ export function ArticlesView({
                     accept="application/pdf,.pdf"
                     onChange={(event) => void handleManualFileChange(event)}
                     disabled={manualProcessing || saving}
-                    className="block w-full text-xs text-slate-300 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-sky-500/15 file:text-sky-300 hover:file:bg-sky-500/25"
+                    className="block w-full text-xs text-slate-700 dark:text-slate-300 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-sky-50 dark:file:bg-sky-500/15 file:text-sky-700 dark:file:text-sky-300 hover:file:bg-sky-100 dark:hover:file:bg-sky-500/25"
                   />
                   {manualFile && (
-                    <p className="text-[11px] text-sky-300">PDF manuale: {manualFile.name}</p>
+                    <p className="text-[11px] text-sky-700 dark:text-sky-300">PDF manuale: {manualFile.name}</p>
                   )}
                   {manualStatus && (
-                    <p className="text-[11px] text-slate-400" role="status">
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400" role="status">
                       {manualStatus}
                     </p>
                   )}
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="block text-[11px] text-slate-400">
+                  <label className="block text-[11px] text-slate-600 dark:text-slate-400">
                     2. Altri documenti allegati (Scontrino, Fattura, Foto targhetta PNC, Extra Family)
                   </label>
                   <div className="flex flex-wrap items-center gap-2">
                     <select
                       value={queuedDocType}
                       onChange={(e) => setQueuedDocType(e.target.value as ArticleAttachmentType)}
-                      className="px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-slate-100 [color-scheme:dark]"
+                      className="px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark]"
                     >
                       {Object.entries(ATTACHMENT_TYPE_META).map(([k, m]) => (
                         <option key={k} value={k}>
@@ -1748,7 +1748,7 @@ export function ArticlesView({
                       multiple
                       accept="application/pdf,.pdf,image/*,.doc,.docx"
                       onChange={handleQueueExtraFiles}
-                      className="flex-1 min-w-[180px] text-xs text-slate-300 file:mr-2 file:px-2.5 file:py-1.5 file:rounded-lg file:border-0 file:bg-emerald-500/15 file:text-emerald-300 hover:file:bg-emerald-500/25"
+                      className="flex-1 min-w-[180px] text-xs text-slate-700 dark:text-slate-300 file:mr-2 file:px-2.5 file:py-1.5 file:rounded-lg file:border-0 file:bg-emerald-50 dark:file:bg-emerald-500/15 file:text-emerald-700 dark:file:text-emerald-300 hover:file:bg-emerald-100 dark:hover:file:bg-emerald-500/25"
                     />
                   </div>
                 </div>
@@ -1759,7 +1759,7 @@ export function ArticlesView({
                   {queuedAttachments.map((att) => (
                     <div
                       key={att.id}
-                      className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-[11px]"
+                      className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px]"
                     >
                       <select
                         value={att.docType}
@@ -1770,23 +1770,23 @@ export function ArticlesView({
                             prev.map((x) => (x.id === att.id ? { ...x, docType: nextType } : x))
                           );
                         }}
-                        className={`px-1.5 py-0.5 text-[10px] rounded border cursor-pointer [color-scheme:dark] ${
+                        className={`px-1.5 py-0.5 text-[10px] rounded border cursor-pointer [color-scheme:light] dark:[color-scheme:dark] ${
                           ATTACHMENT_TYPE_META[att.docType].badgeClass
                         }`}
                       >
                         {(Object.keys(ATTACHMENT_TYPE_META) as ArticleAttachmentType[]).map((key) => (
-                          <option key={key} value={key} className="bg-slate-900 text-slate-100">
+                          <option key={key} value={key} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
                             {ATTACHMENT_TYPE_META[key].label}
                           </option>
                         ))}
                       </select>
-                      <span className="text-slate-200 truncate max-w-[180px]">{att.file.name}</span>
+                      <span className="text-slate-800 dark:text-slate-200 truncate max-w-[180px]">{att.file.name}</span>
                       <button
                         type="button"
                         onClick={() =>
                           setQueuedAttachments((prev) => prev.filter((x) => x.id !== att.id))
                         }
-                        className="text-slate-400 hover:text-rose-400"
+                        className="text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
                         aria-label={`Rimuovi ${att.file.name}`}
                       >
                         <X className="w-3.5 h-3.5" />
@@ -1798,21 +1798,21 @@ export function ArticlesView({
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
               onClick={() => {
                 setShowForm(false);
                 resetForm();
               }}
-              className="px-3.5 py-2 text-xs text-slate-400 hover:text-slate-100 rounded-lg"
+              className="px-3.5 py-2 text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 rounded-lg"
             >
               Annulla
             </button>
             <button
               type="submit"
               disabled={saving || manualProcessing}
-              className="px-4 py-2 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 disabled:opacity-50 rounded-lg transition-colors"
+              className="px-4 py-2 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 disabled:opacity-50 rounded-lg transition-colors"
             >
               {manualProcessing
                 ? 'Lettura PDF...'
@@ -1830,23 +1830,23 @@ export function ArticlesView({
       {viewTab === 'catalogo' && (
         <section className="space-y-4">
           {/* Barra di ricerca stile Store */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3 shadow-xs dark:shadow-none">
             <div className="flex flex-col md:flex-row gap-2">
               <div className="relative flex-1">
-                <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Search className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="search"
                   value={catalogQuery}
                   onChange={(e) => setCatalogQuery(e.target.value)}
                   placeholder="Cerca nel catalogo: es. Electrolux, AEG, LR7G86XW, 914921766, lavastoviglie, TCL, frigo..."
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-violet-400"
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
                 />
               </div>
               <button
                 type="button"
                 disabled={webSearching || catalogQuery.trim().length < 2}
                 onClick={() => void runWebCatalogSearch(catalogQuery)}
-                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-violet-400 text-slate-950 hover:bg-violet-300 disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white dark:bg-indigo-500 dark:hover:bg-indigo-400 disabled:opacity-50"
               >
                 <Globe className={`w-3.5 h-3.5 ${webSearching ? 'animate-spin' : ''}`} />
                 {webSearching ? 'Ricerca Web...' : 'Cerca anche online (Web)'}
@@ -1855,7 +1855,7 @@ export function ArticlesView({
                 <button
                   type="button"
                   onClick={() => openCustomDraftFromQuery(catalogQuery)}
-                  className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/35 hover:bg-emerald-500/25"
+                  className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/35 hover:bg-emerald-100 dark:hover:bg-emerald-500/25"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Crea nuovo &quot;{catalogQuery.trim().slice(0, 22)}&quot;
@@ -1865,12 +1865,12 @@ export function ArticlesView({
 
             <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-xs">
               <div className="flex flex-wrap items-center gap-2">
-                <label className="inline-flex items-center gap-1.5 text-slate-400">
+                <label className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
                   <span>Marca:</span>
                   <select
                     value={catalogBrand}
                     onChange={(e) => setCatalogBrand(e.target.value)}
-                    className="px-2.5 py-1 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark]"
+                    className="px-2.5 py-1 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark]"
                   >
                     {catalogBrands.map((b) => (
                       <option key={b} value={b}>
@@ -1882,12 +1882,12 @@ export function ArticlesView({
 
                 {!readOnly && (
                   <>
-                    <label className="inline-flex items-center gap-1.5 text-slate-400">
+                    <label className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
                       <span>Aggiungi in stanza:</span>
                       <select
                         value={catalogTargetRoom}
                         onChange={(e) => setCatalogTargetRoom(e.target.value)}
-                        className="px-2.5 py-1 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark]"
+                        className="px-2.5 py-1 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark]"
                       >
                         <option value="auto">Automatica per tipo</option>
                         {allRooms.map((r) => (
@@ -1898,12 +1898,12 @@ export function ArticlesView({
                       </select>
                     </label>
 
-                    <label className="inline-flex items-center gap-1.5 text-slate-300 cursor-pointer">
+                    <label className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={catalogIncludeExtraFamily}
                         onChange={(e) => setCatalogIncludeExtraFamily(e.target.checked)}
-                        className="rounded border-slate-700 bg-slate-950 text-emerald-500"
+                        className="rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 accent-sky-600 dark:accent-sky-400"
                       />
                       <span>Attiva Extra Family</span>
                     </label>
@@ -1911,14 +1911,14 @@ export function ArticlesView({
                 )}
               </div>
 
-              <div className="text-[11px] text-slate-400">
-                Mostrati <strong className="text-slate-200">{filteredCatalogItems.length}</strong>{' '}
+              <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                Mostrati <strong className="text-slate-900 dark:text-slate-200">{filteredCatalogItems.length}</strong>{' '}
                 prodotti{webProvider ? ` · ${webProvider}` : ''}
               </div>
             </div>
 
             {webSearchError && (
-              <p className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/25 rounded-lg px-3 py-2">
+              <p className="text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/25 rounded-lg px-3 py-2">
                 {webSearchError}
               </p>
             )}
@@ -1926,8 +1926,8 @@ export function ArticlesView({
 
           {/* Layout Sidebar Reparti + Griglia Prodotti Store */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-            <aside className="lg:col-span-3 bg-slate-900/75 border border-slate-800 rounded-xl p-3 space-y-1.5">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-2 pb-1">
+            <aside className="lg:col-span-3 bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-1.5 shadow-xs dark:shadow-none">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 px-2 pb-1">
                 Reparti Casa
               </div>
               <div className="flex lg:flex-col gap-1 overflow-x-auto pb-1 lg:pb-0">
@@ -1944,14 +1944,14 @@ export function ArticlesView({
                       onClick={() => setCatalogDepartment(dept)}
                       className={`flex items-center justify-between gap-2 px-2.5 py-2 text-xs rounded-lg whitespace-nowrap transition-colors ${
                         active
-                          ? 'bg-violet-400 text-slate-950 font-semibold'
-                          : 'text-slate-300 hover:bg-slate-800'
+                          ? 'bg-indigo-600 text-white dark:bg-indigo-500 dark:text-white font-semibold'
+                          : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                       }`}
                     >
                       <span className="truncate">{dept}</span>
                       <span
                         className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
-                          active ? 'bg-slate-950/20 text-slate-950' : 'bg-slate-800 text-slate-400'
+                          active ? 'bg-white/20 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
                         }`}
                       >
                         {count}
@@ -1964,7 +1964,7 @@ export function ArticlesView({
 
             <div className="lg:col-span-9 space-y-3">
               {filteredCatalogItems.length === 0 ? (
-                <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-8 text-center text-xs text-slate-400 space-y-3">
+                <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-8 text-center text-xs text-slate-600 dark:text-slate-400 space-y-3 shadow-xs dark:shadow-none">
                   <p>
                     Nessun prodotto nel catalogo locale corrisponde a &quot;{catalogQuery}&quot;.
                   </p>
@@ -1972,7 +1972,7 @@ export function ArticlesView({
                     <button
                       type="button"
                       onClick={() => void runWebCatalogSearch(catalogQuery)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-400 text-slate-950 font-semibold"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white dark:bg-indigo-500 dark:hover:bg-indigo-400 font-semibold"
                     >
                       <Globe className="w-3.5 h-3.5" />
                       Cerca sul Web
@@ -1981,7 +1981,7 @@ export function ArticlesView({
                       <button
                         type="button"
                         onClick={() => openCustomDraftFromQuery(catalogQuery)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-400 text-slate-950 font-semibold"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-500 dark:hover:bg-sky-400 dark:text-slate-950 font-semibold"
                       >
                         <Plus className="w-3.5 h-3.5" />
                         Aggiungi manualmente
@@ -2004,14 +2004,14 @@ export function ArticlesView({
                     return (
                       <article
                         key={item.id}
-                        className={`bg-slate-900/80 border rounded-xl overflow-hidden flex flex-col justify-between transition-colors ${
+                        className={`bg-white dark:bg-slate-900/80 border rounded-xl overflow-hidden flex flex-col justify-between transition-colors shadow-xs dark:shadow-none ${
                           alreadyOwned
-                            ? 'border-emerald-500/40'
-                            : 'border-slate-800 hover:border-slate-700'
+                            ? 'border-emerald-300 dark:border-emerald-500/40'
+                            : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
                         }`}
                       >
                         <div>
-                          <div className="h-28 bg-slate-950/90 border-b border-slate-800/80 flex items-center justify-center relative px-4">
+                          <div className="h-28 bg-slate-50 dark:bg-slate-950/90 border-b border-slate-200 dark:border-slate-800/80 flex items-center justify-center relative px-4">
                             {item.imageUrl && !failedOnlineImages.has(item.id) ? (
                               <img
                                 src={item.imageUrl}
@@ -2024,24 +2024,24 @@ export function ArticlesView({
                                 }
                               />
                             ) : (
-                              <div className="flex flex-col items-center gap-1 text-slate-500">
-                                <Icon className="w-8 h-8 text-sky-400/80" />
+                              <div className="flex flex-col items-center gap-1 text-slate-400 dark:text-slate-500">
+                                <Icon className="w-8 h-8 text-sky-600/80 dark:text-sky-400/80" />
                                 <span className="text-[10px] font-mono uppercase tracking-wider">
                                   {item.department || meta.label}
                                 </span>
                               </div>
                             )}
-                            <span className="absolute top-2 left-2 px-2 py-0.5 text-[10px] font-semibold bg-slate-900/90 text-slate-300 border border-slate-700 rounded">
+                            <span className="absolute top-2 left-2 px-2 py-0.5 text-[10px] font-semibold bg-white/95 dark:bg-slate-900/90 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 rounded">
                               {item.brand}
                             </span>
                             {alreadyOwned ? (
-                              <span className="absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/35 rounded">
+                              <span className="absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/35 rounded">
                                 <Check className="w-3 h-3" />
                                 In Casa
                               </span>
                             ) : (
                               item.familyWarrantySuggested && (
-                                <span className="absolute top-2 right-2 px-2 py-0.5 text-[10px] font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded">
+                                <span className="absolute top-2 right-2 px-2 py-0.5 text-[10px] font-medium bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 rounded">
                                   Extra Family
                                 </span>
                               )
@@ -2050,25 +2050,25 @@ export function ArticlesView({
 
                           <div className="p-3.5 space-y-2">
                             <div>
-                              <h3 className="text-sm font-bold text-slate-100 leading-snug">
+                              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 leading-snug">
                                 {item.name}
                               </h3>
-                              <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-sky-300 mt-0.5">
+                              <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-sky-700 dark:text-sky-300 mt-0.5">
                                 <span>Mod. {item.model}</span>
                                 {item.pnc && (
-                                  <span className="text-amber-300">PNC {item.pnc}</span>
+                                  <span className="text-indigo-700 dark:text-indigo-300">PNC {item.pnc}</span>
                                 )}
                               </div>
                             </div>
 
                             {item.description && (
-                              <p className="text-[11px] text-slate-400 leading-relaxed line-clamp-2">
+                              <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed line-clamp-2">
                                 {item.description}
                               </p>
                             )}
 
                             {specBullets.length > 0 && (
-                              <ul className="space-y-0.5 text-[11px] text-slate-300 list-disc pl-4">
+                              <ul className="space-y-0.5 text-[11px] text-slate-700 dark:text-slate-300 list-disc pl-4">
                                 {specBullets.map((sp, i) => (
                                   <li key={i}>{sp}</li>
                                 ))}
@@ -2077,7 +2077,7 @@ export function ArticlesView({
                           </div>
                         </div>
 
-                        <div className="p-3.5 pt-2 border-t border-slate-800/80 space-y-2">
+                        <div className="p-3.5 pt-2 border-t border-slate-200 dark:border-slate-800/80 space-y-2">
                           {!readOnly ? (
                             <div className="flex flex-wrap items-center gap-1.5">
                               <button
@@ -2091,7 +2091,7 @@ export function ArticlesView({
                                     catalogTargetRoom
                                   )
                                 }
-                                className="flex-1 inline-flex items-center justify-center gap-1 rounded-lg bg-sky-400 hover:bg-sky-300 px-2.5 py-1.5 text-xs font-semibold text-slate-950 disabled:opacity-60"
+                                className="flex-1 inline-flex items-center justify-center gap-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-500 dark:hover:bg-sky-400 dark:text-slate-950 px-2.5 py-1.5 text-xs font-semibold disabled:opacity-60"
                               >
                                 <Plus className="h-3.5 w-3.5" />
                                 {quickAddingId === item.id
@@ -2103,16 +2103,16 @@ export function ArticlesView({
                               <button
                                 type="button"
                                 onClick={() => openSearchResultForCustomization(item)}
-                                className="inline-flex items-center gap-1 rounded-lg bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 text-xs font-medium text-slate-200"
+                                className="inline-flex items-center gap-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs font-medium"
                                 title="Personalizza stanza, data acquisto e allega documenti"
                               >
-                                <Paperclip className="h-3 w-3 text-sky-400" />
+                                <Paperclip className="h-3 w-3 text-sky-600 dark:text-sky-400" />
                                 + Doc
                               </button>
                             </div>
                           ) : (
                             <div className="text-[11px] text-slate-500">
-                              Stanza suggerita: <strong className="text-slate-300">{item.suggestedRoom}</strong>
+                              Stanza suggerita: <strong className="text-slate-700 dark:text-slate-300">{item.suggestedRoom}</strong>
                             </div>
                           )}
 
@@ -2121,7 +2121,7 @@ export function ArticlesView({
                               href={item.manualUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-sky-300"
+                              className="inline-flex items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-300"
                             >
                               <ExternalLink className="w-3 h-3" />
                               Manuale / Supporto ufficiale {item.brand}
@@ -2142,10 +2142,10 @@ export function ArticlesView({
       {viewTab === 'casa' && (
         <>
           {/* Barra Stanze */}
-          <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3 space-y-2.5">
+          <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-2.5 shadow-xs dark:shadow-none">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
-                <Home className="w-4 h-4 text-sky-400" />
+              <div className="flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-slate-200">
+                <Home className="w-4 h-4 text-sky-600 dark:text-sky-400" />
                 Stanze di Casa
               </div>
 
@@ -2153,7 +2153,7 @@ export function ArticlesView({
                 <div
                   role="group"
                   aria-label="Formato elenco o griglia"
-                  className="inline-flex items-center p-0.5 bg-slate-950 border border-slate-800 rounded-md"
+                  className="inline-flex items-center p-0.5 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md"
                 >
                   <button
                     type="button"
@@ -2161,8 +2161,8 @@ export function ArticlesView({
                     aria-pressed={layoutMode === 'grid'}
                     className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded transition-colors ${
                       layoutMode === 'grid'
-                        ? 'bg-sky-500 text-slate-950 font-semibold'
-                        : 'text-slate-400 hover:text-slate-100'
+                        ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950 font-semibold'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                     }`}
                   >
                     <LayoutGrid className="w-3 h-3" />
@@ -2174,8 +2174,8 @@ export function ArticlesView({
                     aria-pressed={layoutMode === 'list'}
                     className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded transition-colors ${
                       layoutMode === 'list'
-                        ? 'bg-sky-500 text-slate-950 font-semibold'
-                        : 'text-slate-400 hover:text-slate-100'
+                        ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950 font-semibold'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                     }`}
                   >
                     <List className="w-3 h-3" />
@@ -2188,8 +2188,8 @@ export function ArticlesView({
                   onClick={() => setGroupByRoom((v) => !v)}
                   className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors ${
                     groupByRoom
-                      ? 'bg-sky-500/15 text-sky-300 border-sky-500/35'
-                      : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200'
+                      ? 'bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/35'
+                      : 'bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
                   <LayoutGrid className="w-3.5 h-3.5" />
@@ -2204,8 +2204,8 @@ export function ArticlesView({
                 onClick={() => setSelectedRoom('all')}
                 className={`px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
                   selectedRoom === 'all'
-                    ? 'bg-sky-500 text-slate-950 border-sky-400 font-semibold'
-                    : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                    ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-500 dark:text-slate-950 dark:border-sky-400 font-semibold'
+                    : 'bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
                 }`}
               >
                 Tutte le stanze ({articles.length})
@@ -2217,10 +2217,10 @@ export function ArticlesView({
                   onClick={() => setSelectedRoom(roomName)}
                   className={`px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
                     selectedRoom.toLowerCase() === roomName.toLowerCase()
-                      ? 'bg-sky-500 text-slate-950 border-sky-400 font-semibold'
+                      ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-500 dark:text-slate-950 dark:border-sky-400 font-semibold'
                       : count === 0
-                        ? 'bg-slate-950/60 text-slate-500 border-slate-800/80 hover:text-slate-300'
-                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                        ? 'bg-slate-50/70 dark:bg-slate-950/60 text-slate-400 dark:text-slate-500 border-slate-200/80 dark:border-slate-800/80 hover:text-slate-700 dark:hover:text-slate-300'
+                        : 'bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
                   }`}
                 >
                   {roomName} ({count})
@@ -2231,14 +2231,14 @@ export function ArticlesView({
 
           {/* Filtri Categoria, Marca, Ordinamento e Ricerca */}
           <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-900 border border-slate-800 rounded-lg">
+            <div className="flex flex-wrap items-center gap-1 p-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-xs dark:shadow-none">
               <button
                 type="button"
                 onClick={() => setSelectedCategory('all')}
                 className={`px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
                   selectedCategory === 'all'
-                    ? 'bg-sky-500 text-slate-950'
-                    : 'text-slate-400 hover:text-slate-100'
+                    ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
                 Tutte le categorie
@@ -2253,8 +2253,8 @@ export function ArticlesView({
                     onClick={() => setSelectedCategory(cat)}
                     className={`px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
                       selectedCategory === cat
-                        ? 'bg-sky-500 text-slate-950'
-                        : 'text-slate-400 hover:text-slate-100'
+                        ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                     }`}
                   >
                     {CATEGORY_META[cat].label} ({count})
@@ -2265,13 +2265,13 @@ export function ArticlesView({
 
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative flex-1 min-w-[200px]">
-                <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Search className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Cerca nei miei articoli (nome, marca, modello, PNC, stanza...)"
-                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
                 />
               </div>
 
@@ -2279,7 +2279,7 @@ export function ArticlesView({
                 value={selectedBrand}
                 onChange={(e) => setSelectedBrand(e.target.value)}
                 aria-label="Filtra articoli per marca"
-                className="px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-slate-200 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                className="px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-800 dark:text-slate-200 [color-scheme:light] dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
               >
                 <option value="all">Tutte le marche</option>
                 {availableBrandsInHouse.map((br) => (
@@ -2296,7 +2296,7 @@ export function ArticlesView({
                     setSortField(e.target.value as 'name' | 'brand' | 'room' | 'warranty')
                   }
                   aria-label="Ordina articoli di casa per"
-                  className="px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-slate-200 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                  className="px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-800 dark:text-slate-200 [color-scheme:light] dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                 >
                   <option value="name">Ordina: Nome</option>
                   <option value="brand">Ordina: Marca</option>
@@ -2314,16 +2314,16 @@ export function ArticlesView({
                       : 'Ordine decrescente — clicca per invertire in crescente'
                   }
                   aria-label="Inverti ordine articoli"
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-200 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-lg transition-colors whitespace-nowrap"
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 rounded-lg transition-colors whitespace-nowrap"
                 >
                   {sortDirection === 'asc' ? (
                     <>
-                      <ArrowUpNarrowWide className="w-3.5 h-3.5 text-sky-400" />
+                      <ArrowUpNarrowWide className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                       <span>Crescente</span>
                     </>
                   ) : (
                     <>
-                      <ArrowDownWideNarrow className="w-3.5 h-3.5 text-sky-400" />
+                      <ArrowDownWideNarrow className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                       <span>Decrescente</span>
                     </>
                   )}
@@ -2334,7 +2334,7 @@ export function ArticlesView({
 
           {/* Lista Articoli */}
           {filteredArticles.length === 0 ? (
-            <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-8 text-center text-xs text-slate-400 space-y-3">
+            <div className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-8 text-center text-xs text-slate-600 dark:text-slate-400 space-y-3 shadow-xs dark:shadow-none">
               <p>
                 {selectedRoom !== 'all'
                   ? `Nessun articolo ancora assegnato alla stanza "${selectedRoom}".`
@@ -2344,7 +2344,7 @@ export function ArticlesView({
                 <button
                   type="button"
                   onClick={() => setViewTab('catalogo')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-violet-400 hover:bg-violet-300 rounded-lg"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-400 rounded-lg"
                 >
                   <ShoppingBag className="w-3.5 h-3.5" />
                   Sfoglia Catalogo Prodotti
@@ -2355,7 +2355,7 @@ export function ArticlesView({
                     onClick={() =>
                       openNewForm(selectedRoom !== 'all' ? selectedRoom : 'Cucina')
                     }
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 rounded-lg"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     Crea articolo personalizzato
@@ -2367,11 +2367,11 @@ export function ArticlesView({
             <div className="space-y-6">
               {groupedByRoom.map(([roomName, list]) => (
                 <section key={roomName} className="space-y-3">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
                     <div className="flex items-center gap-2">
-                      <Home className="w-4 h-4 text-sky-400" />
-                      <h2 className="text-sm font-bold text-slate-100">{roomName}</h2>
-                      <span className="px-2 py-0.5 text-[10px] font-mono bg-slate-800 text-slate-300 rounded-md">
+                      <Home className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+                      <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">{roomName}</h2>
+                      <span className="px-2 py-0.5 text-[10px] font-mono bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-md">
                         {list.length} {list.length === 1 ? 'articolo' : 'articoli'}
                       </span>
                     </div>
@@ -2380,7 +2380,7 @@ export function ArticlesView({
                       <button
                         type="button"
                         onClick={() => openNewForm(roomName)}
-                        className="inline-flex items-center gap-1 text-[11px] font-medium text-sky-400 hover:text-sky-300"
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300"
                       >
                         <Plus className="w-3 h-3" />
                         Aggiungi in {roomName}
@@ -2416,27 +2416,27 @@ export function ArticlesView({
 
       {/* Modal Scheda Tecnica, Manuale & Documenti Associati */}
       {activeSheetArticle && activeGuide && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-3 sm:p-4">
-          <div className="w-full max-w-3xl max-h-[90vh] flex flex-col bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-slate-800 flex items-start justify-between gap-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/75 backdrop-blur-sm p-3 sm:p-4">
+          <div className="w-full max-w-3xl max-h-[90vh] flex flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-3">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-sky-500/15 text-sky-300 border border-sky-500/30 rounded">
+                  <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-500/30 rounded">
                     Scheda Articolo, Manuale &amp; Documenti
                   </span>
-                  <span className="px-2 py-0.5 text-[10px] font-medium bg-slate-800 text-slate-300 rounded">
+                  <span className="px-2 py-0.5 text-[10px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded">
                     {activeSheetArticle.room}
                   </span>
                   {activeSheetArticle.familyWarranty && (
-                    <span className="px-2 py-0.5 text-[10px] font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded">
+                    <span className="px-2 py-0.5 text-[10px] font-medium bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 rounded">
                       Assicurazione Extra Family
                     </span>
                   )}
                 </div>
-                <h2 className="text-base font-bold text-slate-100 mt-1.5">
+                <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 mt-1.5">
                   {activeSheetArticle.name}
                 </h2>
-                <div className="text-xs font-mono text-sky-300">
+                <div className="text-xs font-mono text-sky-700 dark:text-sky-300">
                   {activeSheetArticle.brand} · {activeSheetArticle.model}
                   {activeSheetArticle.serialNumber
                     ? ` · ${activeSheetArticle.serialNumber}`
@@ -2451,7 +2451,7 @@ export function ArticlesView({
                   setCopiedSheet(false);
                 }}
                 aria-label="Chiudi scheda manuale"
-                className="p-1.5 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-lg"
+                className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2459,14 +2459,14 @@ export function ArticlesView({
 
             <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
               {/* Documenti Associati (Multi-file Cloud Vault) */}
-              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-3">
+              <div className="bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="font-bold text-slate-100 flex items-center gap-2">
-                    <Paperclip className="w-4 h-4 text-sky-400" />
+                  <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                    <Paperclip className="w-4 h-4 text-sky-600 dark:text-sky-400" />
                     Documenti Associati ({activeSheetDocs.length + (activeSheetArticle.manualFileKey ? 1 : 0)})
                   </div>
                   {!readOnly && (
-                    <span className="text-[11px] text-slate-400">
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
                       Sincronizzati nel Vault Firebase e nella pagina Documenti
                     </span>
                   )}
@@ -2474,11 +2474,11 @@ export function ArticlesView({
 
                 {/* Uploader rapido direttamente dalla scheda */}
                 {!readOnly && (
-                  <div className="flex flex-wrap items-center gap-2 bg-slate-900/90 border border-slate-800 rounded-lg p-2.5">
+                  <div className="flex flex-wrap items-center gap-2 bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5">
                     <select
                       value={modalDocType}
                       onChange={(e) => setModalDocType(e.target.value as ArticleAttachmentType)}
-                      className="px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-100 [color-scheme:dark]"
+                      className="px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark]"
                     >
                       {Object.entries(ATTACHMENT_TYPE_META).map(([k, m]) => (
                         <option key={k} value={k}>
@@ -2492,13 +2492,13 @@ export function ArticlesView({
                       value={modalDocTitle}
                       onChange={(e) => setModalDocTitle(e.target.value)}
                       placeholder="Etichetta opz. (es. Fattura Unieuro)"
-                      className="flex-1 min-w-[160px] px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-100"
+                      className="flex-1 min-w-[160px] px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
                     />
                     <button
                       type="button"
                       disabled={uploadingModalDoc}
                       onClick={() => modalDocInputRef.current?.click()}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-400 hover:bg-emerald-300 text-slate-950 rounded-lg disabled:opacity-60"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-500 dark:hover:bg-sky-400 dark:text-slate-950 rounded-lg disabled:opacity-60"
                     >
                       <Upload className="w-3.5 h-3.5" />
                       {uploadingModalDoc ? 'Caricamento...' : 'Allega PDF / Foto'}
@@ -2508,13 +2508,13 @@ export function ArticlesView({
 
                 <div className="space-y-2">
                   {activeSheetArticle.manualFileKey && (
-                    <div className="flex items-center justify-between gap-2 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2">
+                    <div className="flex items-center justify-between gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="px-1.5 py-0.5 text-[10px] rounded border bg-sky-500/15 text-sky-300 border-sky-500/30">
+                          <span className="px-1.5 py-0.5 text-[10px] rounded border bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/30">
                             Manuale PDF
                           </span>
-                          <span className="font-medium text-slate-200 truncate">
+                          <span className="font-medium text-slate-800 dark:text-slate-200 truncate">
                             {activeSheetArticle.manualFileName || 'manuale.pdf'}
                           </span>
                         </div>
@@ -2523,7 +2523,7 @@ export function ArticlesView({
                         type="button"
                         disabled={downloadingManualId === activeSheetArticle.id}
                         onClick={() => void handleDownloadManual(activeSheetArticle)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-300 hover:bg-slate-800 rounded"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
                       >
                         <Download className="w-3.5 h-3.5" />
                         Scarica
@@ -2539,7 +2539,7 @@ export function ArticlesView({
                     return (
                       <div
                         key={docItem.id}
-                        className="flex flex-wrap items-center justify-between gap-2 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2"
+                        className="flex flex-wrap items-center justify-between gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2"
                       >
                         <div className="min-w-0 space-y-0.5">
                           <div className="flex flex-wrap items-center gap-2">
@@ -2556,10 +2556,10 @@ export function ArticlesView({
                                     e.target.value as ArticleAttachmentType
                                   )
                                 }
-                                className={`px-1.5 py-0.5 text-[10px] rounded border cursor-pointer focus:outline-none focus:ring-1 focus:ring-sky-500/60 disabled:opacity-50 [color-scheme:dark] ${typeMeta.badgeClass}`}
+                                className={`px-1.5 py-0.5 text-[10px] rounded border cursor-pointer focus:outline-none focus:ring-1 focus:ring-sky-500/60 disabled:opacity-50 [color-scheme:light] dark:[color-scheme:dark] ${typeMeta.badgeClass}`}
                               >
                                 {(Object.keys(ATTACHMENT_TYPE_META) as ArticleAttachmentType[]).map((key) => (
-                                  <option key={key} value={key} className="bg-slate-900 text-slate-100">
+                                  <option key={key} value={key} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
                                     {ATTACHMENT_TYPE_META[key].label}
                                   </option>
                                 ))}
@@ -2571,11 +2571,11 @@ export function ArticlesView({
                                 {typeMeta.label}
                               </span>
                             )}
-                            <span className="font-semibold text-slate-100 truncate">
+                            <span className="font-semibold text-slate-900 dark:text-slate-100 truncate">
                               {docItem.title}
                             </span>
                           </div>
-                          <div className="text-[11px] text-slate-400 truncate">
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
                             {docItem.fileName}{' '}
                             {docItem.fileSize ? `(${formatFileSize(docItem.fileSize)})` : ''} ·{' '}
                             {docItem.issueDate || ''}
@@ -2587,15 +2587,15 @@ export function ArticlesView({
                             type="button"
                             disabled={downloadingDocId === docItem.id}
                             onClick={() => void handleDownloadArticleDoc(docItem)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg transition-colors"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors"
                           >
-                            <Download className="w-3.5 h-3.5 text-sky-400" />
+                            <Download className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                             Scarica
                           </button>
                           <button
                             type="button"
                             onClick={() => setShareItem(buildDocumentSharePayload(docItem))}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 rounded-lg transition-colors"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-50 dark:bg-sky-500/15 hover:bg-sky-100 dark:hover:bg-sky-500/25 border border-sky-200 dark:border-sky-500/35 text-sky-700 dark:text-sky-300 rounded-lg transition-colors"
                             aria-label="Condividi documento"
                           >
                             <Share2 className="w-3.5 h-3.5" />
@@ -2606,7 +2606,7 @@ export function ArticlesView({
                               type="button"
                               disabled={deletingDocId === docItem.id}
                               onClick={() => void handleDeleteArticleDoc(docItem)}
-                              className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg"
+                              className="p-1.5 text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
                               aria-label="Elimina allegato"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -2626,14 +2626,14 @@ export function ArticlesView({
               </div>
 
               {/* Summary & Links */}
-              <div className="bg-slate-950/75 border border-slate-800 rounded-xl p-4 space-y-3">
-                <p className="text-slate-200 leading-relaxed">{activeGuide.summary}</p>
+              <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
+                <p className="text-slate-700 dark:text-slate-200 leading-relaxed">{activeGuide.summary}</p>
                 <div className="flex flex-wrap items-center gap-2">
                   <a
                     href={activeGuide.manualUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 rounded-lg"
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
                     Apri Manuale Ufficiale / PDF
@@ -2642,7 +2642,7 @@ export function ArticlesView({
                     href={activeGuide.supportSearchUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-lg"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-lg"
                   >
                     <Search className="w-3.5 h-3.5" />
                     Cerca manuale produttore
@@ -2651,7 +2651,7 @@ export function ArticlesView({
                     type="button"
                     disabled={fetchingManualOnline}
                     onClick={() => void handleFetchOnlineManualForActive()}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-violet-300 bg-violet-500/15 hover:bg-violet-500/25 border border-violet-500/30 rounded-lg disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-500/15 hover:bg-indigo-100 dark:hover:bg-indigo-500/25 border border-indigo-200 dark:border-indigo-500/30 rounded-lg disabled:opacity-50"
                   >
                     <Globe className="w-3.5 h-3.5" />
                     {fetchingManualOnline ? 'Ricerca guida...' : 'Aggiorna scheda online'}
@@ -2660,11 +2660,11 @@ export function ArticlesView({
               </div>
 
               {stripOnlineGuideMarker(activeSheetArticle.manualExtractText) && (
-                <details className="bg-slate-950/60 border border-slate-800 rounded-xl p-4">
-                  <summary className="cursor-pointer font-semibold text-slate-200">
+                <details className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+                  <summary className="cursor-pointer font-semibold text-slate-800 dark:text-slate-200">
                     Testo estratto dal manuale caricato
                   </summary>
-                  <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-slate-400">
+                  <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-slate-600 dark:text-slate-400">
                     {stripOnlineGuideMarker(activeSheetArticle.manualExtractText)}
                   </pre>
                 </details>
@@ -2672,9 +2672,9 @@ export function ArticlesView({
 
               {/* Technical Specs & Warranty */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3.5 space-y-2">
-                  <div className="font-semibold text-sky-300">Specifiche &amp; Dati Casa</div>
-                  <ul className="space-y-1 text-slate-300 list-disc pl-4">
+                <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-2">
+                  <div className="font-semibold text-sky-700 dark:text-sky-300">Specifiche &amp; Dati Casa</div>
+                  <ul className="space-y-1 text-slate-700 dark:text-slate-300 list-disc pl-4">
                     {activeGuide.keySpecs.map((spec, i) => (
                       <li key={i}>{spec}</li>
                     ))}
@@ -2682,12 +2682,12 @@ export function ArticlesView({
                   {(activeSheetArticle.purchaseDate ||
                     typeof activeSheetArticle.purchasePriceEur === 'number' ||
                     activeSheetArticle.warrantyEnd) && (
-                    <div className="pt-2 border-t border-slate-800/80 text-[11px] text-slate-400 font-mono flex flex-wrap gap-x-3 gap-y-1">
+                    <div className="pt-2 border-t border-slate-200 dark:border-slate-800/80 text-[11px] text-slate-600 dark:text-slate-400 font-mono flex flex-wrap gap-x-3 gap-y-1">
                       {activeSheetArticle.purchaseDate && (
                         <span>Acquisto: {activeSheetArticle.purchaseDate}</span>
                       )}
                       {typeof activeSheetArticle.purchasePriceEur === 'number' && (
-                        <span className="text-emerald-300">
+                        <span className="text-emerald-700 dark:text-emerald-300">
                           Pagato: € {activeSheetArticle.purchasePriceEur.toFixed(2)}
                         </span>
                       )}
@@ -2698,27 +2698,27 @@ export function ArticlesView({
                   )}
                 </div>
 
-                <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3.5 space-y-2">
-                  <div className="font-semibold text-emerald-300">Utilizzo Rapido</div>
-                  <ul className="space-y-1 text-slate-300 list-disc pl-4">
+                <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-2">
+                  <div className="font-semibold text-emerald-700 dark:text-emerald-300">Utilizzo Rapido</div>
+                  <ul className="space-y-1 text-slate-700 dark:text-slate-300 list-disc pl-4">
                     {activeGuide.quickUsage.map((u, i) => (
                       <li key={i}>{u}</li>
                     ))}
                   </ul>
                 </div>
 
-                <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3.5 space-y-2">
-                  <div className="font-semibold text-amber-300">Manutenzione Periodica</div>
-                  <ul className="space-y-1 text-slate-300 list-disc pl-4">
+                <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-2">
+                  <div className="font-semibold text-amber-700 dark:text-amber-300">Manutenzione Periodica</div>
+                  <ul className="space-y-1 text-slate-700 dark:text-slate-300 list-disc pl-4">
                     {activeGuide.maintenance.map((m, i) => (
                       <li key={i}>{m}</li>
                     ))}
                   </ul>
                 </div>
 
-                <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3.5 space-y-2">
-                  <div className="font-semibold text-violet-300">Sicurezza &amp; Risparmio Energia</div>
-                  <ul className="space-y-1 text-slate-300 list-disc pl-4">
+                <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-2">
+                  <div className="font-semibold text-indigo-700 dark:text-indigo-300">Sicurezza &amp; Risparmio Energia</div>
+                  <ul className="space-y-1 text-slate-700 dark:text-slate-300 list-disc pl-4">
                     {activeGuide.safetyAndEnergy.map((s, i) => (
                       <li key={i}>{s}</li>
                     ))}
@@ -2727,7 +2727,7 @@ export function ArticlesView({
               </div>
             </div>
 
-            <div className="px-5 py-3.5 border-t border-slate-800 bg-slate-950/60 flex flex-wrap items-center justify-between gap-2">
+            <div className="px-5 py-3.5 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
@@ -2741,9 +2741,9 @@ export function ArticlesView({
                       'text/markdown;charset=utf-8'
                     );
                   }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-lg"
                 >
-                  <Download className="w-3.5 h-3.5 text-emerald-400" />
+                  <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                   Esporta Scheda (.md)
                 </button>
                 <button
@@ -2761,9 +2761,9 @@ export function ArticlesView({
                       'text/html;charset=utf-8'
                     );
                   }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-lg"
                 >
-                  <FileText className="w-3.5 h-3.5 text-sky-400" />
+                  <FileText className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                   Stampabile (.html)
                 </button>
                 <button
@@ -2778,11 +2778,11 @@ export function ArticlesView({
                       // ignore clipboard restrictions
                     }
                   }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-900 border border-slate-700 hover:text-slate-100 rounded-lg"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:text-slate-900 dark:hover:text-slate-100 rounded-lg"
                 >
                   {copiedSheet ? (
                     <>
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                       Copiata!
                     </>
                   ) : (
@@ -2800,7 +2800,7 @@ export function ArticlesView({
                   setActiveSheetArticle(null);
                   setCopiedSheet(false);
                 }}
-                className="px-3.5 py-1.5 text-xs font-medium text-slate-300 hover:text-slate-100 bg-slate-800 rounded-lg"
+                className="px-3.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg"
               >
                 Chiudi
               </button>
@@ -2818,33 +2818,33 @@ export function ArticlesView({
       )}
 
       {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/75 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-rose-500/15 text-rose-400 shrink-0">
+              <div className="p-2 rounded-lg bg-rose-50 dark:bg-rose-500/15 text-rose-600 dark:text-rose-400 shrink-0">
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-sm font-semibold text-slate-100">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   Eliminare {pendingDelete.name}?
                 </h3>
-                <p className="text-xs text-slate-300 leading-relaxed">
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
                   Verrà rimosso dall&apos;inventario su Firebase ({pendingDelete.brand}{' '}
                   {pendingDelete.model}) insieme ai documenti associati.
                 </p>
               </div>
             </div>
             {actionError && (
-              <p role="alert" className="text-xs text-rose-300">
+              <p role="alert" className="text-xs text-rose-600 dark:text-rose-300">
                 {actionError}
               </p>
             )}
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 disabled={deleting}
                 onClick={() => setPendingDelete(null)}
-                className="px-3.5 py-2 text-xs font-medium text-slate-300 hover:text-slate-100 bg-slate-800 rounded-lg"
+                className="px-3.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg"
               >
                 Annulla
               </button>

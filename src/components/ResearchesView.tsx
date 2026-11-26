@@ -129,27 +129,27 @@ const ATTACHMENT_TYPE_OPTIONS: {
   {
     value: 'scontrino_fattura',
     label: 'Scontrino / Fattura',
-    badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+    badgeClass: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/15 dark:text-sky-300 dark:border-sky-500/30',
   },
   {
     value: 'manuale',
     label: "Manuale / Scheda PDF",
-    badgeClass: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+    badgeClass: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-500/15 dark:text-cyan-300 dark:border-cyan-500/30',
   },
   {
     value: 'garanzia_extra_family',
     label: 'Garanzia / Extra Family',
-    badgeClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+    badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30',
   },
   {
     value: 'targhetta_pnc',
     label: 'Foto / Etichetta',
-    badgeClass: 'bg-violet-500/15 text-violet-300 border-violet-500/30',
+    badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-500/15 dark:text-indigo-300 dark:border-indigo-500/30',
   },
   {
     value: 'altro',
     label: 'Altro allegato',
-    badgeClass: 'bg-slate-700/60 text-slate-300 border-slate-600/50',
+    badgeClass: 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-700/60 dark:text-slate-300 dark:border-slate-600/50',
   },
 ];
 
@@ -177,17 +177,17 @@ const STATUS_OPTIONS: {
   {
     value: 'da_valutare',
     label: 'Da valutare',
-    badgeClass: 'bg-slate-800 text-slate-200 border-slate-700',
+    badgeClass: 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700',
   },
   {
     value: 'da_acquistare',
     label: 'Da acquistare',
-    badgeClass: 'bg-sky-500/15 text-sky-200 border-sky-400/40',
+    badgeClass: 'bg-sky-50 text-sky-700 border-sky-300 dark:bg-sky-500/15 dark:text-sky-200 dark:border-sky-400/40',
   },
   {
     value: 'acquistato',
     label: 'Acquistato',
-    badgeClass: 'bg-emerald-500/15 text-emerald-200 border-emerald-400/40',
+    badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-200 dark:border-emerald-400/40',
   },
 ];
 
@@ -318,7 +318,7 @@ function ColorSwatchDot({
         cy="8"
         r="6.5"
         fill={hex}
-        stroke="rgba(255,255,255,0.4)"
+        stroke="rgba(148,163,184,0.55)"
         strokeWidth="1.2"
       />
     </svg>
@@ -364,7 +364,7 @@ function ColorFieldInput({
       <div className="flex items-center gap-1.5">
         <label
           title="Scegli un colore dalla tavolozza"
-          className="relative inline-flex items-center justify-center w-8 h-8 rounded-lg bg-slate-950 border border-slate-700 hover:border-sky-400 cursor-pointer shrink-0 overflow-hidden"
+          className="relative inline-flex items-center justify-center w-8 h-8 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 hover:border-sky-500 dark:hover:border-sky-400 cursor-pointer shrink-0 overflow-hidden"
         >
           <ColorSwatchDot color={value || pickerHex} size="md" />
           <input
@@ -399,15 +399,15 @@ function ColorFieldInput({
           }}
           placeholder="Es. Borgogna, Argento, Glacier, Nero..."
           className={`flex-1 min-w-0 px-2.5 ${
-            compact ? 'py-1.5 bg-slate-950' : 'py-2 bg-slate-900'
-          } border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500`}
+            compact ? 'py-1.5 bg-white dark:bg-slate-950' : 'py-2 bg-white dark:bg-slate-900'
+          } border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500`}
         />
         {value && (
           <button
             type="button"
             onClick={() => onChange('')}
             title="Rimuovi colore"
-            className="p-1.5 text-slate-500 hover:text-slate-200 rounded-lg hover:bg-slate-800 shrink-0"
+            className="p-1.5 text-slate-400 hover:text-slate-800 dark:text-slate-500 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -430,8 +430,8 @@ function ColorFieldInput({
                 title={opt}
                 className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] rounded-md border transition-colors ${
                   isSelected
-                    ? 'bg-sky-500/20 border-sky-400 text-slate-100 font-semibold'
-                    : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-600'
+                    ? 'bg-sky-50 border-sky-500 text-sky-900 dark:bg-sky-500/20 dark:border-sky-400 dark:text-slate-100 font-semibold'
+                    : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-300 dark:hover:border-slate-600'
                 }`}
               >
                 <ColorSwatchDot color={opt} size="sm" />
@@ -483,15 +483,15 @@ function SizeFieldInput({
           }}
           placeholder="Es. 256 GB, 512 GB, 1 TB, M, 42..."
           className={`flex-1 min-w-0 px-2.5 ${
-            compact ? 'py-1.5 bg-slate-950' : 'py-2 bg-slate-900'
-          } border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500`}
+            compact ? 'py-1.5 bg-white dark:bg-slate-950' : 'py-2 bg-white dark:bg-slate-900'
+          } border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500`}
         />
         {value && (
           <button
             type="button"
             onClick={() => onChange('')}
             title="Rimuovi taglia"
-            className="p-1.5 text-slate-500 hover:text-slate-200 rounded-lg hover:bg-slate-800 shrink-0"
+            className="p-1.5 text-slate-400 hover:text-slate-800 dark:text-slate-500 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -515,8 +515,8 @@ function SizeFieldInput({
                 }}
                 className={`px-2 py-0.5 text-[11px] font-mono rounded-md border transition-colors ${
                   isSelected
-                    ? 'bg-sky-500/20 border-sky-400 text-sky-200 font-semibold'
-                    : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-600'
+                    ? 'bg-sky-50 border-sky-500 text-sky-800 dark:bg-sky-500/20 dark:border-sky-400 dark:text-sky-200 font-semibold'
+                    : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-300 dark:hover:border-slate-600'
                 }`}
               >
                 {opt}
@@ -535,6 +535,124 @@ function getCategoryLabel(cat: ProductResearchCategory): string {
 
 function getStatusMeta(status: ProductResearchStatus) {
   return STATUS_OPTIONS.find((s) => s.value === status) || STATUS_OPTIONS[0];
+}
+
+const LOCAL_DRAFT_PREFIX = 'local_draft_';
+
+function isLocalDraftId(id: string): boolean {
+  return id.startsWith(LOCAL_DRAFT_PREFIX);
+}
+
+function canonicalUrlForCompare(raw?: string): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    const asinMatch = parsed.pathname.match(/\/(?:dp|gp\/product|gp\/aw\/d)\/([A-Z0-9]{10})(?:[/?]|$)/i);
+    if (host.includes('amazon.') && asinMatch?.[1]) {
+      const th = parsed.searchParams.get('th') || '';
+      const psc = parsed.searchParams.get('psc') || '';
+      return `${host}/dp/${asinMatch[1].toUpperCase()}${th ? `?th=${th}` : ''}${psc ? `&psc=${psc}` : ''}`;
+    }
+    const kept = new URLSearchParams();
+    for (const [k, v] of parsed.searchParams.entries()) {
+      const kl = k.toLowerCase();
+      if (
+        kl.startsWith('utm_') ||
+        kl.startsWith('pd_rd_') ||
+        kl.startsWith('pf_rd_') ||
+        [
+          'ref',
+          'ref_',
+          'crid',
+          'dib',
+          'dib_tag',
+          'qid',
+          'sprefix',
+          'sr',
+          'keywords',
+          'sbo',
+          'content-id',
+          'aref',
+          '_encoding',
+          'fbclid',
+          'gclid',
+        ].includes(kl)
+      ) {
+        continue;
+      }
+      kept.set(k, v);
+    }
+    const qs = kept.toString();
+    const cleanPath = parsed.pathname.replace(/\/+$/, '') || '/';
+    return `${host}${cleanPath}${qs ? `?${qs}` : ''}`.toLowerCase();
+  } catch {
+    return trimmed.toLowerCase().replace(/#.*$/, '').replace(/\/+$/, '');
+  }
+}
+
+function normalizeStrArrForCompare(arr?: string[]): string {
+  if (!Array.isArray(arr) || arr.length === 0) return '';
+  return Array.from(
+    new Set(arr.map((v) => String(v).trim()).filter(Boolean))
+  )
+    .slice(0, 24)
+    .join('\u0001');
+}
+
+function normalizeColorImagesForCompare(map?: Record<string, string>): string {
+  const clean = sanitizeColorImagesMap(map);
+  if (!clean) return '';
+  return JSON.stringify(
+    Object.keys(clean)
+      .sort()
+      .map((k) => [k, clean[k]])
+  );
+}
+
+function normalizeMoneyForCompare(val?: number): number | undefined {
+  if (typeof val !== 'number' || !Number.isFinite(val) || val < 0) return undefined;
+  return Math.min(1000000, Math.round(val * 100) / 100);
+}
+
+function hasResearchPayloadChanges(
+  existing: ProductResearchRecord,
+  next: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'>
+): boolean {
+  const normStatus = (s?: ProductResearchStatus) => s || 'da_valutare';
+  const nextStatus = normStatus(next.status);
+  const existingStatus = normStatus(existing.status);
+  const existingPaid =
+    existingStatus === 'acquistato' ? normalizeMoneyForCompare(existing.paidPriceEur) : undefined;
+  const nextPaid =
+    nextStatus === 'acquistato' ? normalizeMoneyForCompare(next.paidPriceEur) : undefined;
+
+  return !(
+    (normalizeUrlInput(existing.url) || existing.url.trim()) ===
+      (normalizeUrlInput(next.url) || next.url.trim()) &&
+    existing.title.trim().slice(0, 160) === next.title.trim().slice(0, 160) &&
+    existing.store.trim().slice(0, 60) === next.store.trim().slice(0, 60) &&
+    existing.category === next.category &&
+    existingStatus === nextStatus &&
+    (normalizeResearchRoom(existing.room) || '') === (normalizeResearchRoom(next.room) || '') &&
+    normalizeMoneyForCompare(existing.priceEur) === normalizeMoneyForCompare(next.priceEur) &&
+    existingPaid === nextPaid &&
+    (existing.imageUrl || '').trim().slice(0, 1000) === (next.imageUrl || '').trim().slice(0, 1000) &&
+    (existing.brand || '').trim().slice(0, 60) === (next.brand || '').trim().slice(0, 60) &&
+    (existing.color || '').trim().slice(0, 60) === (next.color || '').trim().slice(0, 60) &&
+    normalizeStrArrForCompare(existing.availableColors) ===
+      normalizeStrArrForCompare(next.availableColors) &&
+    normalizeColorImagesForCompare(existing.colorImages) ===
+      normalizeColorImagesForCompare(next.colorImages) &&
+    (existing.size || '').trim().slice(0, 60) === (next.size || '').trim().slice(0, 60) &&
+    normalizeStrArrForCompare(existing.availableSizes) ===
+      normalizeStrArrForCompare(next.availableSizes) &&
+    (existing.model || '').trim().slice(0, 80) === (next.model || '').trim().slice(0, 80) &&
+    (existing.specs || '').trim().slice(0, 2000) === (next.specs || '').trim().slice(0, 2000) &&
+    (existing.notes || '').trim().slice(0, 400) === (next.notes || '').trim().slice(0, 400)
+  );
 }
 
 function normalizeUrlInput(raw: string): string | null {
@@ -943,7 +1061,7 @@ function CollapsibleColorChips({
       </div>
 
       <div className="flex flex-wrap items-center gap-1 min-h-[24px]">
-        <span className="text-[10px] uppercase tracking-wide text-slate-500 mr-0.5 leading-none">
+        <span className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-500 mr-0.5 leading-none">
           Colori:
         </span>
         {shownColors.map((colOpt) => {
@@ -953,8 +1071,8 @@ function CollapsibleColorChips({
               key={colOpt}
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] leading-4 ${
                 isActive
-                  ? 'bg-sky-500/15 border-sky-400/70 text-slate-100 font-semibold'
-                  : 'bg-slate-950/70 border-slate-800 text-slate-400'
+                  ? 'bg-sky-50 border-sky-500/80 text-sky-900 dark:bg-sky-500/15 dark:border-sky-400/70 dark:text-slate-100 font-semibold'
+                  : 'bg-slate-50 border-slate-200 text-slate-600 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-400'
               }`}
             >
               <ColorSwatchDot color={colOpt} size="sm" />
@@ -968,8 +1086,8 @@ function CollapsibleColorChips({
               title={`Seleziona colore ${colOpt}`}
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] leading-4 transition-colors ${
                 isActive
-                  ? 'bg-sky-500/15 border-sky-400/70 text-slate-100 font-semibold'
-                  : 'bg-slate-950/70 border-slate-800 text-slate-300 hover:border-slate-600'
+                  ? 'bg-sky-50 border-sky-500/80 text-sky-900 dark:bg-sky-500/15 dark:border-sky-400/70 dark:text-slate-100 font-semibold'
+                  : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-300 dark:hover:border-slate-600'
               }`}
             >
               <ColorSwatchDot color={colOpt} size="sm" />
@@ -983,7 +1101,7 @@ function CollapsibleColorChips({
         <button
           type="button"
           onClick={onToggleExpand}
-          className="inline-flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300 font-medium"
+          className="inline-flex items-center gap-1 text-[11px] text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300 font-medium"
         >
           {expanded ? (
             <>
@@ -1022,6 +1140,15 @@ export function ResearchesView({
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkNotice, setLinkNotice] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [pendingDraftItems, setPendingDraftItems] = useState<ProductResearchRecord[]>([]);
+  const [pendingDraftFoundDocs, setPendingDraftFoundDocs] = useState<
+    Record<string, InspectedDocumentLink[]>
+  >({});
+
+  const allResearches = useMemo(
+    () => [...pendingDraftItems, ...researches],
+    [pendingDraftItems, researches]
+  );
 
   // Optional draft preview state (if user clicks "Anteprima / Modifica")
   const [draftOpen, setDraftOpen] = useState(false);
@@ -1165,6 +1292,7 @@ export function ResearchesView({
   const [pendingEditSave, setPendingEditSave] = useState<{
     item: ProductResearchRecord;
     payload: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'>;
+    isNewDraft?: boolean;
     skipProductUpdate?: boolean;
     docTypeChanges?: Array<{
       docId: string;
@@ -1281,7 +1409,8 @@ export function ResearchesView({
 
     async function hydrateAttachedThumbnails() {
       const next: Record<string, string> = {};
-      for (const item of researches) {
+      for (const item of allResearches) {
+        if (isLocalDraftId(item.id)) continue;
         const effectiveImg = pendingCardEdits[item.id]?.imageUrl ?? item.imageUrl;
         const hasWorkingExternalImg = Boolean(effectiveImg) && !brokenImages[item.id];
         if (hasWorkingExternalImg) continue;
@@ -1313,7 +1442,7 @@ export function ResearchesView({
       cancelled = true;
       createdUrls.forEach((u) => URL.revokeObjectURL(u));
     };
-  }, [researches, researchDocuments, brokenImages]);
+  }, [allResearches, researchDocuments, brokenImages]);
 
   async function inspectProductLink(
     validUrl: string,
@@ -1668,6 +1797,62 @@ export function ResearchesView({
     return { downloaded, linked };
   }
 
+  function hasNewInspectedDocuments(
+    researchId: string,
+    productTitle: string,
+    docs?: InspectedDocumentLink[]
+  ): boolean {
+    if (!researchId || !docs || docs.length === 0) return false;
+    const existingDocs = getDocumentsForResearch(researchDocuments, researchId);
+    const existingUrlSet = new Set(
+      existingDocs
+        .map((d) => (d.cloudUrl || '').split('#')[0].toLowerCase())
+        .filter(Boolean)
+    );
+    const existingFileNameSet = new Set(
+      existingDocs.map((d) => (d.fileName || '').trim().toLowerCase()).filter(Boolean)
+    );
+    const existingTitleList = existingDocs
+      .map((d) => d.title.trim().toLowerCase())
+      .filter(Boolean);
+    const cleanProd = productTitle.trim().slice(0, 28);
+
+    for (const docItem of docs.slice(0, 6)) {
+      const normUrl = docItem.url.split('#')[0].toLowerCase();
+      if (existingUrlSet.has(normUrl)) continue;
+      let urlFileName = '';
+      try {
+        const parsed = new URL(docItem.url);
+        if (!parsed.search || !/[?&](id|file|doc|document|attachment|key)=/i.test(parsed.search)) {
+          const seg = decodeURIComponent(parsed.pathname.split('/').pop() || '')
+            .trim()
+            .toLowerCase();
+          if (/\.(pdf|zip|dwg|obj|3ds|fbx|rfa|ifc|doc|docx)$/i.test(seg)) {
+            urlFileName = seg;
+          }
+        }
+      } catch {
+        // ignore URL parse error
+      }
+      if (urlFileName && existingFileNameSet.has(urlFileName)) continue;
+
+      const cleanDocTitle = docItem.title.trim().slice(0, 48);
+      const fullTitle = cleanProd
+        ? `${cleanDocTitle} · ${cleanProd}`.slice(0, 80)
+        : cleanDocTitle.slice(0, 80);
+      const cleanDocTitleLow = cleanDocTitle.toLowerCase();
+      const fullTitleLow = fullTitle.toLowerCase();
+      const alreadyHasSameTitle = existingTitleList.some(
+        (existingTitle) =>
+          existingTitle === fullTitleLow ||
+          existingTitle === cleanDocTitleLow ||
+          existingTitle.startsWith(`${cleanDocTitleLow} · `)
+      );
+      if (!alreadyHasSameTitle) return true;
+    }
+    return false;
+  }
+
   async function handleQuickAddSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (readOnly) return;
@@ -1686,7 +1871,6 @@ export function ResearchesView({
     setInspecting(true);
     try {
       const inspected = await inspectProductLink(validUrl);
-      setSavingNew(true);
       const resolvedBrand = inferProductBrand(inspected);
       const resolvedRoom =
         normalizeResearchRoom(inspected.room) ||
@@ -1696,7 +1880,7 @@ export function ResearchesView({
           specs: inspected.specs,
           category: inspected.category,
         });
-      const createdId = await onAddResearch({
+      const candidatePayload: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'> = {
         url: inspected.url,
         title: inspected.title,
         store: inspected.store,
@@ -1708,27 +1892,78 @@ export function ResearchesView({
         brand: resolvedBrand,
         color: inspected.color,
         availableColors: inspected.availableColors,
-        colorImages: inspected.colorImages,
+        colorImages: sanitizeColorImagesMap(inspected.colorImages),
         size: inspected.size,
         availableSizes: inspected.availableSizes,
+        sizePrices: inspected.sizePrices,
         model: inspected.model,
         specs: inspected.specs,
         notes: inspected.notes,
+      };
+
+      const candCanonUrl = canonicalUrlForCompare(candidatePayload.url);
+      const duplicateExisting = allResearches.find((existing) => {
+        const effectiveExisting = getEffectiveItem(existing);
+        const sameCanonUrl =
+          Boolean(candCanonUrl) &&
+          canonicalUrlForCompare(effectiveExisting.url) === candCanonUrl;
+        const comparableCandidate: Omit<
+          ProductResearchRecord,
+          'id' | 'ownerId' | 'createdAtMs'
+        > = {
+          ...candidatePayload,
+          url: effectiveExisting.url,
+          status: effectiveExisting.status,
+          room: effectiveExisting.room ?? candidatePayload.room,
+          paidPriceEur: effectiveExisting.paidPriceEur,
+          notes: effectiveExisting.notes || candidatePayload.notes,
+        };
+        if (sameCanonUrl && !hasResearchPayloadChanges(effectiveExisting, comparableCandidate)) {
+          return true;
+        }
+        return !hasResearchPayloadChanges(effectiveExisting, {
+          ...candidatePayload,
+          status: effectiveExisting.status,
+          room: effectiveExisting.room ?? candidatePayload.room,
+          paidPriceEur: effectiveExisting.paidPriceEur,
+        });
       });
 
-      let docStats = { downloaded: 0, linked: 0 };
-      if (typeof createdId === 'string' && createdId && inspected.documents?.length) {
-        docStats = await autoAttachInspectedDocuments(
-          createdId,
-          inspected.title,
-          resolvedBrand || inspected.store,
-          inspected.documents
+      if (duplicateExisting) {
+        setLinkInput('');
+        setDraftOpen(false);
+        setLinkNotice(
+          `Il prodotto "${inspected.title}" è già presente nella pagina con gli stessi dati: nessuna nuova bozza aggiunta.`
         );
+        return;
+      }
+
+      const draftId = `${LOCAL_DRAFT_PREFIX}${Date.now()}_${Math.random()
+        .toString(36)
+        .slice(2, 6)}`;
+      const draftRecord: ProductResearchRecord = {
+        id: draftId,
+        ownerId: 'local_draft',
+        createdAtMs: Date.now(),
+        ...candidatePayload,
+      };
+
+      setPendingDraftItems((prev) => [draftRecord, ...prev]);
+      if (inspected.documents?.length) {
+        setPendingDraftFoundDocs((prev) => ({
+          ...prev,
+          [draftId]: inspected.documents!,
+        }));
+      }
+      if (inspected.sizePrices) {
+        setLazySizePrices((prev) => ({ ...prev, [draftId]: inspected.sizePrices! }));
+      }
+      if (inspected.colorImages) {
+        setLazyColorImages((prev) => ({ ...prev, [draftId]: inspected.colorImages! }));
       }
 
       setLinkInput('');
       setDraftOpen(false);
-      const totalDocs = docStats.downloaded + docStats.linked;
       const foundBits = [
         typeof inspected.priceEur === 'number' ? `€ ${inspected.priceEur.toFixed(2)}` : '',
         resolvedRoom ? `stanza ${getResearchRoomLabel(resolvedRoom)}` : '',
@@ -1736,31 +1971,33 @@ export function ResearchesView({
         inspected.size ? `taglia ${inspected.size}` : '',
         inspected.imageUrl ? 'immagine' : '',
         inspected.specs ? 'dettagli tecnici' : '',
-        docStats.downloaded > 0
-          ? `${docStats.downloaded} ${docStats.downloaded === 1 ? 'documento scaricato' : 'documenti scaricati'}`
-          : '',
-        docStats.linked > 0
-          ? `${docStats.linked} link ${docStats.linked === 1 ? 'allegato' : 'allegati'}`
+        inspected.documents?.length
+          ? `${inspected.documents.length} ${inspected.documents.length === 1 ? 'documento' : 'documenti'}`
           : '',
       ].filter(Boolean);
-      if (inspected.blockedBySite && inspected.extractedFrom !== 'page-meta' && totalDocs === 0 && !inspected.specs) {
+
+      if (
+        inspected.blockedBySite &&
+        inspected.extractedFrom !== 'page-meta' &&
+        !inspected.documents?.length &&
+        !inspected.specs
+      ) {
         setLinkNotice(
-          `Scheda "${inspected.title}" salvata da ${inspected.store} (${getCategoryLabel(inspected.category)}). Il sito blocca la lettura automatica (protezione anti-bot): prezzo, foto e dettagli vanno inseriti manualmente o via allegato.`
+          `Bozza "${inspected.title}" inserita in pagina da ${inspected.store} (non ancora salvata su Firestore). Il sito blocca la lettura automatica: completa eventuali dettagli e clicca "Salva modifiche" sulla scheda.`
         );
       } else {
         setFeedback(
           foundBits.length > 0
-            ? `Aggiunto "${inspected.title}" da ${inspected.store} su Firestore (${foundBits.join(', ')}).`
-            : `Link di ${inspected.store} salvato su Firestore: puoi rifinire dettagli o allegare file direttamente nella scheda.`
+            ? `"${inspected.title}" inserito in pagina in bozza (${foundBits.join(', ')}). Nessuna scrittura su Firestore finché non clicchi "Salva modifiche".`
+            : `Link di ${inspected.store} inserito in pagina in bozza (nessuna scrittura su Firestore): clicca "Salva modifiche" sulla scheda per salvarlo.`
         );
       }
     } catch (err) {
       setLinkError(
-        err instanceof Error ? err.message : 'Errore durante il salvataggio del link prodotto.'
+        err instanceof Error ? err.message : 'Errore durante l’analisi del link prodotto.'
       );
     } finally {
       setInspecting(false);
-      setSavingNew(false);
     }
   }
 
@@ -1998,6 +2235,7 @@ export function ResearchesView({
     e.preventDefault();
     if (readOnly) return;
     setLinkError(null);
+    setLinkNotice(null);
     setFeedback(null);
     const validUrl = normalizeUrlInput(editUrl);
     if (!validUrl) {
@@ -2019,38 +2257,90 @@ export function ResearchesView({
         : undefined;
     const combinedSpecs = joinSpecsAndInfo(editTechSpecs, editInfoText);
 
+    const payload: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'> = {
+      url: validUrl,
+      title: cleanTitle.slice(0, 160),
+      store: cleanStore.slice(0, 60),
+      category: editCategory,
+      status: editStatus,
+      room: normalizeResearchRoom(editRoom),
+      priceEur: validPrice,
+      paidPriceEur: validPaidPrice,
+      imageUrl: validImg,
+      brand: editBrand.trim() ? editBrand.trim().slice(0, 60) : undefined,
+      color: editColor.trim() ? editColor.trim().slice(0, 60) : undefined,
+      availableColors: editAvailableColors.length > 0 ? editAvailableColors : undefined,
+      colorImages: sanitizeColorImagesMap(editColorImages),
+      size: editSize.trim() ? editSize.trim().slice(0, 60) : undefined,
+      availableSizes: editAvailableSizes.length > 0 ? editAvailableSizes : undefined,
+      model: editModel.trim() ? editModel.trim().slice(0, 80) : undefined,
+      specs: combinedSpecs || undefined,
+      notes: editNotes.trim() ? editNotes.trim().slice(0, 400) : undefined,
+    };
+
+    if (isLocalDraftId(item.id)) {
+      setPendingEditSave({
+        item,
+        isNewDraft: true,
+        payload,
+      });
+      return;
+    }
+
+    if (!hasResearchPayloadChanges(item, payload)) {
+      setEditingId((curr) => (curr === item.id ? null : curr));
+      setLinkNotice(
+        `Nessuna modifica rilevata per "${cleanTitle}": nessuna scrittura effettuata su Firestore.`
+      );
+      return;
+    }
+
     setPendingEditSave({
       item,
-      payload: {
-        url: validUrl,
-        title: cleanTitle.slice(0, 160),
-        store: cleanStore.slice(0, 60),
-        category: editCategory,
-        status: editStatus,
-        room: normalizeResearchRoom(editRoom),
-        priceEur: validPrice,
-        paidPriceEur: validPaidPrice,
-        imageUrl: validImg,
-        brand: editBrand.trim() ? editBrand.trim().slice(0, 60) : undefined,
-        color: editColor.trim() ? editColor.trim().slice(0, 60) : undefined,
-        availableColors: editAvailableColors.length > 0 ? editAvailableColors : undefined,
-        colorImages: sanitizeColorImagesMap(editColorImages),
-        size: editSize.trim() ? editSize.trim().slice(0, 60) : undefined,
-        availableSizes: editAvailableSizes.length > 0 ? editAvailableSizes : undefined,
-        model: editModel.trim() ? editModel.trim().slice(0, 80) : undefined,
-        specs: combinedSpecs || undefined,
-        notes: editNotes.trim() ? editNotes.trim().slice(0, 400) : undefined,
-      },
+      payload,
     });
   }
 
   async function confirmSaveEdit() {
     if (!pendingEditSave || readOnly) return;
-    const { item, payload, skipProductUpdate, docTypeChanges } = pendingEditSave;
+    const { item, payload, isNewDraft, skipProductUpdate, docTypeChanges } = pendingEditSave;
     setSavingEdit(true);
     setLinkError(null);
+    setLinkNotice(null);
     try {
-      if (!skipProductUpdate) {
+      if (isNewDraft || isLocalDraftId(item.id)) {
+        const createdId = await onAddResearch(payload);
+        let docStats = { downloaded: 0, linked: 0 };
+        const queuedFoundDocs = pendingDraftFoundDocs[item.id];
+        if (typeof createdId === 'string' && createdId && queuedFoundDocs?.length) {
+          docStats = await autoAttachInspectedDocuments(
+            createdId,
+            payload.title,
+            payload.brand || payload.store,
+            queuedFoundDocs
+          );
+        }
+        setPendingDraftItems((prev) => prev.filter((d) => d.id !== item.id));
+        setPendingDraftFoundDocs((prev) => {
+          if (!prev[item.id]) return prev;
+          const next = { ...prev };
+          delete next[item.id];
+          return next;
+        });
+        setPendingEditSave(null);
+        setEditingId((curr) => (curr === item.id ? null : curr));
+        handleDiscardPendingCardEdit(item.id);
+        const totalDocs = docStats.downloaded + docStats.linked;
+        setFeedback(
+          `Prodotto "${payload.title}" salvato su Firestore${
+            totalDocs > 0 ? ` con ${totalDocs} ${totalDocs === 1 ? 'allegato' : 'allegati'}` : ''
+          }.`
+        );
+        return;
+      }
+
+      const actuallyChanged = !skipProductUpdate && hasResearchPayloadChanges(item, payload);
+      if (actuallyChanged) {
         await onUpdateResearch(item.id, payload);
       }
       if (docTypeChanges && docTypeChanges.length > 0 && onUpdateResearchDocumentType) {
@@ -2067,11 +2357,17 @@ export function ResearchesView({
         delete next[item.id];
         return next;
       });
-      setFeedback(
-        skipProductUpdate && docTypeChanges && docTypeChanges.length > 0
-          ? `Tipologia degli allegati per "${payload.title}" salvata su Firestore.`
-          : `Prodotto "${payload.title}" aggiornato e salvato su Firestore.`
-      );
+      if (!actuallyChanged && (!docTypeChanges || docTypeChanges.length === 0)) {
+        setLinkNotice(
+          `Nessuna modifica rilevata per "${payload.title}": nessuna scrittura su Firestore.`
+        );
+      } else {
+        setFeedback(
+          !actuallyChanged && docTypeChanges && docTypeChanges.length > 0
+            ? `Tipologia degli allegati per "${payload.title}" salvata su Firestore.`
+            : `Prodotto "${payload.title}" aggiornato e salvato su Firestore.`
+        );
+      }
     } catch (err) {
       setLinkError(
         err instanceof Error
@@ -2098,46 +2394,268 @@ export function ResearchesView({
     setFeedback(null);
     try {
       const inspected = await inspectProductLink(item.url, true);
-      const nextTitle = inspected.title || item.title;
+      const nextAvailableColors =
+        inspected.availableColors && inspected.availableColors.length > 0
+          ? inspected.availableColors
+          : item.availableColors;
+      const nextAvailableSizes =
+        inspected.availableSizes && inspected.availableSizes.length > 0
+          ? inspected.availableSizes
+          : item.availableSizes;
+      const nextColorImages = sanitizeColorImagesMap(
+        inspected.colorImages ||
+          item.colorImages ||
+          lazyColorImages[item.id] ||
+          readCachedColorImages(item.url)
+      );
+      const mergedSizePrices = sanitizeSizePricesMap(
+        inspected.sizePrices ??
+          item.sizePrices ??
+          lazySizePrices[item.id] ??
+          readCachedSizePrices(item.url)
+      );
+
+      if (nextColorImages) {
+        setLazyColorImages((prev) => ({ ...prev, [item.id]: nextColorImages }));
+        writeCachedColorImages(item.url, nextColorImages);
+      }
+      if (inspected.sizePrices) {
+        setLazySizePrices((prev) => ({ ...prev, [item.id]: inspected.sizePrices! }));
+        writeCachedSizePrices(item.url, inspected.sizePrices);
+      }
+
+      const rawNextTitle = inspected.title || item.title;
       const nextStore = inspected.store || item.store;
       const nextSpecs = inspected.specs || item.specs;
-      const nextBrand = inferProductBrand({
-        title: nextTitle,
-        url: item.url,
-        store: nextStore,
-        brand: inspected.brand || item.brand,
-        specs: nextSpecs,
-      });
-      const nextColorImages = inspected.colorImages || item.colorImages;
-      await onUpdateResearch(item.id, {
-        url: item.url,
-        title: nextTitle,
-        store: nextStore,
-        category: inspected.category || item.category,
-        status: item.status,
-        room: normalizeResearchRoom(item.room) ?? normalizeResearchRoom(inspected.room),
-        priceEur: inspected.priceEur ?? item.priceEur,
-        paidPriceEur: item.status === 'acquistato' ? item.paidPriceEur : undefined,
-        imageUrl: inspected.imageUrl || item.imageUrl,
-        brand: nextBrand,
-        color: inspected.color || item.color,
-        availableColors:
-          inspected.availableColors && inspected.availableColors.length > 0
-            ? inspected.availableColors
-            : item.availableColors,
-        colorImages: sanitizeColorImagesMap(nextColorImages),
-        size: inspected.size || item.size,
-        availableSizes:
-          inspected.availableSizes && inspected.availableSizes.length > 0
-            ? inspected.availableSizes
-            : item.availableSizes,
-        model: inspected.model || item.model,
-        specs: nextSpecs,
-        notes: item.notes || inspected.notes,
-      });
+
+      const resolvePreservedFields = (
+        userBase: ProductResearchRecord
+      ): Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'> => {
+        const preservedColor = (userBase.color || '').trim() || undefined;
+        const preservedSize = (userBase.size || '').trim() || undefined;
+        const nextColor = preservedColor || inspected.color || undefined;
+        const nextSize = preservedSize || inspected.size || undefined;
+
+        let nextTitle = rawNextTitle;
+        if (preservedColor) {
+          nextTitle = replaceColorInTitle(
+            nextTitle,
+            preservedColor,
+            inspected.color || userBase.color,
+            nextAvailableColors
+          ).slice(0, 160);
+        }
+        if (preservedSize) {
+          nextTitle = replaceSizeInTitle(
+            nextTitle,
+            preservedSize,
+            inspected.size || userBase.size,
+            nextAvailableSizes
+          ).slice(0, 160);
+        }
+
+        const variantColorImg = nextColor
+          ? findColorImageUrl(nextColorImages, nextColor)
+          : undefined;
+        const inspectedMatchesPreservedColor =
+          Boolean(preservedColor) &&
+          Boolean(inspected.color) &&
+          preservedColor!.toLowerCase() === inspected.color!.trim().toLowerCase();
+
+        const nextImageUrl = preservedColor
+          ? variantColorImg ||
+            (inspectedMatchesPreservedColor
+              ? inspected.imageUrl || userBase.imageUrl
+              : userBase.imageUrl || inspected.imageUrl)
+          : variantColorImg || inspected.imageUrl || userBase.imageUrl;
+
+        const variantSizePrice = nextSize
+          ? findSizePrice(mergedSizePrices, nextSize)
+          : undefined;
+        const inspectedMatchesPreservedSize =
+          Boolean(preservedSize) &&
+          Boolean(inspected.size) &&
+          preservedSize!.toLowerCase().replace(/\s+/g, '') ===
+            inspected.size!.trim().toLowerCase().replace(/\s+/g, '');
+
+        const nextPriceEur = preservedSize
+          ? typeof variantSizePrice === 'number'
+            ? variantSizePrice
+            : inspectedMatchesPreservedSize || !inspected.size
+              ? inspected.priceEur ?? userBase.priceEur
+              : userBase.priceEur ?? inspected.priceEur
+          : typeof variantSizePrice === 'number'
+            ? variantSizePrice
+            : inspected.priceEur ?? userBase.priceEur;
+
+        const nextBrand =
+          normalizeBrandName(userBase.brand) ||
+          inferProductBrand({
+            title: nextTitle,
+            url: item.url,
+            store: nextStore,
+            brand: inspected.brand || userBase.brand,
+            specs: nextSpecs,
+          });
+
+        return {
+          url: item.url,
+          title: nextTitle,
+          store: nextStore,
+          category: userBase.category || inspected.category,
+          status: userBase.status,
+          room: normalizeResearchRoom(userBase.room),
+          priceEur: nextPriceEur,
+          paidPriceEur: userBase.status === 'acquistato' ? userBase.paidPriceEur : undefined,
+          imageUrl: nextImageUrl,
+          brand: nextBrand,
+          color: nextColor,
+          availableColors: nextAvailableColors,
+          colorImages: nextColorImages,
+          size: nextSize,
+          availableSizes: nextAvailableSizes,
+          model: inspected.model || userBase.model,
+          specs: nextSpecs,
+          notes: userBase.notes || inspected.notes,
+        };
+      };
+
+      if (isLocalDraftId(item.id)) {
+        const effectiveDraft = getEffectiveItem(item);
+        const proposedDraftPayload = resolvePreservedFields(effectiveDraft);
+        const draftChanged = hasResearchPayloadChanges(effectiveDraft, proposedDraftPayload);
+        if (draftChanged) {
+          setPendingDraftItems((prev) =>
+            prev.map((d) =>
+              d.id === item.id
+                ? {
+                    ...d,
+                    ...proposedDraftPayload,
+                    sizePrices: mergedSizePrices ?? d.sizePrices,
+                  }
+                : d
+            )
+          );
+          handleDiscardPendingCardEdit(item.id);
+          if (inspected.documents?.length) {
+            setPendingDraftFoundDocs((prev) => ({
+              ...prev,
+              [item.id]: inspected.documents!,
+            }));
+          }
+          setFeedback(
+            `Bozza "${proposedDraftPayload.title}" aggiornata dal sito (selezioni mantenute, ancora non salvata su Firestore).`
+          );
+        } else {
+          setLinkNotice(
+            `Nessuna modifica trovata online per la bozza "${effectiveDraft.title}".`
+          );
+        }
+        return;
+      }
+
+      const proposedPayload = resolvePreservedFields(item);
+      const nextTitle = proposedPayload.title;
+      const nextBrand = proposedPayload.brand;
+
+      const fieldsChanged = hasResearchPayloadChanges(item, proposedPayload);
+      const otherIdenticalItem = researches.find(
+        (other) => other.id !== item.id && !hasResearchPayloadChanges(other, proposedPayload)
+      );
+      const willUpdateBase = fieldsChanged && !otherIdenticalItem;
+      const hasNewDocs = hasNewInspectedDocuments(
+        item.id,
+        nextTitle,
+        inspected.documents
+      );
+
+      const baseAfterRefresh: ProductResearchRecord = willUpdateBase
+        ? { ...item, ...proposedPayload }
+        : item;
+
+      const preservePendingSelectionsAfterRefresh = () => {
+        setPendingCardEdits((prev) => {
+          const existingPending = prev[item.id];
+          if (!existingPending) return prev;
+          const nextEntry = { ...existingPending };
+          if (nextEntry.color !== undefined) {
+            const stagedColor = nextEntry.color.trim();
+            if (stagedColor) {
+              const stagedImg = findColorImageUrl(nextColorImages, stagedColor);
+              if (stagedImg) {
+                nextEntry.imageUrl = stagedImg;
+              }
+            }
+          }
+          if (nextEntry.size !== undefined) {
+            const stagedSize = nextEntry.size.trim();
+            if (stagedSize) {
+              const stagedPrice = findSizePrice(mergedSizePrices, stagedSize);
+              if (typeof stagedPrice === 'number') {
+                nextEntry.priceEur = stagedPrice;
+              }
+            }
+          }
+          if (nextEntry.color !== undefined || nextEntry.size !== undefined) {
+            let stagedTitle = baseAfterRefresh.title;
+            const targetColor =
+              nextEntry.color !== undefined ? nextEntry.color : baseAfterRefresh.color;
+            const targetSize =
+              nextEntry.size !== undefined ? nextEntry.size : baseAfterRefresh.size;
+            if (targetColor) {
+              stagedTitle = replaceColorInTitle(
+                stagedTitle,
+                targetColor,
+                baseAfterRefresh.color,
+                nextAvailableColors
+              ).slice(0, 160);
+            }
+            if (targetSize) {
+              stagedTitle = replaceSizeInTitle(
+                stagedTitle,
+                targetSize,
+                baseAfterRefresh.size,
+                nextAvailableSizes
+              ).slice(0, 160);
+            }
+            nextEntry.title = stagedTitle;
+          }
+          const stillHasFields = hasPendingFieldDiff(baseAfterRefresh, nextEntry);
+          const stillHasDocs = Boolean(
+            nextEntry.docTypes && Object.keys(nextEntry.docTypes).length > 0
+          );
+          if (!stillHasFields && !stillHasDocs) {
+            const copy = { ...prev };
+            delete copy[item.id];
+            return copy;
+          }
+          return { ...prev, [item.id]: nextEntry };
+        });
+      };
+
+      if ((!fieldsChanged || Boolean(otherIdenticalItem)) && !hasNewDocs) {
+        preservePendingSelectionsAfterRefresh();
+        setBrokenImages((prev) => {
+          if (!prev[item.id]) return prev;
+          const next = { ...prev };
+          delete next[item.id];
+          return next;
+        });
+        setLinkNotice(
+          otherIdenticalItem
+            ? `Nessuna riscrittura effettuata: i dati trovati online coincidono già con l'articolo "${otherIdenticalItem.title}" già presente (0 operazioni Firestore).`
+            : `Nessuna modifica online per "${item.title}": i dati sul sito coincidono già con la scheda salvata (0 operazioni Firestore).`
+        );
+        return;
+      }
+
+      if (willUpdateBase) {
+        await onUpdateResearch(item.id, proposedPayload);
+      }
+      preservePendingSelectionsAfterRefresh();
 
       let docStats = { downloaded: 0, linked: 0 };
-      if (inspected.documents?.length) {
+      if (hasNewDocs && inspected.documents?.length) {
         docStats = await autoAttachInspectedDocuments(
           item.id,
           nextTitle,
@@ -2146,14 +2664,6 @@ export function ResearchesView({
         );
       }
 
-      if (inspected.colorImages) {
-        setLazyColorImages((prev) => ({ ...prev, [item.id]: inspected.colorImages! }));
-      }
-      if (inspected.sizePrices) {
-        setLazySizePrices((prev) => ({ ...prev, [item.id]: inspected.sizePrices! }));
-        writeCachedSizePrices(item.url, inspected.sizePrices);
-      }
-      handleDiscardPendingCardEdit(item.id);
       setBrokenImages((prev) => {
         if (!prev[item.id]) return prev;
         const next = { ...prev };
@@ -2161,21 +2671,34 @@ export function ResearchesView({
         return next;
       });
       const totalDocs = docStats.downloaded + docStats.linked;
-      if (inspected.blockedBySite && inspected.extractedFrom !== 'page-meta' && totalDocs === 0 && !inspected.specs) {
+      if (
+        inspected.blockedBySite &&
+        inspected.extractedFrom !== 'page-meta' &&
+        totalDocs === 0 &&
+        !inspected.specs
+      ) {
         setLinkNotice(
-          `Scheda "${inspected.title || item.title}" aggiornata dai dati del link, ma ${inspected.store || item.store} blocca l'accesso automatico (anti-bot): eventuali foto, prezzi o documenti vanno inseriti manualmente.`
+          `Scheda "${nextTitle || item.title}" aggiornata dai dati del link, ma ${
+            inspected.store || item.store
+          } blocca l'accesso automatico (anti-bot): eventuali foto, prezzi o documenti vanno inseriti manualmente.`
         );
       } else {
         const docSummaryParts = [
           docStats.downloaded > 0
-            ? `${docStats.downloaded} ${docStats.downloaded === 1 ? 'allegato scaricato' : 'allegati scaricati'}`
+            ? `${docStats.downloaded} ${
+                docStats.downloaded === 1 ? 'allegato scaricato' : 'allegati scaricati'
+              }`
             : '',
           docStats.linked > 0 ? `${docStats.linked} link aggiunti` : '',
         ].filter(Boolean);
         setFeedback(
-          `Scheda "${inspected.title || item.title}" aggiornata dal sito${
-            docSummaryParts.length > 0 ? ` (${docSummaryParts.join(', ')})` : ''
-          } e salvata su Firestore.`
+          willUpdateBase
+            ? `Scheda "${nextTitle || item.title}" aggiornata dal sito${
+                docSummaryParts.length > 0 ? ` (${docSummaryParts.join(', ')})` : ''
+              } e salvata su Firestore (selezioni utente mantenute).`
+            : `Aggiunti solo i nuovi allegati (${docSummaryParts.join(', ')}) a "${
+                nextTitle || item.title
+              }" senza riscrivere la scheda.`
         );
       }
     } catch (err) {
@@ -2423,11 +2946,54 @@ export function ResearchesView({
     }
   }
 
+  function handleDiscardLocalDraft(draftId: string) {
+    setPendingDraftItems((prev) => prev.filter((d) => d.id !== draftId));
+    setPendingDraftFoundDocs((prev) => {
+      if (!prev[draftId]) return prev;
+      const next = { ...prev };
+      delete next[draftId];
+      return next;
+    });
+    if (editingId === draftId) {
+      setEditingId(null);
+    }
+    handleDiscardPendingCardEdit(draftId);
+    setFeedback('Bozza rimossa dalla pagina (nessuna operazione su Firestore).');
+  }
+
+  function requestCommitLocalDraft(item: ProductResearchRecord) {
+    if (readOnly) return;
+    setLinkError(null);
+    setLinkNotice(null);
+    setFeedback(null);
+    const effective = getEffectiveItem(item);
+    setPendingEditSave({
+      item,
+      isNewDraft: true,
+      payload: buildPreservedUpdatePayload(item, {
+        title: effective.title,
+        color: effective.color,
+        imageUrl: effective.imageUrl,
+        colorImages: effective.colorImages,
+        size: effective.size,
+        priceEur: effective.priceEur,
+        room: normalizeResearchRoom(effective.room),
+        status: effective.status,
+        paidPriceEur: effective.paidPriceEur,
+      }),
+    });
+  }
+
   function requestCommitPendingCardEdit(item: ProductResearchRecord) {
     if (readOnly) return;
+    if (isLocalDraftId(item.id)) {
+      requestCommitLocalDraft(item);
+      return;
+    }
     const pending = pendingCardEdits[item.id];
     if (!pending) return;
     setLinkError(null);
+    setLinkNotice(null);
     setFeedback(null);
     const effective = getEffectiveItem(item);
     const fieldsChanged = hasPendingFieldDiff(item, pending);
@@ -2581,11 +3147,6 @@ export function ResearchesView({
                 return copy;
               });
             }
-            const nextAvailColors =
-              inspected.availableColors &&
-              inspected.availableColors.length > (item.availableColors?.length || 0)
-                ? inspected.availableColors
-                : undefined;
             setPendingCardEdits((prev) => {
               if (!prev[item.id]) return prev;
               return {
@@ -2597,23 +3158,6 @@ export function ResearchesView({
                 },
               };
             });
-
-            // Auto-persist newly discovered colorImages to Firestore so static hosts (Chrome/GitHub Pages) have them immediately
-            const existingCount = item.colorImages ? Object.keys(item.colorImages).length : 0;
-            const fetchedCount = Object.keys(inspected.colorImages).length;
-            if (fetchedCount > existingCount) {
-              try {
-                await onUpdateResearch(
-                  item.id,
-                  buildPreservedUpdatePayload(item, {
-                    colorImages: inspected.colorImages,
-                    ...(nextAvailColors ? { availableColors: nextAvailColors } : {}),
-                  })
-                );
-              } catch {
-                // ignore background metadata sync errors
-              }
-            }
           })
           .catch(() => {
             // ignore lazy variant image lookup failures
@@ -2680,27 +3224,6 @@ export function ResearchesView({
                 },
               };
             });
-
-            const existingSizePricesCount = item.sizePrices ? Object.keys(item.sizePrices).length : 0;
-            const fetchedSizePricesCount = Object.keys(inspected.sizePrices).length;
-            const nextAvailSizes =
-              inspected.availableSizes &&
-              inspected.availableSizes.length > (item.availableSizes?.length || 0)
-                ? inspected.availableSizes
-                : undefined;
-            if (fetchedSizePricesCount > existingSizePricesCount) {
-              try {
-                await onUpdateResearch(
-                  item.id,
-                  buildPreservedUpdatePayload(item, {
-                    sizePrices: inspected.sizePrices,
-                    ...(nextAvailSizes ? { availableSizes: nextAvailSizes } : {}),
-                  })
-                );
-              } catch {
-                // ignore background metadata sync errors
-              }
-            }
           })
           .catch(() => {
             // ignore lazy variant price lookup failures
@@ -2753,6 +3276,12 @@ export function ResearchesView({
     replaceLinkDoc?: HomeDocumentRecord
   ) {
     if (readOnly) return;
+    if (isLocalDraftId(item.id)) {
+      setLinkNotice(
+        'Salva prima il prodotto su Firestore con "Salva modifiche" per poter allegare file.'
+      );
+      return;
+    }
     uploadTargetItemRef.current = item;
     uploadTargetDocTypeRef.current = overrideDocType || null;
     replaceLinkDocTargetRef.current = replaceLinkDoc || null;
@@ -2891,7 +3420,7 @@ export function ResearchesView({
           const remainingDocTypes =
             Object.keys(nextDocTypes).length > 0 ? nextDocTypes : undefined;
           const copy = { ...prev };
-          const targetItem = researches.find((r) => r.id === deletedResearchId);
+          const targetItem = allResearches.find((r) => r.id === deletedResearchId);
           if (!remainingDocTypes && (!targetItem || !hasPendingFieldDiff(targetItem, entry))) {
             delete copy[deletedResearchId];
           } else {
@@ -2921,7 +3450,11 @@ export function ResearchesView({
       const id = pendingDelete.id;
       if (editingId === id) setEditingId(null);
       handleDiscardPendingCardEdit(id);
-      await onDeleteResearch(id);
+      if (isLocalDraftId(id)) {
+        handleDiscardLocalDraft(id);
+      } else {
+        await onDeleteResearch(id);
+      }
       setPendingDelete(null);
     } finally {
       setDeleting(false);
@@ -2953,12 +3486,25 @@ export function ResearchesView({
     setLinkError(null);
     try {
       const effective = getEffectiveItem(item);
-      if (pendingCardEdits[item.id]) {
+      if (!isLocalDraftId(item.id) && pendingCardEdits[item.id]) {
         await handleCommitPendingCardEdit(item);
       }
       await onMoveToArticles(effective);
-      setMovedArticleIds((prev) => ({ ...prev, [item.id]: true }));
-      const attachedCount = getDocumentsForResearch(researchDocuments, item.id).length;
+      if (isLocalDraftId(item.id)) {
+        setPendingDraftItems((prev) => prev.filter((d) => d.id !== item.id));
+        setPendingDraftFoundDocs((prev) => {
+          if (!prev[item.id]) return prev;
+          const next = { ...prev };
+          delete next[item.id];
+          return next;
+        });
+        handleDiscardPendingCardEdit(item.id);
+      } else {
+        setMovedArticleIds((prev) => ({ ...prev, [item.id]: true }));
+      }
+      const attachedCount = isLocalDraftId(item.id)
+        ? 0
+        : getDocumentsForResearch(researchDocuments, item.id).length;
       setFeedback(
         `"${effective.title}" aggiunto alla pagina Articoli${
           attachedCount > 0 ? ` con ${attachedCount} file allegati` : ''
@@ -2975,16 +3521,16 @@ export function ResearchesView({
 
   const availableStores = useMemo(() => {
     const set = new Set<string>();
-    for (const r of researches) {
+    for (const r of allResearches) {
       if (r.store) set.add(r.store);
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'it'));
-  }, [researches]);
+  }, [allResearches]);
 
   const { availableBrands, hasUnbranded } = useMemo(() => {
     const set = new Set<string>();
     let missingBrand = false;
-    for (const r of researches) {
+    for (const r of allResearches) {
       const b = inferProductBrand(r);
       if (b) set.add(b);
       else missingBrand = true;
@@ -2993,14 +3539,14 @@ export function ResearchesView({
       availableBrands: Array.from(set).sort((a, b) => a.localeCompare(b, 'it')),
       hasUnbranded: missingBrand,
     };
-  }, [researches]);
+  }, [allResearches]);
 
   const kpis = useMemo(() => {
     let toBuy = 0;
     let purchased = 0;
     let pendingBudget = 0;
     let purchasedSpent = 0;
-    for (const r of researches) {
+    for (const r of allResearches) {
       if (r.status === 'da_acquistare') toBuy += 1;
       if (r.status === 'acquistato') {
         purchased += 1;
@@ -3015,17 +3561,17 @@ export function ResearchesView({
       }
     }
     return {
-      total: researches.length,
+      total: allResearches.length,
       toBuy,
       purchased,
       pendingBudget,
       purchasedSpent,
     };
-  }, [researches]);
+  }, [allResearches]);
 
   const filteredResearches = useMemo(() => {
     const q = searchText.trim().toLowerCase();
-    const filtered = researches.filter((item) => {
+    const filtered = allResearches.filter((item) => {
       const effectiveBrand = inferProductBrand(item);
       if (statusFilter !== 'all' && item.status !== statusFilter) return false;
       if (categoryFilter !== 'all' && item.category !== categoryFilter) return false;
@@ -3069,6 +3615,9 @@ export function ResearchesView({
       a.title.localeCompare(b.title, 'it', { numeric: true, sensitivity: 'base' });
 
     return [...filtered].sort((a, b) => {
+      const aDraft = isLocalDraftId(a.id);
+      const bDraft = isLocalDraftId(b.id);
+      if (aDraft !== bDraft) return aDraft ? -1 : 1;
       switch (sortField) {
         case 'price': {
           const aHas = typeof a.priceEur === 'number';
@@ -3115,7 +3664,7 @@ export function ResearchesView({
       }
     });
   }, [
-    researches,
+    allResearches,
     searchText,
     statusFilter,
     categoryFilter,
@@ -3139,7 +3688,7 @@ export function ResearchesView({
       terrazza_est: 0,
     };
     let unassigned = 0;
-    for (const item of researches) {
+    for (const item of allResearches) {
       const normalized = normalizeResearchRoom(item.room);
       if (normalized) {
         counts[normalized] += 1;
@@ -3148,15 +3697,15 @@ export function ResearchesView({
       }
     }
     return { counts, unassigned };
-  }, [researches]);
+  }, [allResearches]);
 
   const categoryCounts = useMemo(() => {
     const counts: Partial<Record<ProductResearchCategory, number>> = {};
-    for (const item of researches) {
+    for (const item of allResearches) {
       counts[item.category] = (counts[item.category] || 0) + 1;
     }
     return counts;
-  }, [researches]);
+  }, [allResearches]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<ProductResearchStatus, number> = {
@@ -3164,11 +3713,11 @@ export function ResearchesView({
       da_acquistare: 0,
       acquistato: 0,
     };
-    for (const item of researches) {
+    for (const item of allResearches) {
       counts[item.status] += 1;
     }
     return counts;
-  }, [researches]);
+  }, [allResearches]);
 
   const pageTotals = useMemo(() => {
     let listTotal = 0;
@@ -3292,11 +3841,11 @@ export function ResearchesView({
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold text-slate-100 flex items-center gap-2">
-            <ShoppingBag className="w-5 h-5 text-sky-400" />
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+            <ShoppingBag className="w-5 h-5 text-sky-600 dark:text-sky-400" />
             Ricerche Prodotti &amp; Link Online
           </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
             Incolla un link da Amazon, MediaWorld, Electrolux, IKEA o qualsiasi negozio: estrae foto, prezzo, colore, modello e specifiche tecniche del sito e ti permette di allegare PDF, fatture o immagini su Firestore.
           </p>
         </div>
@@ -3314,13 +3863,13 @@ export function ResearchesView({
       />
 
       {/* Hero URL Paste Searchbar */}
-      <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 sm:p-5 space-y-3.5">
+      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 sm:p-5 space-y-3.5 shadow-xs dark:shadow-none">
         <form onSubmit={handleQuickAddSubmit} className="space-y-3">
           <label
             htmlFor="research-url-input"
-            className="block text-xs font-semibold text-slate-200 flex items-center gap-1.5"
+            className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200"
           >
-            <Link2 className="w-3.5 h-3.5 text-sky-400" />
+            <Link2 className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
             Incolla il link di un prodotto da aggiungere alle ricerche
           </label>
           <div className="flex flex-col sm:flex-row gap-2.5">
@@ -3340,7 +3889,7 @@ export function ResearchesView({
                     ? 'Accedi con Google per incollare nuovi link prodotto...'
                     : 'https://www.amazon.it/dp/... oppure link MediaWorld, Electrolux, IKEA...'
                 }
-                className="w-full pl-10 pr-9 py-2.5 text-sm text-slate-100 bg-slate-950 border border-slate-700 rounded-xl placeholder:text-slate-500 focus:outline-none focus:border-sky-400 disabled:opacity-60"
+                className="w-full pl-10 pr-9 py-2.5 text-sm text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500 dark:focus:border-sky-400 disabled:opacity-60"
               />
               {linkInput && !readOnly && (
                 <button
@@ -3350,7 +3899,7 @@ export function ResearchesView({
                     setLinkError(null);
                   }}
                   aria-label="Svuota link"
-                  className="p-1 text-slate-500 hover:text-slate-200 absolute right-2.5 top-1/2 -translate-y-1/2"
+                  className="p-1 text-slate-400 hover:text-slate-800 dark:text-slate-500 dark:hover:text-slate-200 absolute right-2.5 top-1/2 -translate-y-1/2"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -3363,15 +3912,15 @@ export function ResearchesView({
                   type="button"
                   disabled={inspecting || savingNew}
                   onClick={() => void handleOpenDraftFromLink()}
-                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl transition-colors whitespace-nowrap disabled:opacity-50"
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-xl transition-colors whitespace-nowrap disabled:opacity-50"
                 >
-                  <Pencil className="w-3.5 h-3.5 text-sky-400" />
+                  <Pencil className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                   <span>{linkInput.trim() ? 'Anteprima / Modifica' : 'Inserimento manuale'}</span>
                 </button>
                 <button
                   type="submit"
                   disabled={!linkInput.trim() || inspecting || savingNew}
-                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-xl transition-colors whitespace-nowrap disabled:opacity-50"
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-xl transition-colors whitespace-nowrap disabled:opacity-50"
                 >
                   {inspecting || savingNew ? (
                     <>
@@ -3391,22 +3940,22 @@ export function ResearchesView({
         </form>
 
         {linkError && (
-          <div className="bg-rose-500/10 border border-rose-500/35 rounded-lg px-3 py-2 text-xs text-rose-200 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+          <div className="bg-rose-50 border border-rose-200 text-rose-800 dark:bg-rose-500/10 dark:border-rose-500/35 rounded-lg px-3 py-2 text-xs dark:text-rose-200 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
             <span>{linkError}</span>
           </div>
         )}
 
         {linkNotice && (
-          <div className="bg-amber-500/10 border border-amber-500/35 rounded-lg px-3 py-2 text-xs text-amber-200 flex items-center justify-between gap-2">
+          <div className="bg-sky-50 border border-sky-200 text-sky-900 dark:bg-sky-500/10 dark:border-sky-500/35 rounded-lg px-3 py-2 text-xs dark:text-sky-200 flex items-center justify-between gap-2">
             <div className="flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <AlertTriangle className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0 mt-0.5" />
               <span>{linkNotice}</span>
             </div>
             <button
               type="button"
               onClick={() => setLinkNotice(null)}
-              className="text-amber-300/80 hover:text-amber-100 p-0.5 shrink-0"
+              className="text-sky-600 hover:text-sky-900 dark:text-sky-300/80 dark:hover:text-sky-100 p-0.5 shrink-0"
               aria-label="Chiudi avviso"
             >
               <X className="w-3.5 h-3.5" />
@@ -3415,15 +3964,15 @@ export function ResearchesView({
         )}
 
         {feedback && (
-          <div className="bg-emerald-500/10 border border-emerald-500/35 rounded-lg px-3 py-2 text-xs text-emerald-200 flex items-center justify-between gap-2">
+          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 dark:bg-emerald-500/10 dark:border-emerald-500/35 rounded-lg px-3 py-2 text-xs dark:text-emerald-200 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
               <span>{feedback}</span>
             </div>
             <button
               type="button"
               onClick={() => setFeedback(null)}
-              className="text-emerald-300/80 hover:text-emerald-100 p-0.5"
+              className="text-emerald-700 hover:text-emerald-950 dark:text-emerald-300/80 dark:hover:text-emerald-100 p-0.5"
               aria-label="Chiudi avviso"
             >
               <X className="w-3.5 h-3.5" />
@@ -3435,25 +3984,25 @@ export function ResearchesView({
         {draftOpen && !readOnly && (
           <form
             onSubmit={handleSaveDraft}
-            className="mt-3 bg-slate-950/90 border border-sky-500/30 rounded-xl p-4 space-y-3.5 text-xs"
+            className="mt-3 bg-slate-50 dark:bg-slate-950/90 border border-sky-300 dark:border-sky-500/30 rounded-xl p-4 space-y-3.5 text-xs"
           >
-            <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-2">
-              <span className="font-semibold text-sky-300 flex items-center gap-1.5">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+              <span className="font-semibold text-sky-700 dark:text-sky-300 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5" />
                 Anteprima &amp; Dettagli prodotto prima del salvataggio
               </span>
               <button
                 type="button"
                 onClick={() => setDraftOpen(false)}
-                className="text-slate-400 hover:text-slate-200"
+                className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {draftImageUrl && /^https?:\/\/.+/.test(draftImageUrl) && (
-              <div className="flex items-center gap-3 p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg">
-                <div className="w-16 h-16 rounded-lg bg-white/95 border border-slate-700 overflow-hidden shrink-0 flex items-center justify-center p-1">
+              <div className="flex items-center gap-3 p-2.5 bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-lg">
+                <div className="w-16 h-16 rounded-lg bg-white border border-slate-200 dark:border-slate-700 overflow-hidden shrink-0 flex items-center justify-center p-1">
                   <img
                     src={draftImageUrl}
                     alt={draftTitle || 'Anteprima'}
@@ -3461,13 +4010,13 @@ export function ResearchesView({
                   />
                 </div>
                 <div className="min-w-0">
-                  <div className="font-semibold text-slate-200">
+                  <div className="font-semibold text-slate-900 dark:text-slate-200">
                     {draftTitle || 'Anteprima immagine trovata dal sito'}
                   </div>
-                  <div className="text-[11px] text-slate-400 mt-0.5 flex flex-wrap items-center gap-2">
-                    <span>{draftPrice ? `${draftPrice} €` : 'Prezzo non rilevato'}</span>
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 flex flex-wrap items-center gap-2">
+                    <span className="tabular-nums">{draftPrice ? `${draftPrice} €` : 'Prezzo non rilevato'}</span>
                     {draftStatus === 'acquistato' && draftPaidPrice && (
-                      <span className="text-emerald-300 font-medium">
+                      <span className="text-emerald-700 dark:text-emerald-300 font-medium tabular-nums">
                         · Pagato {draftPaidPrice} €
                       </span>
                     )}
@@ -3478,7 +4027,7 @@ export function ResearchesView({
                       </span>
                     )}
                     {draftSize && (
-                      <span className="px-1.5 py-0.2 rounded bg-slate-800 text-slate-200 font-mono text-[10px]">
+                      <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono text-[10px]">
                         {draftSize}
                       </span>
                     )}
@@ -3490,7 +4039,7 @@ export function ResearchesView({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               <div className="sm:col-span-2 lg:col-span-1 space-y-1">
-                <label className="block text-slate-400">Titolo prodotto *</label>
+                <label className="block text-slate-600 dark:text-slate-400">Titolo prodotto *</label>
                 <input
                   type="text"
                   required
@@ -3498,12 +4047,12 @@ export function ResearchesView({
                   value={draftTitle}
                   onChange={(e) => setDraftTitle(e.target.value)}
                   placeholder="Es. Apple Custodia MagSafe in tessuto TechWoven..."
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                  className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="block text-slate-400">Prezzo online (€ opz.)</label>
+                <label className="block text-slate-600 dark:text-slate-400">Prezzo online (€ opz.)</label>
                 <input
                   type="number"
                   step="0.01"
@@ -3512,13 +4061,13 @@ export function ResearchesView({
                   value={draftPrice}
                   onChange={(e) => setDraftPrice(e.target.value)}
                   placeholder="Es. 58.00"
-                  className="w-full px-3 py-2 font-mono bg-slate-900 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                  className="w-full px-3 py-2 font-mono bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
                 />
               </div>
 
               {draftStatus === 'acquistato' && (
                 <div className="space-y-1">
-                  <label className="block text-slate-400">Prezzo pagato all&apos;acquisto (€ opz.)</label>
+                  <label className="block text-slate-600 dark:text-slate-400">Prezzo pagato all&apos;acquisto (€ opz.)</label>
                   <input
                     type="number"
                     step="0.01"
@@ -3527,13 +4076,13 @@ export function ResearchesView({
                     value={draftPaidPrice}
                     onChange={(e) => setDraftPaidPrice(e.target.value)}
                     placeholder="Es. 49.90"
-                    className="w-full px-3 py-2 font-mono bg-slate-900 border border-slate-800 rounded-lg text-emerald-200 focus:outline-none focus:border-emerald-500"
+                    className="w-full px-3 py-2 font-mono bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-emerald-700 dark:text-emerald-200 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
               )}
 
               <div className="sm:col-span-2 lg:col-span-2 space-y-1">
-                <label className="block text-slate-400">Link URL prodotto *</label>
+                <label className="block text-slate-600 dark:text-slate-400">Link URL prodotto *</label>
                 <input
                   type="text"
                   required
@@ -3541,12 +4090,12 @@ export function ResearchesView({
                   value={draftUrl}
                   onChange={(e) => setDraftUrl(e.target.value)}
                   placeholder="https://..."
-                  className="w-full px-3 py-2 font-mono bg-slate-900 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                  className="w-full px-3 py-2 font-mono bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="block text-slate-400">Negozio / Sito *</label>
+                <label className="block text-slate-600 dark:text-slate-400">Negozio / Sito *</label>
                 <input
                   type="text"
                   required
@@ -3554,40 +4103,40 @@ export function ResearchesView({
                   value={draftStore}
                   onChange={(e) => setDraftStore(e.target.value)}
                   placeholder="Es. Amazon, MediaWorld"
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                  className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="block text-slate-400">Marca</label>
+                <label className="block text-slate-600 dark:text-slate-400">Marca</label>
                 <input
                   type="text"
                   maxLength={60}
                   value={draftBrand}
                   onChange={(e) => setDraftBrand(e.target.value)}
                   placeholder="Es. Apple, Electrolux..."
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                  className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="block text-slate-400">Modello / Codice / ASIN</label>
+                <label className="block text-slate-600 dark:text-slate-400">Modello / Codice / ASIN</label>
                 <input
                   type="text"
                   maxLength={80}
                   value={draftModel}
                   onChange={(e) => setDraftModel(e.target.value)}
                   placeholder="Es. B0HJB2DT3H"
-                  className="w-full px-3 py-2 font-mono bg-slate-900 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                  className="w-full px-3 py-2 font-mono bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="block text-slate-400">Stanza di casa</label>
+                <label className="block text-slate-600 dark:text-slate-400">Stanza di casa</label>
                 <select
                   value={draftRoom}
                   onChange={(e) => setDraftRoom(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                  className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                 >
                   <option value="">Nessuna stanza</option>
                   {RESEARCH_ROOMS.map((rm) => (
@@ -3599,11 +4148,11 @@ export function ResearchesView({
               </div>
 
               <div className="space-y-1">
-                <label className="block text-slate-400">Categoria</label>
+                <label className="block text-slate-600 dark:text-slate-400">Categoria</label>
                 <select
                   value={draftCategory}
                   onChange={(e) => setDraftCategory(e.target.value as ProductResearchCategory)}
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                  className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                 >
                   {CATEGORY_OPTIONS.map((c) => (
                     <option key={c.value} value={c.value}>
@@ -3614,7 +4163,7 @@ export function ResearchesView({
               </div>
 
               <div className="space-y-1">
-                <label className="block text-slate-400">Stato</label>
+                <label className="block text-slate-600 dark:text-slate-400">Stato</label>
                 <select
                   value={draftStatus}
                   onChange={(e) => {
@@ -3624,7 +4173,7 @@ export function ResearchesView({
                       setDraftPaidPrice('');
                     }
                   }}
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                  className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                 >
                   {STATUS_OPTIONS.map((s) => (
                     <option key={s.value} value={s.value}>
@@ -3635,19 +4184,19 @@ export function ResearchesView({
               </div>
 
               <div className="space-y-1">
-                <label className="block text-slate-400">URL Immagine</label>
+                <label className="block text-slate-600 dark:text-slate-400">URL Immagine</label>
                 <input
                   type="text"
                   maxLength={1000}
                   value={draftImageUrl}
                   onChange={(e) => setDraftImageUrl(e.target.value)}
                   placeholder="https://..."
-                  className="w-full px-3 py-2 font-mono bg-slate-900 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                  className="w-full px-3 py-2 font-mono bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
                 />
               </div>
 
               <div className="sm:col-span-2 lg:col-span-3 space-y-1">
-                <label className="block text-slate-400">Colore / Finitura</label>
+                <label className="block text-slate-600 dark:text-slate-400">Colore / Finitura</label>
                 <ColorFieldInput
                   value={draftColor}
                   onChange={setDraftColor}
@@ -3666,7 +4215,7 @@ export function ResearchesView({
               </div>
 
               <div className="sm:col-span-2 lg:col-span-3 space-y-1">
-                <label className="block text-slate-400">Taglia / Capacità</label>
+                <label className="block text-slate-600 dark:text-slate-400">Taglia / Capacità</label>
                 <SizeFieldInput
                   value={draftSize}
                   onChange={setDraftSize}
@@ -3685,7 +4234,7 @@ export function ResearchesView({
 
               <div className="sm:col-span-2 lg:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="block text-slate-400">
+                  <label className="block text-slate-600 dark:text-slate-400">
                     Specifiche tecniche (Etichetta: Valore, una per riga)
                   </label>
                   <textarea
@@ -3693,19 +4242,19 @@ export function ResearchesView({
                     value={draftTechSpecs}
                     onChange={(e) => setDraftTechSpecs(e.target.value)}
                     placeholder="Es. Sistema operativo: iOS&#10;Capacità della memoria: 1 TB&#10;Materiale: Polipropilene fiberglass&#10;Altezza schienale: 90 cm"
-                    className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500 resize-y"
+                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500 resize-y"
                   />
                 </div>
 
                 <div className="space-y-1">
                   <div className="flex items-center justify-between gap-2">
-                    <label className="block text-slate-400">
+                    <label className="block text-slate-600 dark:text-slate-400">
                       Informazioni &amp; Punti chiave (descrizioni dal sito)
                     </label>
                     <span
                       className={`text-[10px] font-mono tabular-nums ${
                         joinSpecsAndInfo(draftTechSpecs, draftInfoText).length > 1900
-                          ? 'text-amber-300'
+                          ? 'text-indigo-600 dark:text-indigo-300 font-semibold'
                           : 'text-slate-500'
                       }`}
                     >
@@ -3717,36 +4266,36 @@ export function ResearchesView({
                     value={draftInfoText}
                     onChange={(e) => setDraftInfoText(e.target.value)}
                     placeholder="Es. • DESIGN UNIBODY — In alluminio forgiato a caldo...&#10;• CUSCINI — Sfoderabili con zip, piedini antiscivolo"
-                    className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500 resize-y"
+                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500 resize-y"
                   />
                 </div>
               </div>
 
               <div className="sm:col-span-2 lg:col-span-3 space-y-1">
-                <label className="block text-slate-400">Note personali (opzionale)</label>
+                <label className="block text-slate-600 dark:text-slate-400">Note personali (opzionale)</label>
                 <input
                   type="text"
                   maxLength={400}
                   value={draftNotes}
                   onChange={(e) => setDraftNotes(e.target.value)}
                   placeholder="Es. misure, confronto con altro modello, codice sconto..."
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500"
+                  className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
                 />
               </div>
             </div>
 
             {/* Draft Attachments Queue & Detected Official Documents */}
-            <div className="border-t border-slate-800 pt-3 space-y-2">
+            <div className="border-t border-slate-200 dark:border-slate-800 pt-3 space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-medium text-slate-300 flex items-center gap-1.5">
-                  <Paperclip className="w-3.5 h-3.5 text-sky-400" />
+                <span className="font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  <Paperclip className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                   Allega file a questo prodotto (PDF, ricevute, foto)
                 </span>
                 <div className="flex items-center gap-2">
                   <select
                     value={draftAttachmentType}
                     onChange={(e) => setDraftAttachmentType(e.target.value as ArticleAttachmentType)}
-                    className="px-2 py-1 bg-slate-900 border border-slate-800 rounded-lg text-[11px] text-slate-200 [color-scheme:dark]"
+                    className="px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-[11px] text-slate-800 dark:text-slate-200 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                   >
                     {ATTACHMENT_TYPE_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
@@ -3754,8 +4303,8 @@ export function ResearchesView({
                       </option>
                     ))}
                   </select>
-                  <label className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg cursor-pointer transition-colors">
-                    <Upload className="w-3 h-3 text-sky-400" />
+                  <label className="inline-flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-lg cursor-pointer transition-colors">
+                    <Upload className="w-3 h-3 text-sky-600 dark:text-sky-400" />
                     <span>Scegli file</span>
                     <input
                       type="file"
@@ -3769,16 +4318,16 @@ export function ResearchesView({
               </div>
               {draftFoundDocuments.length > 0 && (
                 <div className="space-y-1">
-                  <div className="text-[11px] text-emerald-300 font-medium">
+                  <div className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium">
                     Documenti ufficiali rilevati dal sito (verranno scaricati/allegati al salvataggio):
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {draftFoundDocuments.map((docLink) => (
                       <span
                         key={docLink.url}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-[11px] text-emerald-200"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-500/30 rounded-lg text-[11px] text-emerald-800 dark:text-emerald-200"
                       >
-                        <FileText className="w-3 h-3 text-emerald-400 shrink-0" />
+                        <FileText className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
                         <a
                           href={docLink.url}
                           target="_blank"
@@ -3795,7 +4344,7 @@ export function ResearchesView({
                             )
                           }
                           title="Non allegare questo documento"
-                          className="text-emerald-300/70 hover:text-rose-400"
+                          className="text-emerald-600/70 hover:text-rose-600 dark:text-emerald-300/70 dark:hover:text-rose-400"
                         >
                           <X className="w-3 h-3" />
                         </button>
@@ -3811,9 +4360,9 @@ export function ResearchesView({
                     return (
                       <span
                         key={att.id}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-900 border border-slate-800 rounded-lg text-[11px] text-slate-200"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px] text-slate-800 dark:text-slate-200"
                       >
-                        <FileText className="w-3 h-3 text-sky-400 shrink-0" />
+                        <FileText className="w-3 h-3 text-sky-600 dark:text-sky-400 shrink-0" />
                         <span className="truncate max-w-[140px]">{att.file.name}</span>
                         <select
                           value={att.docType}
@@ -3826,10 +4375,10 @@ export function ResearchesView({
                               )
                             );
                           }}
-                          className={`px-1.5 py-0.5 rounded border text-[10px] font-medium cursor-pointer [color-scheme:dark] ${attMeta.badgeClass}`}
+                          className={`px-1.5 py-0.5 rounded border text-[10px] font-medium cursor-pointer dark:[color-scheme:dark] focus:outline-none ${attMeta.badgeClass}`}
                         >
                           {ATTACHMENT_TYPE_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value} className="bg-slate-900 text-slate-100">
+                            <option key={opt.value} value={opt.value} className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">
                               {opt.label}
                             </option>
                           ))}
@@ -3840,7 +4389,7 @@ export function ResearchesView({
                           onClick={() =>
                             setDraftAttachments((prev) => prev.filter((x) => x.id !== att.id))
                           }
-                          className="text-slate-400 hover:text-rose-400"
+                          className="text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
                         >
                           <X className="w-3 h-3" />
                         </button>
@@ -3855,14 +4404,14 @@ export function ResearchesView({
               <button
                 type="button"
                 onClick={() => setDraftOpen(false)}
-                className="px-3 py-1.5 text-slate-400 hover:text-slate-100"
+                className="px-3 py-1.5 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
               >
                 Annulla
               </button>
               <button
                 type="submit"
                 disabled={savingNew}
-                className="inline-flex items-center gap-1.5 px-4 py-1.5 font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg disabled:opacity-50"
               >
                 <Plus className="w-3.5 h-3.5" />
                 {savingNew ? 'Salvataggio...' : 'Salva prodotto'}
@@ -3947,11 +4496,11 @@ export function ResearchesView({
         }
 
         const selectBaseClass =
-          'w-full sm:w-auto min-w-0 max-w-full px-3 py-2 text-xs rounded-lg border [color-scheme:dark] focus:outline-none focus:border-sky-500 transition-colors';
+          'w-full sm:w-auto min-w-0 max-w-full px-3 py-2 text-xs rounded-lg border dark:[color-scheme:dark] focus:outline-none focus:border-sky-500 transition-colors';
         const selectInactiveClass =
-          'text-slate-200 bg-slate-950 border-slate-800 hover:border-slate-700';
+          'text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-950 border-slate-300 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700';
         const selectActiveClass =
-          'text-sky-100 font-semibold bg-sky-500/15 border-sky-400/80 ring-1 ring-sky-400/25';
+          'text-sky-800 dark:text-sky-100 font-semibold bg-sky-50 dark:bg-sky-500/15 border-sky-500 dark:border-sky-400/80 ring-1 ring-sky-500/25 dark:ring-sky-400/25';
 
         const activeSectionTitle =
           selectedRooms.length === 0
@@ -3967,32 +4516,32 @@ export function ResearchesView({
         return (
           <>
             <section
-              className={`bg-slate-900 border rounded-xl p-4 sm:p-5 space-y-4 transition-colors ${
+              className={`bg-white dark:bg-slate-900 border rounded-xl p-4 sm:p-5 space-y-4 transition-colors shadow-xs dark:shadow-none ${
                 hasActiveFilters
-                  ? 'border-sky-500/45 ring-1 ring-sky-500/15'
-                  : 'border-slate-800'
+                  ? 'border-sky-400 dark:border-sky-500/45 ring-1 ring-sky-500/15'
+                  : 'border-slate-200 dark:border-slate-800'
               }`}
             >
               {/* Row 1: Summary Title + Page Totals + View Switcher & Copy List */}
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 min-w-0">
                 <div className="min-w-0 md:shrink-0">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-400">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
                     <span>Spazio personale</span>
                     <span aria-hidden="true">·</span>
                     <span className="tabular-nums">
-                      {researches.length}{' '}
-                      {researches.length === 1 ? 'articolo aggiunto' : 'articoli aggiunti'}
+                      {allResearches.length}{' '}
+                      {allResearches.length === 1 ? 'articolo aggiunto' : 'articoli aggiunti'}
                     </span>
                     {kpis.toBuy > 0 && (
                       <>
                         <span aria-hidden="true">·</span>
-                        <span className="text-sky-300 tabular-nums">
+                        <span className="text-sky-600 dark:text-sky-300 tabular-nums font-medium">
                           {kpis.toBuy} da acquistare
                         </span>
                       </>
                     )}
                   </div>
-                  <h3 className="text-xl sm:text-2xl font-bold text-slate-100 tracking-tight mt-0.5 truncate">
+                  <h3 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight mt-0.5 truncate">
                     {activeSectionTitle}
                   </h3>
                 </div>
@@ -4001,24 +4550,24 @@ export function ResearchesView({
                   {/* Totals */}
                   <div className="flex items-start justify-between sm:justify-start gap-3 sm:gap-5 min-w-0">
                     <div className="min-w-0">
-                      <div className="text-[11px] text-slate-400 whitespace-nowrap">
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap">
                         Valore totale pagina
                       </div>
-                      <div className="text-lg sm:text-2xl font-bold font-mono tabular-nums text-slate-100 leading-tight mt-0.5 whitespace-nowrap">
+                      <div className="text-lg sm:text-2xl font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100 leading-tight mt-0.5 whitespace-nowrap">
                         {formatEuroIt(pageTotals.listTotal)}
                       </div>
                     </div>
 
-                    <div className="w-px h-10 bg-slate-800 self-center shrink-0" aria-hidden="true" />
+                    <div className="w-px h-10 bg-slate-200 dark:bg-slate-800 self-center shrink-0" aria-hidden="true" />
 
                     <div className="min-w-0 text-right sm:text-left">
-                      <div className="text-[11px] text-slate-400 whitespace-nowrap">
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap">
                         Totale pagato
                       </div>
-                      <div className="text-lg sm:text-2xl font-bold font-mono tabular-nums text-emerald-400 leading-tight mt-0.5 whitespace-nowrap">
+                      <div className="text-lg sm:text-2xl font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400 leading-tight mt-0.5 whitespace-nowrap">
                         {formatEuroIt(pageTotals.paidTotal)}
                       </div>
-                      <div className="text-[11px] text-slate-400 tabular-nums mt-0.5 whitespace-nowrap">
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 tabular-nums mt-0.5 whitespace-nowrap">
                         su {pageTotals.paidCount} su {pageTotals.itemCount}{' '}
                         {pageTotals.itemCount === 1 ? 'articolo' : 'articoli'}
                       </div>
@@ -4026,7 +4575,7 @@ export function ResearchesView({
                   </div>
 
                   <div
-                    className="hidden sm:block w-px h-10 bg-slate-800 shrink-0"
+                    className="hidden sm:block w-px h-10 bg-slate-200 dark:bg-slate-800 shrink-0"
                     aria-hidden="true"
                   />
 
@@ -4035,7 +4584,7 @@ export function ResearchesView({
                     <div
                       role="group"
                       aria-label="Modalità visualizzazione"
-                      className="inline-flex items-center p-1 bg-slate-950 border border-slate-800 rounded-xl shrink-0"
+                      className="inline-flex items-center p-1 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl shrink-0"
                     >
                       <button
                         type="button"
@@ -4043,8 +4592,8 @@ export function ResearchesView({
                         aria-pressed={viewMode === 'list'}
                         className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
                           viewMode === 'list'
-                            ? 'bg-slate-800 text-slate-100 font-semibold shadow-sm'
-                            : 'text-slate-400 hover:text-slate-100'
+                            ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-semibold shadow-xs'
+                            : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
                         }`}
                       >
                         <List className="w-3.5 h-3.5" />
@@ -4056,8 +4605,8 @@ export function ResearchesView({
                         aria-pressed={viewMode === 'grid'}
                         className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
                           viewMode === 'grid'
-                            ? 'bg-slate-800 text-slate-100 font-semibold shadow-sm'
-                            : 'text-slate-400 hover:text-slate-100'
+                            ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-semibold shadow-xs'
+                            : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
                         }`}
                       >
                         <LayoutGrid className="w-3.5 h-3.5" />
@@ -4072,8 +4621,8 @@ export function ResearchesView({
                       title="Dividi i risultati per stanze (compatibile sia con Griglia che con Elenco)"
                       className={`inline-flex items-center gap-1.5 px-2.5 py-2 text-xs font-medium rounded-xl border transition-colors whitespace-nowrap ${
                         groupByRoom
-                          ? 'bg-slate-100 text-slate-950 border-slate-100 font-semibold'
-                          : 'text-slate-200 bg-slate-950 hover:bg-slate-800 border-slate-800 hover:border-slate-700'
+                          ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-500 dark:text-slate-950 dark:border-sky-500 font-semibold'
+                          : 'text-slate-700 dark:text-slate-200 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 border-slate-300 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700'
                       }`}
                     >
                       <Home className="w-3.5 h-3.5" />
@@ -4085,16 +4634,16 @@ export function ResearchesView({
                       disabled={filteredResearches.length === 0}
                       onClick={() => void handleCopyFilteredList()}
                       title="Copia riepilogo della lista filtrata negli appunti"
-                      className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-200 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-xl transition-colors whitespace-nowrap disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700 rounded-xl transition-colors whitespace-nowrap disabled:opacity-50"
                     >
                       {listCopied ? (
                         <>
-                          <Check className="w-3.5 h-3.5 text-emerald-400" />
-                          <span className="text-emerald-300">Lista copiata</span>
+                          <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                          <span className="text-emerald-700 dark:text-emerald-300">Lista copiata</span>
                         </>
                       ) : (
                         <>
-                          <Copy className="w-3.5 h-3.5 text-slate-400" />
+                          <Copy className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                           <span>Copia lista</span>
                         </>
                       )}
@@ -4103,7 +4652,7 @@ export function ResearchesView({
                 </div>
               </div>
 
-              <div className="border-t border-slate-800/80" />
+              <div className="border-t border-slate-200 dark:border-slate-800/80" />
 
               {/* Row 2: Stanze Single-Line Bar (Multi-select Dropdown + Active Quick Chips) */}
               <div className="flex items-center gap-2 min-w-0">
@@ -4116,11 +4665,11 @@ export function ResearchesView({
                     title="Seleziona una o più stanze da filtrare"
                     className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs rounded-lg border transition-colors whitespace-nowrap ${
                       selectedRooms.length > 0
-                        ? 'bg-sky-500/15 text-sky-100 border-sky-400/80 ring-1 ring-sky-400/25 font-semibold'
-                        : 'bg-slate-950 text-slate-200 border-slate-800 hover:border-slate-700'
+                        ? 'bg-sky-50 text-sky-800 border-sky-500 dark:bg-sky-500/15 dark:text-sky-100 dark:border-sky-400/80 ring-1 ring-sky-500/25 dark:ring-sky-400/25 font-semibold'
+                        : 'bg-slate-50 text-slate-700 border-slate-300 hover:border-slate-400 dark:bg-slate-950 dark:text-slate-200 dark:border-slate-800 dark:hover:border-slate-700'
                     }`}
                   >
-                    <Home className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                    <Home className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
                     <span>
                       {selectedRooms.length === 0
                         ? 'Stanze'
@@ -4142,17 +4691,17 @@ export function ResearchesView({
                       role="listbox"
                       aria-multiselectable="true"
                       aria-label="Seleziona una o più stanze"
-                      className="absolute left-0 top-full mt-1.5 z-40 w-64 max-w-[calc(100vw-2.5rem)] bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 space-y-1"
+                      className="absolute left-0 top-full mt-1.5 z-40 w-64 max-w-[calc(100vw-2.5rem)] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-2 space-y-1"
                     >
-                      <div className="flex items-center justify-between px-2 py-1 border-b border-slate-800/80 mb-1">
-                        <span className="text-[11px] font-medium text-slate-400">
+                      <div className="flex items-center justify-between px-2 py-1 border-b border-slate-200 dark:border-slate-800/80 mb-1">
+                        <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                           Seleziona più stanze
                         </span>
                         {selectedRooms.length > 0 && (
                           <button
                             type="button"
                             onClick={() => setSelectedRooms([])}
-                            className="text-[11px] font-medium text-sky-400 hover:text-sky-300"
+                            className="text-[11px] font-medium text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300"
                           >
                             Mostra tutte
                           </button>
@@ -4172,25 +4721,25 @@ export function ResearchesView({
                               onClick={() => toggleRoomFilter(rm.id)}
                               className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs rounded-lg transition-colors text-left ${
                                 isSelected
-                                  ? 'bg-sky-500/20 text-sky-100 font-semibold'
+                                  ? 'bg-sky-50 text-sky-900 dark:bg-sky-500/20 dark:text-sky-100 font-semibold'
                                   : count > 0
-                                  ? 'text-slate-200 hover:bg-slate-800/80'
-                                  : 'text-slate-500 hover:bg-slate-800/60 hover:text-slate-300'
+                                  ? 'text-slate-800 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800/80'
+                                  : 'text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-500 dark:hover:bg-slate-800/60 dark:hover:text-slate-300'
                               }`}
                             >
                               <span className="inline-flex items-center gap-2 min-w-0">
                                 <span
                                   className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
                                     isSelected
-                                      ? 'bg-sky-400 border-sky-400 text-slate-950'
-                                      : 'border-slate-700 bg-slate-950'
+                                      ? 'bg-sky-600 border-sky-600 text-white dark:bg-sky-400 dark:border-sky-400 dark:text-slate-950'
+                                      : 'border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-950'
                                   }`}
                                 >
                                   {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
                                 </span>
                                 <span className="truncate">{rm.label}</span>
                               </span>
-                              <span className="text-[11px] font-mono tabular-nums text-slate-400 shrink-0">
+                              <span className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400 shrink-0">
                                 {count}
                               </span>
                             </button>
@@ -4204,16 +4753,16 @@ export function ResearchesView({
                           onClick={() => toggleRoomFilter('none')}
                           className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs rounded-lg transition-colors text-left ${
                             selectedRooms.includes('none')
-                              ? 'bg-sky-500/20 text-sky-100 font-semibold'
-                              : 'text-slate-300 hover:bg-slate-800/80'
+                              ? 'bg-sky-50 text-sky-900 dark:bg-sky-500/20 dark:text-sky-100 font-semibold'
+                              : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/80'
                           }`}
                         >
                           <span className="inline-flex items-center gap-2 min-w-0">
                             <span
                               className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
                                 selectedRooms.includes('none')
-                                  ? 'bg-sky-400 border-sky-400 text-slate-950'
-                                  : 'border-slate-700 bg-slate-950'
+                                  ? 'bg-sky-600 border-sky-600 text-white dark:bg-sky-400 dark:border-sky-400 dark:text-slate-950'
+                                  : 'border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-950'
                               }`}
                             >
                               {selectedRooms.includes('none') && (
@@ -4222,7 +4771,7 @@ export function ResearchesView({
                             </span>
                             <span className="truncate">Non assegnata</span>
                           </span>
-                          <span className="text-[11px] font-mono tabular-nums text-slate-400 shrink-0">
+                          <span className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400 shrink-0">
                             {roomStats.unassigned}
                           </span>
                         </button>
@@ -4231,7 +4780,7 @@ export function ResearchesView({
                   )}
                 </div>
 
-                <div className="w-px h-5 bg-slate-800 shrink-0" aria-hidden="true" />
+                <div className="w-px h-5 bg-slate-200 dark:bg-slate-800 shrink-0" aria-hidden="true" />
 
                 <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden min-w-0 flex-1 py-0.5">
                   <button
@@ -4239,11 +4788,11 @@ export function ResearchesView({
                     onClick={() => setSelectedRooms([])}
                     className={`px-2.5 sm:px-3 py-1.5 text-xs rounded-lg border transition-colors whitespace-nowrap tabular-nums shrink-0 ${
                       selectedRooms.length === 0
-                        ? 'bg-slate-100 text-slate-950 border-slate-100 font-semibold'
-                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-slate-100'
+                        ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-500 dark:text-slate-950 dark:border-sky-500 font-semibold'
+                        : 'bg-slate-50 text-slate-700 border-slate-300 hover:border-slate-400 hover:text-slate-900 dark:bg-slate-950 dark:text-slate-300 dark:border-slate-800 dark:hover:border-slate-700 dark:hover:text-slate-100'
                     }`}
                   >
-                    Tutte ({researches.length})
+                    Tutte ({allResearches.length})
                   </button>
 
                   {RESEARCH_ROOMS.map((rm) => {
@@ -4263,8 +4812,8 @@ export function ResearchesView({
                         }
                         className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs rounded-lg border transition-colors whitespace-nowrap tabular-nums shrink-0 ${
                           isActive
-                            ? 'bg-slate-100 text-slate-950 border-slate-100 font-semibold'
-                            : 'bg-slate-950 text-slate-200 border-slate-800 hover:border-slate-700 hover:text-white'
+                            ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-500 dark:text-slate-950 dark:border-sky-500 font-semibold'
+                            : 'bg-slate-50 text-slate-700 border-slate-300 hover:border-slate-400 hover:text-slate-900 dark:bg-slate-950 dark:text-slate-200 dark:border-slate-800 dark:hover:border-slate-700 dark:hover:text-white'
                         }`}
                       >
                         {isActive && <Check className="w-3 h-3 shrink-0" />}
@@ -4288,8 +4837,8 @@ export function ResearchesView({
                       }
                       className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs rounded-lg border transition-colors whitespace-nowrap tabular-nums shrink-0 ${
                         selectedRooms.includes('none')
-                          ? 'bg-slate-100 text-slate-950 border-slate-100 font-semibold'
-                          : 'bg-slate-800/75 text-slate-300 border-slate-700/80 hover:border-slate-600 hover:text-slate-100'
+                          ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-500 dark:text-slate-950 dark:border-sky-500 font-semibold'
+                          : 'bg-slate-100 text-slate-700 border-slate-300 hover:border-slate-400 hover:text-slate-900 dark:bg-slate-800/75 dark:text-slate-300 dark:border-slate-700/80 dark:hover:border-slate-600 dark:hover:text-slate-100'
                       }`}
                     >
                       {selectedRooms.includes('none') && <Check className="w-3 h-3 shrink-0" />}
@@ -4304,7 +4853,7 @@ export function ResearchesView({
                 <div className="relative w-full lg:flex-1 lg:min-w-[220px]">
                   <Search
                     className={`w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 ${
-                      searchText.trim() ? 'text-sky-300' : 'text-slate-400'
+                      searchText.trim() ? 'text-sky-600 dark:text-sky-300' : 'text-slate-400'
                     }`}
                   />
                   <input
@@ -4314,10 +4863,10 @@ export function ResearchesView({
                     placeholder="Filtra tra i tuoi articoli (nome, marca, negozio, stanza, modello)..."
                     className={`w-full pl-9 ${
                       searchText.trim() ? 'pr-8' : 'pr-3'
-                    } py-2 text-xs text-slate-100 rounded-lg border focus:outline-none focus:border-sky-500 transition-colors ${
+                    } py-2 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-lg border focus:outline-none focus:border-sky-500 transition-colors ${
                       searchText.trim()
-                        ? 'bg-sky-500/10 border-sky-400/80 ring-1 ring-sky-400/20'
-                        : 'bg-slate-950 border-slate-800'
+                        ? 'bg-sky-50 dark:bg-sky-500/10 border-sky-500 dark:border-sky-400/80 ring-1 ring-sky-500/20'
+                        : 'bg-slate-50 dark:bg-slate-950 border-slate-300 dark:border-slate-800'
                     }`}
                   />
                   {searchText.trim() && (
@@ -4326,7 +4875,7 @@ export function ResearchesView({
                       onClick={() => setSearchText('')}
                       aria-label="Cancella ricerca"
                       title="Cancella testo di ricerca"
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-100"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-800 dark:hover:text-slate-100"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -4344,7 +4893,7 @@ export function ResearchesView({
                       categoryFilter !== 'all' ? selectActiveClass : selectInactiveClass
                     }`}
                   >
-                    <option value="all">Tutte le categorie ({researches.length})</option>
+                    <option value="all">Tutte le categorie ({allResearches.length})</option>
                     {CATEGORY_OPTIONS.map((c) => {
                       const count = categoryCounts[c.value] || 0;
                       return (
@@ -4399,7 +4948,7 @@ export function ResearchesView({
                       statusFilter !== 'all' ? selectActiveClass : selectInactiveClass
                     }`}
                   >
-                    <option value="all">Tutti gli stati ({researches.length})</option>
+                    <option value="all">Tutti gli stati ({allResearches.length})</option>
                     {STATUS_OPTIONS.map((st) => (
                       <option key={st.value} value={st.value}>
                         {st.label} ({statusCounts[st.value]})
@@ -4412,7 +4961,7 @@ export function ResearchesView({
                       value={sortField}
                       onChange={(e) => setSortField(e.target.value as ResearchSortField)}
                       aria-label="Ordina articoli per"
-                      className="flex-1 sm:flex-initial min-w-0 px-3 py-2 text-xs text-slate-200 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-lg [color-scheme:dark] focus:outline-none focus:border-sky-500 transition-colors"
+                      className="flex-1 sm:flex-initial min-w-0 px-3 py-2 text-xs text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700 rounded-lg dark:[color-scheme:dark] focus:outline-none focus:border-sky-500 transition-colors"
                     >
                       <option value="title">Ordine: Nome</option>
                       <option value="price">Ordine: Prezzo</option>
@@ -4433,12 +4982,12 @@ export function ResearchesView({
                           : 'Ordine decrescente — clicca per invertire in crescente'
                       }
                       aria-label="Inverti ordine"
-                      className="inline-flex items-center justify-center p-2 text-xs font-medium text-slate-200 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-lg transition-colors shrink-0"
+                      className="inline-flex items-center justify-center p-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700 rounded-lg transition-colors shrink-0"
                     >
                       {sortDirection === 'asc' ? (
-                        <ArrowUpNarrowWide className="w-3.5 h-3.5 text-sky-400" />
+                        <ArrowUpNarrowWide className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                       ) : (
-                        <ArrowDownWideNarrow className="w-3.5 h-3.5 text-sky-400" />
+                        <ArrowDownWideNarrow className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                       )}
                     </button>
                   </div>
@@ -4446,9 +4995,9 @@ export function ResearchesView({
               </div>
 
               {hasActiveFilters && (
-                <div className="flex flex-wrap items-center gap-1.5 pt-2.5 border-t border-slate-800/80 text-[11px]">
-                  <span className="text-sky-300 font-medium mr-1 tabular-nums">
-                    Filtri attivi ({filteredResearches.length}/{researches.length} risultati):
+                <div className="flex flex-wrap items-center gap-1.5 pt-2.5 border-t border-slate-200 dark:border-slate-800/80 text-[11px]">
+                  <span className="text-sky-700 dark:text-sky-300 font-medium mr-1 tabular-nums">
+                    Filtri attivi ({filteredResearches.length}/{allResearches.length} risultati):
                   </span>
                   {activeChips.map((chip) => (
                     <button
@@ -4456,16 +5005,16 @@ export function ResearchesView({
                       type="button"
                       onClick={chip.onClear}
                       title="Clicca per rimuovere questo filtro"
-                      className="inline-flex items-center gap-1 px-2 py-0.5 max-w-full rounded-md bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/50 text-sky-200 font-medium transition-colors"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 max-w-full rounded-md bg-sky-50 hover:bg-sky-100 border border-sky-300 text-sky-800 dark:bg-sky-500/15 dark:hover:bg-sky-500/25 dark:border-sky-400/50 dark:text-sky-200 font-medium transition-colors"
                     >
                       <span className="truncate">{chip.label}</span>
-                      <X className="w-3 h-3 text-sky-300 shrink-0" />
+                      <X className="w-3 h-3 text-sky-600 dark:text-sky-300 shrink-0" />
                     </button>
                   ))}
                   <button
                     type="button"
                     onClick={resetAllFilters}
-                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-amber-200 hover:text-amber-100 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/40 transition-colors ml-auto whitespace-nowrap"
+                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 dark:text-indigo-200 dark:hover:text-indigo-100 dark:bg-indigo-500/15 dark:hover:bg-indigo-500/25 dark:border-indigo-400/40 transition-colors ml-auto whitespace-nowrap"
                   >
                     <RotateCcw className="w-3 h-3" />
                     <span>Azzera filtri ({activeFilterCount})</span>
@@ -4476,16 +5025,16 @@ export function ResearchesView({
 
             {/* Product Grid / List */}
             {filteredResearches.length === 0 ? (
-              <div className="bg-slate-900 border border-dashed border-slate-800 rounded-xl p-8 text-center space-y-3">
-                <ShoppingBag className="w-8 h-8 text-slate-600 mx-auto" />
+              <div className="bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 rounded-xl p-8 text-center space-y-3">
+                <ShoppingBag className="w-8 h-8 text-slate-400 dark:text-slate-600 mx-auto" />
                 <div className="space-y-1">
-                  <p className="text-sm font-medium text-slate-300">
-                    {researches.length === 0
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                    {allResearches.length === 0
                       ? 'Nessun prodotto salvato nelle ricerche'
                       : 'Nessun prodotto corrisponde ai filtri selezionati'}
                   </p>
                   <p className="text-xs text-slate-500">
-                    {researches.length === 0
+                    {allResearches.length === 0
                       ? 'Incolla un link prodotto nella barra in alto per aggiungerlo subito a questa pagina.'
                       : 'Prova a cambiare ricerca, stanza, negozio o stato.'}
                   </p>
@@ -4494,7 +5043,7 @@ export function ResearchesView({
                   <button
                     type="button"
                     onClick={resetAllFilters}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg transition-colors"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
                     <span>Rimuovi tutti i filtri</span>
@@ -4503,13 +5052,14 @@ export function ResearchesView({
               </div>
             ) : (() => {
               const renderResearchCard = (item: ProductResearchRecord) => {
+            const isLocalDraft = isLocalDraftId(item.id);
             const effectiveItem = getEffectiveItem(item);
             const hasPendingEdits = Boolean(pendingCardEdits[item.id]);
             const isSavingPendingHere = savingPendingId === item.id;
             const statusMeta = getStatusMeta(effectiveItem.status);
             const isEditing = editingId === item.id;
             const imageBroken = Boolean(brokenImages[item.id]);
-            const itemDocs = getDocumentsForResearch(researchDocuments, item.id);
+            const itemDocs = isLocalDraft ? [] : getDocumentsForResearch(researchDocuments, item.id);
             const specEntries = parseSpecLines(item.specs);
             const filteredSpecEntries = specEntries.filter((entry) => {
               const lowL = entry.label?.toLowerCase();
@@ -4587,6 +5137,7 @@ export function ResearchesView({
               const normalizedOrigUrl = normalizeUrlInput(item.url) || item.url.trim();
               const origSplit = splitSpecsAndInfo(item.specs);
               const isEditFormDirty =
+                isLocalDraft ||
                 editTitle.trim() !== item.title.trim() ||
                 normalizedEditUrl !== normalizedOrigUrl ||
                 editStore.trim() !== item.store.trim() ||
@@ -4614,59 +5165,59 @@ export function ResearchesView({
                     }
                     handleRequestSaveEdit(e, item);
                   }}
-                  className={`bg-slate-900 border border-sky-500/50 rounded-xl p-4 space-y-2.5 text-xs ${
+                  className={`bg-white dark:bg-slate-900 border border-sky-400 dark:border-sky-500/50 rounded-xl p-4 space-y-2.5 text-xs shadow-xs dark:shadow-none ${
                     viewMode === 'list' ? '' : 'sm:col-span-2'
                   }`}
                 >
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                    <span className="font-semibold text-sky-300">Modifica prodotto</span>
+                  <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
+                    <span className="font-semibold text-sky-700 dark:text-sky-300">Modifica prodotto</span>
                     <button
                       type="button"
                       onClick={() => {
                         setPendingEditSave(null);
                         setEditingId(null);
                       }}
-                      className="text-slate-400 hover:text-slate-100"
+                      className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
                     >
                       <X className="w-4 h-4" />
                     </button>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-slate-400">Titolo *</label>
+                    <label className="text-slate-600 dark:text-slate-400">Titolo *</label>
                     <input
                       type="text"
                       required
                       maxLength={160}
                       value={editTitle}
                       onChange={(e) => setEditTitle(e.target.value)}
-                      className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                      className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-slate-400">Link URL *</label>
+                    <label className="text-slate-600 dark:text-slate-400">Link URL *</label>
                     <input
                       type="text"
                       required
                       maxLength={1000}
                       value={editUrl}
                       onChange={(e) => setEditUrl(e.target.value)}
-                      className="w-full px-2.5 py-1.5 font-mono bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                      className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
-                      <label className="text-slate-400">Negozio *</label>
+                      <label className="text-slate-600 dark:text-slate-400">Negozio *</label>
                       <input
                         type="text"
                         required
                         maxLength={60}
                         value={editStore}
                         onChange={(e) => setEditStore(e.target.value)}
-                        className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-slate-400">Prezzo online (€)</label>
+                      <label className="text-slate-600 dark:text-slate-400">Prezzo online (€)</label>
                       <input
                         type="number"
                         step="0.01"
@@ -4674,12 +5225,12 @@ export function ResearchesView({
                         max="1000000"
                         value={editPrice}
                         onChange={(e) => setEditPrice(e.target.value)}
-                        className="w-full px-2.5 py-1.5 font-mono bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                        className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
                       />
                     </div>
                     {editStatus === 'acquistato' && (
                       <div className="space-y-1">
-                        <label className="text-slate-400">Prezzo pagato (€)</label>
+                        <label className="text-slate-600 dark:text-slate-400">Prezzo pagato (€)</label>
                         <input
                           type="number"
                           step="0.01"
@@ -4688,36 +5239,36 @@ export function ResearchesView({
                           value={editPaidPrice}
                           onChange={(e) => setEditPaidPrice(e.target.value)}
                           placeholder="Pagato..."
-                          className="w-full px-2.5 py-1.5 font-mono bg-slate-950 border border-slate-800 rounded-lg text-emerald-200"
+                          className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-emerald-700 dark:text-emerald-200 focus:outline-none focus:border-emerald-500"
                         />
                       </div>
                     )}
                     <div className="space-y-1">
-                      <label className="text-slate-400">Marca</label>
+                      <label className="text-slate-600 dark:text-slate-400">Marca</label>
                       <input
                         type="text"
                         maxLength={60}
                         value={editBrand}
                         onChange={(e) => setEditBrand(e.target.value)}
-                        className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-slate-400">Modello / Codice</label>
+                      <label className="text-slate-600 dark:text-slate-400">Modello / Codice</label>
                       <input
                         type="text"
                         maxLength={80}
                         value={editModel}
                         onChange={(e) => setEditModel(e.target.value)}
-                        className="w-full px-2.5 py-1.5 font-mono bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                        className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-slate-400">Stanza di casa</label>
+                      <label className="text-slate-600 dark:text-slate-400">Stanza di casa</label>
                       <select
                         value={editRoom}
                         onChange={(e) => setEditRoom(e.target.value)}
-                        className="w-full px-2 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark]"
+                        className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                       >
                         <option value="">Nessuna stanza</option>
                         {RESEARCH_ROOMS.map((rm) => (
@@ -4728,13 +5279,13 @@ export function ResearchesView({
                       </select>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-slate-400">Categoria</label>
+                      <label className="text-slate-600 dark:text-slate-400">Categoria</label>
                       <select
                         value={editCategory}
                         onChange={(e) =>
                           setEditCategory(e.target.value as ProductResearchCategory)
                         }
-                        className="w-full px-2 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark]"
+                        className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                       >
                         {CATEGORY_OPTIONS.map((c) => (
                           <option key={c.value} value={c.value}>
@@ -4744,7 +5295,7 @@ export function ResearchesView({
                       </select>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-slate-400">Stato</label>
+                      <label className="text-slate-600 dark:text-slate-400">Stato</label>
                       <select
                         value={editStatus}
                         onChange={(e) => {
@@ -4754,7 +5305,7 @@ export function ResearchesView({
                             setEditPaidPrice('');
                           }
                         }}
-                        className="w-full px-2 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 [color-scheme:dark]"
+                        className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                       >
                         {STATUS_OPTIONS.map((s) => (
                           <option key={s.value} value={s.value}>
@@ -4764,18 +5315,18 @@ export function ResearchesView({
                       </select>
                     </div>
                     <div className="col-span-2 space-y-1">
-                      <label className="text-slate-400">URL Immagine</label>
+                      <label className="text-slate-600 dark:text-slate-400">URL Immagine</label>
                       <input
                         type="text"
                         maxLength={1000}
                         value={editImageUrl}
                         onChange={(e) => setEditImageUrl(e.target.value)}
-                        className="w-full px-2.5 py-1.5 font-mono bg-slate-950 border border-slate-800 rounded-lg text-slate-100"
+                        className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
                       />
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-slate-400">Colore (scegli o scrivi)</label>
+                    <label className="text-slate-600 dark:text-slate-400">Colore (scegli o scrivi)</label>
                     <ColorFieldInput
                       value={editColor}
                       onChange={setEditColor}
@@ -4794,7 +5345,7 @@ export function ResearchesView({
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-slate-400">Taglia / Capacità</label>
+                    <label className="text-slate-600 dark:text-slate-400">Taglia / Capacità</label>
                     <SizeFieldInput
                       value={editSize}
                       onChange={setEditSize}
@@ -4816,7 +5367,7 @@ export function ResearchesView({
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                     <div className="space-y-1">
-                      <label className="text-slate-400">
+                      <label className="text-slate-600 dark:text-slate-400">
                         Specifiche tecniche (Etichetta: Valore)
                       </label>
                       <textarea
@@ -4824,18 +5375,18 @@ export function ResearchesView({
                         value={editTechSpecs}
                         onChange={(e) => setEditTechSpecs(e.target.value)}
                         placeholder="Es. Sistema operativo: iOS&#10;Capacità della memoria: 1 TB&#10;Dimensioni schermo: 6,9 Pollici"
-                        className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500 resize-y"
+                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500 resize-y"
                       />
                     </div>
                     <div className="space-y-1">
                       <div className="flex items-center justify-between gap-2">
-                        <label className="text-slate-400">
+                        <label className="text-slate-600 dark:text-slate-400">
                           Informazioni &amp; Punti chiave
                         </label>
                         <span
                           className={`text-[10px] font-mono tabular-nums ${
                             joinSpecsAndInfo(editTechSpecs, editInfoText).length > 1900
-                              ? 'text-amber-300'
+                              ? 'text-indigo-600 dark:text-indigo-300 font-semibold'
                               : 'text-slate-500'
                           }`}
                         >
@@ -4847,18 +5398,18 @@ export function ResearchesView({
                         value={editInfoText}
                         onChange={(e) => setEditInfoText(e.target.value)}
                         placeholder="Es. • DESIGN UNIBODY — Il design unibody in alluminio..."
-                        className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 focus:outline-none focus:border-sky-500 resize-y"
+                        className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500 resize-y"
                       />
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-slate-400">Note personali (opzionale)</label>
+                    <label className="text-slate-600 dark:text-slate-400">Note personali (opzionale)</label>
                     <textarea
                       rows={2}
                       maxLength={400}
                       value={editNotes}
                       onChange={(e) => setEditNotes(e.target.value)}
-                      className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 resize-y"
+                      className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500 resize-y"
                     />
                   </div>
                   <div className="flex items-center justify-end gap-2 pt-1">
@@ -4869,7 +5420,7 @@ export function ResearchesView({
                         setPendingEditSave(null);
                         setEditingId(null);
                       }}
-                      className="px-3 py-1.5 text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
+                      className="px-3 py-1.5 text-slate-700 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
                     >
                       {isEditFormDirty ? 'Annulla' : 'Chiudi'}
                     </button>
@@ -4877,7 +5428,7 @@ export function ResearchesView({
                       <button
                         type="submit"
                         disabled={savingEdit}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg disabled:opacity-50 transition-colors"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg disabled:opacity-50 transition-colors"
                       >
                         <Check className="w-3.5 h-3.5" />
                         <span>{savingEdit ? 'Salvataggio...' : 'Salva modifiche'}</span>
@@ -4901,18 +5452,18 @@ export function ResearchesView({
 
             const renderRoomControl = () =>
               readOnly ? (
-                <span className="inline-flex items-center gap-1 text-[11px] text-slate-300 shrink-0">
-                  <Home className="w-3 h-3 text-sky-400" />
+                <span className="inline-flex items-center gap-1 text-[11px] text-slate-600 dark:text-slate-300 shrink-0">
+                  <Home className="w-3 h-3 text-sky-600 dark:text-sky-400" />
                   <span>{currentRoomLabel}</span>
                 </span>
               ) : (
-                <label className="inline-flex items-center gap-1 text-[11px] text-slate-300 shrink-0">
-                  <Home className="w-3 h-3 text-sky-400 shrink-0" />
+                <label className="inline-flex items-center gap-1 text-[11px] text-slate-600 dark:text-slate-300 shrink-0">
+                  <Home className="w-3 h-3 text-sky-600 dark:text-sky-400 shrink-0" />
                   <select
                     aria-label={`Stanza per ${effectiveItem.title}`}
                     value={currentRoomId}
                     onChange={(e) => handleQuickRoomChange(item, e.target.value)}
-                    className="max-w-[135px] sm:max-w-none bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-md px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-[11px] text-slate-200 [color-scheme:dark] focus:outline-none focus:border-sky-500"
+                    className="max-w-[135px] sm:max-w-none bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700 rounded-md px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-[11px] text-slate-800 dark:text-slate-200 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                   >
                     <option value="">Nessuna stanza</option>
                     {RESEARCH_ROOMS.map((rm) => (
@@ -4945,19 +5496,19 @@ export function ResearchesView({
                       }
                     }}
                     placeholder="Pagato €"
-                    className="w-24 px-2 py-0.5 text-[11px] font-mono bg-slate-950 border border-emerald-500/60 rounded text-emerald-200 focus:outline-none"
+                    className="w-24 px-2 py-0.5 text-[11px] font-mono bg-slate-50 dark:bg-slate-950 border border-emerald-500/70 rounded text-emerald-700 dark:text-emerald-200 focus:outline-none focus:border-emerald-500"
                   />
                   <button
                     type="button"
                     onClick={() => handleSaveInlinePaidPrice(item)}
-                    className="px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-500 text-slate-950 rounded hover:bg-emerald-400"
+                    className="px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-500 dark:text-slate-950 rounded dark:hover:bg-emerald-400"
                   >
                     OK
                   </button>
                   <button
                     type="button"
                     onClick={() => setInlinePaidEditId(null)}
-                    className="p-0.5 text-slate-500 hover:text-slate-200"
+                    className="p-0.5 text-slate-400 hover:text-slate-800 dark:text-slate-500 dark:hover:text-slate-200"
                     aria-label="Annulla prezzo pagato"
                   >
                     <X className="w-3 h-3" />
@@ -4965,7 +5516,7 @@ export function ResearchesView({
                 </div>
               ) : typeof effectiveItem.paidPriceEur === 'number' ? (
                 readOnly ? (
-                  <span className="inline-flex items-center gap-1 text-xs sm:text-sm font-semibold text-emerald-400 whitespace-nowrap">
+                  <span className="inline-flex items-center gap-1 text-xs sm:text-sm font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                     <span>Pagato:</span>
                     <span className="font-mono tabular-nums">
                       {formatEuroIt(effectiveItem.paidPriceEur)}
@@ -4979,7 +5530,7 @@ export function ResearchesView({
                       setInlinePaidValue(String(effectiveItem.paidPriceEur));
                     }}
                     title="Modifica prezzo pagato all'acquisto"
-                    className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-emerald-400 hover:text-emerald-300 whitespace-nowrap"
+                    className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 whitespace-nowrap"
                   >
                     <span>Pagato:</span>
                     <span className="font-mono tabular-nums">
@@ -4999,7 +5550,7 @@ export function ResearchesView({
                         : ''
                     );
                   }}
-                  className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-emerald-300 whitespace-nowrap"
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 hover:text-emerald-600 dark:text-slate-400 dark:hover:text-emerald-300 whitespace-nowrap"
                 >
                   <Plus className="w-3 h-3" />
                   <span>Prezzo pagato</span>
@@ -5021,11 +5572,11 @@ export function ResearchesView({
                         alignRightOnDesktop
                           ? 'text-base sm:text-lg md:text-xl'
                           : 'text-lg sm:text-xl'
-                      } font-bold text-white tabular-nums leading-none`}
+                      } font-bold text-slate-900 dark:text-white tabular-nums leading-none`}
                     >
                       <span>{formatEuroIt(effectiveItem.priceEur!)}</span>
                       {lazySizePriceLoadingIds[item.id] && (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-400" />
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-600 dark:text-sky-400" />
                       )}
                     </span>
                   ) : (
@@ -5064,13 +5615,13 @@ export function ResearchesView({
                     compact
                       ? 'px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-[11px]'
                       : 'px-2 py-1 text-[11px]'
-                  } font-semibold rounded-md border [color-scheme:dark] focus:outline-none ${statusMeta.badgeClass}`}
+                  } font-semibold rounded-md border dark:[color-scheme:dark] focus:outline-none ${statusMeta.badgeClass}`}
                 >
                   {STATUS_OPTIONS.map((st) => (
                     <option
                       key={st.value}
                       value={st.value}
-                      className="bg-slate-900 text-slate-100"
+                      className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100"
                     >
                       {st.label}
                     </option>
@@ -5082,8 +5633,8 @@ export function ResearchesView({
               <div
                 className={
                   inListFooter
-                    ? 'py-1.5 px-2 sm:pt-2 sm:px-3 sm:pb-2.5 border-t border-slate-800/80 flex flex-wrap items-center justify-between sm:justify-start gap-1 sm:gap-1.5 bg-slate-950/30'
-                    : 'pt-2.5 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2'
+                    ? 'py-1.5 px-2 sm:pt-2 sm:px-3 sm:pb-2.5 border-t border-slate-200 dark:border-slate-800/80 flex flex-wrap items-center justify-between sm:justify-start gap-1 sm:gap-1.5 bg-slate-50/80 dark:bg-slate-950/30'
+                    : 'pt-2.5 border-t border-slate-200 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2'
                 }
               >
                 <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
@@ -5093,7 +5644,7 @@ export function ResearchesView({
                     rel="noreferrer"
                     className={`inline-flex items-center gap-1 ${
                       inListFooter ? 'px-2 py-1 sm:px-2.5 sm:py-1.5' : 'px-2.5 py-1.5'
-                    } text-[11px] font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap`}
+                    } text-[11px] font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap`}
                   >
                     <ExternalLink className="w-3 h-3" />
                     {inListFooter ? (
@@ -5112,10 +5663,10 @@ export function ResearchesView({
                     aria-label="Copia link"
                     className={`inline-flex items-center gap-1 ${
                       inListFooter ? 'p-1.5 sm:px-2 sm:py-1.5' : 'px-2 py-1.5'
-                    } text-[11px] font-medium text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors whitespace-nowrap`}
+                    } text-[11px] font-medium text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 dark:text-slate-300 dark:hover:text-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors whitespace-nowrap`}
                   >
                     {copiedId === item.id ? (
-                      <Check className="w-3 h-3 text-emerald-400" />
+                      <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                     ) : (
                       <Copy className="w-3 h-3" />
                     )}
@@ -5128,7 +5679,7 @@ export function ResearchesView({
                     onClick={() => setShareItem(buildResearchSharePayload(effectiveItem))}
                     title="Condividi prodotto"
                     aria-label="Condividi prodotto"
-                    className="p-1.5 text-slate-400 hover:text-sky-300 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+                    className="p-1.5 text-slate-500 hover:text-sky-600 bg-slate-100 hover:bg-slate-200 dark:text-slate-400 dark:hover:text-sky-300 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors"
                   >
                     <Share2 className="w-3.5 h-3.5" />
                   </button>
@@ -5146,14 +5697,14 @@ export function ResearchesView({
                       className={`inline-flex items-center gap-1 px-1.5 py-1 sm:px-2 sm:py-1.5 text-[11px] rounded-lg border transition-colors whitespace-nowrap ${
                         itemDocs.length > 0
                           ? isAttachOpen
-                            ? 'font-semibold text-emerald-100 bg-emerald-500/30 border-emerald-400/80 shadow-xs shadow-emerald-500/20'
-                            : 'font-semibold text-emerald-200 hover:text-emerald-100 bg-emerald-500/20 hover:bg-emerald-500/30 border-emerald-400/60'
-                          : 'font-medium text-slate-400 hover:text-slate-200 bg-slate-800/70 hover:bg-slate-800 border-transparent'
+                            ? 'font-semibold text-emerald-900 bg-emerald-100 border-emerald-400 dark:text-emerald-100 dark:bg-emerald-500/30 dark:border-emerald-400/80 shadow-sm shadow-emerald-500/20'
+                            : 'font-semibold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 border-emerald-300 dark:text-emerald-200 dark:hover:text-emerald-100 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30 dark:border-emerald-400/60'
+                          : 'font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 dark:text-slate-400 dark:hover:text-slate-200 dark:bg-slate-800/70 dark:hover:bg-slate-800 border-transparent'
                       }`}
                     >
                       <Paperclip
                         className={`w-3 h-3 ${
-                          itemDocs.length > 0 ? 'text-emerald-300' : 'text-slate-400'
+                          itemDocs.length > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
                         }`}
                       />
                       <span className="sm:hidden tabular-nums">{itemDocs.length}</span>
@@ -5167,7 +5718,7 @@ export function ResearchesView({
                       onClick={() => triggerCardFileUpload(item)}
                       title="Allega file"
                       aria-label="Allega file"
-                      className="inline-flex items-center gap-1 p-1.5 sm:px-2 sm:py-1.5 text-[11px] font-medium text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap"
+                      className="inline-flex items-center gap-1 p-1.5 sm:px-2 sm:py-1.5 text-[11px] font-medium text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 dark:text-sky-300 dark:bg-sky-500/10 dark:hover:bg-sky-500/20 dark:border-sky-500/30 rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap"
                     >
                       {isUploadingHere ? (
                         <Loader2 className="w-3 h-3 animate-spin" />
@@ -5184,7 +5735,7 @@ export function ResearchesView({
                 {!readOnly && (
                   <div
                     className={`flex items-center gap-0.5 sm:gap-1 ${
-                      inListFooter ? 'sm:pl-1.5 sm:border-l sm:border-slate-800' : ''
+                      inListFooter ? 'sm:pl-1.5 sm:border-l sm:border-slate-200 dark:sm:border-slate-800' : ''
                     }`}
                   >
                     <button
@@ -5193,11 +5744,11 @@ export function ResearchesView({
                       onClick={() => setPendingRefresh(item)}
                       aria-label="Aggiorna prodotto"
                       title="Aggiorna prodotto dal sito (foto, prezzo, colore e dettagli)"
-                      className="p-1.5 text-slate-400 hover:text-sky-300 hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
+                      className="p-1.5 text-slate-500 hover:text-sky-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-sky-300 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
                     >
                       <RefreshCw
                         className={`w-3.5 h-3.5 ${
-                          isRefreshingHere ? 'animate-spin text-sky-400' : ''
+                          isRefreshingHere ? 'animate-spin text-sky-600 dark:text-sky-400' : ''
                         }`}
                       />
                     </button>
@@ -5209,8 +5760,8 @@ export function ResearchesView({
                         title="Copia questo prodotto (con dettagli e allegati) nella pagina Articoli di casa"
                         className={`inline-flex items-center gap-1 px-1.5 py-1 sm:px-2 sm:py-1.5 text-[11px] font-medium rounded-lg border transition-colors whitespace-nowrap ${
                           movedArticleIds[item.id]
-                            ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
-                            : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:text-emerald-300 hover:border-emerald-500/40'
+                            ? 'bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-500/15 dark:border-emerald-500/35 dark:text-emerald-300'
+                            : 'bg-slate-100 border-slate-300 text-slate-700 hover:text-emerald-700 hover:border-emerald-400 dark:bg-slate-800/80 dark:border-slate-700 dark:text-slate-300 dark:hover:text-emerald-300 dark:hover:border-emerald-500/40'
                         }`}
                       >
                         <PackagePlus className="w-3 h-3" />
@@ -5235,16 +5786,18 @@ export function ResearchesView({
                       onClick={() => startEditItem(item)}
                       aria-label="Modifica prodotto"
                       title="Modifica"
-                      className="p-1.5 text-slate-400 hover:text-sky-400 hover:bg-slate-800 rounded-lg transition-colors"
+                      className="p-1.5 text-slate-500 hover:text-sky-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-sky-400 dark:hover:bg-slate-800 rounded-lg transition-colors"
                     >
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
                     <button
                       type="button"
-                      onClick={() => setPendingDelete(item)}
-                      aria-label="Elimina prodotto"
-                      title="Elimina"
-                      className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors"
+                      onClick={() =>
+                        isLocalDraft ? handleDiscardLocalDraft(item.id) : setPendingDelete(item)
+                      }
+                      aria-label={isLocalDraft ? 'Scarta bozza' : 'Elimina prodotto'}
+                      title={isLocalDraft ? 'Scarta bozza' : 'Elimina'}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 dark:text-slate-500 dark:hover:text-rose-400 dark:hover:bg-slate-800 rounded-lg transition-colors"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -5256,10 +5809,10 @@ export function ResearchesView({
             return (
               <article
                 key={item.id}
-                className={`bg-slate-900 border rounded-xl overflow-hidden flex flex-col transition-colors ${
-                  hasPendingEdits
-                    ? 'border-amber-400/70 ring-1 ring-amber-400/20'
-                    : 'border-slate-800 hover:border-slate-700'
+                className={`bg-white dark:bg-slate-900 border rounded-xl overflow-hidden flex flex-col transition-colors shadow-xs dark:shadow-none ${
+                  isLocalDraft || hasPendingEdits
+                    ? 'border-indigo-400 dark:border-indigo-400/75 ring-1 ring-indigo-500/20'
+                    : 'border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700'
                 }`}
               >
                 <div className={isList ? 'flex flex-row items-start flex-1 min-w-0' : 'flex flex-col flex-1 min-w-0'}>
@@ -5271,8 +5824,8 @@ export function ResearchesView({
                       rel="noreferrer"
                       className={
                         isList
-                          ? 'group relative w-20 h-20 m-2 sm:w-36 md:w-40 sm:h-36 sm:self-start sm:my-2 sm:mx-2.5 rounded-lg bg-white border border-slate-800/80 flex items-center justify-center p-1 sm:p-1.5 overflow-hidden shrink-0'
-                          : 'group relative h-56 w-full bg-white border-b border-slate-800/80 flex items-center justify-center p-2.5 overflow-hidden shrink-0'
+                          ? 'group relative w-20 h-20 m-2 sm:w-36 md:w-40 sm:h-36 sm:self-start sm:my-2 sm:mx-2.5 rounded-lg bg-white border border-slate-200 dark:border-slate-800/80 flex items-center justify-center p-1 sm:p-1.5 overflow-hidden shrink-0'
+                          : 'group relative h-56 w-full bg-white border-b border-slate-200 dark:border-slate-800/80 flex items-center justify-center p-2.5 overflow-hidden shrink-0'
                       }
                     >
                       <img
@@ -5291,22 +5844,22 @@ export function ResearchesView({
                     <div
                       className={
                         isList
-                          ? 'relative w-20 h-20 m-2 sm:w-36 md:w-40 sm:h-36 sm:self-start sm:my-2 sm:mx-2.5 rounded-lg bg-gradient-to-b from-slate-800/40 to-slate-950/90 border border-slate-800 flex flex-col items-center justify-center gap-1 p-1.5 sm:p-2.5 text-center shrink-0'
-                          : 'relative h-56 w-full bg-gradient-to-b from-slate-800/40 to-slate-950/90 border-b border-slate-800 flex flex-col items-center justify-center gap-2.5 p-4 text-center shrink-0'
+                          ? 'relative w-20 h-20 m-2 sm:w-36 md:w-40 sm:h-36 sm:self-start sm:my-2 sm:mx-2.5 rounded-lg bg-gradient-to-b from-slate-100 to-slate-200/70 dark:from-slate-800/40 dark:to-slate-950/90 border border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center gap-1 p-1.5 sm:p-2.5 text-center shrink-0'
+                          : 'relative h-56 w-full bg-gradient-to-b from-slate-100 to-slate-200/70 dark:from-slate-800/40 dark:to-slate-950/90 border-b border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center gap-2.5 p-4 text-center shrink-0'
                       }
                     >
                       <a
                         href={item.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="flex flex-col items-center gap-0.5 sm:gap-1 text-slate-400 hover:text-sky-300 transition-colors"
+                        className="flex flex-col items-center gap-0.5 sm:gap-1 text-slate-500 hover:text-sky-600 dark:text-slate-400 dark:hover:text-sky-300 transition-colors"
                       >
                         {effectiveItem.imageUrl ? (
-                          <ImageOff className={isList ? 'w-4 h-4 sm:w-6 sm:h-6 text-slate-500' : 'w-8 h-8 text-slate-500'} />
+                          <ImageOff className={isList ? 'w-4 h-4 sm:w-6 sm:h-6 text-slate-400 dark:text-slate-500' : 'w-8 h-8 text-slate-400 dark:text-slate-500'} />
                         ) : (
-                          <ShoppingBag className={isList ? 'w-4 h-4 sm:w-6 sm:h-6 text-slate-500' : 'w-8 h-8 text-slate-500'} />
+                          <ShoppingBag className={isList ? 'w-4 h-4 sm:w-6 sm:h-6 text-slate-400 dark:text-slate-500' : 'w-8 h-8 text-slate-400 dark:text-slate-500'} />
                         )}
-                        <span className={isList ? 'text-[10px] sm:text-xs font-semibold text-slate-300 truncate max-w-full' : 'text-xs font-semibold text-slate-300'}>
+                        <span className={isList ? 'text-[10px] sm:text-xs font-semibold text-slate-700 dark:text-slate-300 truncate max-w-full' : 'text-xs font-semibold text-slate-700 dark:text-slate-300'}>
                           {item.store}
                         </span>
                         <span className={isList ? 'hidden sm:inline text-[10px] text-slate-500 leading-tight' : 'text-[10px] text-slate-500 leading-tight'}>
@@ -5324,7 +5877,7 @@ export function ResearchesView({
                             isList
                               ? 'px-1.5 py-0.5 text-[9px] sm:px-2.5 sm:py-1 sm:text-[11px]'
                               : 'px-2.5 py-1 text-[11px]'
-                          } font-medium text-sky-300 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-md sm:rounded-lg transition-colors disabled:opacity-50`}
+                          } font-medium text-sky-700 bg-white hover:bg-slate-50 border border-slate-300 dark:text-sky-300 dark:bg-slate-900/90 dark:hover:bg-slate-800 dark:border-slate-700 rounded-md sm:rounded-lg transition-colors disabled:opacity-50`}
                         >
                           <Upload className={isList ? 'w-2.5 h-2.5 sm:w-3 sm:h-3' : 'w-3 h-3'} />
                           {isList ? (
@@ -5350,12 +5903,12 @@ export function ResearchesView({
                   >
                   {isList ? (
                     /* LIST MODE HEADER: Meta + Room + Status + Title on left, Price + Paid cleanly on right */
-                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-1.5 sm:gap-2 pb-1.5 sm:pb-2 border-b border-slate-800/80">
+                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-1.5 sm:gap-2 pb-1.5 sm:pb-2 border-b border-slate-200 dark:border-slate-800/80">
                       <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex flex-wrap items-center gap-x-1.5 sm:gap-x-2 gap-y-1 text-[10px] sm:text-[11px] font-medium text-slate-400">
+                        <div className="flex flex-wrap items-center gap-x-1.5 sm:gap-x-2 gap-y-1 text-[10px] sm:text-[11px] font-medium text-slate-500 dark:text-slate-400">
                           {effectiveBrand && (
                             <span
-                              className="inline-flex items-center gap-1 text-sky-300 font-semibold"
+                              className="inline-flex items-center gap-1 text-sky-600 dark:text-sky-300 font-semibold"
                               title={`Marca: ${effectiveBrand}`}
                             >
                               <Tag className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0" />
@@ -5365,18 +5918,18 @@ export function ResearchesView({
                           {(!effectiveBrand ||
                             effectiveBrand.toLowerCase() !== item.store.toLowerCase()) && (
                             <span
-                              className="inline-flex items-center gap-1 text-slate-200 font-medium"
+                              className="inline-flex items-center gap-1 text-slate-700 dark:text-slate-200 font-medium"
                               title={`Negozio: ${item.store}`}
                             >
                               <Store className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 shrink-0" />
                               <span>{item.store}</span>
                             </span>
                           )}
-                          <span className="text-slate-600" aria-hidden="true">
+                          <span className="text-slate-300 dark:text-slate-600" aria-hidden="true">
                             ·
                           </span>
                           <span>{getCategoryLabel(item.category)}</span>
-                          <span className="text-slate-700 hidden sm:inline" aria-hidden="true">
+                          <span className="text-slate-300 dark:text-slate-700 hidden sm:inline" aria-hidden="true">
                             |
                           </span>
                           <div className="flex flex-wrap items-center gap-1.5">
@@ -5389,24 +5942,24 @@ export function ResearchesView({
                           href={item.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="block text-[13px] sm:text-sm font-semibold text-slate-100 hover:text-sky-300 leading-snug break-words line-clamp-2 sm:line-clamp-none"
+                          className="block text-[13px] sm:text-sm font-semibold text-slate-900 hover:text-sky-600 dark:text-slate-100 dark:hover:text-sky-300 leading-snug break-words line-clamp-2 sm:line-clamp-none"
                         >
                           {effectiveItem.title}
                         </a>
                       </div>
 
-                      <div className="flex flex-col items-start md:items-end justify-center shrink-0 md:border-l md:border-slate-800/80 md:pl-3">
+                      <div className="flex flex-col items-start md:items-end justify-center shrink-0 md:border-l md:border-slate-200 dark:md:border-slate-800/80 md:pl-3">
                         {renderPriceBlock(true)}
                       </div>
                     </div>
                   ) : (
                     /* GRID MODE HEADER: 1. Meta + Room -> 2. Title */
                     <>
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-medium text-slate-400">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-medium text-slate-500 dark:text-slate-400">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
                           {effectiveBrand && (
                             <span
-                              className="inline-flex items-center gap-1 text-sky-300 font-semibold"
+                              className="inline-flex items-center gap-1 text-sky-600 dark:text-sky-300 font-semibold"
                               title={`Marca: ${effectiveBrand}`}
                             >
                               <Tag className="w-3 h-3 shrink-0" />
@@ -5416,14 +5969,14 @@ export function ResearchesView({
                           {(!effectiveBrand ||
                             effectiveBrand.toLowerCase() !== item.store.toLowerCase()) && (
                             <span
-                              className="inline-flex items-center gap-1 text-slate-200 font-medium"
+                              className="inline-flex items-center gap-1 text-slate-700 dark:text-slate-200 font-medium"
                               title={`Negozio: ${item.store}`}
                             >
                               <Store className="w-3 h-3 text-slate-400 shrink-0" />
                               <span>{item.store}</span>
                             </span>
                           )}
-                          <span className="text-slate-600" aria-hidden="true">
+                          <span className="text-slate-300 dark:text-slate-600" aria-hidden="true">
                             ·
                           </span>
                           <span>{getCategoryLabel(item.category)}</span>
@@ -5436,7 +5989,7 @@ export function ResearchesView({
                         href={item.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="block text-sm font-semibold text-slate-100 hover:text-sky-300 leading-snug break-words"
+                        className="block text-sm font-semibold text-slate-900 hover:text-sky-600 dark:text-slate-100 dark:hover:text-sky-300 leading-snug break-words"
                       >
                         {effectiveItem.title}
                       </a>
@@ -5452,8 +6005,8 @@ export function ResearchesView({
                     <div
                       className={
                         isList
-                          ? 'flex flex-wrap items-start gap-x-4 gap-y-1.5 text-xs text-slate-400'
-                          : 'space-y-1.5 text-xs text-slate-400'
+                          ? 'flex flex-wrap items-start gap-x-4 gap-y-1.5 text-xs text-slate-500 dark:text-slate-400'
+                          : 'space-y-1.5 text-xs text-slate-500 dark:text-slate-400'
                       }
                     >
                       {allAvailableColors.length > 0 ? (
@@ -5473,7 +6026,7 @@ export function ResearchesView({
                       ) : effectiveItem.color ? (
                         <div className="flex flex-wrap items-center gap-1.5 min-h-[24px]">
                           <span
-                            className="inline-flex items-center gap-1.5 text-slate-200 font-medium"
+                            className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-200 font-medium"
                             title={`Colore: ${effectiveItem.color}`}
                           >
                             <ColorSwatchDot color={effectiveItem.color} size="md" />
@@ -5502,8 +6055,8 @@ export function ResearchesView({
                                 title={sizeTooltip}
                                 className={`inline-flex items-center px-2 py-0.5 rounded-md border font-mono text-[11px] leading-4 ${
                                   isActive
-                                    ? 'bg-sky-500/15 border-sky-400/70 text-sky-200 font-semibold'
-                                    : 'bg-slate-950/70 border-slate-800 text-slate-400'
+                                    ? 'bg-sky-50 border-sky-500 text-sky-800 dark:bg-sky-500/15 dark:border-sky-400/70 dark:text-sky-200 font-semibold'
+                                    : 'bg-slate-50 border-slate-200 text-slate-500 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-400'
                                 }`}
                               >
                                 {sizeOpt}
@@ -5516,8 +6069,8 @@ export function ResearchesView({
                                 title={sizeTooltip}
                                 className={`inline-flex items-center px-2 py-0.5 rounded-md border font-mono text-[11px] leading-4 transition-colors ${
                                   isActive
-                                    ? 'bg-sky-500/15 border-sky-400/70 text-sky-200 font-semibold'
-                                    : 'bg-slate-950/70 border-slate-800 text-slate-300 hover:border-slate-600'
+                                    ? 'bg-sky-50 border-sky-500 text-sky-800 dark:bg-sky-500/15 dark:border-sky-400/70 dark:text-sky-200 font-semibold'
+                                    : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-300 dark:hover:border-slate-600'
                                 }`}
                               >
                                 {sizeOpt}
@@ -5527,14 +6080,14 @@ export function ResearchesView({
                         </div>
                       ) : effectiveItem.size ? (
                         <div className="flex flex-wrap items-center gap-1.5 min-h-[24px]">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-md border border-slate-700 bg-slate-950 font-mono text-[11px] leading-4 text-slate-200">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md border border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-950 font-mono text-[11px] leading-4 text-slate-800 dark:text-slate-200">
                             {effectiveItem.size}
                           </span>
                         </div>
                       ) : null}
 
                       {item.model && (
-                        <div className="inline-flex items-center min-h-[24px] font-mono text-[11px] text-slate-400">
+                        <div className="inline-flex items-center min-h-[24px] font-mono text-[11px] text-slate-500 dark:text-slate-400">
                           Cod. {item.model}
                         </div>
                       )}
@@ -5543,7 +6096,7 @@ export function ResearchesView({
 
                   {/* 4. Grid Mode Price + Paid Price + Status Row */}
                   {!isList && (
-                    <div className="flex flex-wrap items-center justify-between gap-2 py-2.5 border-y border-slate-800/80">
+                    <div className="flex flex-wrap items-center justify-between gap-2 py-2.5 border-y border-slate-200 dark:border-slate-800/80">
                       {renderPriceBlock(false)}
 
                       {renderStatusControl()}
@@ -5555,7 +6108,7 @@ export function ResearchesView({
                     <div className={isList ? 'space-y-1' : 'space-y-2'}>
                       {hasUniqueNotes && (
                         <p
-                          className={`text-xs text-slate-300 leading-relaxed whitespace-pre-line break-words ${
+                          className={`text-xs text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line break-words ${
                             isList && !isSpecsExpanded ? 'line-clamp-1 sm:line-clamp-none' : ''
                           }`}
                         >
@@ -5567,8 +6120,8 @@ export function ResearchesView({
                         <ul
                           className={
                             isList
-                              ? `${isSpecsExpanded ? 'grid' : 'hidden sm:grid'} grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-0.5 text-[11px] text-slate-300 leading-snug`
-                              : 'space-y-1 text-[11px] text-slate-300 leading-relaxed'
+                              ? `${isSpecsExpanded ? 'grid' : 'hidden sm:grid'} grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-0.5 text-[11px] text-slate-600 dark:text-slate-300 leading-snug`
+                              : 'space-y-1 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed'
                           }
                         >
                           {visibleTechSpecs.map((entry, idx) => {
@@ -5577,7 +6130,7 @@ export function ResearchesView({
                               entry.label?.toLowerCase() === 'color';
                             return (
                               <li key={`tech-${idx}`} className="flex items-start gap-1.5 min-w-0">
-                                <span className="text-sky-400 shrink-0">·</span>
+                                <span className="text-sky-600 dark:text-sky-400 shrink-0">·</span>
                                 <span className="min-w-0 break-words">
                                   {isColorSpec ? (
                                     <span
@@ -5585,14 +6138,14 @@ export function ResearchesView({
                                       title={`Colore: ${entry.value}`}
                                     >
                                       <ColorSwatchDot color={entry.value} size="sm" />
-                                      <span className="text-slate-200 font-medium">
+                                      <span className="text-slate-800 dark:text-slate-200 font-medium">
                                         {entry.value}
                                       </span>
                                     </span>
                                   ) : (
                                     <>
-                                      <span className="text-slate-400">{entry.label}: </span>
-                                      <span className="text-slate-200 font-medium">
+                                      <span className="text-slate-500 dark:text-slate-400">{entry.label}: </span>
+                                      <span className="text-slate-800 dark:text-slate-200 font-medium">
                                         {entry.value}
                                       </span>
                                     </>
@@ -5610,7 +6163,7 @@ export function ResearchesView({
                             isList
                               ? `${isSpecsExpanded ? 'block' : 'hidden sm:block'} ${
                                   visibleTechSpecs.length > 0
-                                    ? 'pt-2 mt-1.5 border-t border-slate-800/70 '
+                                    ? 'pt-2 mt-1.5 border-t border-slate-200 dark:border-slate-800/70 '
                                     : ''
                                 }columns-1 ${
                                   visibleDescriptiveSpecs.length === 2 ||
@@ -5619,12 +6172,12 @@ export function ResearchesView({
                                     : visibleDescriptiveSpecs.length >= 3
                                       ? 'md:columns-2 xl:columns-3'
                                       : ''
-                                } gap-x-5 text-[11px] text-slate-300 leading-snug`
+                                } gap-x-5 text-[11px] text-slate-600 dark:text-slate-300 leading-snug`
                               : `${
                                   visibleTechSpecs.length > 0
-                                    ? 'pt-1.5 mt-1.5 border-t border-slate-800/70 '
+                                    ? 'pt-1.5 mt-1.5 border-t border-slate-200 dark:border-slate-800/70 '
                                     : ''
-                                }space-y-1 text-[11px] text-slate-300 leading-relaxed`
+                                }space-y-1 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed`
                           }
                         >
                           {visibleDescriptiveSpecs.map((entry, idx) => {
@@ -5640,14 +6193,14 @@ export function ResearchesView({
                                 }
                               >
                                 <div className="flex items-start gap-1.5 min-w-0">
-                                  <span className="text-sky-400 shrink-0">·</span>
+                                  <span className="text-sky-600 dark:text-sky-400 shrink-0">·</span>
                                   <span className="min-w-0 break-words">
                                     {hasLeadHeadline ? (
                                       <>
-                                        <span className="text-slate-100 font-semibold">
+                                        <span className="text-slate-900 dark:text-slate-100 font-semibold">
                                           {entry.value.slice(0, dashIdx)}
                                         </span>
-                                        <span className="text-slate-300">
+                                        <span className="text-slate-600 dark:text-slate-300">
                                           {entry.value.slice(dashIdx)}
                                         </span>
                                       </>
@@ -5673,7 +6226,7 @@ export function ResearchesView({
                           }
                           className={`${
                             hasExtraDetails ? 'inline-flex' : 'inline-flex sm:hidden'
-                          } items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300 font-medium`}
+                          } items-center gap-1 text-[11px] text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300 font-medium`}
                         >
                           {isSpecsExpanded ? (
                             <>
@@ -5693,11 +6246,11 @@ export function ResearchesView({
 
                   {/* 6. Bottom-pinned Attachments & Actions */}
                   {(!isList || isAttachOpen) && (
-                  <div className={isList ? 'mt-auto space-y-2' : 'mt-auto space-y-2'}>
+                  <div className="mt-auto space-y-2">
                     {/* In Grid mode show attachments header row; in List mode show drawer only when expanded/populated */}
                     {(!isList && (itemDocs.length > 0 || !readOnly || isAttachOpen)) ||
                     (isList && isAttachOpen) ? (
-                      <div className="border-t border-slate-800/70 pt-2 space-y-2">
+                      <div className="border-t border-slate-200 dark:border-slate-800/70 pt-2 space-y-2">
                         {!isList && (
                           <div className="flex items-center justify-between gap-2">
                             <button
@@ -5711,27 +6264,27 @@ export function ResearchesView({
                               className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] transition-colors ${
                                 itemDocs.length > 0
                                   ? isAttachOpen
-                                    ? 'font-semibold text-emerald-100 bg-emerald-500/30 border-emerald-400/80'
-                                    : 'font-semibold text-emerald-200 hover:text-emerald-100 bg-emerald-500/20 hover:bg-emerald-500/30 border-emerald-400/60'
-                                  : 'font-medium text-slate-400 hover:text-slate-200 border-transparent hover:bg-slate-800/70'
+                                    ? 'font-semibold text-emerald-900 bg-emerald-100 border-emerald-400 dark:text-emerald-100 dark:bg-emerald-500/30 dark:border-emerald-400/80'
+                                    : 'font-semibold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 border-emerald-300 dark:text-emerald-200 dark:hover:text-emerald-100 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30 dark:border-emerald-400/60'
+                                  : 'font-medium text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 border-transparent hover:bg-slate-100 dark:hover:bg-slate-800/70'
                               }`}
                             >
                               <Paperclip
                                 className={`w-3.5 h-3.5 ${
-                                  itemDocs.length > 0 ? 'text-emerald-300' : 'text-slate-400'
+                                  itemDocs.length > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
                                 }`}
                               />
                               <span>Allegati ({itemDocs.length})</span>
                               {isAttachOpen ? (
                                 <ChevronUp
                                   className={`w-3 h-3 ${
-                                    itemDocs.length > 0 ? 'text-emerald-300' : 'text-slate-400'
+                                    itemDocs.length > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
                                   }`}
                                 />
                               ) : (
                                 <ChevronDown
                                   className={`w-3 h-3 ${
-                                    itemDocs.length > 0 ? 'text-emerald-300' : 'text-slate-400'
+                                    itemDocs.length > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
                                   }`}
                                 />
                               )}
@@ -5742,7 +6295,7 @@ export function ResearchesView({
                                 type="button"
                                 disabled={isUploadingHere}
                                 onClick={() => triggerCardFileUpload(item)}
-                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 rounded-md transition-colors disabled:opacity-50"
+                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 dark:text-sky-300 dark:bg-sky-500/10 dark:hover:bg-sky-500/20 dark:border-sky-500/30 rounded-md transition-colors disabled:opacity-50"
                               >
                                 {isUploadingHere ? (
                                   <Loader2 className="w-3 h-3 animate-spin" />
@@ -5757,7 +6310,7 @@ export function ResearchesView({
 
                         {!readOnly && isAttachOpen && (
                           <div className="flex flex-wrap items-center gap-2 text-[10px]">
-                            <span className="text-slate-400 shrink-0">Tipo allegato:</span>
+                            <span className="text-slate-500 dark:text-slate-400 shrink-0">Tipo allegato:</span>
                             <select
                               value={selectedAttachType}
                               onChange={(e) =>
@@ -5766,7 +6319,7 @@ export function ResearchesView({
                                   [item.id]: e.target.value as ArticleAttachmentType,
                                 }))
                               }
-                              className="flex-1 min-w-[140px] max-w-xs px-2 py-1 bg-slate-950 border border-slate-800 rounded text-slate-200 [color-scheme:dark]"
+                              className="flex-1 min-w-[140px] max-w-xs px-2 py-1 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded text-slate-800 dark:text-slate-200 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
                             >
                               {ATTACHMENT_TYPE_OPTIONS.map((opt) => (
                                 <option key={opt.value} value={opt.value}>
@@ -5779,7 +6332,7 @@ export function ResearchesView({
                                 type="button"
                                 disabled={isUploadingHere}
                                 onClick={() => triggerCardFileUpload(item)}
-                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 rounded-md transition-colors disabled:opacity-50"
+                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 dark:text-sky-300 dark:bg-sky-500/10 dark:hover:bg-sky-500/20 dark:border-sky-500/30 rounded-md transition-colors disabled:opacity-50"
                               >
                                 {isUploadingHere ? (
                                   <Loader2 className="w-3 h-3 animate-spin" />
@@ -5808,15 +6361,15 @@ export function ResearchesView({
                                 return (
                                   <div
                                     key={docItem.id}
-                                    className="flex items-center justify-between gap-2 bg-slate-950/70 border border-slate-800 rounded-md px-2 py-1.5 text-[11px]"
+                                    className="flex items-center justify-between gap-2 bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-md px-2 py-1.5 text-[11px]"
                                   >
                                     <div className="min-w-0 flex items-center gap-1.5">
                                       {isImg ? (
-                                        <ImageIcon className="w-3.5 h-3.5 text-violet-300 shrink-0" />
+                                        <ImageIcon className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-300 shrink-0" />
                                       ) : isLinkOnlyDoc ? (
-                                        <Link2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                        <Link2 className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
                                       ) : (
-                                        <FileText className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                                        <FileText className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
                                       )}
                                       <div className="min-w-0">
                                         {openTabHref ? (
@@ -5824,7 +6377,7 @@ export function ResearchesView({
                                             href={openTabHref}
                                             target="_blank"
                                             rel="noreferrer"
-                                            className="block text-slate-200 hover:text-sky-300 font-medium truncate transition-colors"
+                                            className="block text-slate-800 hover:text-sky-600 dark:text-slate-200 dark:hover:text-sky-300 font-medium truncate transition-colors"
                                             title={`Apri in nuova scheda: ${docItem.fileName || docItem.title}`}
                                           >
                                             {docItem.fileName || docItem.title}
@@ -5834,13 +6387,13 @@ export function ResearchesView({
                                             type="button"
                                             disabled={openingDocId === docItem.id}
                                             onClick={() => void handleOpenDocInNewTab(docItem)}
-                                            className="block w-full text-left text-slate-200 hover:text-sky-300 font-medium truncate transition-colors disabled:opacity-50"
+                                            className="block w-full text-left text-slate-800 hover:text-sky-600 dark:text-slate-200 dark:hover:text-sky-300 font-medium truncate transition-colors disabled:opacity-50"
                                             title={`Apri in nuova scheda: ${docItem.fileName || docItem.title}`}
                                           >
                                             {docItem.fileName || docItem.title}
                                           </button>
                                         )}
-                                        <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400">
+                                        <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
                                           {!readOnly && onUpdateResearchDocumentType ? (
                                             <select
                                               value={effectiveDocType}
@@ -5857,13 +6410,13 @@ export function ResearchesView({
                                                   e.target.value as ArticleAttachmentType
                                                 )
                                               }
-                                              className={`px-1.5 py-0.5 rounded border text-[10px] font-medium cursor-pointer focus:outline-none focus:ring-1 focus:ring-sky-500/60 disabled:opacity-50 [color-scheme:dark] ${docMeta.badgeClass}`}
+                                              className={`px-1.5 py-0.5 rounded border text-[10px] font-medium cursor-pointer focus:outline-none focus:ring-1 focus:ring-sky-500/60 disabled:opacity-50 dark:[color-scheme:dark] ${docMeta.badgeClass}`}
                                             >
                                               {ATTACHMENT_TYPE_OPTIONS.map((opt) => (
                                                 <option
                                                   key={opt.value}
                                                   value={opt.value}
-                                                  className="bg-slate-900 text-slate-100"
+                                                  className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100"
                                                 >
                                                   {opt.label}
                                                 </option>
@@ -5871,7 +6424,7 @@ export function ResearchesView({
                                             </select>
                                           ) : (
                                             <span
-                                              className={`px-1.5 py-0.2 rounded border ${docMeta.badgeClass}`}
+                                              className={`px-1.5 py-0.5 rounded border ${docMeta.badgeClass}`}
                                             >
                                               {docMeta.label}
                                             </span>
@@ -5880,7 +6433,7 @@ export function ResearchesView({
                                             <span>{formatFileSize(docItem.fileSize)}</span>
                                           ) : isLinkOnlyDoc ? (
                                             <span
-                                              className="text-amber-300/90"
+                                              className="text-sky-700 dark:text-sky-300/90"
                                               title="Il sito di origine ha bloccato il download automatico: puoi caricare il file manualmente nell'archivio"
                                             >
                                               Link diretto
@@ -5897,7 +6450,7 @@ export function ResearchesView({
                                           target="_blank"
                                           rel="noreferrer"
                                           title="Apri in nuova scheda"
-                                          className="p-1 text-sky-300 hover:bg-slate-800 rounded transition-colors"
+                                          className="p-1 text-sky-600 hover:bg-slate-200/70 dark:text-sky-300 dark:hover:bg-slate-800 rounded transition-colors"
                                         >
                                           <ExternalLink className="w-3.5 h-3.5" />
                                         </a>
@@ -5907,7 +6460,7 @@ export function ResearchesView({
                                           disabled={openingDocId === docItem.id}
                                           onClick={() => void handleOpenDocInNewTab(docItem)}
                                           title="Apri in nuova scheda"
-                                          className="p-1 text-sky-300 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                                          className="p-1 text-sky-600 hover:bg-slate-200/70 dark:text-sky-300 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
                                         >
                                           {openingDocId === docItem.id ? (
                                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -5928,7 +6481,7 @@ export function ResearchesView({
                                             )
                                           }
                                           title="Salva file nell'archivio al posto del link diretto"
-                                          className="p-1 text-amber-300 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                                          className="p-1 text-indigo-600 hover:bg-slate-200/70 dark:text-indigo-300 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
                                         >
                                           {isUploadingHere ? (
                                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -5943,7 +6496,7 @@ export function ResearchesView({
                                           disabled={downloadingDocId === docItem.id}
                                           onClick={() => void handleDownloadDoc(docItem)}
                                           title="Scarica allegato"
-                                          className="p-1 text-emerald-300 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                                          className="p-1 text-emerald-600 hover:bg-slate-200/70 dark:text-emerald-300 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
                                         >
                                           {downloadingDocId === docItem.id ? (
                                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -5963,7 +6516,7 @@ export function ResearchesView({
                                             })
                                           }
                                           title="Rimuovi allegato"
-                                          className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-slate-200/70 dark:text-slate-500 dark:hover:text-rose-400 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
                                         >
                                           <Trash2 className="w-3.5 h-3.5" />
                                         </button>
@@ -5985,26 +6538,32 @@ export function ResearchesView({
 
                 {isList && renderCardActionButtons(true)}
 
-                {hasPendingEdits && !readOnly && (
-                  <div className="px-3 py-2 border-t border-amber-400/35 bg-amber-500/10 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                    <span className="text-amber-200 font-medium inline-flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
-                      Modifiche non salvate
+                {(isLocalDraft || hasPendingEdits) && !readOnly && (
+                  <div className="px-3 py-2 border-t border-indigo-200 dark:border-indigo-500/35 bg-indigo-50 dark:bg-indigo-950/35 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                    <span className="text-indigo-800 dark:text-indigo-200 font-medium inline-flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-indigo-400 animate-pulse shrink-0" />
+                      {isLocalDraft
+                        ? 'Bozza in pagina · Non ancora salvata su Firestore'
+                        : 'Modifiche non salvate'}
                     </span>
                     <div className="flex items-center gap-1.5 ml-auto">
                       <button
                         type="button"
-                        disabled={isSavingPendingHere}
-                        onClick={() => handleDiscardPendingCardEdit(item.id)}
-                        className="px-2 py-1 text-slate-300 hover:text-slate-100 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-md transition-colors disabled:opacity-50"
+                        disabled={isSavingPendingHere || savingEdit}
+                        onClick={() =>
+                          isLocalDraft
+                            ? handleDiscardLocalDraft(item.id)
+                            : handleDiscardPendingCardEdit(item.id)
+                        }
+                        className="px-2 py-1 text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-300 dark:text-slate-300 dark:hover:text-slate-100 dark:bg-slate-900/90 dark:hover:bg-slate-800 dark:border-slate-700 rounded-md transition-colors disabled:opacity-50"
                       >
-                        Annulla
+                        {isLocalDraft ? 'Scarta' : 'Annulla'}
                       </button>
                       <button
                         type="button"
                         disabled={isSavingPendingHere || savingEdit}
                         onClick={() => requestCommitPendingCardEdit(item)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-md transition-colors disabled:opacity-50"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 font-semibold text-white bg-indigo-600 hover:bg-indigo-700 dark:text-slate-950 dark:bg-indigo-400 dark:hover:bg-indigo-300 rounded-md transition-colors disabled:opacity-50"
                       >
                         {isSavingPendingHere ||
                         (savingEdit && pendingEditSave?.item.id === item.id) ? (
@@ -6036,29 +6595,29 @@ export function ResearchesView({
                   <div className="space-y-6">
                     {groupedByRoom.map((group) => (
                       <section key={group.key} className="space-y-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800/80">
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-800/80">
                           <div className="flex items-center gap-2 min-w-0">
-                            <Home className="w-4 h-4 text-sky-400 shrink-0" />
-                            <h4 className="text-base font-semibold text-slate-100 truncate">
+                            <Home className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+                            <h4 className="text-base font-semibold text-slate-900 dark:text-slate-100 truncate">
                               {group.label}
                             </h4>
-                            <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
+                            <span className="text-xs text-slate-500 dark:text-slate-400 tabular-nums whitespace-nowrap">
                               · {group.items.length}{' '}
                               {group.items.length === 1 ? 'articolo' : 'articoli'}
                             </span>
                           </div>
 
                           <div className="flex flex-wrap items-center gap-3 text-xs tabular-nums">
-                            <span className="text-slate-400">
+                            <span className="text-slate-600 dark:text-slate-400">
                               Valore:{' '}
-                              <strong className="font-mono text-slate-100">
+                              <strong className="font-mono text-slate-900 dark:text-slate-100">
                                 {formatEuroIt(group.listTotal)}
                               </strong>
                             </span>
                             {group.paidCount > 0 && (
-                              <span className="text-slate-400">
+                              <span className="text-slate-600 dark:text-slate-400">
                                 Pagato:{' '}
-                                <strong className="font-mono text-emerald-400">
+                                <strong className="font-mono text-emerald-600 dark:text-emerald-400">
                                   {formatEuroIt(group.paidTotal)}
                                 </strong>{' '}
                                 <span className="text-slate-500">
@@ -6070,7 +6629,7 @@ export function ResearchesView({
                               <button
                                 type="button"
                                 onClick={() => setSelectedRooms([group.key])}
-                                className="px-2.5 py-1 text-[11px] font-medium text-sky-300 hover:text-sky-200 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-lg transition-colors whitespace-nowrap"
+                                className="px-2.5 py-1 text-[11px] font-medium text-sky-700 hover:text-sky-900 bg-white hover:bg-slate-100 border border-slate-300 dark:text-sky-300 dark:hover:text-sky-200 dark:bg-slate-900 dark:hover:bg-slate-800 dark:border-slate-800 rounded-lg transition-colors whitespace-nowrap"
                               >
                                 Filtra stanza
                               </button>
@@ -6106,31 +6665,31 @@ export function ResearchesView({
       )}
 
       {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-rose-500/15 text-rose-400 shrink-0">
+              <div className="p-2 rounded-lg bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400 shrink-0">
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-sm font-semibold text-slate-100">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   Eliminare questa ricerca?
                 </h3>
-                <p className="text-xs text-slate-300 leading-relaxed">
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
                   Vuoi davvero rimuovere{' '}
-                  <span className="font-semibold text-slate-100">
+                  <span className="font-semibold text-slate-900 dark:text-slate-100">
                     {pendingDelete.title}
                   </span>{' '}
                   ({pendingDelete.store}) e gli eventuali file allegati da Firestore?
                 </p>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 disabled={deleting}
                 onClick={() => setPendingDelete(null)}
-                className="px-3.5 py-2 text-xs font-medium text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+                className="px-3.5 py-2 text-xs font-medium text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 dark:text-slate-300 dark:hover:text-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors"
               >
                 Annulla
               </button>
@@ -6148,35 +6707,35 @@ export function ResearchesView({
       )}
 
       {pendingDeleteDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-rose-500/15 text-rose-400 shrink-0">
+              <div className="p-2 rounded-lg bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400 shrink-0">
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div className="space-y-1 min-w-0">
-                <h3 className="text-sm font-semibold text-slate-100">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   Eliminare questo allegato?
                 </h3>
-                <p className="text-xs text-slate-300 leading-relaxed">
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
                   Vuoi davvero rimuovere{' '}
-                  <span className="font-semibold text-slate-100 break-words">
+                  <span className="font-semibold text-slate-900 dark:text-slate-100 break-words">
                     {pendingDeleteDoc.doc.fileName || pendingDeleteDoc.doc.title}
                   </span>{' '}
                   da{' '}
-                  <span className="font-semibold text-slate-100">
+                  <span className="font-semibold text-slate-900 dark:text-slate-100">
                     {pendingDeleteDoc.productTitle}
                   </span>{' '}
                   su Firestore?
                 </p>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 disabled={deletingDocId === pendingDeleteDoc.doc.id}
                 onClick={() => setPendingDeleteDoc(null)}
-                className="px-3.5 py-2 text-xs font-medium text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
+                className="px-3.5 py-2 text-xs font-medium text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 dark:text-slate-300 dark:hover:text-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
               >
                 Annulla
               </button>
@@ -6194,10 +6753,10 @@ export function ResearchesView({
       )}
 
       {pendingRefresh && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-sky-500/15 text-sky-400 shrink-0">
+              <div className="p-2 rounded-lg bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-400 shrink-0">
                 <RefreshCw
                   className={`w-5 h-5 ${
                     refreshingId === pendingRefresh.id ? 'animate-spin' : ''
@@ -6205,24 +6764,26 @@ export function ResearchesView({
                 />
               </div>
               <div className="space-y-1">
-                <h3 className="text-sm font-semibold text-slate-100">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   Aggiornare questo prodotto?
                 </h3>
-                <p className="text-xs text-slate-300 leading-relaxed">
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
                   Vuoi ri-analizzare il link di{' '}
-                  <span className="font-semibold text-slate-100">
-                    {pendingRefresh.title}
+                  <span className="font-semibold text-slate-900 dark:text-slate-100">
+                    {getEffectiveItem(pendingRefresh).title}
                   </span>{' '}
-                  ({pendingRefresh.store}) per aggiornare foto, prezzo, varianti e dettagli su Firestore?
+                  ({pendingRefresh.store}) per aggiornare i dati dal sito
+                  {isLocalDraftId(pendingRefresh.id) ? ' sulla bozza' : ' su Firestore'}{' '}
+                  mantenendo colore, taglia, stanza e stato selezionati?
                 </p>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 disabled={refreshingId === pendingRefresh.id}
                 onClick={() => setPendingRefresh(null)}
-                className="px-3.5 py-2 text-xs font-medium text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
+                className="px-3.5 py-2 text-xs font-medium text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 dark:text-slate-300 dark:hover:text-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
               >
                 Annulla
               </button>
@@ -6230,7 +6791,7 @@ export function ResearchesView({
                 type="button"
                 disabled={refreshingId === pendingRefresh.id}
                 onClick={() => void confirmRefreshResearch()}
-                className="px-3.5 py-2 text-xs font-semibold text-slate-950 bg-sky-400 hover:bg-sky-300 disabled:opacity-50 rounded-lg transition-colors"
+                className="px-3.5 py-2 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-400 dark:hover:bg-sky-300 disabled:opacity-50 rounded-lg transition-colors"
               >
                 {refreshingId === pendingRefresh.id ? 'Aggiornamento...' : 'Aggiorna'}
               </button>
@@ -6240,37 +6801,41 @@ export function ResearchesView({
       )}
 
       {pendingEditSave && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-amber-500/15 text-amber-400 shrink-0">
+              <div className="p-2 rounded-lg bg-indigo-100 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-400 shrink-0">
                 <Pencil className="w-5 h-5" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-sm font-semibold text-slate-100">
-                  Salvare le modifiche al prodotto?
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  {pendingEditSave.isNewDraft
+                    ? 'Salvare il nuovo prodotto su Firestore?'
+                    : 'Salvare le modifiche al prodotto?'}
                 </h3>
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  Vuoi aggiornare{' '}
-                  <span className="font-semibold text-slate-100">
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                  {pendingEditSave.isNewDraft ? 'Vuoi salvare ' : 'Vuoi aggiornare '}
+                  <span className="font-semibold text-slate-900 dark:text-slate-100">
                     {pendingEditSave.payload.title}
                   </span>{' '}
-                  ({pendingEditSave.payload.store}) salvando{' '}
-                  {pendingEditSave.skipProductUpdate &&
-                  pendingEditSave.docTypeChanges &&
-                  pendingEditSave.docTypeChanges.length > 0
-                    ? 'la nuova tipologia degli allegati'
-                    : 'i nuovi dati'}{' '}
+                  ({pendingEditSave.payload.store})
+                  {pendingEditSave.isNewDraft
+                    ? ' tra i tuoi prodotti '
+                    : pendingEditSave.skipProductUpdate &&
+                        pendingEditSave.docTypeChanges &&
+                        pendingEditSave.docTypeChanges.length > 0
+                      ? ' salvando la nuova tipologia degli allegati '
+                      : ' salvando i nuovi dati '}
                   su Firestore?
                 </p>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 disabled={savingEdit}
                 onClick={() => setPendingEditSave(null)}
-                className="px-3.5 py-2 text-xs font-medium text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
+                className="px-3.5 py-2 text-xs font-medium text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 dark:text-slate-300 dark:hover:text-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
               >
                 Annulla
               </button>
@@ -6278,7 +6843,7 @@ export function ResearchesView({
                 type="button"
                 disabled={savingEdit}
                 onClick={() => void confirmSaveEdit()}
-                className="px-3.5 py-2 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 disabled:opacity-50 rounded-lg transition-colors"
+                className="px-3.5 py-2 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-400 dark:hover:bg-sky-300 disabled:opacity-50 rounded-lg transition-colors"
               >
                 {savingEdit ? 'Salvataggio...' : 'Salva modifiche'}
               </button>
