@@ -50,6 +50,8 @@ const VALID_START_SECTIONS: readonly DefaultStartSection[] = [
   'ricerche',
   'documenti',
   'macchina',
+  'promemoria',
+  'vinted',
   'spesa',
   'info',
   'impostazioni',

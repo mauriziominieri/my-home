@@ -61,6 +61,7 @@ interface CarViewProps {
   carDocuments: HomeDocumentRecord[];
   readOnly?: boolean;
   onSignIn?: () => void;
+  onOpenReminders?: () => void;
   onSaveProfile: (profile: Omit<CarProfile, 'id'>) => Promise<void>;
   onSaveInsurancePolicy: (policy: CarInsurancePolicy) => Promise<void>;
   onUploadCarDocument: (
@@ -129,6 +130,7 @@ export function CarView({
   carDocuments,
   readOnly = false,
   onSignIn,
+  onOpenReminders,
   onSaveProfile,
   onSaveInsurancePolicy,
   onUploadCarDocument,
@@ -144,7 +146,7 @@ export function CarView({
   const [model, setModel] = useState(profile.model);
   const [plate, setPlate] = useState(profile.plate);
   const [year, setYear] = useState(profile.year || '');
-  const [fuelType, setFuelType] = useState(profile.fuelType || '');
+  const [fuelType, setFuelType] = useState(profile.fuelType || 'Ibrido (Benzina / GPL)');
   const [engine, setEngine] = useState(profile.engine || '');
   const [vin, setVin] = useState(profile.vin || '');
   const [tireSize, setTireSize] = useState(profile.tireSize || '');
@@ -156,6 +158,52 @@ export function CarView({
   const [bolloExpiry, setBolloExpiry] = useState(profile.bolloExpiry || '');
   const [revisioneExpiry, setRevisioneExpiry] = useState(profile.revisioneExpiry || '');
   const [profileNotes, setProfileNotes] = useState(profile.notes || '');
+
+  // Extended technical & maintenance fields
+  const [lpgTankLiters, setLpgTankLiters] = useState(
+    profile.lpgTankLiters !== undefined ? String(profile.lpgTankLiters) : '31.84'
+  );
+  const [petrolTankLiters, setPetrolTankLiters] = useState(
+    profile.petrolTankLiters !== undefined ? String(profile.petrolTankLiters) : ''
+  );
+  const [lpgSystemBrand, setLpgSystemBrand] = useState(profile.lpgSystemBrand || '');
+  const [lpgTankExpiry, setLpgTankExpiry] = useState(profile.lpgTankExpiry || '');
+  const [euroClass, setEuroClass] = useState(profile.euroClass || '');
+  const [oilSpec, setOilSpec] = useState(profile.oilSpec || '');
+  const [oilCapacityLiters, setOilCapacityLiters] = useState(
+    profile.oilCapacityLiters !== undefined ? String(profile.oilCapacityLiters) : ''
+  );
+  const [lastOilChangeDate, setLastOilChangeDate] = useState(profile.lastOilChangeDate || '');
+  const [lastOilChangeKm, setLastOilChangeKm] = useState(
+    profile.lastOilChangeKm !== undefined ? String(profile.lastOilChangeKm) : ''
+  );
+  const [oilIntervalKm, setOilIntervalKm] = useState(
+    profile.oilIntervalKm !== undefined ? String(profile.oilIntervalKm) : '15000'
+  );
+  const [oilIntervalMonths, setOilIntervalMonths] = useState(
+    profile.oilIntervalMonths !== undefined ? String(profile.oilIntervalMonths) : '12'
+  );
+  const [batterySpec, setBatterySpec] = useState(profile.batterySpec || '');
+  const [batteryInstalledDate, setBatteryInstalledDate] = useState(
+    profile.batteryInstalledDate || ''
+  );
+  const [batteryIntervalMonths, setBatteryIntervalMonths] = useState(
+    profile.batteryIntervalMonths !== undefined ? String(profile.batteryIntervalMonths) : '54'
+  );
+  const [timingBeltDate, setTimingBeltDate] = useState(profile.timingBeltDate || '');
+  const [timingBeltKm, setTimingBeltKm] = useState(
+    profile.timingBeltKm !== undefined ? String(profile.timingBeltKm) : ''
+  );
+  const [sparkPlugsDate, setSparkPlugsDate] = useState(profile.sparkPlugsDate || '');
+  const [sparkPlugsKm, setSparkPlugsKm] = useState(
+    profile.sparkPlugsKm !== undefined ? String(profile.sparkPlugsKm) : ''
+  );
+  const [brakeFluidDate, setBrakeFluidDate] = useState(profile.brakeFluidDate || '');
+  const [coolantDate, setCoolantDate] = useState(profile.coolantDate || '');
+  const [tirePressure, setTirePressure] = useState(profile.tirePressure || '');
+  const [paintCode, setPaintCode] = useState(profile.paintCode || '');
+  const [radioCode, setRadioCode] = useState(profile.radioCode || '');
+  const [spareKeyNote, setSpareKeyNote] = useState(profile.spareKeyNote || '');
 
   // Insurance Policy editor & UX toggles
   const [editingPolicy, setEditingPolicy] = useState(false);
@@ -203,16 +251,54 @@ export function CarView({
     setModel(profile.model);
     setPlate(profile.plate);
     setYear(profile.year || '');
-    setFuelType(profile.fuelType || '');
+    setFuelType(profile.fuelType || 'Ibrido (Benzina / GPL)');
     setEngine(profile.engine || '');
     setVin(profile.vin || '');
     setTireSize(profile.tireSize || '');
-    setCurrentKm(profile.currentKm !== undefined ? String(profile.currentKm) : '');
+    setCurrentKm(profile.currentKm !== undefined ? String(profile.currentKm) : '150000');
     setInsuranceCompany(profile.insuranceCompany || insurancePolicy.company || '');
     setInsuranceExpiry(profile.insuranceExpiry || insurancePolicy.endDate || '');
     setBolloExpiry(profile.bolloExpiry || '');
     setRevisioneExpiry(profile.revisioneExpiry || '');
     setProfileNotes(profile.notes || '');
+    setLpgTankLiters(
+      profile.lpgTankLiters !== undefined ? String(profile.lpgTankLiters) : '31.84'
+    );
+    setPetrolTankLiters(
+      profile.petrolTankLiters !== undefined ? String(profile.petrolTankLiters) : ''
+    );
+    setLpgSystemBrand(profile.lpgSystemBrand || '');
+    setLpgTankExpiry(profile.lpgTankExpiry || '');
+    setEuroClass(profile.euroClass || '');
+    setOilSpec(profile.oilSpec || '');
+    setOilCapacityLiters(
+      profile.oilCapacityLiters !== undefined ? String(profile.oilCapacityLiters) : ''
+    );
+    setLastOilChangeDate(profile.lastOilChangeDate || '');
+    setLastOilChangeKm(
+      profile.lastOilChangeKm !== undefined ? String(profile.lastOilChangeKm) : ''
+    );
+    setOilIntervalKm(
+      profile.oilIntervalKm !== undefined ? String(profile.oilIntervalKm) : '15000'
+    );
+    setOilIntervalMonths(
+      profile.oilIntervalMonths !== undefined ? String(profile.oilIntervalMonths) : '12'
+    );
+    setBatterySpec(profile.batterySpec || '');
+    setBatteryInstalledDate(profile.batteryInstalledDate || '');
+    setBatteryIntervalMonths(
+      profile.batteryIntervalMonths !== undefined ? String(profile.batteryIntervalMonths) : '54'
+    );
+    setTimingBeltDate(profile.timingBeltDate || '');
+    setTimingBeltKm(profile.timingBeltKm !== undefined ? String(profile.timingBeltKm) : '');
+    setSparkPlugsDate(profile.sparkPlugsDate || '');
+    setSparkPlugsKm(profile.sparkPlugsKm !== undefined ? String(profile.sparkPlugsKm) : '');
+    setBrakeFluidDate(profile.brakeFluidDate || '');
+    setCoolantDate(profile.coolantDate || '');
+    setTirePressure(profile.tirePressure || '');
+    setPaintCode(profile.paintCode || '');
+    setRadioCode(profile.radioCode || '');
+    setSpareKeyNote(profile.spareKeyNote || '');
     setEditingProfile(true);
   }
 
@@ -221,11 +307,25 @@ export function CarView({
     setEditingPolicy(true);
   }
 
+  function parseOptionalDecimal(raw: string): number | undefined {
+    const clean = raw.trim().replace(',', '.');
+    if (!clean) return undefined;
+    const n = Number(clean);
+    return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : undefined;
+  }
+
+  function parseOptionalInt(raw: string): number | undefined {
+    const clean = raw.trim().replace(/[^\d]/g, '');
+    if (!clean) return undefined;
+    const n = Number(clean);
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
+  }
+
   async function handleSubmitProfile(e: React.FormEvent) {
     e.preventDefault();
     setSavingProfile(true);
     try {
-      const kmVal = currentKm.trim() ? Number(currentKm.replace(/[^\d]/g, '')) : undefined;
+      const kmVal = parseOptionalInt(currentKm);
       await onSaveProfile({
         brand: brand.trim() || 'Fiat',
         model: model.trim() || 'Panda 2ª serie - Panda 1.2 Dynamic Mamy',
@@ -235,12 +335,36 @@ export function CarView({
         engine: engine.trim() || undefined,
         vin: vin.trim().toUpperCase() || undefined,
         tireSize: tireSize.trim() || undefined,
-        currentKm: kmVal !== undefined && Number.isFinite(kmVal) ? kmVal : undefined,
+        currentKm: kmVal,
         insuranceCompany: insuranceCompany.trim() || undefined,
         insuranceExpiry: insuranceExpiry.trim() || undefined,
         bolloExpiry: bolloExpiry.trim() || undefined,
         revisioneExpiry: revisioneExpiry.trim() || undefined,
         notes: profileNotes.trim() || undefined,
+        lpgTankLiters: parseOptionalDecimal(lpgTankLiters),
+        petrolTankLiters: parseOptionalDecimal(petrolTankLiters),
+        lpgSystemBrand: lpgSystemBrand.trim() || undefined,
+        lpgTankExpiry: lpgTankExpiry.trim() || undefined,
+        euroClass: euroClass.trim() || undefined,
+        oilSpec: oilSpec.trim() || undefined,
+        oilCapacityLiters: parseOptionalDecimal(oilCapacityLiters),
+        lastOilChangeDate: lastOilChangeDate.trim() || undefined,
+        lastOilChangeKm: parseOptionalInt(lastOilChangeKm),
+        oilIntervalKm: parseOptionalInt(oilIntervalKm),
+        oilIntervalMonths: parseOptionalInt(oilIntervalMonths),
+        batterySpec: batterySpec.trim() || undefined,
+        batteryInstalledDate: batteryInstalledDate.trim() || undefined,
+        batteryIntervalMonths: parseOptionalInt(batteryIntervalMonths),
+        timingBeltDate: timingBeltDate.trim() || undefined,
+        timingBeltKm: parseOptionalInt(timingBeltKm),
+        sparkPlugsDate: sparkPlugsDate.trim() || undefined,
+        sparkPlugsKm: parseOptionalInt(sparkPlugsKm),
+        brakeFluidDate: brakeFluidDate.trim() || undefined,
+        coolantDate: coolantDate.trim() || undefined,
+        tirePressure: tirePressure.trim() || undefined,
+        paintCode: paintCode.trim() || undefined,
+        radioCode: radioCode.trim() || undefined,
+        spareKeyNote: spareKeyNote.trim() || undefined,
       });
       setEditingProfile(false);
     } finally {
@@ -669,7 +793,25 @@ export function CarView({
                 </span>
                 <span>
                   Alimentazione:{' '}
-                  <strong className="text-slate-800 dark:text-slate-200">{profile.fuelType || 'Benzina'}</strong>
+                  <strong className="text-slate-800 dark:text-slate-200">
+                    {profile.fuelType || 'Ibrido (Benzina / GPL)'}
+                  </strong>
+                </span>
+                <span>
+                  Odometro:{' '}
+                  <strong className="text-slate-800 dark:text-slate-200 font-mono">
+                    {totals.displayKm > 0
+                      ? `${totals.displayKm.toLocaleString('it-IT')} km`
+                      : '150.000 km'}
+                  </strong>
+                </span>
+                <span>
+                  Serbatoio GPL:{' '}
+                  <strong className="text-emerald-700 dark:text-emerald-300 font-mono">
+                    {profile.lpgTankLiters !== undefined
+                      ? `${profile.lpgTankLiters.toFixed(2).replace('.', ',')} L`
+                      : '31,84 L'}
+                  </strong>
                 </span>
                 <span>
                   Valore stimato:{' '}
@@ -685,6 +827,16 @@ export function CarView({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {onOpenReminders && (
+              <button
+                type="button"
+                onClick={onOpenReminders}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-500/15 hover:bg-amber-100 dark:hover:bg-amber-500/25 border border-amber-200 dark:border-amber-500/35 rounded-lg"
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                Promemoria &amp; Scadenze
+              </button>
+            )}
             <a
               href="https://www.ilportaledellautomobilista.it/web/portale-automobilista/verifica-ultima-revisione"
               target="_blank"
@@ -750,7 +902,7 @@ export function CarView({
 
           <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5">
             <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Premio Polizza / Percorrenza
+              Premio Polizza / Odometro
             </div>
             <div className="text-base font-bold font-mono tabular-nums text-emerald-700 dark:text-emerald-300 mt-0.5">
               {formatEur(insurancePolicy.totalPremiumEur)}{' '}
@@ -758,10 +910,10 @@ export function CarView({
                 / {insurancePolicy.paymentFrequency}
               </span>
             </div>
-            <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+            <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 tabular-nums">
               Dichiarati {insurancePolicy.annualKm.toLocaleString('it-IT')} km/anno
               {totals.displayKm > 0
-                ? ` · Odometro ${totals.displayKm.toLocaleString('it-IT')} km`
+                ? ` · Attuali ~${totals.displayKm.toLocaleString('it-IT')} km`
                 : ''}
             </div>
           </div>
@@ -782,6 +934,202 @@ export function CarView({
             {profile.notes && <span className="italic">{profile.notes}</span>}
           </div>
         )}
+      </section>
+
+      {/* Scheda Tecnica, Impianto GPL & Voci Utili da Appuntare */}
+      <section className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
+        <div className="px-4 sm:px-5 py-3.5 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <Wrench className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+              Scheda Tecnica, Impianto GPL &amp; Dati Manutenzione
+            </h2>
+            <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+              Dati tecnici del veicolo, impianto GPL ({profile.lpgTankLiters !== undefined ? `${profile.lpgTankLiters.toFixed(2).replace('.', ',')} L` : '31,84 L'}) e voci utili da verificare in auto e compilare manualmente.
+            </p>
+          </div>
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={openEditProfile}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/10 hover:bg-sky-100 dark:hover:bg-sky-500/20 border border-sky-200 dark:border-sky-500/30 rounded-lg transition-colors"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              Compila / Modifica voci auto
+            </button>
+          )}
+        </div>
+
+        <div className="p-4 sm:p-5 grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Colonna 1: Alimentazione Ibrida & Impianto GPL */}
+          <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-2.5">
+            <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300 border-b border-slate-200 dark:border-slate-800 pb-2">
+              <Fuel className="w-4 h-4" />
+              Motorizzazione, Serbatoi &amp; GPL
+            </div>
+            <dl className="space-y-1.5 text-xs">
+              {[
+                ['Sistema alimentazione', profile.fuelType || 'Ibrido (Benzina / GPL)'],
+                [
+                  'Chilometraggio attuale',
+                  totals.displayKm > 0
+                    ? `~${totals.displayKm.toLocaleString('it-IT')} km`
+                    : '150.000 km',
+                ],
+                [
+                  'Capacità serbatoio GPL',
+                  profile.lpgTankLiters !== undefined
+                    ? `${profile.lpgTankLiters.toFixed(2).replace('.', ',')} L`
+                    : '31,84 L',
+                ],
+                [
+                  'Capacità serbatoio Benzina',
+                  profile.petrolTankLiters !== undefined
+                    ? `${profile.petrolTankLiters} L`
+                    : 'Da verificare (es. 35 L)',
+                ],
+                ['Marca / modello impianto GPL', profile.lpgSystemBrand || 'Da controllare sul libretto / vano motore'],
+                ['Scadenza bombola GPL (10 anni)', profile.lpgTankExpiry || 'Da verificare (stampigliata su serbatoio)'],
+                ['Classe ambientale Euro', profile.euroClass || 'Da verificare sul libretto (punto V.9)'],
+                ['Motorizzazione / CV', profile.engine || '1.2'],
+              ].map(([label, val]) => {
+                const isPlaceholder = val.startsWith('Da ');
+                return (
+                  <div key={label} className="flex items-start justify-between gap-2">
+                    <dt className="text-slate-500 dark:text-slate-400 shrink-0">{label}</dt>
+                    <dd
+                      className={`text-right tabular-nums ${
+                        isPlaceholder
+                          ? 'text-slate-400 dark:text-slate-500 italic text-[11px]'
+                          : 'text-slate-900 dark:text-slate-100 font-medium'
+                      }`}
+                    >
+                      {val}
+                    </dd>
+                  </div>
+                );
+              })}
+            </dl>
+          </div>
+
+          {/* Colonna 2: Olio, Batteria & Tagliandi */}
+          <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-2.5">
+            <div className="flex items-center gap-2 text-xs font-semibold text-sky-700 dark:text-sky-300 border-b border-slate-200 dark:border-slate-800 pb-2">
+              <Wrench className="w-4 h-4" />
+              Olio, Batteria &amp; Manutenzioni Periodiche
+            </div>
+            <dl className="space-y-1.5 text-xs">
+              {[
+                [
+                  'Olio motore (specifica)',
+                  profile.oilSpec
+                    ? `${profile.oilSpec}${profile.oilCapacityLiters ? ` (${profile.oilCapacityLiters} L)` : ''}`
+                    : 'Da verificare (es. 5W-40 / 10W-40)',
+                ],
+                [
+                  'Ultimo cambio olio',
+                  profile.lastOilChangeDate || profile.lastOilChangeKm
+                    ? `${profile.lastOilChangeDate || 'Data n/d'}${
+                        profile.lastOilChangeKm
+                          ? ` · ${profile.lastOilChangeKm.toLocaleString('it-IT')} km`
+                          : ''
+                      }`
+                    : 'Da annotare (data & km)',
+                ],
+                [
+                  'Intervallo cambio olio',
+                  `${(profile.oilIntervalKm || 15000).toLocaleString('it-IT')} km o ${
+                    profile.oilIntervalMonths || 12
+                  } mesi`,
+                ],
+                [
+                  'Batteria (specifica / Ah)',
+                  profile.batterySpec || 'Da verificare nel cofano (es. 12V 44Ah/50Ah)',
+                ],
+                [
+                  'Data cambio batteria',
+                  profile.batteryInstalledDate
+                    ? `${profile.batteryInstalledDate} (durata ~${profile.batteryIntervalMonths || 54} mesi)`
+                    : 'Da annotare (es. 26/11/2026)',
+                ],
+                [
+                  'Cinghia distribuzione',
+                  profile.timingBeltDate || profile.timingBeltKm
+                    ? `${profile.timingBeltDate || 'Data n/d'}${
+                        profile.timingBeltKm ? ` · ${profile.timingBeltKm.toLocaleString('it-IT')} km` : ''
+                      }`
+                    : 'Da verificare (ogni ~100-120k km / 5 anni)',
+                ],
+                [
+                  'Candele (importanti su GPL)',
+                  profile.sparkPlugsDate || profile.sparkPlugsKm
+                    ? `${profile.sparkPlugsDate || 'Data n/d'}${
+                        profile.sparkPlugsKm ? ` · ${profile.sparkPlugsKm.toLocaleString('it-IT')} km` : ''
+                      }`
+                    : 'Da annotare (su GPL ogni ~30k km)',
+                ],
+                [
+                  'Liquido freni / Radiatore',
+                  profile.brakeFluidDate || profile.coolantDate
+                    ? `Freni: ${profile.brakeFluidDate || '—'} · Rad.: ${profile.coolantDate || '—'}`
+                    : 'Da annotare',
+                ],
+              ].map(([label, val]) => {
+                const isPlaceholder = val.startsWith('Da ');
+                return (
+                  <div key={label} className="flex items-start justify-between gap-2">
+                    <dt className="text-slate-500 dark:text-slate-400 shrink-0">{label}</dt>
+                    <dd
+                      className={`text-right tabular-nums ${
+                        isPlaceholder
+                          ? 'text-slate-400 dark:text-slate-500 italic text-[11px]'
+                          : 'text-slate-900 dark:text-slate-100 font-medium'
+                      }`}
+                    >
+                      {val}
+                    </dd>
+                  </div>
+                );
+              })}
+            </dl>
+          </div>
+
+          {/* Colonna 3: Gomme, Codici Segreti & Dotazioni */}
+          <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-2.5">
+            <div className="flex items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-300 border-b border-slate-200 dark:border-slate-800 pb-2">
+              <Gauge className="w-4 h-4" />
+              Gomme, Codici Utili &amp; Libretto
+            </div>
+            <dl className="space-y-1.5 text-xs">
+              {[
+                ['Misura pneumatici (libretto)', profile.tireSize || 'Da leggere su spalla gomma / libretto'],
+                ['Pressione gonfiaggio (bar)', profile.tirePressure || 'Da controllare su montante portiera'],
+                ['Numero telaio (VIN)', profile.vin || 'Da copiare da libretto / parabrezza'],
+                ['Codice vernice carrozzeria', profile.paintCode || 'Da leggere su targhetta cofano/portellone'],
+                ['Codice sblocco autoradio', profile.radioCode || 'Da annotare (utile se si stacca la batteria)'],
+                ['Seconda chiave / Code Card', profile.spareKeyNote || 'Da annotare dove si trova'],
+                ['Scadenza Bollo', profile.bolloExpiry || 'Da inserire'],
+                ['Scadenza Revisione', profile.revisioneExpiry || 'Da inserire'],
+              ].map(([label, val]) => {
+                const isPlaceholder = val.startsWith('Da ');
+                return (
+                  <div key={label} className="flex items-start justify-between gap-2">
+                    <dt className="text-slate-500 dark:text-slate-400 shrink-0">{label}</dt>
+                    <dd
+                      className={`text-right tabular-nums ${
+                        isPlaceholder
+                          ? 'text-slate-400 dark:text-slate-500 italic text-[11px]'
+                          : 'text-slate-900 dark:text-slate-100 font-medium'
+                      }`}
+                    >
+                      {val}
+                    </dd>
+                  </div>
+                );
+              })}
+            </dl>
+          </div>
+        </div>
       </section>
 
       {/* Polizza Assicurativa ConTe.it & Garanzie con spiegazioni */}
@@ -1514,7 +1862,7 @@ export function CarView({
               <span className="text-slate-600 dark:text-slate-400">Alimentazione</span>
               <input
                 type="text"
-                placeholder="Es. Benzina"
+                placeholder="Es. Ibrido (Benzina / GPL)"
                 value={fuelType}
                 onChange={(e) => setFuelType(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
@@ -1531,23 +1879,63 @@ export function CarView({
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-600 dark:text-slate-400">Misura Pneumatici</span>
+              <span className="text-slate-600 dark:text-slate-400">Chilometraggio attuale (km)</span>
+              <input
+                type="number"
+                placeholder="Es. 150000"
+                value={currentKm}
+                onChange={(e) => setCurrentKm(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Serbatoio GPL (Litri)</span>
               <input
                 type="text"
-                placeholder="Es. 175/65 R14"
-                value={tireSize}
-                onChange={(e) => setTireSize(e.target.value)}
+                placeholder="Es. 31.84"
+                value={lpgTankLiters}
+                onChange={(e) => setLpgTankLiters(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-600 dark:text-slate-400">Chilometraggio attuale (km)</span>
+              <span className="text-slate-600 dark:text-slate-400">Serbatoio Benzina (Litri)</span>
               <input
-                type="number"
-                placeholder="Es. 135000"
-                value={currentKm}
-                onChange={(e) => setCurrentKm(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
+                type="text"
+                placeholder="Es. 35"
+                value={petrolTankLiters}
+                onChange={(e) => setPetrolTankLiters(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Marca impianto GPL</span>
+              <input
+                type="text"
+                placeholder="Es. Landi Renzo / BRC"
+                value={lpgSystemBrand}
+                onChange={(e) => setLpgSystemBrand(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Scadenza bombola GPL (10 anni)</span>
+              <input
+                type="text"
+                placeholder="GG/MM/AAAA o MM/AAAA"
+                value={lpgTankExpiry}
+                onChange={(e) => setLpgTankExpiry(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Classe Euro</span>
+              <input
+                type="text"
+                placeholder="Es. Euro 4 / Euro 5"
+                value={euroClass}
+                onChange={(e) => setEuroClass(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">
@@ -1590,6 +1978,205 @@ export function CarView({
                 className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
+
+            {/* Manutenzione: Olio, Batteria, Cinghia, Candele, Liquidi */}
+            <div className="sm:col-span-2 lg:col-span-4 pt-2 border-t border-slate-200 dark:border-slate-800 text-[11px] font-semibold uppercase tracking-wider text-sky-700 dark:text-sky-300">
+              Manutenzione Programmata &amp; Ricambi
+            </div>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Olio Motore (Specifica)</span>
+              <input
+                type="text"
+                placeholder="Es. 5W-40 ACEA C3 / Selenia Gas"
+                value={oilSpec}
+                onChange={(e) => setOilSpec(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Quantità Olio (Litri)</span>
+              <input
+                type="text"
+                placeholder="Es. 2.8"
+                value={oilCapacityLiters}
+                onChange={(e) => setOilCapacityLiters(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Data ultimo cambio olio</span>
+              <input
+                type="text"
+                placeholder="GG/MM/AAAA"
+                value={lastOilChangeDate}
+                onChange={(e) => setLastOilChangeDate(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Km ultimo cambio olio</span>
+              <input
+                type="number"
+                placeholder="Es. 142000"
+                value={lastOilChangeKm}
+                onChange={(e) => setLastOilChangeKm(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Intervallo olio (km / mesi)</span>
+              <div className="grid grid-cols-2 gap-1.5">
+                <input
+                  type="number"
+                  placeholder="15000 km"
+                  value={oilIntervalKm}
+                  onChange={(e) => setOilIntervalKm(e.target.value)}
+                  className="w-full px-2.5 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+                />
+                <input
+                  type="number"
+                  placeholder="12 mesi"
+                  value={oilIntervalMonths}
+                  onChange={(e) => setOilIntervalMonths(e.target.value)}
+                  className="w-full px-2.5 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+                />
+              </div>
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Batteria (Ah / Spunto)</span>
+              <input
+                type="text"
+                placeholder="Es. 12V 50Ah 450A"
+                value={batterySpec}
+                onChange={(e) => setBatterySpec(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Data cambio batteria</span>
+              <input
+                type="text"
+                placeholder="Es. 26/11/2026"
+                value={batteryInstalledDate}
+                onChange={(e) => setBatteryInstalledDate(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Durata batteria (mesi)</span>
+              <input
+                type="number"
+                placeholder="54 (4,5 anni)"
+                value={batteryIntervalMonths}
+                onChange={(e) => setBatteryIntervalMonths(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Cinghia distribuzione (Data)</span>
+              <input
+                type="text"
+                placeholder="GG/MM/AAAA"
+                value={timingBeltDate}
+                onChange={(e) => setTimingBeltDate(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Km ultima cinghia</span>
+              <input
+                type="number"
+                placeholder="Es. 120000"
+                value={timingBeltKm}
+                onChange={(e) => setTimingBeltKm(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Ultimo cambio candele (Data)</span>
+              <input
+                type="text"
+                placeholder="GG/MM/AAAA"
+                value={sparkPlugsDate}
+                onChange={(e) => setSparkPlugsDate(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Km ultimo cambio candele</span>
+              <input
+                type="number"
+                placeholder="Es. 135000"
+                value={sparkPlugsKm}
+                onChange={(e) => setSparkPlugsKm(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Liquido freni (ultimo cambio)</span>
+              <input
+                type="text"
+                placeholder="GG/MM/AAAA"
+                value={brakeFluidDate}
+                onChange={(e) => setBrakeFluidDate(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Liquido radiatore (ultimo controllo)</span>
+              <input
+                type="text"
+                placeholder="GG/MM/AAAA"
+                value={coolantDate}
+                onChange={(e) => setCoolantDate(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+
+            {/* Gomme & Codici utili */}
+            <div className="sm:col-span-2 lg:col-span-4 pt-2 border-t border-slate-200 dark:border-slate-800 text-[11px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+              Gomme, Codici Segreti &amp; Libretto
+            </div>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Misura Pneumatici</span>
+              <input
+                type="text"
+                placeholder="Es. 175/65 R14"
+                value={tireSize}
+                onChange={(e) => setTireSize(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Pressione Pneumatici</span>
+              <input
+                type="text"
+                placeholder="Es. Ant 2.2 / Post 2.1 bar"
+                value={tirePressure}
+                onChange={(e) => setTirePressure(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Codice Vernice</span>
+              <input
+                type="text"
+                placeholder="Es. 249 Bianco Banchisa"
+                value={paintCode}
+                onChange={(e) => setPaintCode(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Codice Autoradio / PIN</span>
+              <input
+                type="text"
+                placeholder="Es. 4 cifre su card"
+                value={radioCode}
+                onChange={(e) => setRadioCode(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+              />
+            </label>
             <label className="space-y-1 sm:col-span-2">
               <span className="text-slate-600 dark:text-slate-400">Telaio (VIN)</span>
               <input
@@ -1601,11 +2188,21 @@ export function CarView({
               />
             </label>
             <label className="space-y-1 sm:col-span-2">
-              <span className="text-slate-600 dark:text-slate-400">Note libretto / dotazioni</span>
+              <span className="text-slate-600 dark:text-slate-400">Seconda chiave / Code Card Fiat</span>
+              <input
+                type="text"
+                placeholder="Es. Chiave di scorta + Code Card nel cassetto ingresso"
+                value={spareKeyNote}
+                onChange={(e) => setSpareKeyNote(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1 sm:col-span-2 lg:col-span-4">
+              <span className="text-slate-600 dark:text-slate-400">Altre note libretto / officina di fiducia</span>
               <input
                 type="text"
                 maxLength={240}
-                placeholder="Es. Classe Euro, pressione gomme, codice autoradio, officina..."
+                placeholder="Es. Officina di fiducia, numero carro attrezzi, annotazioni libretto..."
                 value={profileNotes}
                 onChange={(e) => setProfileNotes(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"

@@ -13,6 +13,8 @@ export type NavSection =
   | 'ricerche'
   | 'documenti'
   | 'macchina'
+  | 'promemoria'
+  | 'vinted'
   | 'spesa'
   | 'info'
   | 'impostazioni';
@@ -239,6 +241,31 @@ export interface CarProfile {
   bolloExpiry?: string;
   revisioneExpiry?: string;
   notes?: string;
+  // Dettagli tecnici, impianto GPL & manutenzione programmata
+  lpgTankLiters?: number;
+  petrolTankLiters?: number;
+  lpgSystemBrand?: string;
+  lpgTankExpiry?: string;
+  euroClass?: string;
+  oilSpec?: string;
+  oilCapacityLiters?: number;
+  lastOilChangeDate?: string;
+  lastOilChangeKm?: number;
+  oilIntervalKm?: number;
+  oilIntervalMonths?: number;
+  batterySpec?: string;
+  batteryInstalledDate?: string;
+  batteryIntervalMonths?: number;
+  timingBeltDate?: string;
+  timingBeltKm?: number;
+  sparkPlugsDate?: string;
+  sparkPlugsKm?: number;
+  brakeFluidDate?: string;
+  coolantDate?: string;
+  tirePressure?: string;
+  paintCode?: string;
+  radioCode?: string;
+  spareKeyNote?: string;
 }
 
 export interface CarInsuranceCoverage {
@@ -417,4 +444,74 @@ export interface ProductResearchRecord {
   notes?: string;
   createdAtMs?: number;
 }
+
+export type ReminderCategory =
+  | 'auto_manutenzione'
+  | 'auto_pagamento'
+  | 'reso_garanzia'
+  | 'casa_mutuo'
+  | 'altro';
+
+export interface HomeReminderRecord {
+  id: string;
+  title: string;
+  category: ReminderCategory;
+  startDate: string; // YYYY-MM-DD
+  durationYears?: number;
+  durationMonths?: number;
+  durationDays?: number;
+  customEndDate?: string; // YYYY-MM-DD (opzionale, sovrascrive durata)
+  trackKm?: boolean;
+  startKm?: number;
+  intervalKm?: number;
+  notifyEnabled: boolean;
+  leadMonths: number;
+  leadDays: number;
+  notifyEmail: boolean;
+  notifyWhatsapp: boolean;
+  customEmail?: string;
+  customWhatsappPhone?: string;
+  renewable: boolean;
+  completed: boolean;
+  completedDate?: string;
+  renewalCount?: number;
+  lastNotifiedDate?: string; // YYYY-MM-DD
+  notes?: string;
+}
+
+export interface ReminderNotificationConfig {
+  defaultEmail: string;
+  whatsappPhone: string;
+  callmebotApiKey?: string;
+  autoEmailOnOpen: boolean;
+  lastAutoDigestDate?: string; // YYYY-MM-DD
+}
+
+export type VintedItemCategory =
+  | 'Abbigliamento'
+  | 'Scarpe'
+  | 'Accessori'
+  | 'Elettronica'
+  | 'Casa & Arredo'
+  | 'Libri & Giochi'
+  | 'Altro';
+
+export type VintedSaleStatus = 'venduto' | 'spedito' | 'completato';
+
+export interface VintedSaleRecord {
+  id: string;
+  title: string;
+  category: VintedItemCategory;
+  brand?: string;
+  size?: string;
+  saleDate: string; // DD/MM/YYYY
+  salePriceEur: number;
+  originalCostEur?: number;
+  extraCostsEur?: number;
+  netProfitEur: number;
+  status: VintedSaleStatus;
+  buyerName?: string;
+  notes?: string;
+}
+
 

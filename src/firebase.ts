@@ -17,10 +17,12 @@ import {
   Firestore,
   FirestoreError,
   getDoc as rawGetDoc,
-  getDocFromServer,
   getDocs as rawGetDocs,
   getFirestore,
+  initializeFirestore,
   onSnapshot as rawOnSnapshot,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   Query,
   QuerySnapshot,
   serverTimestamp,
@@ -37,7 +39,22 @@ const app = getApps().some((a) => a.name === '[DEFAULT]')
   ? getApp()
   : initializeApp(firebaseConfig);
 
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+let initializedDb: Firestore;
+try {
+  initializedDb = initializeFirestore(
+    app,
+    {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    },
+    firebaseConfig.firestoreDatabaseId
+  );
+} catch {
+  initializedDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+}
+
+export const db = initializedDb;
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
@@ -537,11 +554,15 @@ function describePathSectionAndTitle(
         ? 'Spesa'
         : room === '__app_settings__' || docId === 'app_settings_state'
           ? 'Impostazioni'
-          : room === '__documenti__' || docId.startsWith('doc_') || docId.startsWith('resdoc_') || docId.startsWith('artdoc_')
-            ? 'Documenti'
-            : room === '__macchina__' || docId.startsWith('car_')
-              ? 'Macchina'
-              : 'Articoli';
+          : room === '__promemoria__' || docId.startsWith('rem_')
+            ? 'Promemoria'
+            : room === '__vinted__' || docId.startsWith('vinted_')
+              ? 'Vinted'
+              : room === '__documenti__' || docId.startsWith('doc_') || docId.startsWith('resdoc_') || docId.startsWith('artdoc_')
+                ? 'Documenti'
+                : room === '__macchina__' || docId.startsWith('car_')
+                  ? 'Macchina'
+                  : 'Articoli';
     const title = String(data?.name || hintedTitle || docId);
     return { section, targetTitle: title };
   }
@@ -2015,15 +2036,24 @@ export function trackedOnSnapshot<AppModelType = DocumentData, DbModelType exten
     | ((snapshot: QuerySnapshot<AppModelType, DbModelType>) => void),
   onError?: (error: FirestoreError) => void
 ): Unsubscribe {
+  let sawAnySnapshot = false;
   let receivedServerSnap = false;
   const wrappedNext = (
     snap: DocumentSnapshot<AppModelType, DbModelType> | QuerySnapshot<AppModelType, DbModelType>
   ) => {
+    const hadCacheSnapshotBefore = sawAnySnapshot;
+    sawAnySnapshot = true;
     if (!snap.metadata.fromCache) {
       if ('docs' in snap) {
         if (!receivedServerSnap) {
           receivedServerSnap = true;
-          recordFirestoreReadsExecuted(Math.max(1, snap.size));
+          // With persistentLocalCache active, if cache emitted first, the server only bills for docs changed/returned in docChanges().
+          const serverReads = hadCacheSnapshotBefore
+            ? snap.docChanges().length
+            : Math.max(1, snap.size);
+          if (serverReads > 0) {
+            recordFirestoreReadsExecuted(serverReads);
+          }
         } else {
           const changesCount = snap.docChanges().length;
           if (changesCount > 0) {
@@ -2031,8 +2061,14 @@ export function trackedOnSnapshot<AppModelType = DocumentData, DbModelType exten
           }
         }
       } else {
-        receivedServerSnap = true;
-        recordFirestoreReadsExecuted(1);
+        if (!receivedServerSnap) {
+          receivedServerSnap = true;
+          if (!hadCacheSnapshotBefore) {
+            recordFirestoreReadsExecuted(1);
+          }
+        } else {
+          recordFirestoreReadsExecuted(1);
+        }
       }
     }
     (onNext as (s: typeof snap) => void)(snap);
@@ -2393,14 +2429,3 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
-    }
-  }
-}
-
-testConnection();

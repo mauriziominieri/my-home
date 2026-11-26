@@ -177,6 +177,9 @@ interface CloudVaultDocMeta {
 }
 
 const cloudMetaCache = new Map<string, CloudVaultDocMeta>();
+let syncedVaultMetaUid: string | null = null;
+let inFlightVaultMetaSync: Promise<void> | null = null;
+let inFlightVaultMetaUid: string | null = null;
 
 export function sanitizeVaultFileKey(key: string): string {
   const clean = (key || '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
@@ -512,7 +515,12 @@ export async function getVaultFile(key: string, ownerUid?: string): Promise<Stor
   if (uid) {
     try {
       let cloudMeta = cloudMetaCache.get(cleanKey);
-      if (!cloudMeta) {
+      // Batch-sync cloud metadata once per session instead of firing N separate getDoc calls on view mounts
+      if (!cloudMeta && syncedVaultMetaUid !== uid) {
+        await listVaultFileMetadata(uid);
+        cloudMeta = cloudMetaCache.get(cleanKey);
+      }
+      if (!cloudMeta && syncedVaultMetaUid !== uid) {
         const metaSnap = await getDoc(doc(db, `users/${uid}/vaultFiles`, cleanKey));
         if (metaSnap.exists()) {
           const d = metaSnap.data();
@@ -719,7 +727,10 @@ export async function replayVaultDeleteToFirestore(params: {
   await deleteVaultKeysFromFirestore(cleanKeys, uid);
 }
 
-export async function listVaultFileMetadata(ownerUid?: string): Promise<Record<string, VaultFileMeta>> {
+export async function listVaultFileMetadata(
+  ownerUid?: string,
+  options?: { forceRefresh?: boolean }
+): Promise<Record<string, VaultFileMeta>> {
   const map: Record<string, VaultFileMeta> = {};
   for (const [key, asset] of Object.entries(STATIC_BILL_PDF_ASSETS)) {
     map[key] = {
@@ -759,71 +770,94 @@ export async function listVaultFileMetadata(ownerUid?: string): Promise<Record<s
   }
 
   const uid = getAuthenticatedUid(ownerUid);
-  if (uid) {
-    try {
-      const q = query(
-        collection(db, `users/${uid}/vaultFiles`),
-        where('ownerId', '==', uid)
-      );
-      const snap = await getDocs(q);
-      const seenCloudKeys = new Set<string>();
-      cloudMetaCache.clear();
+  if (!uid) {
+    syncedVaultMetaUid = null;
+    cloudMetaCache.clear();
+    return map;
+  }
 
-      snap.forEach((docSnap) => {
-        const d = docSnap.data();
-        const fileKey = String(d.fileKey || docSnap.id);
-        const fileName = String(d.fileName || 'documento.pdf');
-        const mimeType = String(d.mimeType || 'application/pdf');
-        const size = Number(d.size || 0);
-        const chunkCount = Number(d.chunkCount || 0);
-        const updatedAtMs = timestampToMs(d.updatedAt);
+  const forceRefresh = Boolean(options?.forceRefresh);
+  const needsCloudSync = forceRefresh || syncedVaultMetaUid !== uid;
 
-        seenCloudKeys.add(fileKey);
-        cloudMetaCache.set(fileKey, {
-          fileKey,
-          fileName,
-          mimeType,
-          size,
-          chunkCount,
-          updatedAtMs,
-        });
+  if (needsCloudSync) {
+    if (inFlightVaultMetaSync && inFlightVaultMetaUid === uid) {
+      await inFlightVaultMetaSync;
+    } else {
+      inFlightVaultMetaUid = uid;
+      inFlightVaultMetaSync = (async () => {
+        try {
+          const q = query(
+            collection(db, `users/${uid}/vaultFiles`),
+            where('ownerId', '==', uid)
+          );
+          const snap = await getDocs(q);
+          const seenCloudKeys = new Set<string>();
+          cloudMetaCache.clear();
 
-        map[fileKey] = {
-          fileName,
-          mimeType,
-          size,
-          updatedAt: updatedAtMs,
-          origin: 'firestore',
-          chunkCount,
-        };
-      });
+          snap.forEach((docSnap) => {
+            const d = docSnap.data();
+            const fileKey = String(d.fileKey || docSnap.id);
+            const fileName = String(d.fileName || 'documento.pdf');
+            const mimeType = String(d.mimeType || 'application/pdf');
+            const size = Number(d.size || 0);
+            const chunkCount = Number(d.chunkCount || 0);
+            const updatedAtMs = timestampToMs(d.updatedAt);
 
-      // Prune cached cloud files that were deleted from another device
-      for (const cachedKey of localSyncedKeysToCheck) {
-        if (!seenCloudKeys.has(cachedKey)) {
-          await deleteLocalCache(cachedKey);
-          if (STATIC_BILL_PDF_ASSETS[cachedKey]) {
-            map[cachedKey] = {
-              fileName: STATIC_BILL_PDF_ASSETS[cachedKey].fileName,
-              mimeType: STATIC_BILL_PDF_ASSETS[cachedKey].mimeType,
-              size: 0,
-              updatedAt: 0,
-              origin: 'bundled',
-            };
-          } else {
-            delete map[cachedKey];
+            seenCloudKeys.add(fileKey);
+            cloudMetaCache.set(fileKey, {
+              fileKey,
+              fileName,
+              mimeType,
+              size,
+              chunkCount,
+              updatedAtMs,
+            });
+          });
+
+          // Prune cached cloud files that were deleted from another device
+          for (const cachedKey of localSyncedKeysToCheck) {
+            if (!seenCloudKeys.has(cachedKey)) {
+              await deleteLocalCache(cachedKey);
+              if (STATIC_BILL_PDF_ASSETS[cachedKey]) {
+                map[cachedKey] = {
+                  fileName: STATIC_BILL_PDF_ASSETS[cachedKey].fileName,
+                  mimeType: STATIC_BILL_PDF_ASSETS[cachedKey].mimeType,
+                  size: 0,
+                  updatedAt: 0,
+                  origin: 'bundled',
+                };
+              } else {
+                delete map[cachedKey];
+              }
+            }
           }
-        }
-      }
 
-      setVaultCloudStatus('ok');
-    } catch (err) {
-      if (isPermissionDeniedError(err)) {
-        setVaultCloudStatus('rules-required');
-      } else {
-        console.warn('Firestore vault metadata list warning:', err);
-      }
+          syncedVaultMetaUid = uid;
+          setVaultCloudStatus('ok');
+        } catch (err) {
+          if (isPermissionDeniedError(err)) {
+            setVaultCloudStatus('rules-required');
+          } else {
+            console.warn('Firestore vault metadata list warning:', err);
+          }
+        } finally {
+          inFlightVaultMetaSync = null;
+          inFlightVaultMetaUid = null;
+        }
+      })();
+      await inFlightVaultMetaSync;
     }
+  }
+
+  for (const [fileKey, cloudMeta] of cloudMetaCache.entries()) {
+    map[fileKey] = {
+      fileName: cloudMeta.fileName,
+      mimeType: cloudMeta.mimeType,
+      size: cloudMeta.size,
+      updatedAt: cloudMeta.updatedAtMs,
+      origin: 'firestore',
+      chunkCount: cloudMeta.chunkCount,
+    };
   }
 
   return map;

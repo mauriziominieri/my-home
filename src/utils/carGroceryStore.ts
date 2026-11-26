@@ -22,8 +22,13 @@ export const DEFAULT_PANDA_PROFILE: CarProfile = {
   model: 'Panda 2ª serie - Panda 1.2 Dynamic Mamy',
   plate: 'EA218ES',
   year: '2010',
-  fuelType: 'Benzina',
+  fuelType: 'Ibrido (Benzina / GPL)',
   engine: '1.2',
+  currentKm: 150000,
+  lpgTankLiters: 31.84,
+  oilIntervalKm: 15000,
+  oilIntervalMonths: 12,
+  batteryIntervalMonths: 54,
   insuranceCompany: 'ConTe.it',
   insuranceExpiry: '20/11/2027',
 };
@@ -256,26 +261,115 @@ function parseKvString(raw?: string): Record<string, string> {
   return map;
 }
 
+interface CarProfileExtraJson {
+  v?: number;
+  lpgTankLiters?: number;
+  petrolTankLiters?: number;
+  lpgSystemBrand?: string;
+  lpgTankExpiry?: string;
+  euroClass?: string;
+  oilSpec?: string;
+  oilCapacityLiters?: number;
+  lastOilChangeDate?: string;
+  lastOilChangeKm?: number;
+  oilIntervalKm?: number;
+  oilIntervalMonths?: number;
+  batterySpec?: string;
+  batteryInstalledDate?: string;
+  batteryIntervalMonths?: number;
+  timingBeltDate?: string;
+  timingBeltKm?: number;
+  sparkPlugsDate?: string;
+  sparkPlugsKm?: number;
+  brakeFluidDate?: string;
+  coolantDate?: string;
+  tirePressure?: string;
+  paintCode?: string;
+  radioCode?: string;
+  spareKeyNote?: string;
+}
+
+function parseCarExtraJson(raw?: string): CarProfileExtraJson | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as CarProfileExtraJson) : null;
+  } catch {
+    return null;
+  }
+}
+
+function optNum(val: unknown): number | undefined {
+  if (typeof val !== 'number' || !Number.isFinite(val) || val < 0) return undefined;
+  return Math.round(val * 100) / 100;
+}
+
+function optStr(val: unknown): string | undefined {
+  if (typeof val !== 'string') return undefined;
+  const trimmed = val.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 export function articleToCarProfile(article?: HomeArticleRecord): CarProfile {
   if (!article) return DEFAULT_PANDA_PROFILE;
   const kv = parseKvString(article.specs);
   const kmNum = kv.KM ? Number(kv.KM) : undefined;
+  const extra = parseCarExtraJson(article.manualExtractText);
+  const isV2 = extra?.v === 2;
+
+  const rawFuel = kv.FUEL || undefined;
+  const resolvedFuel = isV2
+    ? rawFuel || DEFAULT_PANDA_PROFILE.fuelType
+    : !rawFuel || rawFuel.toLowerCase() === 'benzina'
+      ? DEFAULT_PANDA_PROFILE.fuelType
+      : rawFuel;
+
+  const resolvedKm =
+    kmNum !== undefined && Number.isFinite(kmNum) && (isV2 || kmNum > 0)
+      ? kmNum
+      : DEFAULT_PANDA_PROFILE.currentKm;
+
   return {
     id: article.id,
     brand: article.brand || 'Fiat',
     model: article.model || 'Panda',
     plate: (kv.PLT || article.serialNumber || 'EA218ES').toUpperCase(),
     year: kv.YR || undefined,
-    fuelType: kv.FUEL || undefined,
+    fuelType: resolvedFuel,
     engine: kv.ENG || undefined,
     vin: kv.VIN || undefined,
     tireSize: kv.TIRE || undefined,
-    currentKm: kmNum !== undefined && Number.isFinite(kmNum) ? kmNum : undefined,
+    currentKm: resolvedKm,
     insuranceCompany: kv.ASS || undefined,
     insuranceExpiry: article.purchaseDate || undefined,
     bolloExpiry: kv.BOL || undefined,
     revisioneExpiry: article.warrantyEnd || undefined,
     notes: article.notes || undefined,
+    lpgTankLiters: optNum(extra?.lpgTankLiters) ?? (isV2 ? undefined : DEFAULT_PANDA_PROFILE.lpgTankLiters),
+    petrolTankLiters: optNum(extra?.petrolTankLiters),
+    lpgSystemBrand: optStr(extra?.lpgSystemBrand),
+    lpgTankExpiry: optStr(extra?.lpgTankExpiry),
+    euroClass: optStr(extra?.euroClass),
+    oilSpec: optStr(extra?.oilSpec),
+    oilCapacityLiters: optNum(extra?.oilCapacityLiters),
+    lastOilChangeDate: optStr(extra?.lastOilChangeDate),
+    lastOilChangeKm: optNum(extra?.lastOilChangeKm),
+    oilIntervalKm: optNum(extra?.oilIntervalKm) ?? DEFAULT_PANDA_PROFILE.oilIntervalKm,
+    oilIntervalMonths: optNum(extra?.oilIntervalMonths) ?? DEFAULT_PANDA_PROFILE.oilIntervalMonths,
+    batterySpec: optStr(extra?.batterySpec),
+    batteryInstalledDate: optStr(extra?.batteryInstalledDate),
+    batteryIntervalMonths:
+      optNum(extra?.batteryIntervalMonths) ?? DEFAULT_PANDA_PROFILE.batteryIntervalMonths,
+    timingBeltDate: optStr(extra?.timingBeltDate),
+    timingBeltKm: optNum(extra?.timingBeltKm),
+    sparkPlugsDate: optStr(extra?.sparkPlugsDate),
+    sparkPlugsKm: optNum(extra?.sparkPlugsKm),
+    brakeFluidDate: optStr(extra?.brakeFluidDate),
+    coolantDate: optStr(extra?.coolantDate),
+    tirePressure: optStr(extra?.tirePressure),
+    paintCode: optStr(extra?.paintCode),
+    radioCode: optStr(extra?.radioCode),
+    spareKeyNote: optStr(extra?.spareKeyNote),
   };
 }
 
@@ -286,7 +380,7 @@ export function carProfileToArticlePayload(
   const plate = sanitizeToken(profile.plate).toUpperCase() || 'EA218ES';
   parts.push(`PLT:${plate.slice(0, 16)}`);
   if (profile.year) parts.push(`YR:${sanitizeToken(profile.year).slice(0, 12)}`);
-  if (profile.fuelType) parts.push(`FUEL:${sanitizeToken(profile.fuelType).slice(0, 24)}`);
+  if (profile.fuelType) parts.push(`FUEL:${sanitizeToken(profile.fuelType).slice(0, 28)}`);
   if (profile.engine) parts.push(`ENG:${sanitizeToken(profile.engine).slice(0, 28)}`);
   if (profile.tireSize) parts.push(`TIRE:${sanitizeToken(profile.tireSize).slice(0, 24)}`);
   if (typeof profile.currentKm === 'number' && Number.isFinite(profile.currentKm)) {
@@ -297,6 +391,56 @@ export function carProfileToArticlePayload(
     parts.push(`ASS:${sanitizeToken(profile.insuranceCompany).slice(0, 32)}`);
   }
   if (profile.vin) parts.push(`VIN:${sanitizeToken(profile.vin).slice(0, 24)}`);
+
+  const extra: CarProfileExtraJson = {
+    v: 2,
+    ...(optNum(profile.lpgTankLiters) !== undefined
+      ? { lpgTankLiters: optNum(profile.lpgTankLiters) }
+      : {}),
+    ...(optNum(profile.petrolTankLiters) !== undefined
+      ? { petrolTankLiters: optNum(profile.petrolTankLiters) }
+      : {}),
+    ...(optStr(profile.lpgSystemBrand) ? { lpgSystemBrand: optStr(profile.lpgSystemBrand) } : {}),
+    ...(optStr(profile.lpgTankExpiry) ? { lpgTankExpiry: optStr(profile.lpgTankExpiry) } : {}),
+    ...(optStr(profile.euroClass) ? { euroClass: optStr(profile.euroClass) } : {}),
+    ...(optStr(profile.oilSpec) ? { oilSpec: optStr(profile.oilSpec) } : {}),
+    ...(optNum(profile.oilCapacityLiters) !== undefined
+      ? { oilCapacityLiters: optNum(profile.oilCapacityLiters) }
+      : {}),
+    ...(optStr(profile.lastOilChangeDate)
+      ? { lastOilChangeDate: optStr(profile.lastOilChangeDate) }
+      : {}),
+    ...(optNum(profile.lastOilChangeKm) !== undefined
+      ? { lastOilChangeKm: optNum(profile.lastOilChangeKm) }
+      : {}),
+    ...(optNum(profile.oilIntervalKm) !== undefined
+      ? { oilIntervalKm: optNum(profile.oilIntervalKm) }
+      : {}),
+    ...(optNum(profile.oilIntervalMonths) !== undefined
+      ? { oilIntervalMonths: optNum(profile.oilIntervalMonths) }
+      : {}),
+    ...(optStr(profile.batterySpec) ? { batterySpec: optStr(profile.batterySpec) } : {}),
+    ...(optStr(profile.batteryInstalledDate)
+      ? { batteryInstalledDate: optStr(profile.batteryInstalledDate) }
+      : {}),
+    ...(optNum(profile.batteryIntervalMonths) !== undefined
+      ? { batteryIntervalMonths: optNum(profile.batteryIntervalMonths) }
+      : {}),
+    ...(optStr(profile.timingBeltDate) ? { timingBeltDate: optStr(profile.timingBeltDate) } : {}),
+    ...(optNum(profile.timingBeltKm) !== undefined
+      ? { timingBeltKm: optNum(profile.timingBeltKm) }
+      : {}),
+    ...(optStr(profile.sparkPlugsDate) ? { sparkPlugsDate: optStr(profile.sparkPlugsDate) } : {}),
+    ...(optNum(profile.sparkPlugsKm) !== undefined
+      ? { sparkPlugsKm: optNum(profile.sparkPlugsKm) }
+      : {}),
+    ...(optStr(profile.brakeFluidDate) ? { brakeFluidDate: optStr(profile.brakeFluidDate) } : {}),
+    ...(optStr(profile.coolantDate) ? { coolantDate: optStr(profile.coolantDate) } : {}),
+    ...(optStr(profile.tirePressure) ? { tirePressure: optStr(profile.tirePressure) } : {}),
+    ...(optStr(profile.paintCode) ? { paintCode: optStr(profile.paintCode) } : {}),
+    ...(optStr(profile.radioCode) ? { radioCode: optStr(profile.radioCode) } : {}),
+    ...(optStr(profile.spareKeyNote) ? { spareKeyNote: optStr(profile.spareKeyNote) } : {}),
+  };
 
   return {
     name: `${profile.brand || 'Fiat'} ${profile.model || 'Panda'}`.slice(0, 80),
@@ -310,6 +454,7 @@ export function carProfileToArticlePayload(
     warrantyEnd: profile.revisioneExpiry ? profile.revisioneExpiry.slice(0, 20) : undefined,
     specs: parts.join('|').slice(0, 240),
     notes: profile.notes ? profile.notes.slice(0, 240) : undefined,
+    manualExtractText: JSON.stringify(extra).slice(0, 12_000),
   };
 }
 

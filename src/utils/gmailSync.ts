@@ -408,3 +408,51 @@ export async function trashGmailMessages(
   }
   return trashed;
 }
+
+function encodeUtf8ToBase64Url(input: string): string {
+  const bytes = new TextEncoder().encode(input);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunkSize, bytes.length)));
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function encodeMimeHeaderUtf8(text: string): string {
+  // Encode non-ASCII subjects cleanly via RFC 2047 UTF-8 Base64
+  if (/^[\x20-\x7e]*$/.test(text)) return text;
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return `=?UTF-8?B?${btoa(binary)}?=`;
+}
+
+export async function sendGmailMessage(
+  accessToken: string,
+  params: { to: string; subject: string; body: string }
+): Promise<{ id: string }> {
+  const cleanTo = params.to.trim();
+  if (!cleanTo || !cleanTo.includes('@')) {
+    throw new Error('Indirizzo email destinatario non valido.');
+  }
+  const rawMime = [
+    `To: ${cleanTo}`,
+    `Subject: ${encodeMimeHeaderUtf8(params.subject.trim())}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset="UTF-8"',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    params.body,
+  ].join('\r\n');
+
+  const raw = encodeUtf8ToBase64Url(rawMime);
+  return gmailFetchJson<{ id: string }>(`${GMAIL_API_BASE}/messages/send`, accessToken, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ raw }),
+  });
+}
+

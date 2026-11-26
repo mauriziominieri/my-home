@@ -103,6 +103,8 @@ interface SettingsViewProps {
     researches: number;
     documents: number;
     carLogs: number;
+    reminders?: number;
+    vintedSales?: number;
     groceries: number;
   };
 }
@@ -117,6 +119,8 @@ const START_SECTION_OPTIONS: { value: DefaultStartSection; label: string }[] = [
   { value: 'ricerche', label: 'Prodotti' },
   { value: 'documenti', label: 'Documenti' },
   { value: 'macchina', label: 'Macchina' },
+  { value: 'promemoria', label: 'Promemoria' },
+  { value: 'vinted', label: 'Vinted' },
   { value: 'spesa', label: 'Spesa' },
   { value: 'info', label: 'Info Utili' },
 ];
@@ -836,7 +840,7 @@ export function SettingsView({
         )}
 
         <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-3 leading-relaxed">
-          Nota tecnica: Firebase non fornisce un&apos;API client per leggere il contatore ufficiale di fatturazione del progetto, quindi questo pannello misura tutte le operazioni reali eseguite da questo browser (cache locale di Firestore esclusa). Gli script automatici esterni (Google Apps Script 24/7 per e-distribuzione) scrivono separatamente lato server senza passare dal browser.
+          Nota tecnica: la cache persistente su IndexedDB (Firestore + Vault PDF) mantiene i dati in locale tra i ricaricamenti e al cambio pagina (es. Documenti ↔ Bollette ↔ Prodotti = <strong>0 letture extra</strong>). Anche con 500+ documenti archiviati, le letture avvengono solo alla prima apertura su un dispositivo nuovo o sui soli record modificati da altri dispositivi (limite Spark gratuito: <strong>50.000 letture/giorno</strong>).
         </p>
       </section>
 

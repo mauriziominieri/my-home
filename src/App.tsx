@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import {
   AlertTriangle,
+  BellRing,
   BookOpen,
   Car,
   CheckCircle2,
@@ -33,6 +34,7 @@ import {
   ShoppingBag,
   ShoppingCart,
   Sun,
+  Tag,
   Thermometer,
   Trash2,
   WifiOff,
@@ -96,14 +98,17 @@ import {
   HomeArticleCategory,
   HomeArticleRecord,
   HomeDocumentRecord,
+  HomeReminderRecord,
   HomeSystemConfig,
   NavSection,
   ProductResearchCategory,
   ProductResearchRecord,
   ProductResearchStatus,
   ReadingSource,
+  ReminderNotificationConfig,
   RoomId,
   TariBillRecord,
+  VintedSaleRecord,
   VmcDayRecord,
   WaterBillRecord,
 } from './types/home';
@@ -316,6 +321,8 @@ function diffHomeArticleFields(
     docId.startsWith('resdoc_') ||
     docId.startsWith('artdoc_');
   const isSpesaRecord = next.room === '__spesa__' || docId.startsWith('spesa_');
+  const isReminderRecord = next.room === '__promemoria__' || docId.startsWith('rem_');
+  const isVintedRecord = next.room === '__vinted__' || docId.startsWith('vinted_');
 
   if (prev.name.trim() !== next.name.trim()) {
     changedFields.push('name');
@@ -324,12 +331,28 @@ function diffHomeArticleFields(
   if ((prev.brand || '').trim() !== (next.brand || '').trim()) {
     changedFields.push('brand');
     changedDetails.push(
-      `${isDocRecord ? 'Fornitore' : isSpesaRecord ? 'Categoria' : 'Marca'}: ${next.brand?.trim() || '—'}`
+      `${
+        isDocRecord
+          ? 'Fornitore'
+          : isSpesaRecord || isReminderRecord || isVintedRecord
+            ? 'Categoria'
+            : 'Marca'
+      }: ${next.brand?.trim() || '—'}`
     );
   }
   if ((prev.model || '').trim() !== (next.model || '').trim()) {
     changedFields.push('model');
-    changedDetails.push(`${isDocRecord ? 'Categoria' : 'Modello'}: ${next.model?.trim() || '—'}`);
+    changedDetails.push(
+      `${
+        isDocRecord
+          ? 'Categoria'
+          : isReminderRecord
+            ? 'Ciclo'
+            : isVintedRecord
+              ? 'Brand/Taglia'
+              : 'Modello'
+      }: ${next.model?.trim() || '—'}`
+    );
   }
   if ((prev.room || '').trim() !== (next.room || '').trim()) {
     changedFields.push('room');
@@ -342,19 +365,27 @@ function diffHomeArticleFields(
   if ((prev.purchaseDate || '').trim() !== (next.purchaseDate || '').trim()) {
     changedFields.push('purchaseDate');
     changedDetails.push(
-      `${isDocRecord ? 'Data emissione' : 'Data acquisto'}: ${next.purchaseDate?.trim() || 'Rimossa'}`
+      `${
+        isDocRecord
+          ? 'Data emissione'
+          : isReminderRecord
+            ? 'Data inizio'
+            : isVintedRecord
+              ? 'Data vendita'
+              : 'Data acquisto'
+      }: ${next.purchaseDate?.trim() || 'Rimossa'}`
     );
   }
   if (normSimulatedMoney(prev.purchasePriceEur) !== normSimulatedMoney(next.purchasePriceEur)) {
     changedFields.push('purchasePriceEur');
     changedDetails.push(
-      `Prezzo: ${formatSimulatedEuro(normSimulatedMoney(prev.purchasePriceEur))} → ${formatSimulatedEuro(normSimulatedMoney(next.purchasePriceEur))}`
+      `${isVintedRecord ? 'Prezzo vendita' : 'Prezzo'}: ${formatSimulatedEuro(normSimulatedMoney(prev.purchasePriceEur))} → ${formatSimulatedEuro(normSimulatedMoney(next.purchasePriceEur))}`
     );
   }
   if ((prev.warrantyEnd || '').trim() !== (next.warrantyEnd || '').trim()) {
     changedFields.push('warrantyEnd');
     changedDetails.push(
-      `${isDocRecord ? 'Scadenza' : 'Fine garanzia'}: ${next.warrantyEnd?.trim() || 'Rimossa'}`
+      `${isDocRecord || isReminderRecord ? 'Scadenza' : 'Fine garanzia'}: ${next.warrantyEnd?.trim() || 'Rimossa'}`
     );
   }
   if (Boolean(prev.familyWarranty) !== Boolean(next.familyWarranty)) {
@@ -368,9 +399,17 @@ function diffHomeArticleFields(
           ? next.familyWarranty
             ? 'Documento in evidenza'
             : 'Rimosso da evidenza'
-          : next.familyWarranty
-            ? 'Garanzia Extra Family attivata'
-            : 'Garanzia Extra Family disattivata'
+          : isReminderRecord
+            ? next.familyWarranty
+              ? 'Notifiche attive'
+              : 'Notifiche disattivate'
+            : isVintedRecord
+              ? next.familyWarranty
+                ? 'Vendita completata'
+                : 'Vendita in corso'
+              : next.familyWarranty
+                ? 'Garanzia Extra Family attivata'
+                : 'Garanzia Extra Family disattivata'
     );
   }
   if ((prev.serialNumber || '').trim() !== (next.serialNumber || '').trim()) {
@@ -380,12 +419,22 @@ function diffHomeArticleFields(
     if (nextResDoc && prevResDoc && nextResDoc.docType !== prevResDoc.docType) {
       changedDetails.push(`Tipo allegato: ${prevResDoc.docType} → ${nextResDoc.docType}`);
     } else {
-      changedDetails.push(isDocRecord ? 'Riferimento aggiornato' : 'Seriale aggiornato');
+      changedDetails.push(
+        isDocRecord || isReminderRecord || isVintedRecord
+          ? 'Stato aggiornato'
+          : 'Seriale aggiornato'
+      );
     }
   }
   if ((prev.specs || '').trim() !== (next.specs || '').trim()) {
     changedFields.push('specs');
-    changedDetails.push(isSpesaRecord ? 'Prezzi supermercati aggiornati' : 'Specifiche aggiornate');
+    changedDetails.push(
+      isSpesaRecord
+        ? 'Prezzi supermercati aggiornati'
+        : isVintedRecord
+          ? 'Profitto aggiornato'
+          : 'Specifiche aggiornate'
+    );
   }
   if ((prev.notes || '').trim() !== (next.notes || '').trim()) {
     changedFields.push('notes');
@@ -405,6 +454,7 @@ import {
   GmailAuthExpiredError,
   GmailProcessedMessage,
   scanGmailInbox,
+  sendGmailMessage,
   trashGmailMessages,
 } from './utils/gmailSync';
 import {
@@ -487,6 +537,22 @@ import {
   SYSTEM_ROOM_APP_SETTINGS,
   useAppSettings,
 } from './utils/appSettings';
+import {
+  articleToReminder,
+  articleToReminderConfig,
+  buildDailyReminderDigestText,
+  computeReminderLifecycle,
+  REMINDERS_CONFIG_DOC_ID,
+  reminderConfigToArticlePayload,
+  ReminderLifecycleInfo,
+  reminderToArticlePayload,
+  SYSTEM_ROOM_REMINDERS,
+} from './utils/remindersStore';
+import {
+  articleToVintedSale,
+  SYSTEM_ROOM_VINTED,
+  vintedSaleToArticlePayload,
+} from './utils/vintedStore';
 import { OverviewView } from './components/OverviewView';
 import { DomoticsView } from './components/DomoticsView';
 import { EnergyDatabaseView } from './components/EnergyDatabaseView';
@@ -496,6 +562,8 @@ import { ResearchesView } from './components/ResearchesView';
 import { CarView } from './components/CarView';
 import { GroceryView } from './components/GroceryView';
 import { DocumentsView } from './components/DocumentsView';
+import { RemindersView } from './components/RemindersView';
+import { VintedView } from './components/VintedView';
 import { ClimateAutopilotInput } from './components/ClimateAutopilotCard';
 import { InfoGuideView } from './components/InfoGuideView';
 import { SettingsView } from './components/SettingsView';
@@ -577,6 +645,8 @@ const NAV_ITEMS: { id: NavSection; label: string; icon: typeof LayoutDashboard }
   { id: 'ricerche', label: 'Prodotti', icon: ShoppingBag },
   { id: 'documenti', label: 'Documenti', icon: FolderOpen },
   { id: 'macchina', label: 'Macchina', icon: Car },
+  { id: 'promemoria', label: 'Promemoria', icon: BellRing },
+  { id: 'vinted', label: 'Vinted', icon: Tag },
   { id: 'spesa', label: 'Spesa', icon: ShoppingCart },
   { id: 'info', label: 'Info Utili', icon: BookOpen },
   { id: 'impostazioni', label: 'Impostazioni', icon: Settings },
@@ -1016,6 +1086,8 @@ export default function App() {
   const [migrationDismissed, setMigrationDismissed] = useState(false);
   const clearingBillArchiveRef = useRef(false);
   const carPolicySeededRef = useRef(false);
+  const ownerCheckedUidRef = useRef<string | null>(null);
+  const autoReminderEmailAttemptedDateRef = useRef<string | null>(null);
   const skippedTrashIdsRef = useRef<Set<string>>(new Set());
   const gmailSyncInFlightRef = useRef(false);
   const autopilotSyncInFlightRef = useRef(false);
@@ -1048,6 +1120,7 @@ export default function App() {
   const [todayIso, setTodayIso] = useState<string>(() => getLocalTodayIso());
   const [gmailToken, setGmailToken] = useState<string | null>(() => getGmailAccessToken());
   const [gmailSyncing, setGmailSyncing] = useState(false);
+  const [sendingReminderEmail, setSendingReminderEmail] = useState(false);
   const [gmailNotice, setGmailNotice] = useState<{
     tone: 'ok' | 'info' | 'warn';
     text: string;
@@ -1206,10 +1279,12 @@ export default function App() {
     return () => unsubscribe();
   }, [authReady, activeUid]);
 
-  // Registra l'ownerUid su appMeta/owner solo se mancante o diverso, evitando scritture ridondanti a ogni avvio
+  // Registra l'ownerUid su appMeta/owner solo se mancante o diverso, una volta per UID
   useEffect(() => {
     if (!authReady || !user || user.email !== 'mauminieri@gmail.com') return;
     if (isFirestoreWritesDisabled()) return;
+    if (ownerCheckedUidRef.current === user.uid) return;
+    ownerCheckedUidRef.current = user.uid;
     let cancelled = false;
     const ownerRef = doc(db, 'appMeta', 'owner');
     void getDoc(ownerRef)
@@ -1223,11 +1298,13 @@ export default function App() {
           { merge: true }
         );
       })
-      .catch(() => {});
+      .catch(() => {
+        ownerCheckedUidRef.current = null;
+      });
     return () => {
       cancelled = true;
     };
-  }, [authReady, user]);
+  }, [authReady, activeUid, user]);
 
   // Subscribe to private Firestore data when signed in as owner.
   useEffect(() => {
@@ -1745,7 +1822,7 @@ export default function App() {
       unsubVmcDays();
       unsubResearches();
     };
-  }, [authReady, activeUid, user]);
+  }, [authReady, activeUid]);
 
   // Recompute all state immediately whenever simulatedOps changes (add, discard, clear, flush)
   useEffect(() => {
@@ -4431,6 +4508,26 @@ export default function App() {
     await handleUpdateArticle(id, homeDocumentToArticlePayload(docItem));
   }
 
+  async function handleAddReminder(reminder: Omit<HomeReminderRecord, 'id'>) {
+    await handleAddArticle(reminderToArticlePayload(reminder), 'rem');
+  }
+
+  async function handleUpdateReminder(id: string, reminder: Omit<HomeReminderRecord, 'id'>) {
+    await handleUpdateArticle(id, reminderToArticlePayload(reminder));
+  }
+
+  async function handleSaveReminderNotifyConfig(cfg: ReminderNotificationConfig) {
+    await handleUpdateArticle(REMINDERS_CONFIG_DOC_ID, reminderConfigToArticlePayload(cfg));
+  }
+
+  async function handleAddVintedSale(sale: Omit<VintedSaleRecord, 'id'>) {
+    await handleAddArticle(vintedSaleToArticlePayload(sale), 'vinted');
+  }
+
+  async function handleUpdateVintedSale(id: string, sale: Omit<VintedSaleRecord, 'id'>) {
+    await handleUpdateArticle(id, vintedSaleToArticlePayload(sale));
+  }
+
   async function handleUploadLinkedDocument(
     docItem: Omit<HomeDocumentRecord, 'id'>,
     file: File
@@ -4627,7 +4724,9 @@ export default function App() {
           a.room !== SYSTEM_ROOM_DOCUMENTS &&
           a.room !== SYSTEM_ROOM_CLIMATE_AUTO &&
           a.room !== SYSTEM_ROOM_MIGRATION_META &&
-          a.room !== SYSTEM_ROOM_APP_SETTINGS
+          a.room !== SYSTEM_ROOM_APP_SETTINGS &&
+          a.room !== SYSTEM_ROOM_REMINDERS &&
+          a.room !== SYSTEM_ROOM_VINTED
       ),
     [homeArticles]
   );
@@ -4658,6 +4757,189 @@ export default function App() {
         .map(articleToCarLog),
     [homeArticles]
   );
+
+  const effectiveCarProfileForReminders = useMemo<CarProfile>(() => {
+    const maxLogKm = carLogs.reduce(
+      (max, entry) => (typeof entry.km === 'number' && entry.km > max ? entry.km : max),
+      0
+    );
+    return {
+      ...carProfile,
+      currentKm: Math.max(carProfile.currentKm || 0, maxLogKm),
+    };
+  }, [carProfile, carLogs]);
+
+  const reminderNotifyConfig = useMemo<ReminderNotificationConfig>(
+    () =>
+      articleToReminderConfig(
+        homeArticles.find((a) => a.id === REMINDERS_CONFIG_DOC_ID),
+        user?.email
+      ),
+    [homeArticles, user?.email]
+  );
+
+  const reminders = useMemo<HomeReminderRecord[]>(
+    () =>
+      homeArticles
+        .filter((a) => a.room === SYSTEM_ROOM_REMINDERS && a.id !== REMINDERS_CONFIG_DOC_ID)
+        .map(articleToReminder)
+        .filter((r): r is HomeReminderRecord => Boolean(r)),
+    [homeArticles]
+  );
+
+  const dueRemindersToday = useMemo(
+    () =>
+      reminders
+        .map((reminder) => ({
+          reminder,
+          lifecycle: computeReminderLifecycle(
+            reminder,
+            todayIso,
+            effectiveCarProfileForReminders.currentKm
+          ),
+        }))
+        .filter((item) => item.lifecycle.needsNotificationToday),
+    [reminders, todayIso, effectiveCarProfileForReminders.currentKm]
+  );
+
+  const vintedSales = useMemo<VintedSaleRecord[]>(
+    () =>
+      homeArticles
+        .filter((a) => a.room === SYSTEM_ROOM_VINTED)
+        .map(articleToVintedSale),
+    [homeArticles]
+  );
+
+  const handleMarkRemindersNotifiedToday = useCallback(
+    async (reminderIds: string[]) => {
+      if (!user || reminderIds.length === 0) return;
+      for (const id of reminderIds) {
+        const existing = reminders.find((r) => r.id === id);
+        if (!existing || existing.lastNotifiedDate === todayIso) continue;
+        const { id: _ignored, ...rest } = existing;
+        await handleUpdateArticle(id, reminderToArticlePayload({ ...rest, lastNotifiedDate: todayIso }));
+      }
+    },
+    [user, reminders, todayIso]
+  );
+
+  const handleSendReminderDigestEmail = useCallback(
+    async (
+      dueItems: { reminder: HomeReminderRecord; lifecycle: ReminderLifecycleInfo }[],
+      silent = false
+    ) => {
+      if (dueItems.length === 0) return;
+      const to = (
+        dueItems.find((item) => item.reminder.customEmail?.trim())?.reminder.customEmail ||
+        reminderNotifyConfig.defaultEmail ||
+        user?.email ||
+        ''
+      ).trim();
+      if (!to) {
+        if (!silent) {
+          setGmailNotice({
+            tone: 'warn',
+            text: 'Inserisci un indirizzo email destinatario nelle impostazioni Promemoria.',
+          });
+        }
+        return;
+      }
+
+      let activeUser = user;
+      if (!activeUser && !silent) {
+        try {
+          activeUser = await signInPrimaryOwner();
+        } catch (err) {
+          setAuthError(formatFirebaseAuthError(err, 'primary'));
+          return;
+        }
+      }
+      if (!activeUser) return;
+
+      let token = gmailToken || getGmailAccessToken();
+      if (!token) {
+        if (silent) return;
+        try {
+          token = await connectGmailAccount();
+          if (token) setGmailToken(token);
+        } catch (err) {
+          setAuthError(formatFirebaseAuthError(err, 'gmail'));
+          return;
+        }
+      }
+      if (!token) return;
+
+      setSendingReminderEmail(true);
+      try {
+        const { subject, body } = buildDailyReminderDigestText(
+          dueItems,
+          effectiveCarProfileForReminders
+        );
+        try {
+          await sendGmailMessage(token, { to, subject, body });
+        } catch (err) {
+          if (err instanceof GmailAuthExpiredError) {
+            clearGmailAccessToken();
+            setGmailToken(null);
+            if (silent) return;
+            const refreshed = await connectGmailAccount();
+            if (!refreshed) return;
+            setGmailToken(refreshed);
+            await sendGmailMessage(refreshed, { to, subject, body });
+          } else {
+            throw err;
+          }
+        }
+        await handleMarkRemindersNotifiedToday(dueItems.map((item) => item.reminder.id));
+        setGmailNotice({
+          tone: 'ok',
+          text: `Email promemoria inviata a ${to} (${dueItems.length} avvisi).`,
+        });
+      } catch (err) {
+        if (!silent) {
+          setGmailNotice({
+            tone: 'warn',
+            text:
+              err instanceof Error
+                ? `Invio email promemoria non riuscito: ${err.message}`
+                : 'Errore invio email promemoria.',
+          });
+        }
+      } finally {
+        setSendingReminderEmail(false);
+      }
+    },
+    [
+      reminderNotifyConfig.defaultEmail,
+      user,
+      gmailToken,
+      effectiveCarProfileForReminders,
+      handleMarkRemindersNotifiedToday,
+    ]
+  );
+
+  useEffect(() => {
+    if (!user || !canEdit || !homeArticlesLoaded) return;
+    if (isFirestoreWritesDisabled()) return;
+    if (!reminderNotifyConfig.autoEmailOnOpen) return;
+    if (!reminderNotifyConfig.defaultEmail.trim()) return;
+    const emailDueItems = dueRemindersToday.filter((item) => item.reminder.notifyEmail);
+    if (emailDueItems.length === 0) return;
+    if (!(gmailToken || getGmailAccessToken())) return;
+    if (autoReminderEmailAttemptedDateRef.current === todayIso) return;
+    autoReminderEmailAttemptedDateRef.current = todayIso;
+    void handleSendReminderDigestEmail(emailDueItems, true);
+  }, [
+    user,
+    canEdit,
+    homeArticlesLoaded,
+    reminderNotifyConfig.autoEmailOnOpen,
+    reminderNotifyConfig.defaultEmail,
+    dueRemindersToday,
+    gmailToken,
+    todayIso,
+    handleSendReminderDigestEmail,
+  ]);
 
   const groceryProducts = useMemo(
     () =>
@@ -5238,6 +5520,8 @@ export default function App() {
       carProfile,
       carPolicy,
       carLogs,
+      reminders,
+      vintedSales,
       groceries: groceryProducts,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
@@ -5291,6 +5575,7 @@ export default function App() {
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const active = activeNav === item.id;
+            const badgeCount = item.id === 'promemoria' ? dueRemindersToday.length : 0;
             return (
               <button
                 key={item.id}
@@ -5303,13 +5588,29 @@ export default function App() {
                     : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
                 }`}
               >
-                <Icon className="w-4 h-4 shrink-0" />
+                <span className="relative shrink-0">
+                  <Icon className="w-4 h-4" />
+                  {badgeCount > 0 && !sidebarPinned && (
+                    <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white dark:ring-slate-900 group-hover:hidden" />
+                  )}
+                </span>
                 <span
-                  className={`min-w-0 truncate transition-opacity duration-150 ${
+                  className={`min-w-0 flex-1 flex items-center justify-between gap-2 truncate transition-opacity duration-150 ${
                     sidebarPinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                   }`}
                 >
-                  {item.label}
+                  <span className="truncate">{item.label}</span>
+                  {badgeCount > 0 && (
+                    <span
+                      className={`px-1.5 py-0.5 text-[10px] font-mono font-semibold rounded-full tabular-nums ${
+                        active
+                          ? 'bg-white/20 text-white dark:bg-slate-950/20 dark:text-slate-950'
+                          : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                      }`}
+                    >
+                      {badgeCount}
+                    </span>
+                  )}
                 </span>
               </button>
             );
@@ -5381,6 +5682,7 @@ export default function App() {
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
                 const active = activeNav === item.id;
+                const badgeCount = item.id === 'promemoria' ? dueRemindersToday.length : 0;
                 return (
                   <button
                     key={item.id}
@@ -5389,14 +5691,27 @@ export default function App() {
                       navigateToSection(item.id);
                       setMobileMenuOpen(false);
                     }}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg ${
+                    className={`w-full flex items-center justify-between gap-2.5 px-3 py-2 text-xs font-medium rounded-lg ${
                       active
                         ? 'bg-brand-600 text-white dark:bg-brand-400 dark:text-slate-950'
                         : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
                     }`}
                   >
-                    <Icon className="w-4 h-4 shrink-0" />
-                    <span>{item.label}</span>
+                    <span className="flex items-center gap-2.5 min-w-0">
+                      <Icon className="w-4 h-4 shrink-0" />
+                      <span className="truncate">{item.label}</span>
+                    </span>
+                    {badgeCount > 0 && (
+                      <span
+                        className={`px-1.5 py-0.5 text-[10px] font-mono font-semibold rounded-full tabular-nums ${
+                          active
+                            ? 'bg-white/20 text-white dark:bg-slate-950/20 dark:text-slate-950'
+                            : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                        }`}
+                      >
+                        {badgeCount}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -6206,6 +6521,37 @@ export default function App() {
               onAddLog={handleAddCarLog}
               onUpdateLog={handleUpdateCarLog}
               onDeleteLog={handleDeleteArticle}
+              onOpenReminders={() => navigateToSection('promemoria')}
+            />
+          )}
+
+          {activeNav === 'promemoria' && (
+            <RemindersView
+              reminders={reminders}
+              notifyConfig={reminderNotifyConfig}
+              carProfile={effectiveCarProfileForReminders}
+              todayIso={todayIso}
+              readOnly={!canEdit}
+              isGmailConnected={Boolean(gmailToken)}
+              sendingEmail={sendingReminderEmail}
+              onSignIn={handleSignIn}
+              onAddReminder={handleAddReminder}
+              onUpdateReminder={handleUpdateReminder}
+              onDeleteReminder={handleDeleteArticle}
+              onSaveNotifyConfig={handleSaveReminderNotifyConfig}
+              onSendDailyDigestEmail={(items) => handleSendReminderDigestEmail(items, false)}
+              onMarkNotifiedToday={handleMarkRemindersNotifiedToday}
+            />
+          )}
+
+          {activeNav === 'vinted' && (
+            <VintedView
+              sales={vintedSales}
+              readOnly={!canEdit}
+              onSignIn={handleSignIn}
+              onAddSale={handleAddVintedSale}
+              onUpdateSale={handleUpdateVintedSale}
+              onDeleteSale={handleDeleteArticle}
             />
           )}
 
@@ -6255,6 +6601,8 @@ export default function App() {
                 documents: homeDocuments.length,
                 carLogs: carLogs.length,
                 groceries: groceryProducts.length,
+                reminders: reminders.length,
+                vintedSales: vintedSales.length,
               }}
             />
           )}
