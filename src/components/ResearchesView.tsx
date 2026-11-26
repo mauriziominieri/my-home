@@ -41,7 +41,13 @@ import {
   ProductResearchRecord,
   ProductResearchStatus,
 } from '../types/home';
-import { subscribeFirestoreQuotaExceeded } from '../firebase';
+import {
+  getSimulatedFirestoreOps,
+  SimulatedFirestoreOp,
+  subscribeFirestoreQuotaExceeded,
+  subscribeSimulatedFirestoreOps,
+} from '../firebase';
+import { useAppSettings } from '../utils/appSettings';
 import { getDocumentsForResearch, parseResearchDocumentRef } from '../utils/carGroceryStore';
 import {
   buildDocumentSharePayload,
@@ -52,14 +58,18 @@ import {
   ShareableItemPayload,
 } from '../utils/documentVault';
 import {
+  computeMissingLiveOptions,
   findColorImageUrl,
   findColorNameForHex,
   findSizePrice,
   getResearchRoomLabel,
   inferProductBrand,
   inferResearchRoom,
+  mergePreservedVariantOptions,
   normalizeBrandName,
+  normalizeColorOptionKey,
   normalizeResearchRoom,
+  normalizeSizeOptionKey,
   replaceColorInTitle,
   replaceSizeInTitle,
   RESEARCH_ROOMS,
@@ -205,6 +215,7 @@ const VIEW_MODE_STORAGE_KEY = 'myhome_researches_view_mode';
 const GROUP_BY_ROOM_STORAGE_KEY = 'myhome_researches_group_by_room';
 const SIZE_PRICES_CACHE_STORAGE_KEY = 'myhome_researches_size_prices_v1';
 const COLOR_IMAGES_CACHE_STORAGE_KEY = 'myhome_researches_color_images_v1';
+const UNAVAILABLE_VARIANTS_CACHE_STORAGE_KEY = 'myhome_researches_unavailable_variants_v1';
 
 let backendApiUnavailable =
   typeof window !== 'undefined' &&
@@ -251,7 +262,9 @@ function writeCachedSizePrices(url: string | undefined, sizePrices: Record<strin
   try {
     const raw = window.localStorage.getItem(SIZE_PRICES_CACHE_STORAGE_KEY);
     const parsed = raw ? (JSON.parse(raw) as Record<string, Record<string, number>>) : {};
-    const next: Record<string, Record<string, number>> = { ...parsed, [key]: clean };
+    const existing = sanitizeSizePricesMap(parsed?.[key]) || {};
+    const merged = sanitizeSizePricesMap({ ...existing, ...clean }) || clean;
+    const next: Record<string, Record<string, number>> = { ...parsed, [key]: merged };
     const keys = Object.keys(next);
     if (keys.length > 60) {
       for (const oldKey of keys.slice(0, keys.length - 60)) {
@@ -289,7 +302,9 @@ function writeCachedColorImages(
   try {
     const raw = window.localStorage.getItem(COLOR_IMAGES_CACHE_STORAGE_KEY);
     const parsed = raw ? (JSON.parse(raw) as Record<string, Record<string, string>>) : {};
-    const next: Record<string, Record<string, string>> = { ...parsed, [key]: clean };
+    const existing = sanitizeColorImagesMap(parsed?.[key]) || {};
+    const merged = sanitizeColorImagesMap({ ...existing, ...clean }) || clean;
+    const next: Record<string, Record<string, string>> = { ...parsed, [key]: merged };
     const keys = Object.keys(next);
     if (keys.length > 60) {
       for (const oldKey of keys.slice(0, keys.length - 60)) {
@@ -297,6 +312,70 @@ function writeCachedColorImages(
       }
     }
     window.localStorage.setItem(COLOR_IMAGES_CACHE_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+interface UnavailableVariantsEntry {
+  sizes?: string[];
+  colors?: string[];
+}
+
+function sanitizeUnavailableVariantsEntry(raw: unknown): UnavailableVariantsEntry | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const obj = raw as { sizes?: unknown; colors?: unknown };
+  const sizes = Array.isArray(obj.sizes)
+    ? obj.sizes.map((s) => String(s).trim().slice(0, 60)).filter(Boolean).slice(0, 24)
+    : [];
+  const colors = Array.isArray(obj.colors)
+    ? obj.colors.map((c) => String(c).trim().slice(0, 60)).filter(Boolean).slice(0, 24)
+    : [];
+  if (sizes.length === 0 && colors.length === 0) return undefined;
+  return {
+    ...(sizes.length > 0 ? { sizes } : {}),
+    ...(colors.length > 0 ? { colors } : {}),
+  };
+}
+
+function readCachedUnavailableVariants(url?: string): UnavailableVariantsEntry | undefined {
+  if (typeof window === 'undefined' || !url) return undefined;
+  const key = buildSizePriceCacheKey(url);
+  if (!key) return undefined;
+  try {
+    const raw = window.localStorage.getItem(UNAVAILABLE_VARIANTS_CACHE_STORAGE_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return sanitizeUnavailableVariantsEntry(parsed?.[key]);
+  } catch {
+    return undefined;
+  }
+}
+
+function writeCachedUnavailableVariants(
+  url: string | undefined,
+  entry: UnavailableVariantsEntry | undefined
+) {
+  if (typeof window === 'undefined' || !url) return;
+  const key = buildSizePriceCacheKey(url);
+  if (!key) return;
+  try {
+    const raw = window.localStorage.getItem(UNAVAILABLE_VARIANTS_CACHE_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, UnavailableVariantsEntry>) : {};
+    const clean = sanitizeUnavailableVariantsEntry(entry);
+    const next: Record<string, UnavailableVariantsEntry> = { ...parsed };
+    if (!clean) {
+      delete next[key];
+    } else {
+      next[key] = clean;
+    }
+    const keys = Object.keys(next);
+    if (keys.length > 60) {
+      for (const oldKey of keys.slice(0, keys.length - 60)) {
+        delete next[oldKey];
+      }
+    }
+    window.localStorage.setItem(UNAVAILABLE_VARIANTS_CACHE_STORAGE_KEY, JSON.stringify(next));
   } catch {
     // ignore storage quota errors
   }
@@ -941,18 +1020,22 @@ async function fetchWithTimeout(
 interface CollapsibleColorChipsProps {
   colors: string[];
   activeColor?: string;
+  unavailableColors?: string[];
   expanded: boolean;
   onToggleExpand: () => void;
   readOnly?: boolean;
+  highlightActive?: boolean;
   onSelectColor: (color: string) => void;
 }
 
 function CollapsibleColorChips({
   colors,
   activeColor,
+  unavailableColors,
   expanded,
   onToggleExpand,
   readOnly = false,
+  highlightActive = false,
   onSelectColor,
 }: CollapsibleColorChipsProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -1061,37 +1144,69 @@ function CollapsibleColorChips({
       </div>
 
       <div className="flex flex-wrap items-center gap-1 min-h-[24px]">
-        <span className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-500 mr-0.5 leading-none">
+        <span
+          className={`text-[10px] uppercase tracking-wide mr-0.5 leading-none ${
+            highlightActive
+              ? 'text-amber-700 dark:text-amber-300 font-semibold'
+              : 'text-slate-500 dark:text-slate-500'
+          }`}
+        >
           Colori:
         </span>
         {shownColors.map((colOpt) => {
           const isActive = activeNorm === colOpt.trim().toLowerCase();
+          const isMissingOnSite = Boolean(
+            unavailableColors?.some(
+              (u) => normalizeColorOptionKey(u) === normalizeColorOptionKey(colOpt)
+            )
+          );
+          const activeClasses = highlightActive
+            ? 'bg-amber-50 border-amber-500 text-amber-900 dark:bg-amber-500/20 dark:border-amber-400 dark:text-amber-100 font-semibold ring-1 ring-amber-400/60'
+            : 'bg-sky-50 border-sky-500/80 text-sky-900 dark:bg-sky-500/15 dark:border-sky-400/70 dark:text-slate-100 font-semibold';
+          const colorTitle = isMissingOnSite
+            ? `Seleziona colore ${colOpt} (non più presente sul sito all'ultimo aggiornamento · opzione mantenuta)`
+            : `Seleziona colore ${colOpt}`;
           return readOnly ? (
             <span
               key={colOpt}
+              title={colorTitle}
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] leading-4 ${
+                isMissingOnSite ? 'border-dashed ' : ''
+              }${
                 isActive
-                  ? 'bg-sky-50 border-sky-500/80 text-sky-900 dark:bg-sky-500/15 dark:border-sky-400/70 dark:text-slate-100 font-semibold'
-                  : 'bg-slate-50 border-slate-200 text-slate-600 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-400'
+                  ? activeClasses
+                  : isMissingOnSite
+                    ? 'bg-slate-50/70 border-slate-300 text-slate-500 dark:bg-slate-950/40 dark:border-slate-700 dark:text-slate-400 opacity-85'
+                    : 'bg-slate-50 border-slate-200 text-slate-600 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-400'
               }`}
             >
               <ColorSwatchDot color={colOpt} size="sm" />
               <span>{colOpt}</span>
+              {isMissingOnSite && (
+                <span className="text-[9px] font-medium opacity-75">(storico)</span>
+              )}
             </span>
           ) : (
             <button
               key={colOpt}
               type="button"
               onClick={() => onSelectColor(colOpt)}
-              title={`Seleziona colore ${colOpt}`}
+              title={colorTitle}
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] leading-4 transition-colors ${
+                isMissingOnSite ? 'border-dashed ' : ''
+              }${
                 isActive
-                  ? 'bg-sky-50 border-sky-500/80 text-sky-900 dark:bg-sky-500/15 dark:border-sky-400/70 dark:text-slate-100 font-semibold'
-                  : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-300 dark:hover:border-slate-600'
+                  ? activeClasses
+                  : isMissingOnSite
+                    ? 'bg-slate-50/70 border-slate-300 text-slate-600 hover:border-slate-400 dark:bg-slate-950/40 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-500 opacity-85'
+                    : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-300 dark:hover:border-slate-600'
               }`}
             >
               <ColorSwatchDot color={colOpt} size="sm" />
               <span>{colOpt}</span>
+              {isMissingOnSite && (
+                <span className="text-[9px] font-medium opacity-75">(storico)</span>
+              )}
             </button>
           );
         })}
@@ -1260,6 +1375,9 @@ export function ResearchesView({
   const [lazySizePrices, setLazySizePrices] = useState<
     Record<string, Record<string, number>>
   >({});
+  const [unavailableVariantsById, setUnavailableVariantsById] = useState<
+    Record<string, UnavailableVariantsEntry>
+  >({});
   const [lazySizePriceLoadingIds, setLazySizePriceLoadingIds] = useState<
     Record<string, boolean>
   >({});
@@ -1305,8 +1423,152 @@ export function ResearchesView({
   const [listCopied, setListCopied] = useState(false);
   const [movedArticleIds, setMovedArticleIds] = useState<Record<string, boolean>>({});
   const [movingId, setMovingId] = useState<string | null>(null);
-  const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
+  const { settings: appSettings } = useAppSettings();
+  const writesDisabled = appSettings.firestoreWritesDisabled;
+  const [simulatedOps, setSimulatedOps] = useState<SimulatedFirestoreOp[]>([]);
+  const [brokenImages, setBrokenImages] = useState<Record<string, string>>({});
   const [attachedThumbnails, setAttachedThumbnails] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    return subscribeSimulatedFirestoreOps(setSimulatedOps);
+  }, []);
+
+  useEffect(() => {
+    if (!feedback) return;
+    const timer = window.setTimeout(() => {
+      setFeedback(null);
+    }, 4500);
+    return () => window.clearTimeout(timer);
+  }, [feedback]);
+
+  useEffect(() => {
+    if (!linkNotice) return;
+    const timer = window.setTimeout(() => {
+      setLinkNotice(null);
+    }, 6500);
+    return () => window.clearTimeout(timer);
+  }, [linkNotice]);
+
+  useEffect(() => {
+    if (!linkError) return;
+    const timer = window.setTimeout(() => {
+      setLinkError(null);
+    }, 8000);
+    return () => window.clearTimeout(timer);
+  }, [linkError]);
+
+  const localQueueChangesById = useMemo(() => {
+    const map: Record<
+      string,
+      { isNew: boolean; changedFields: Set<string>; details: string[] }
+    > = {};
+    const ensureEntry = (id: string) => {
+      if (!map[id]) {
+        map[id] = { isNew: false, changedFields: new Set<string>(), details: [] };
+      }
+      return map[id];
+    };
+    const pushDetail = (entry: { details: string[] }, detail: string) => {
+      const colonIdx = detail.indexOf(':');
+      if (colonIdx > 0) {
+        const prefix = detail.slice(0, colonIdx + 1).toLowerCase();
+        const existingIdx = entry.details.findIndex((d) =>
+          d.toLowerCase().startsWith(prefix)
+        );
+        if (existingIdx >= 0) {
+          entry.details[existingIdx] = detail;
+          return;
+        }
+      }
+      if (!entry.details.includes(detail)) {
+        entry.details.push(detail);
+      }
+    };
+    const handleTargetPath = (
+      path: string | undefined,
+      opFields?: string[],
+      opDetails?: string[],
+      opKind?: string,
+      opData?: Record<string, unknown>
+    ) => {
+      if (!path) return;
+      const resMatch = path.match(/\/productResearches\/([^/]+)$/);
+      if (resMatch?.[1]) {
+        const resId = resMatch[1];
+        const entry = ensureEntry(resId);
+        if (opFields?.includes('__new__')) {
+          entry.isNew = true;
+        }
+        (opFields || []).forEach((f) => {
+          if (f !== '__new__' && f !== '__delete__') {
+            entry.changedFields.add(f);
+          }
+        });
+        (opDetails || []).forEach((d) => pushDetail(entry, d));
+        return;
+      }
+      const artMatch = path.match(/\/homeArticles\/([^/]+)$/);
+      if (artMatch?.[1]) {
+        const docId = artMatch[1];
+        const serial = typeof opData?.serialNumber === 'string' ? opData.serialNumber : '';
+        const parsedRef = parseResearchDocumentRef(serial);
+        let targetResId = parsedRef?.researchId;
+        if (!targetResId) {
+          const matchedDoc = researchDocuments.find((d) => d.id === docId);
+          targetResId = parseResearchDocumentRef(matchedDoc?.referenceCode)?.researchId;
+        }
+        if (targetResId) {
+          const entry = ensureEntry(targetResId);
+          entry.changedFields.add('attachments');
+          pushDetail(
+            entry,
+            opKind === 'delete' ? 'Allegato rimosso' : 'Allegati aggiornati'
+          );
+        }
+      }
+    };
+
+    for (const op of simulatedOps) {
+      if (op.kind === 'set' || op.kind === 'delete') {
+        handleTargetPath(op.path, op.changedFields, op.changedDetails, op.kind, op.data);
+      } else if (op.kind === 'batch' && op.batchOps) {
+        for (const sub of op.batchOps) {
+          handleTargetPath(sub.path, op.changedFields, op.changedDetails, sub.op, sub.data);
+        }
+      }
+    }
+    return map;
+  }, [simulatedOps, researchDocuments]);
+
+  function hasQueuedOpForResearch(researchId: string): boolean {
+    const ops = getSimulatedFirestoreOps();
+    const targetSuffix = `/productResearches/${researchId}`;
+    const linkedDocIds = new Set(
+      researchDocuments
+        .filter((d) => parseResearchDocumentRef(d.referenceCode)?.researchId === researchId)
+        .map((d) => d.id)
+    );
+    const touchesPath = (path?: string, data?: Record<string, unknown>) => {
+      if (!path) return false;
+      if (path.endsWith(targetSuffix)) return true;
+      const artMatch = path.match(/\/homeArticles\/([^/]+)$/);
+      if (artMatch?.[1]) {
+        if (linkedDocIds.has(artMatch[1])) return true;
+        const serial = typeof data?.serialNumber === 'string' ? data.serialNumber : '';
+        if (parseResearchDocumentRef(serial)?.researchId === researchId) return true;
+      }
+      return false;
+    };
+    return ops.some((op) => {
+      if (op.kind === 'set' || op.kind === 'delete') {
+        return touchesPath(op.path, op.data);
+      }
+      if (op.kind === 'batch' && op.batchOps) {
+        return op.batchOps.some((sub) => touchesPath(sub.path, sub.data));
+      }
+      return false;
+    });
+  }
 
   useEffect(() => {
     return subscribeFirestoreQuotaExceeded((active) => {
@@ -1412,7 +1674,7 @@ export function ResearchesView({
       for (const item of allResearches) {
         if (isLocalDraftId(item.id)) continue;
         const effectiveImg = pendingCardEdits[item.id]?.imageUrl ?? item.imageUrl;
-        const hasWorkingExternalImg = Boolean(effectiveImg) && !brokenImages[item.id];
+        const hasWorkingExternalImg = Boolean(effectiveImg) && brokenImages[item.id] !== effectiveImg;
         if (hasWorkingExternalImg) continue;
         const itemDocs = getDocumentsForResearch(researchDocuments, item.id);
         const imgDoc = itemDocs.find(
@@ -1983,13 +2245,21 @@ export function ResearchesView({
         !inspected.specs
       ) {
         setLinkNotice(
-          `Bozza "${inspected.title}" inserita in pagina da ${inspected.store} (non ancora salvata su Firestore). Il sito blocca la lettura automatica: completa eventuali dettagli e clicca "Salva modifiche" sulla scheda.`
+          `Bozza "${inspected.title}" inserita in pagina da ${inspected.store} (${
+            writesDisabled ? 'non ancora salvata nella coda locale' : 'non ancora salvata su Firestore'
+          }). Il sito blocca la lettura automatica: completa eventuali dettagli e clicca "Salva modifiche" sulla scheda.`
         );
       } else {
         setFeedback(
           foundBits.length > 0
-            ? `"${inspected.title}" inserito in pagina in bozza (${foundBits.join(', ')}). Nessuna scrittura su Firestore finché non clicchi "Salva modifiche".`
-            : `Link di ${inspected.store} inserito in pagina in bozza (nessuna scrittura su Firestore): clicca "Salva modifiche" sulla scheda per salvarlo.`
+            ? `"${inspected.title}" inserito in pagina in bozza (${foundBits.join(', ')}). ${
+                writesDisabled
+                  ? 'Nessun salvataggio finché non clicchi "Salva modifiche".'
+                  : 'Nessuna scrittura su Firestore finché non clicchi "Salva modifiche".'
+              }`
+            : `Link di ${inspected.store} inserito in pagina in bozza: clicca "Salva modifiche" sulla scheda per ${
+                writesDisabled ? 'simularlo in locale' : 'salvarlo'
+              }.`
         );
       }
     } catch (err) {
@@ -2189,11 +2459,17 @@ export function ResearchesView({
       setDraftAttachments([]);
       setDraftFoundDocuments([]);
       setFeedback(
-        `Prodotto "${cleanTitle}" salvato su Firestore${
-          attachedTotal > 0
-            ? ` con ${attachedTotal} ${attachedTotal === 1 ? 'allegato' : 'allegati'}`
-            : ''
-        }.`
+        writesDisabled
+          ? `Prodotto "${cleanTitle}" salvato in locale (in coda per Firestore)${
+              attachedTotal > 0
+                ? ` con ${attachedTotal} ${attachedTotal === 1 ? 'allegato' : 'allegati'}`
+                : ''
+            }.`
+          : `Prodotto "${cleanTitle}" salvato su Firestore${
+              attachedTotal > 0
+                ? ` con ${attachedTotal} ${attachedTotal === 1 ? 'allegato' : 'allegati'}`
+                : ''
+            }.`
       );
     } catch (err) {
       setLinkError(err instanceof Error ? err.message : 'Salvataggio non riuscito.');
@@ -2212,10 +2488,26 @@ export function ResearchesView({
     setEditStore(effective.store);
     setEditBrand(normalizeBrandName(effective.brand) || inferProductBrand(effective) || '');
     setEditColor(effective.color || '');
-    setEditAvailableColors(effective.availableColors || []);
+    setEditAvailableColors(
+      effective.availableColors && effective.availableColors.length > 0
+        ? mergePreservedVariantOptions({
+            previousOptions: effective.availableColors,
+            extraOptions: [effective.color, item.color],
+            normalizeKey: normalizeColorOptionKey,
+          }) || []
+        : []
+    );
     setEditColorImages(effective.colorImages);
     setEditSize(effective.size || '');
-    setEditAvailableSizes(effective.availableSizes || []);
+    setEditAvailableSizes(
+      effective.availableSizes && effective.availableSizes.length > 0
+        ? mergePreservedVariantOptions({
+            previousOptions: effective.availableSizes,
+            extraOptions: [effective.size, item.size],
+            normalizeKey: normalizeSizeOptionKey,
+          }) || []
+        : []
+    );
     setEditSizePrices(effective.sizePrices);
     setEditModel(effective.model || '');
     setEditCategory(effective.category);
@@ -2257,6 +2549,25 @@ export function ResearchesView({
         : undefined;
     const combinedSpecs = joinSpecsAndInfo(editTechSpecs, editInfoText);
 
+    const cleanEditColor = editColor.trim().slice(0, 60);
+    const cleanEditSize = editSize.trim().slice(0, 60);
+    const mergedEditColors =
+      editAvailableColors.length > 0
+        ? mergePreservedVariantOptions({
+            previousOptions: editAvailableColors,
+            extraOptions: [cleanEditColor || undefined],
+            normalizeKey: normalizeColorOptionKey,
+          })
+        : undefined;
+    const mergedEditSizes =
+      editAvailableSizes.length > 0
+        ? mergePreservedVariantOptions({
+            previousOptions: editAvailableSizes,
+            extraOptions: [cleanEditSize || undefined],
+            normalizeKey: normalizeSizeOptionKey,
+          })
+        : undefined;
+
     const payload: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'> = {
       url: validUrl,
       title: cleanTitle.slice(0, 160),
@@ -2268,11 +2579,11 @@ export function ResearchesView({
       paidPriceEur: validPaidPrice,
       imageUrl: validImg,
       brand: editBrand.trim() ? editBrand.trim().slice(0, 60) : undefined,
-      color: editColor.trim() ? editColor.trim().slice(0, 60) : undefined,
-      availableColors: editAvailableColors.length > 0 ? editAvailableColors : undefined,
+      color: cleanEditColor || undefined,
+      availableColors: mergedEditColors,
       colorImages: sanitizeColorImagesMap(editColorImages),
-      size: editSize.trim() ? editSize.trim().slice(0, 60) : undefined,
-      availableSizes: editAvailableSizes.length > 0 ? editAvailableSizes : undefined,
+      size: cleanEditSize || undefined,
+      availableSizes: mergedEditSizes,
       model: editModel.trim() ? editModel.trim().slice(0, 80) : undefined,
       specs: combinedSpecs || undefined,
       notes: editNotes.trim() ? editNotes.trim().slice(0, 400) : undefined,
@@ -2332,9 +2643,13 @@ export function ResearchesView({
         handleDiscardPendingCardEdit(item.id);
         const totalDocs = docStats.downloaded + docStats.linked;
         setFeedback(
-          `Prodotto "${payload.title}" salvato su Firestore${
-            totalDocs > 0 ? ` con ${totalDocs} ${totalDocs === 1 ? 'allegato' : 'allegati'}` : ''
-          }.`
+          writesDisabled
+            ? `Prodotto "${payload.title}" salvato in locale (in coda per Firestore)${
+                totalDocs > 0 ? ` con ${totalDocs} ${totalDocs === 1 ? 'allegato' : 'allegati'}` : ''
+              }.`
+            : `Prodotto "${payload.title}" salvato su Firestore${
+                totalDocs > 0 ? ` con ${totalDocs} ${totalDocs === 1 ? 'allegato' : 'allegati'}` : ''
+              }.`
         );
         return;
       }
@@ -2359,20 +2674,28 @@ export function ResearchesView({
       });
       if (!actuallyChanged && (!docTypeChanges || docTypeChanges.length === 0)) {
         setLinkNotice(
-          `Nessuna modifica rilevata per "${payload.title}": nessuna scrittura su Firestore.`
+          `Nessuna modifica rilevata per "${payload.title}": nessuna operazione effettuata.`
+        );
+      } else if (writesDisabled && !hasQueuedOpForResearch(item.id)) {
+        setLinkNotice(
+          `"${payload.title}" è tornato allo stato originale: modifiche locali annullate, nessuna operazione in coda per Firestore.`
         );
       } else {
         setFeedback(
           !actuallyChanged && docTypeChanges && docTypeChanges.length > 0
-            ? `Tipologia degli allegati per "${payload.title}" salvata su Firestore.`
-            : `Prodotto "${payload.title}" aggiornato e salvato su Firestore.`
+            ? writesDisabled
+              ? `Tipologia degli allegati per "${payload.title}" salvata in locale (in coda per Firestore).`
+              : `Tipologia degli allegati per "${payload.title}" salvata su Firestore.`
+            : writesDisabled
+              ? `Modifiche a "${payload.title}" salvate in locale (in coda per Firestore).`
+              : `Prodotto "${payload.title}" aggiornato e salvato su Firestore.`
         );
       }
     } catch (err) {
       setLinkError(
         err instanceof Error
           ? err.message
-          : 'Errore durante il salvataggio delle modifiche su Firestore.'
+          : 'Errore durante il salvataggio delle modifiche.'
       );
       setPendingEditSave(null);
     } finally {
@@ -2394,34 +2717,85 @@ export function ResearchesView({
     setFeedback(null);
     try {
       const inspected = await inspectProductLink(item.url, true);
-      const nextAvailableColors =
+      const hasMultiColorSource =
+        (item.availableColors?.length || 0) > 0 ||
+        (inspected.availableColors?.length || 0) > 0;
+      const nextAvailableColors = hasMultiColorSource
+        ? mergePreservedVariantOptions({
+            previousOptions: item.availableColors,
+            liveOptions: inspected.availableColors,
+            extraOptions: [item.color, inspected.color],
+            normalizeKey: normalizeColorOptionKey,
+          })
+        : item.availableColors;
+
+      const hasMultiSizeSource =
+        (item.availableSizes?.length || 0) > 0 ||
+        (inspected.availableSizes?.length || 0) > 0;
+      const nextAvailableSizes = hasMultiSizeSource
+        ? mergePreservedVariantOptions({
+            previousOptions: item.availableSizes,
+            liveOptions: inspected.availableSizes,
+            extraOptions: [item.size, inspected.size],
+            normalizeKey: normalizeSizeOptionKey,
+          })
+        : item.availableSizes;
+
+      const prevUnavailable =
+        unavailableVariantsById[item.id] ?? readCachedUnavailableVariants(item.url);
+      const missingColorsNow =
         inspected.availableColors && inspected.availableColors.length > 0
-          ? inspected.availableColors
-          : item.availableColors;
-      const nextAvailableSizes =
+          ? computeMissingLiveOptions(
+              nextAvailableColors,
+              inspected.availableColors,
+              normalizeColorOptionKey
+            )
+          : prevUnavailable?.colors || [];
+      const missingSizesNow =
         inspected.availableSizes && inspected.availableSizes.length > 0
-          ? inspected.availableSizes
-          : item.availableSizes;
-      const nextColorImages = sanitizeColorImagesMap(
-        inspected.colorImages ||
-          item.colorImages ||
-          lazyColorImages[item.id] ||
-          readCachedColorImages(item.url)
-      );
-      const mergedSizePrices = sanitizeSizePricesMap(
-        inspected.sizePrices ??
-          item.sizePrices ??
-          lazySizePrices[item.id] ??
-          readCachedSizePrices(item.url)
-      );
+          ? computeMissingLiveOptions(
+              nextAvailableSizes,
+              inspected.availableSizes,
+              normalizeSizeOptionKey
+            )
+          : prevUnavailable?.sizes || [];
+      const nextUnavailableEntry = sanitizeUnavailableVariantsEntry({
+        colors: missingColorsNow,
+        sizes: missingSizesNow,
+      });
+      writeCachedUnavailableVariants(item.url, nextUnavailableEntry);
+      setUnavailableVariantsById((prev) => {
+        const next = { ...prev };
+        if (nextUnavailableEntry) {
+          next[item.id] = nextUnavailableEntry;
+        } else {
+          delete next[item.id];
+        }
+        return next;
+      });
+
+      const cachedColorImages = readCachedColorImages(item.url);
+      const nextColorImages = sanitizeColorImagesMap({
+        ...(cachedColorImages || {}),
+        ...(lazyColorImages[item.id] || {}),
+        ...(item.colorImages || {}),
+        ...(inspected.colorImages || {}),
+      });
+      const cachedSizePrices = readCachedSizePrices(item.url);
+      const mergedSizePrices = sanitizeSizePricesMap({
+        ...(cachedSizePrices || {}),
+        ...(lazySizePrices[item.id] || {}),
+        ...(item.sizePrices || {}),
+        ...(inspected.sizePrices || {}),
+      });
 
       if (nextColorImages) {
         setLazyColorImages((prev) => ({ ...prev, [item.id]: nextColorImages }));
         writeCachedColorImages(item.url, nextColorImages);
       }
-      if (inspected.sizePrices) {
-        setLazySizePrices((prev) => ({ ...prev, [item.id]: inspected.sizePrices! }));
-        writeCachedSizePrices(item.url, inspected.sizePrices);
+      if (mergedSizePrices) {
+        setLazySizePrices((prev) => ({ ...prev, [item.id]: mergedSizePrices }));
+        writeCachedSizePrices(item.url, mergedSizePrices);
       }
 
       const rawNextTitle = inspected.title || item.title;
@@ -2691,14 +3065,26 @@ export function ResearchesView({
             : '',
           docStats.linked > 0 ? `${docStats.linked} link aggiunti` : '',
         ].filter(Boolean);
+        const preservedMissingLabels = [
+          ...(nextUnavailableEntry?.sizes || []),
+          ...(nextUnavailableEntry?.colors || []),
+        ];
+        const preservedMissingText =
+          preservedMissingLabels.length > 0
+            ? ` · Mantenute anche le opzioni non più sul sito: ${preservedMissingLabels.join(', ')}.`
+            : '';
         setFeedback(
           willUpdateBase
             ? `Scheda "${nextTitle || item.title}" aggiornata dal sito${
                 docSummaryParts.length > 0 ? ` (${docSummaryParts.join(', ')})` : ''
-              } e salvata su Firestore (selezioni utente mantenute).`
+              } e ${
+                writesDisabled
+                  ? 'salvata in locale in coda per Firestore'
+                  : 'salvata su Firestore'
+              } (selezioni utente mantenute).${preservedMissingText}`
             : `Aggiunti solo i nuovi allegati (${docSummaryParts.join(', ')}) a "${
                 nextTitle || item.title
-              }" senza riscrivere la scheda.`
+              }" senza riscrivere la scheda.${preservedMissingText}`
         );
       }
     } catch (err) {
@@ -3057,7 +3443,17 @@ export function ResearchesView({
         delete next[item.id];
         return next;
       });
-      setFeedback(`Modifiche a "${effective.title}" salvate su Firestore.`);
+      if (writesDisabled && !hasQueuedOpForResearch(item.id)) {
+        setLinkNotice(
+          `"${effective.title}" è tornato allo stato originale: modifiche locali annullate, nessuna operazione in coda per Firestore.`
+        );
+      } else {
+        setFeedback(
+          writesDisabled
+            ? `Modifiche a "${effective.title}" salvate in locale (in coda per Firestore).`
+            : `Modifiche a "${effective.title}" salvate su Firestore.`
+        );
+      }
     } catch (err) {
       setLinkError(
         err instanceof Error ? err.message : 'Errore durante il salvataggio delle modifiche.'
@@ -3092,11 +3488,16 @@ export function ResearchesView({
     if (readOnly) return;
     latestQuickColorRef.current[item.id] = nextColor;
     const effective = getEffectiveItem(item);
+    const mergedColorChoices = mergePreservedVariantOptions({
+      previousOptions: effective.availableColors || item.availableColors,
+      extraOptions: [effective.color, item.color, nextColor],
+      normalizeKey: normalizeColorOptionKey,
+    });
     const nextTitle = replaceColorInTitle(
       effective.title,
       nextColor,
       effective.color,
-      item.availableColors
+      mergedColorChoices
     ).slice(0, 160);
     const knownColorImages =
       effective.colorImages ||
@@ -3132,10 +3533,17 @@ export function ResearchesView({
         void inspectProductLink(item.url)
           .then(async (inspected) => {
             if (inspected.sizePrices && Object.keys(inspected.sizePrices).length > 0) {
-              setLazySizePrices((prev) => ({ ...prev, [item.id]: inspected.sizePrices! }));
+              setLazySizePrices((prev) => ({
+                ...prev,
+                [item.id]: { ...(prev[item.id] || {}), ...inspected.sizePrices! },
+              }));
+              writeCachedSizePrices(item.url, inspected.sizePrices);
             }
             if (!inspected.colorImages || Object.keys(inspected.colorImages).length === 0) return;
-            setLazyColorImages((prev) => ({ ...prev, [item.id]: inspected.colorImages! }));
+            setLazyColorImages((prev) => ({
+              ...prev,
+              [item.id]: { ...(prev[item.id] || {}), ...inspected.colorImages! },
+            }));
             writeCachedColorImages(item.url, inspected.colorImages);
             const targetColor = latestQuickColorRef.current[item.id] || nextColor;
             const fetchedVariantImg = findColorImageUrl(inspected.colorImages, targetColor);
@@ -3173,11 +3581,16 @@ export function ResearchesView({
     if (readOnly) return;
     latestQuickSizeRef.current[item.id] = nextSize;
     const effective = getEffectiveItem(item);
+    const mergedSizeChoices = mergePreservedVariantOptions({
+      previousOptions: effective.availableSizes || item.availableSizes,
+      extraOptions: [effective.size, item.size, nextSize],
+      normalizeKey: normalizeSizeOptionKey,
+    });
     const nextTitle = replaceSizeInTitle(
       effective.title,
       nextSize,
       effective.size,
-      item.availableSizes
+      mergedSizeChoices
     ).slice(0, 160);
     const knownSizePrices =
       effective.sizePrices || lazySizePrices[item.id] || readCachedSizePrices(item.url);
@@ -3205,11 +3618,17 @@ export function ResearchesView({
         void inspectProductLink(item.url)
           .then(async (inspected) => {
             if (inspected.colorImages && Object.keys(inspected.colorImages).length > 0) {
-              setLazyColorImages((prev) => ({ ...prev, [item.id]: inspected.colorImages! }));
+              setLazyColorImages((prev) => ({
+                ...prev,
+                [item.id]: { ...(prev[item.id] || {}), ...inspected.colorImages! },
+              }));
               writeCachedColorImages(item.url, inspected.colorImages);
             }
             if (!inspected.sizePrices || Object.keys(inspected.sizePrices).length === 0) return;
-            setLazySizePrices((prev) => ({ ...prev, [item.id]: inspected.sizePrices! }));
+            setLazySizePrices((prev) => ({
+              ...prev,
+              [item.id]: { ...(prev[item.id] || {}), ...inspected.sizePrices! },
+            }));
             writeCachedSizePrices(item.url, inspected.sizePrices);
             const targetSize = latestQuickSizeRef.current[item.id] || nextSize;
             const fetchedPrice = findSizePrice(inspected.sizePrices, targetSize);
@@ -3219,7 +3638,10 @@ export function ResearchesView({
                 ...prev,
                 [item.id]: {
                   ...prev[item.id],
-                  sizePrices: inspected.sizePrices,
+                  sizePrices: {
+                    ...(prev[item.id].sizePrices || item.sizePrices || {}),
+                    ...inspected.sizePrices,
+                  },
                   ...(typeof fetchedPrice === 'number' ? { priceEur: fetchedPrice } : {}),
                 },
               };
@@ -3334,7 +3756,9 @@ export function ResearchesView({
       setFeedback(
         replaceLinkDoc
           ? `File "${file.name}" salvato nell'archivio al posto del link diretto.`
-          : `File "${file.name}" allegato a "${targetItem.title}" su Firestore.`
+          : writesDisabled
+            ? `File "${file.name}" allegato a "${targetItem.title}" in locale (in coda per Firestore).`
+            : `File "${file.name}" allegato a "${targetItem.title}" su Firestore.`
       );
     } catch (err) {
       setLinkError(
@@ -3938,47 +4362,6 @@ export function ResearchesView({
             )}
           </div>
         </form>
-
-        {linkError && (
-          <div className="bg-rose-50 border border-rose-200 text-rose-800 dark:bg-rose-500/10 dark:border-rose-500/35 rounded-lg px-3 py-2 text-xs dark:text-rose-200 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
-            <span>{linkError}</span>
-          </div>
-        )}
-
-        {linkNotice && (
-          <div className="bg-sky-50 border border-sky-200 text-sky-900 dark:bg-sky-500/10 dark:border-sky-500/35 rounded-lg px-3 py-2 text-xs dark:text-sky-200 flex items-center justify-between gap-2">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0 mt-0.5" />
-              <span>{linkNotice}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setLinkNotice(null)}
-              className="text-sky-600 hover:text-sky-900 dark:text-sky-300/80 dark:hover:text-sky-100 p-0.5 shrink-0"
-              aria-label="Chiudi avviso"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
-
-        {feedback && (
-          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 dark:bg-emerald-500/10 dark:border-emerald-500/35 rounded-lg px-3 py-2 text-xs dark:text-emerald-200 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-              <span>{feedback}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setFeedback(null)}
-              className="text-emerald-700 hover:text-emerald-950 dark:text-emerald-300/80 dark:hover:text-emerald-100 p-0.5"
-              aria-label="Chiudi avviso"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
 
         {/* Optional Draft Review Form */}
         {draftOpen && !readOnly && (
@@ -5058,7 +5441,7 @@ export function ResearchesView({
             const isSavingPendingHere = savingPendingId === item.id;
             const statusMeta = getStatusMeta(effectiveItem.status);
             const isEditing = editingId === item.id;
-            const imageBroken = Boolean(brokenImages[item.id]);
+            const imageBroken = Boolean(effectiveItem.imageUrl) && brokenImages[item.id] === effectiveItem.imageUrl;
             const itemDocs = isLocalDraft ? [] : getDocumentsForResearch(researchDocuments, item.id);
             const specEntries = parseSpecLines(item.specs);
             const filteredSpecEntries = specEntries.filter((entry) => {
@@ -5109,7 +5492,30 @@ export function ResearchesView({
               (entry) => entry.isBullet || !entry.label
             );
 
-            const allAvailableColors = effectiveItem.availableColors || [];
+            const baseColorsList = effectiveItem.availableColors || item.availableColors;
+            const allAvailableColors =
+              baseColorsList && baseColorsList.length > 0
+                ? mergePreservedVariantOptions({
+                    previousOptions: baseColorsList,
+                    extraOptions: [effectiveItem.color, item.color],
+                    normalizeKey: normalizeColorOptionKey,
+                  }) || []
+                : [];
+            const baseSizesList = effectiveItem.availableSizes || item.availableSizes;
+            const allAvailableSizes =
+              baseSizesList && baseSizesList.length > 0
+                ? mergePreservedVariantOptions({
+                    previousOptions: baseSizesList,
+                    extraOptions: [effectiveItem.size, item.size],
+                    normalizeKey: normalizeSizeOptionKey,
+                  }) || []
+                : [];
+            const unavailableVariants =
+              unavailableVariantsById[item.id] ?? readCachedUnavailableVariants(item.url);
+            const unavailableColorList = unavailableVariants?.colors;
+            const unavailableSizeKeys = new Set(
+              (unavailableVariants?.sizes || []).map(normalizeSizeOptionKey)
+            );
             const isColorsExpanded = Boolean(expandedColorsIds[item.id]);
             const isAttachOpen = Boolean(openAttachmentsIds[item.id]);
             const selectedAttachType = cardAttachType[item.id] || 'scontrino_fattura';
@@ -5117,6 +5523,53 @@ export function ResearchesView({
             const isRefreshingHere = refreshingId === item.id;
             const currentRoomId = normalizeResearchRoom(effectiveItem.room) || '';
             const currentRoomLabel = getResearchRoomLabel(effectiveItem.room);
+            const localQueueChange = isLocalDraft ? undefined : localQueueChangesById[item.id];
+            const pendingEdit = pendingCardEdits[item.id];
+            const isFieldQueued = (field: string): boolean =>
+              Boolean(localQueueChange?.changedFields.has(field));
+            const isFieldStaged = (field: string): boolean => {
+              if (!pendingEdit) return false;
+              switch (field) {
+                case 'color':
+                  return pendingEdit.color !== undefined;
+                case 'size':
+                  return pendingEdit.size !== undefined;
+                case 'room':
+                  return pendingEdit.room !== undefined;
+                case 'status':
+                  return pendingEdit.status !== undefined;
+                case 'priceEur':
+                  return pendingEdit.priceEur !== undefined;
+                case 'paidPriceEur':
+                  return pendingEdit.paidPriceEur !== undefined;
+                case 'title':
+                  return pendingEdit.title !== undefined;
+                case 'imageUrl':
+                  return pendingEdit.imageUrl !== undefined;
+                case 'attachments':
+                  return Boolean(
+                    pendingEdit.docTypes && Object.keys(pendingEdit.docTypes).length > 0
+                  );
+                default:
+                  return false;
+              }
+            };
+            const isRoomChanged = isFieldQueued('room');
+            const isRoomStaged = isFieldStaged('room');
+            const isColorChanged = isFieldQueued('color');
+            const isSizeChanged = isFieldQueued('size');
+            const isStatusChanged = isFieldQueued('status');
+            const isPriceChanged = isFieldQueued('priceEur');
+            const isPaidPriceChanged = isFieldQueued('paidPriceEur');
+            const isTitleChanged = isFieldQueued('title');
+            const isBrandChanged = isFieldQueued('brand');
+            const isStoreChanged = isFieldQueued('store');
+            const isCategoryChanged = isFieldQueued('category');
+            const isModelChanged = isFieldQueued('model');
+            const isImageChanged = isFieldQueued('imageUrl');
+            const isNotesChanged = isFieldQueued('notes');
+            const isSpecsChanged = isFieldQueued('specs');
+            const isAttachChanged = isFieldQueued('attachments');
 
             if (isEditing && !readOnly) {
               const origBrand = (
@@ -5452,18 +5905,42 @@ export function ResearchesView({
 
             const renderRoomControl = () =>
               readOnly ? (
-                <span className="inline-flex items-center gap-1 text-[11px] text-slate-600 dark:text-slate-300 shrink-0">
-                  <Home className="w-3 h-3 text-sky-600 dark:text-sky-400" />
+                <span
+                  className={`inline-flex items-center gap-1 text-[11px] shrink-0 ${
+                    isRoomChanged
+                      ? 'px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-400 dark:bg-amber-500/15 dark:text-amber-200 dark:border-amber-400/70 font-semibold'
+                      : 'text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  <Home
+                    className={`w-3 h-3 ${
+                      isRoomChanged
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-sky-600 dark:text-sky-400'
+                    }`}
+                  />
                   <span>{currentRoomLabel}</span>
                 </span>
               ) : (
                 <label className="inline-flex items-center gap-1 text-[11px] text-slate-600 dark:text-slate-300 shrink-0">
-                  <Home className="w-3 h-3 text-sky-600 dark:text-sky-400 shrink-0" />
+                  <Home
+                    className={`w-3 h-3 shrink-0 ${
+                      isRoomChanged
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-sky-600 dark:text-sky-400'
+                    }`}
+                  />
                   <select
                     aria-label={`Stanza per ${effectiveItem.title}`}
                     value={currentRoomId}
                     onChange={(e) => handleQuickRoomChange(item, e.target.value)}
-                    className="max-w-[135px] sm:max-w-none bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700 rounded-md px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-[11px] text-slate-800 dark:text-slate-200 dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
+                    className={`max-w-[135px] sm:max-w-none border rounded-md px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-[11px] dark:[color-scheme:dark] focus:outline-none ${
+                      isRoomChanged
+                        ? 'bg-amber-50 dark:bg-amber-500/15 border-amber-400 dark:border-amber-400/80 text-amber-900 dark:text-amber-200 font-semibold ring-1 ring-amber-400/50 focus:border-amber-500'
+                        : isRoomStaged
+                          ? 'bg-sky-50 dark:bg-sky-500/15 border-sky-400 dark:border-sky-400/80 text-sky-900 dark:text-sky-200 font-semibold ring-1 ring-sky-400/50 focus:border-sky-500'
+                          : 'bg-slate-50 dark:bg-slate-950 border-slate-300 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700 text-slate-800 dark:text-slate-200 focus:border-sky-500'
+                    }`}
                   >
                     <option value="">Nessuna stanza</option>
                     {RESEARCH_ROOMS.map((rm) => (
@@ -5516,7 +5993,13 @@ export function ResearchesView({
                 </div>
               ) : typeof effectiveItem.paidPriceEur === 'number' ? (
                 readOnly ? (
-                  <span className="inline-flex items-center gap-1 text-xs sm:text-sm font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                  <span
+                    className={`inline-flex items-center gap-1 text-xs sm:text-sm font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap ${
+                      isPaidPriceChanged
+                        ? 'px-1.5 py-0.5 rounded-md bg-amber-50 dark:bg-amber-500/15 ring-1 ring-amber-400/70'
+                        : ''
+                    }`}
+                  >
                     <span>Pagato:</span>
                     <span className="font-mono tabular-nums">
                       {formatEuroIt(effectiveItem.paidPriceEur)}
@@ -5530,7 +6013,13 @@ export function ResearchesView({
                       setInlinePaidValue(String(effectiveItem.paidPriceEur));
                     }}
                     title="Modifica prezzo pagato all'acquisto"
-                    className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 whitespace-nowrap"
+                    className={`inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 whitespace-nowrap ${
+                      isPaidPriceChanged
+                        ? 'px-1.5 py-0.5 rounded-md bg-amber-50 dark:bg-amber-500/15 ring-1 ring-amber-400/70'
+                        : isFieldStaged('paidPriceEur')
+                          ? 'px-1.5 py-0.5 rounded-md bg-sky-50 dark:bg-sky-500/15 ring-1 ring-sky-400/70'
+                          : ''
+                    }`}
                   >
                     <span>Pagato:</span>
                     <span className="font-mono tabular-nums">
@@ -5572,7 +6061,11 @@ export function ResearchesView({
                         alignRightOnDesktop
                           ? 'text-base sm:text-lg md:text-xl'
                           : 'text-lg sm:text-xl'
-                      } font-bold text-slate-900 dark:text-white tabular-nums leading-none`}
+                      } font-bold tabular-nums leading-none ${
+                        isPriceChanged
+                          ? 'px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-900 dark:bg-amber-500/15 dark:text-amber-200 ring-1 ring-amber-400/70'
+                          : 'text-slate-900 dark:text-white'
+                      }`}
                     >
                       <span>{formatEuroIt(effectiveItem.priceEur!)}</span>
                       {lazySizePriceLoadingIds[item.id] && (
@@ -5600,7 +6093,9 @@ export function ResearchesView({
                 <span
                   className={`${
                     compact ? 'px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-[11px]' : 'px-2 py-0.5 text-[11px]'
-                  } font-semibold rounded-md border whitespace-nowrap ${statusMeta.badgeClass}`}
+                  } font-semibold rounded-md border whitespace-nowrap ${statusMeta.badgeClass} ${
+                    isStatusChanged ? 'ring-2 ring-amber-400/85 dark:ring-amber-400/80' : ''
+                  }`}
                 >
                   {statusMeta.label}
                 </span>
@@ -5615,7 +6110,13 @@ export function ResearchesView({
                     compact
                       ? 'px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-[11px]'
                       : 'px-2 py-1 text-[11px]'
-                  } font-semibold rounded-md border dark:[color-scheme:dark] focus:outline-none ${statusMeta.badgeClass}`}
+                  } font-semibold rounded-md border dark:[color-scheme:dark] focus:outline-none ${statusMeta.badgeClass} ${
+                    isStatusChanged
+                      ? 'ring-2 ring-amber-400/85 dark:ring-amber-400/80'
+                      : isFieldStaged('status')
+                        ? 'ring-2 ring-sky-400/85 dark:ring-sky-400/80'
+                        : ''
+                  }`}
                 >
                   {STATUS_OPTIONS.map((st) => (
                     <option
@@ -5700,7 +6201,7 @@ export function ResearchesView({
                             ? 'font-semibold text-emerald-900 bg-emerald-100 border-emerald-400 dark:text-emerald-100 dark:bg-emerald-500/30 dark:border-emerald-400/80 shadow-sm shadow-emerald-500/20'
                             : 'font-semibold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 border-emerald-300 dark:text-emerald-200 dark:hover:text-emerald-100 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30 dark:border-emerald-400/60'
                           : 'font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 dark:text-slate-400 dark:hover:text-slate-200 dark:bg-slate-800/70 dark:hover:bg-slate-800 border-transparent'
-                      }`}
+                      } ${isAttachChanged ? 'ring-2 ring-amber-400/80' : ''}`}
                     >
                       <Paperclip
                         className={`w-3 h-3 ${
@@ -5811,8 +6312,10 @@ export function ResearchesView({
                 key={item.id}
                 className={`bg-white dark:bg-slate-900 border rounded-xl overflow-hidden flex flex-col transition-colors shadow-xs dark:shadow-none ${
                   isLocalDraft || hasPendingEdits
-                    ? 'border-indigo-400 dark:border-indigo-400/75 ring-1 ring-indigo-500/20'
-                    : 'border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700'
+                    ? 'border-sky-400 dark:border-sky-400/75 ring-1 ring-sky-500/20'
+                    : localQueueChange
+                      ? 'border-amber-400/85 dark:border-amber-500/65 ring-1 ring-amber-400/25'
+                      : 'border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700'
                 }`}
               >
                 <div className={isList ? 'flex flex-row items-start flex-1 min-w-0' : 'flex flex-col flex-1 min-w-0'}>
@@ -5824,8 +6327,16 @@ export function ResearchesView({
                       rel="noreferrer"
                       className={
                         isList
-                          ? 'group relative w-20 h-20 m-2 sm:w-36 md:w-40 sm:h-36 sm:self-start sm:my-2 sm:mx-2.5 rounded-lg bg-white border border-slate-200 dark:border-slate-800/80 flex items-center justify-center p-1 sm:p-1.5 overflow-hidden shrink-0'
-                          : 'group relative h-56 w-full bg-white border-b border-slate-200 dark:border-slate-800/80 flex items-center justify-center p-2.5 overflow-hidden shrink-0'
+                          ? `group relative w-20 h-20 m-2 sm:w-36 md:w-40 sm:h-36 sm:self-start sm:my-2 sm:mx-2.5 rounded-lg bg-white border flex items-center justify-center p-1 sm:p-1.5 overflow-hidden shrink-0 ${
+                              isImageChanged
+                                ? 'border-amber-400 dark:border-amber-400 ring-2 ring-amber-400/75'
+                                : 'border-slate-200 dark:border-slate-800/80'
+                            }`
+                          : `group relative h-56 w-full bg-white border-b flex items-center justify-center p-2.5 overflow-hidden shrink-0 ${
+                              isImageChanged
+                                ? 'border-amber-400 dark:border-amber-400 ring-2 ring-inset ring-amber-400/65'
+                                : 'border-slate-200 dark:border-slate-800/80'
+                            }`
                       }
                     >
                       <img
@@ -5833,12 +6344,17 @@ export function ResearchesView({
                         alt={effectiveItem.title}
                         referrerPolicy="no-referrer"
                         onError={() => {
-                          if (hasExternal) {
-                            setBrokenImages((prev) => ({ ...prev, [item.id]: true }));
+                          if (hasExternal && effectiveItem.imageUrl) {
+                            setBrokenImages((prev) => ({ ...prev, [item.id]: effectiveItem.imageUrl! }));
                           }
                         }}
                         className="w-full h-full object-contain transition-transform duration-200 group-hover:scale-[1.03]"
                       />
+                      {isImageChanged && (
+                        <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-amber-500 text-white dark:text-slate-950 text-[9px] font-bold shadow-xs">
+                          Foto
+                        </span>
+                      )}
                     </a>
                   ) : (
                     <div
@@ -5908,7 +6424,11 @@ export function ResearchesView({
                         <div className="flex flex-wrap items-center gap-x-1.5 sm:gap-x-2 gap-y-1 text-[10px] sm:text-[11px] font-medium text-slate-500 dark:text-slate-400">
                           {effectiveBrand && (
                             <span
-                              className="inline-flex items-center gap-1 text-sky-600 dark:text-sky-300 font-semibold"
+                              className={`inline-flex items-center gap-1 font-semibold ${
+                                isBrandChanged
+                                  ? 'px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300 dark:bg-amber-500/15 dark:text-amber-200 dark:border-amber-400/60'
+                                  : 'text-sky-600 dark:text-sky-300'
+                              }`}
                               title={`Marca: ${effectiveBrand}`}
                             >
                               <Tag className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0" />
@@ -5918,7 +6438,11 @@ export function ResearchesView({
                           {(!effectiveBrand ||
                             effectiveBrand.toLowerCase() !== item.store.toLowerCase()) && (
                             <span
-                              className="inline-flex items-center gap-1 text-slate-700 dark:text-slate-200 font-medium"
+                              className={`inline-flex items-center gap-1 font-medium ${
+                                isStoreChanged
+                                  ? 'px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300 dark:bg-amber-500/15 dark:text-amber-200 dark:border-amber-400/60'
+                                  : 'text-slate-700 dark:text-slate-200'
+                              }`}
                               title={`Negozio: ${item.store}`}
                             >
                               <Store className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 shrink-0" />
@@ -5928,7 +6452,15 @@ export function ResearchesView({
                           <span className="text-slate-300 dark:text-slate-600" aria-hidden="true">
                             ·
                           </span>
-                          <span>{getCategoryLabel(item.category)}</span>
+                          <span
+                            className={
+                              isCategoryChanged
+                                ? 'px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300 dark:bg-amber-500/15 dark:text-amber-200 dark:border-amber-400/60 font-semibold'
+                                : ''
+                            }
+                          >
+                            {getCategoryLabel(item.category)}
+                          </span>
                           <span className="text-slate-300 dark:text-slate-700 hidden sm:inline" aria-hidden="true">
                             |
                           </span>
@@ -5942,7 +6474,11 @@ export function ResearchesView({
                           href={item.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="block text-[13px] sm:text-sm font-semibold text-slate-900 hover:text-sky-600 dark:text-slate-100 dark:hover:text-sky-300 leading-snug break-words line-clamp-2 sm:line-clamp-none"
+                          className={`block text-[13px] sm:text-sm font-semibold leading-snug break-words line-clamp-2 sm:line-clamp-none ${
+                            isTitleChanged
+                              ? 'pl-2 border-l-2 border-amber-400 text-amber-900 hover:text-amber-700 dark:text-amber-200 dark:hover:text-amber-100'
+                              : 'text-slate-900 hover:text-sky-600 dark:text-slate-100 dark:hover:text-sky-300'
+                          }`}
                         >
                           {effectiveItem.title}
                         </a>
@@ -5959,7 +6495,11 @@ export function ResearchesView({
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
                           {effectiveBrand && (
                             <span
-                              className="inline-flex items-center gap-1 text-sky-600 dark:text-sky-300 font-semibold"
+                              className={`inline-flex items-center gap-1 font-semibold ${
+                                isBrandChanged
+                                  ? 'px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300 dark:bg-amber-500/15 dark:text-amber-200 dark:border-amber-400/60'
+                                  : 'text-sky-600 dark:text-sky-300'
+                              }`}
                               title={`Marca: ${effectiveBrand}`}
                             >
                               <Tag className="w-3 h-3 shrink-0" />
@@ -5969,7 +6509,11 @@ export function ResearchesView({
                           {(!effectiveBrand ||
                             effectiveBrand.toLowerCase() !== item.store.toLowerCase()) && (
                             <span
-                              className="inline-flex items-center gap-1 text-slate-700 dark:text-slate-200 font-medium"
+                              className={`inline-flex items-center gap-1 font-medium ${
+                                isStoreChanged
+                                  ? 'px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300 dark:bg-amber-500/15 dark:text-amber-200 dark:border-amber-400/60'
+                                  : 'text-slate-700 dark:text-slate-200'
+                              }`}
                               title={`Negozio: ${item.store}`}
                             >
                               <Store className="w-3 h-3 text-slate-400 shrink-0" />
@@ -5979,7 +6523,15 @@ export function ResearchesView({
                           <span className="text-slate-300 dark:text-slate-600" aria-hidden="true">
                             ·
                           </span>
-                          <span>{getCategoryLabel(item.category)}</span>
+                          <span
+                            className={
+                              isCategoryChanged
+                                ? 'px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300 dark:bg-amber-500/15 dark:text-amber-200 dark:border-amber-400/60 font-semibold'
+                                : ''
+                            }
+                          >
+                            {getCategoryLabel(item.category)}
+                          </span>
                         </div>
 
                         {renderRoomControl()}
@@ -5989,7 +6541,11 @@ export function ResearchesView({
                         href={item.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="block text-sm font-semibold text-slate-900 hover:text-sky-600 dark:text-slate-100 dark:hover:text-sky-300 leading-snug break-words"
+                        className={`block text-sm font-semibold leading-snug break-words ${
+                          isTitleChanged
+                            ? 'pl-2 border-l-2 border-amber-400 text-amber-900 hover:text-amber-700 dark:text-amber-200 dark:hover:text-amber-100'
+                            : 'text-slate-900 hover:text-sky-600 dark:text-slate-100 dark:hover:text-sky-300'
+                        }`}
                       >
                         {effectiveItem.title}
                       </a>
@@ -5998,9 +6554,9 @@ export function ResearchesView({
 
                   {/* 3. Product Colors + Sizes + Model Code (inline wrap in list mode for compact height) */}
                   {(effectiveItem.color ||
-                    (effectiveItem.availableColors && effectiveItem.availableColors.length > 0) ||
+                    allAvailableColors.length > 0 ||
                     effectiveItem.size ||
-                    (item.availableSizes && item.availableSizes.length > 0) ||
+                    allAvailableSizes.length > 0 ||
                     item.model) && (
                     <div
                       className={
@@ -6013,7 +6569,9 @@ export function ResearchesView({
                         <CollapsibleColorChips
                           colors={allAvailableColors}
                           activeColor={effectiveItem.color}
+                          unavailableColors={unavailableColorList}
                           expanded={isColorsExpanded}
+                          highlightActive={isColorChanged}
                           onToggleExpand={() =>
                             setExpandedColorsIds((prev) => ({
                               ...prev,
@@ -6026,7 +6584,11 @@ export function ResearchesView({
                       ) : effectiveItem.color ? (
                         <div className="flex flex-wrap items-center gap-1.5 min-h-[24px]">
                           <span
-                            className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-200 font-medium"
+                            className={`inline-flex items-center gap-1.5 font-medium ${
+                              isColorChanged
+                                ? 'px-2 py-0.5 rounded-md border border-amber-500 bg-amber-50 text-amber-900 dark:border-amber-400 dark:bg-amber-500/20 dark:text-amber-100 font-semibold ring-1 ring-amber-400/60'
+                                : 'text-slate-700 dark:text-slate-200'
+                            }`}
                             title={`Colore: ${effectiveItem.color}`}
                           >
                             <ColorSwatchDot color={effectiveItem.color} size="md" />
@@ -6035,31 +6597,53 @@ export function ResearchesView({
                         </div>
                       ) : null}
 
-                      {item.availableSizes && item.availableSizes.length > 0 ? (
+                      {allAvailableSizes.length > 0 ? (
                         <div className="flex flex-wrap items-center gap-1 min-h-[24px]">
-                          <span className="text-[10px] uppercase tracking-wide text-slate-500 mr-0.5 leading-none">
+                          <span
+                            className={`text-[10px] uppercase tracking-wide mr-0.5 leading-none ${
+                              isSizeChanged
+                                ? 'text-amber-700 dark:text-amber-300 font-semibold'
+                                : 'text-slate-500'
+                            }`}
+                          >
                             Taglia:
                           </span>
-                          {item.availableSizes.map((sizeOpt) => {
+                          {allAvailableSizes.map((sizeOpt) => {
+                            const sizeOptKey = normalizeSizeOptionKey(sizeOpt);
                             const isActive =
-                              effectiveItem.size?.trim().toLowerCase().replace(/\s+/g, '') ===
-                              sizeOpt.trim().toLowerCase().replace(/\s+/g, '');
+                              Boolean(effectiveItem.size) &&
+                              normalizeSizeOptionKey(effectiveItem.size!) === sizeOptKey;
+                            const isMissingOnSite = unavailableSizeKeys.has(sizeOptKey);
                             const optPrice = findSizePrice(effectiveItem.sizePrices, sizeOpt);
+                            const missingHint = isMissingOnSite
+                              ? " · non più disponibile sul sito all'ultimo aggiornamento (opzione mantenuta)"
+                              : '';
                             const sizeTooltip =
                               typeof optPrice === 'number'
-                                ? `Seleziona taglia ${sizeOpt} · ${formatEuroIt(optPrice)}`
-                                : `Seleziona taglia ${sizeOpt}`;
+                                ? `Seleziona taglia ${sizeOpt} · ${formatEuroIt(optPrice)}${missingHint}`
+                                : `Seleziona taglia ${sizeOpt}${missingHint}`;
+                            const activeSizeCls = isSizeChanged
+                              ? 'bg-amber-50 border-amber-500 text-amber-900 dark:bg-amber-500/20 dark:border-amber-400 dark:text-amber-100 font-semibold ring-1 ring-amber-400/60'
+                              : 'bg-sky-50 border-sky-500 text-sky-800 dark:bg-sky-500/15 dark:border-sky-400/70 dark:text-sky-200 font-semibold';
+                            const dashedCls = isMissingOnSite ? 'border-dashed ' : '';
                             return readOnly ? (
                               <span
                                 key={sizeOpt}
                                 title={sizeTooltip}
-                                className={`inline-flex items-center px-2 py-0.5 rounded-md border font-mono text-[11px] leading-4 ${
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border font-mono text-[11px] leading-4 ${dashedCls}${
                                   isActive
-                                    ? 'bg-sky-50 border-sky-500 text-sky-800 dark:bg-sky-500/15 dark:border-sky-400/70 dark:text-sky-200 font-semibold'
-                                    : 'bg-slate-50 border-slate-200 text-slate-500 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-400'
+                                    ? activeSizeCls
+                                    : isMissingOnSite
+                                      ? 'bg-slate-50/70 border-slate-300 text-slate-500 dark:bg-slate-950/40 dark:border-slate-700 dark:text-slate-400 opacity-85'
+                                      : 'bg-slate-50 border-slate-200 text-slate-500 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-400'
                                 }`}
                               >
-                                {sizeOpt}
+                                <span>{sizeOpt}</span>
+                                {isMissingOnSite && (
+                                  <span className="text-[9px] font-sans font-medium opacity-75">
+                                    (storico)
+                                  </span>
+                                )}
                               </span>
                             ) : (
                               <button
@@ -6067,27 +6651,46 @@ export function ResearchesView({
                                 type="button"
                                 onClick={() => handleQuickSizeSelect(item, sizeOpt)}
                                 title={sizeTooltip}
-                                className={`inline-flex items-center px-2 py-0.5 rounded-md border font-mono text-[11px] leading-4 transition-colors ${
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border font-mono text-[11px] leading-4 transition-colors ${dashedCls}${
                                   isActive
-                                    ? 'bg-sky-50 border-sky-500 text-sky-800 dark:bg-sky-500/15 dark:border-sky-400/70 dark:text-sky-200 font-semibold'
-                                    : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-300 dark:hover:border-slate-600'
+                                    ? activeSizeCls
+                                    : isMissingOnSite
+                                      ? 'bg-slate-50/70 border-slate-300 text-slate-600 hover:border-slate-400 dark:bg-slate-950/40 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-500 opacity-85'
+                                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-300 dark:hover:border-slate-600'
                                 }`}
                               >
-                                {sizeOpt}
+                                <span>{sizeOpt}</span>
+                                {isMissingOnSite && (
+                                  <span className="text-[9px] font-sans font-medium opacity-75">
+                                    (storico)
+                                  </span>
+                                )}
                               </button>
                             );
                           })}
                         </div>
                       ) : effectiveItem.size ? (
                         <div className="flex flex-wrap items-center gap-1.5 min-h-[24px]">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-md border border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-950 font-mono text-[11px] leading-4 text-slate-800 dark:text-slate-200">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-md border font-mono text-[11px] leading-4 ${
+                              isSizeChanged
+                                ? 'border-amber-500 bg-amber-50 text-amber-900 dark:border-amber-400 dark:bg-amber-500/20 dark:text-amber-100 font-semibold ring-1 ring-amber-400/60'
+                                : 'border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-950 text-slate-800 dark:text-slate-200'
+                            }`}
+                          >
                             {effectiveItem.size}
                           </span>
                         </div>
                       ) : null}
 
                       {item.model && (
-                        <div className="inline-flex items-center min-h-[24px] font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                        <div
+                          className={`inline-flex items-center min-h-[24px] font-mono text-[11px] ${
+                            isModelChanged
+                              ? 'px-1.5 py-0.5 rounded bg-amber-50 border border-amber-300 text-amber-900 dark:bg-amber-500/15 dark:border-amber-400/60 dark:text-amber-200'
+                              : 'text-slate-500 dark:text-slate-400'
+                          }`}
+                        >
                           Cod. {item.model}
                         </div>
                       )}
@@ -6105,11 +6708,21 @@ export function ResearchesView({
 
                   {/* 5. Specifications & Notes with Vedi tutti i dettagli / Mostra meno in both Grid & List */}
                   {(filteredSpecEntries.length > 0 || hasUniqueNotes) && (
-                    <div className={isList ? 'space-y-1' : 'space-y-2'}>
+                    <div
+                      className={`${isList ? 'space-y-1' : 'space-y-2'} ${
+                        isSpecsChanged
+                          ? 'pl-2 border-l-2 border-amber-400 bg-amber-50/40 dark:bg-amber-500/10 rounded-r-md py-0.5'
+                          : ''
+                      }`}
+                    >
                       {hasUniqueNotes && (
                         <p
                           className={`text-xs text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line break-words ${
                             isList && !isSpecsExpanded ? 'line-clamp-1 sm:line-clamp-none' : ''
+                          } ${
+                            isNotesChanged && !isSpecsChanged
+                              ? 'pl-2 border-l-2 border-amber-400 bg-amber-50/40 dark:bg-amber-500/10 rounded-r-md py-0.5'
+                              : ''
                           }`}
                         >
                           {item.notes}
@@ -6267,7 +6880,7 @@ export function ResearchesView({
                                     ? 'font-semibold text-emerald-900 bg-emerald-100 border-emerald-400 dark:text-emerald-100 dark:bg-emerald-500/30 dark:border-emerald-400/80'
                                     : 'font-semibold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 border-emerald-300 dark:text-emerald-200 dark:hover:text-emerald-100 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30 dark:border-emerald-400/60'
                                   : 'font-medium text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 border-transparent hover:bg-slate-100 dark:hover:bg-slate-800/70'
-                              }`}
+                              } ${isAttachChanged ? 'ring-2 ring-amber-400/80' : ''}`}
                             >
                               <Paperclip
                                 className={`w-3.5 h-3.5 ${
@@ -6539,11 +7152,13 @@ export function ResearchesView({
                 {isList && renderCardActionButtons(true)}
 
                 {(isLocalDraft || hasPendingEdits) && !readOnly && (
-                  <div className="px-3 py-2 border-t border-indigo-200 dark:border-indigo-500/35 bg-indigo-50 dark:bg-indigo-950/35 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                    <span className="text-indigo-800 dark:text-indigo-200 font-medium inline-flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-indigo-400 animate-pulse shrink-0" />
+                  <div className="px-3 py-2 border-t border-sky-200 dark:border-sky-500/35 bg-sky-50 dark:bg-sky-950/35 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                    <span className="text-sky-800 dark:text-sky-200 font-medium inline-flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-sky-500 dark:bg-sky-400 animate-pulse shrink-0" />
                       {isLocalDraft
-                        ? 'Bozza in pagina · Non ancora salvata su Firestore'
+                        ? writesDisabled
+                          ? 'Bozza in pagina · Non ancora salvata in coda locale'
+                          : 'Bozza in pagina · Non ancora salvata su Firestore'
                         : 'Modifiche non salvate'}
                     </span>
                     <div className="flex items-center gap-1.5 ml-auto">
@@ -6563,7 +7178,7 @@ export function ResearchesView({
                         type="button"
                         disabled={isSavingPendingHere || savingEdit}
                         onClick={() => requestCommitPendingCardEdit(item)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 font-semibold text-white bg-indigo-600 hover:bg-indigo-700 dark:text-slate-950 dark:bg-indigo-400 dark:hover:bg-indigo-300 rounded-md transition-colors disabled:opacity-50"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-md transition-colors disabled:opacity-50"
                       >
                         {isSavingPendingHere ||
                         (savingEdit && pendingEditSave?.item.id === item.id) ? (
@@ -6579,6 +7194,29 @@ export function ResearchesView({
                         </span>
                       </button>
                     </div>
+                  </div>
+                )}
+
+                {!isLocalDraft && !hasPendingEdits && localQueueChange && (
+                  <div className="px-3 py-1.5 border-t border-amber-200 dark:border-amber-500/35 bg-amber-50/90 dark:bg-amber-950/30 flex flex-wrap items-center gap-1.5 text-[11px]">
+                    <span className="inline-flex items-center gap-1.5 font-semibold text-amber-800 dark:text-amber-200 shrink-0">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 dark:bg-amber-400 shrink-0" />
+                      {localQueueChange.isNew
+                        ? 'Nuovo in locale · Non ancora su Firestore'
+                        : 'Modificato in locale · Non ancora su Firestore'}
+                    </span>
+                    {localQueueChange.details.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1">
+                        {localQueueChange.details.map((detail, idx) => (
+                          <span
+                            key={idx}
+                            className="px-1.5 py-0.5 rounded bg-white/90 dark:bg-slate-900/80 border border-amber-300/80 dark:border-amber-500/40 text-[10px] font-medium text-amber-900 dark:text-amber-200"
+                          >
+                            {detail}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </article>
@@ -6673,14 +7311,38 @@ export function ResearchesView({
               </div>
               <div className="space-y-1">
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  Eliminare questa ricerca?
+                  {isLocalDraftId(pendingDelete.id)
+                    ? 'Scartare questa bozza?'
+                    : writesDisabled
+                      ? 'Eliminare in locale (Modalità Test)?'
+                      : 'Eliminare questa ricerca?'}
                 </h3>
                 <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                  Vuoi davvero rimuovere{' '}
-                  <span className="font-semibold text-slate-900 dark:text-slate-100">
-                    {pendingDelete.title}
-                  </span>{' '}
-                  ({pendingDelete.store}) e gli eventuali file allegati da Firestore?
+                  {isLocalDraftId(pendingDelete.id) ? (
+                    <>
+                      Vuoi davvero rimuovere la bozza{' '}
+                      <span className="font-semibold text-slate-900 dark:text-slate-100">
+                        {pendingDelete.title}
+                      </span>{' '}
+                      ({pendingDelete.store}) dalla pagina?
+                    </>
+                  ) : writesDisabled ? (
+                    <>
+                      Modalità Test attiva (scritture Firestore disattivate): vuoi simulare la rimozione di{' '}
+                      <span className="font-semibold text-slate-900 dark:text-slate-100">
+                        {pendingDelete.title}
+                      </span>{' '}
+                      ({pendingDelete.store}) e degli eventuali file allegati in locale? L’eliminazione verrà inviata a Firestore solo quando riattiverai le scritture.
+                    </>
+                  ) : (
+                    <>
+                      Vuoi davvero rimuovere{' '}
+                      <span className="font-semibold text-slate-900 dark:text-slate-100">
+                        {pendingDelete.title}
+                      </span>{' '}
+                      ({pendingDelete.store}) e gli eventuali file allegati da Firestore?
+                    </>
+                  )}
                 </p>
               </div>
             </div>
@@ -6699,7 +7361,11 @@ export function ResearchesView({
                 onClick={() => void confirmDeleteResearch()}
                 className="px-3.5 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition-colors"
               >
-                {deleting ? 'Eliminazione...' : 'Elimina'}
+                {deleting
+                  ? 'Eliminazione...'
+                  : writesDisabled && !isLocalDraftId(pendingDelete.id)
+                    ? 'Elimina in locale'
+                    : 'Elimina'}
               </button>
             </div>
           </div>
@@ -6715,10 +7381,12 @@ export function ResearchesView({
               </div>
               <div className="space-y-1 min-w-0">
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  Eliminare questo allegato?
+                  {writesDisabled
+                    ? 'Eliminare allegato in locale (Modalità Test)?'
+                    : 'Eliminare questo allegato?'}
                 </h3>
                 <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                  Vuoi davvero rimuovere{' '}
+                  {writesDisabled ? 'Modalità Test attiva: vuoi rimuovere in locale ' : 'Vuoi davvero rimuovere '}
                   <span className="font-semibold text-slate-900 dark:text-slate-100 break-words">
                     {pendingDeleteDoc.doc.fileName || pendingDeleteDoc.doc.title}
                   </span>{' '}
@@ -6726,7 +7394,9 @@ export function ResearchesView({
                   <span className="font-semibold text-slate-900 dark:text-slate-100">
                     {pendingDeleteDoc.productTitle}
                   </span>{' '}
-                  su Firestore?
+                  {writesDisabled
+                    ? '(verrà rimosso da Firestore quando riattiverai le scritture)?'
+                    : 'su Firestore?'}
                 </p>
               </div>
             </div>
@@ -6745,7 +7415,11 @@ export function ResearchesView({
                 onClick={() => void confirmDeleteDoc()}
                 className="px-3.5 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-lg transition-colors"
               >
-                {deletingDocId === pendingDeleteDoc.doc.id ? 'Eliminazione...' : 'Elimina'}
+                {deletingDocId === pendingDeleteDoc.doc.id
+                  ? 'Eliminazione...'
+                  : writesDisabled
+                    ? 'Elimina in locale'
+                    : 'Elimina'}
               </button>
             </div>
           </div>
@@ -6765,7 +7439,9 @@ export function ResearchesView({
               </div>
               <div className="space-y-1">
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  Aggiornare questo prodotto?
+                  {writesDisabled && !isLocalDraftId(pendingRefresh.id)
+                    ? 'Aggiornare il prodotto in locale?'
+                    : 'Aggiornare questo prodotto?'}
                 </h3>
                 <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
                   Vuoi ri-analizzare il link di{' '}
@@ -6773,7 +7449,11 @@ export function ResearchesView({
                     {getEffectiveItem(pendingRefresh).title}
                   </span>{' '}
                   ({pendingRefresh.store}) per aggiornare i dati dal sito
-                  {isLocalDraftId(pendingRefresh.id) ? ' sulla bozza' : ' su Firestore'}{' '}
+                  {isLocalDraftId(pendingRefresh.id)
+                    ? ' sulla bozza'
+                    : writesDisabled
+                      ? ' in locale (Modalità Test attiva: salvataggio su Firestore rimandato alla riattivazione)'
+                      : ' su Firestore'}{' '}
                   mantenendo colore, taglia, stanza e stato selezionati?
                 </p>
               </div>
@@ -6804,29 +7484,54 @@ export function ResearchesView({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/70 backdrop-blur-sm p-4">
           <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-indigo-100 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-400 shrink-0">
+              <div className="p-2 rounded-lg bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-400 shrink-0">
                 <Pencil className="w-5 h-5" />
               </div>
               <div className="space-y-1">
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  {pendingEditSave.isNewDraft
-                    ? 'Salvare il nuovo prodotto su Firestore?'
-                    : 'Salvare le modifiche al prodotto?'}
+                  {writesDisabled
+                    ? pendingEditSave.isNewDraft
+                      ? 'Salvare il nuovo prodotto in locale?'
+                      : 'Salvare le modifiche in locale?'
+                    : pendingEditSave.isNewDraft
+                      ? 'Salvare il nuovo prodotto su Firestore?'
+                      : 'Salvare le modifiche al prodotto?'}
                 </h3>
                 <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                  {pendingEditSave.isNewDraft ? 'Vuoi salvare ' : 'Vuoi aggiornare '}
-                  <span className="font-semibold text-slate-900 dark:text-slate-100">
-                    {pendingEditSave.payload.title}
-                  </span>{' '}
-                  ({pendingEditSave.payload.store})
-                  {pendingEditSave.isNewDraft
-                    ? ' tra i tuoi prodotti '
-                    : pendingEditSave.skipProductUpdate &&
-                        pendingEditSave.docTypeChanges &&
-                        pendingEditSave.docTypeChanges.length > 0
-                      ? ' salvando la nuova tipologia degli allegati '
-                      : ' salvando i nuovi dati '}
-                  su Firestore?
+                  {writesDisabled ? (
+                    <>
+                      Modalità Test attiva (scritture su Firestore disattivate).{' '}
+                      {pendingEditSave.isNewDraft ? 'Vuoi salvare in locale ' : 'Vuoi aggiornare in locale '}
+                      <span className="font-semibold text-slate-900 dark:text-slate-100">
+                        {pendingEditSave.payload.title}
+                      </span>{' '}
+                      ({pendingEditSave.payload.store})
+                      {pendingEditSave.isNewDraft
+                        ? ' nella coda locale? '
+                        : pendingEditSave.skipProductUpdate &&
+                            pendingEditSave.docTypeChanges &&
+                            pendingEditSave.docTypeChanges.length > 0
+                          ? ' con la nuova tipologia degli allegati? '
+                          : ' con i nuovi dati? '}
+                      L’operazione resterà visibile e verrà salvata su Firestore quando riattiverai le scritture.
+                    </>
+                  ) : (
+                    <>
+                      {pendingEditSave.isNewDraft ? 'Vuoi salvare ' : 'Vuoi aggiornare '}
+                      <span className="font-semibold text-slate-900 dark:text-slate-100">
+                        {pendingEditSave.payload.title}
+                      </span>{' '}
+                      ({pendingEditSave.payload.store})
+                      {pendingEditSave.isNewDraft
+                        ? ' tra i tuoi prodotti '
+                        : pendingEditSave.skipProductUpdate &&
+                            pendingEditSave.docTypeChanges &&
+                            pendingEditSave.docTypeChanges.length > 0
+                          ? ' salvando la nuova tipologia degli allegati '
+                          : ' salvando i nuovi dati '}
+                      su Firestore?
+                    </>
+                  )}
                 </p>
               </div>
             </div>
@@ -6845,10 +7550,81 @@ export function ResearchesView({
                 onClick={() => void confirmSaveEdit()}
                 className="px-3.5 py-2 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-400 dark:hover:bg-sky-300 disabled:opacity-50 rounded-lg transition-colors"
               >
-                {savingEdit ? 'Salvataggio...' : 'Salva modifiche'}
+                {savingEdit
+                  ? 'Salvataggio...'
+                  : writesDisabled
+                    ? 'Salva in locale'
+                    : 'Salva modifiche'}
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {(feedback || linkNotice || linkError) && (
+        <div
+          className="fixed bottom-4 left-4 right-4 sm:left-auto sm:bottom-6 sm:right-6 sm:w-full sm:max-w-md z-50 flex flex-col gap-2 pointer-events-none"
+          aria-live="polite"
+        >
+          {feedback && (
+            <div
+              role="status"
+              className="pointer-events-auto bg-emerald-50/95 dark:bg-emerald-950/95 backdrop-blur-md border border-emerald-300 dark:border-emerald-500/50 text-emerald-900 dark:text-emerald-100 rounded-xl px-3.5 py-2.5 text-xs shadow-xl flex items-start justify-between gap-2.5"
+            >
+              <div className="flex items-start gap-2 min-w-0">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                <span className="leading-relaxed break-words">{feedback}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFeedback(null)}
+                className="text-emerald-700 hover:text-emerald-950 dark:text-emerald-300/80 dark:hover:text-emerald-100 p-0.5 shrink-0"
+                aria-label="Chiudi notifica"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {linkNotice && (
+            <div
+              role="status"
+              className="pointer-events-auto bg-sky-50/95 dark:bg-sky-950/95 backdrop-blur-md border border-sky-300 dark:border-sky-500/50 text-sky-900 dark:text-sky-100 rounded-xl px-3.5 py-2.5 text-xs shadow-xl flex items-start justify-between gap-2.5"
+            >
+              <div className="flex items-start gap-2 min-w-0">
+                <AlertTriangle className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0 mt-0.5" />
+                <span className="leading-relaxed break-words">{linkNotice}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLinkNotice(null)}
+                className="text-sky-600 hover:text-sky-900 dark:text-sky-300/80 dark:hover:text-sky-100 p-0.5 shrink-0"
+                aria-label="Chiudi avviso"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {linkError && (
+            <div
+              role="alert"
+              className="pointer-events-auto bg-rose-50/95 dark:bg-rose-950/95 backdrop-blur-md border border-rose-300 dark:border-rose-500/50 text-rose-900 dark:text-rose-100 rounded-xl px-3.5 py-2.5 text-xs shadow-xl flex items-start justify-between gap-2.5"
+            >
+              <div className="flex items-start gap-2 min-w-0">
+                <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                <span className="leading-relaxed break-words">{linkError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLinkError(null)}
+                className="text-rose-700 hover:text-rose-950 dark:text-rose-300/80 dark:hover:text-rose-100 p-0.5 shrink-0"
+                aria-label="Chiudi errore"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

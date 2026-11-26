@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   CheckCircle2,
+  Clock,
+  CloudUpload,
   Database,
   Download,
   FlaskConical,
   HardDrive,
   Laptop,
+  Loader2,
   Mail,
   Moon,
   RefreshCw,
@@ -16,16 +19,25 @@ import {
   SlidersHorizontal,
   Sun,
   Trash2,
+  X,
   Zap,
 } from 'lucide-react';
 import {
+  clearSimulatedFirestoreOps,
+  discardSimulatedFirestoreOp,
+  dismissSimulatedFlushResult,
   FIREBASE_PROJECT_ID,
   FIRESTORE_DATABASE_ID,
   FirestoreWriteStats,
+  flushSimulatedFirestoreOps,
   isFirestoreQuotaExceededActive,
   resetFirestoreWriteStats,
+  SimulatedFirestoreOp,
+  SimulatedFlushState,
   subscribeFirestoreQuotaExceeded,
   subscribeFirestoreWriteStats,
+  subscribeSimulatedFirestoreOps,
+  subscribeSimulatedFlushState,
 } from '../firebase';
 import { HomeSystemConfig } from '../types/home';
 import {
@@ -123,6 +135,11 @@ export function SettingsView({
     lastActionAt: null,
   });
   const [quotaExceeded, setQuotaExceeded] = useState(() => isFirestoreQuotaExceededActive());
+  const [simulatedOps, setSimulatedOps] = useState<SimulatedFirestoreOp[]>([]);
+  const [flushState, setFlushState] = useState<SimulatedFlushState>({
+    flushing: false,
+    lastResult: null,
+  });
   const [podDraft, setPodDraft] = useState(homeConfig.podCode);
   const [tariffDraft, setTariffDraft] = useState(String(homeConfig.tariffEurPerKwh));
   const [savingConfig, setSavingConfig] = useState(false);
@@ -142,6 +159,14 @@ export function SettingsView({
 
   useEffect(() => {
     return subscribeFirestoreQuotaExceeded(setQuotaExceeded);
+  }, []);
+
+  useEffect(() => {
+    return subscribeSimulatedFirestoreOps(setSimulatedOps);
+  }, []);
+
+  useEffect(() => {
+    return subscribeSimulatedFlushState(setFlushState);
   }, []);
 
   const totalRecords = useMemo(
@@ -361,7 +386,7 @@ export function SettingsView({
             </div>
 
             <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              Attiva questa opzione quando vuoi fare test nel browser (aggiungere articoli, cambiare varianti su Ricerche, provare la domotica o caricare allegati) senza consumare la quota giornaliera gratuita di Firebase Firestore. Tutte le operazioni restano simulate in locale fino al ricaricamento della pagina.
+              Attiva questa opzione quando vuoi fare test nel browser (aggiungere articoli, cambiare varianti su Ricerche, provare la domotica o caricare allegati) senza consumare la quota giornaliera gratuita di Firebase Firestore. Tutte le operazioni simulate restano salvate e visibili in locale e vengono inserite automaticamente su Firestore quando riattivi le scritture.
             </p>
           </div>
 
@@ -370,17 +395,21 @@ export function SettingsView({
               type="button"
               role="switch"
               aria-checked={settings.firestoreWritesDisabled}
+              disabled={flushState.flushing}
               onClick={() => {
                 const next = !settings.firestoreWritesDisabled;
+                const pendingBefore = simulatedOps.length;
                 updateSettings({ firestoreWritesDisabled: next });
                 setFeedback({
                   tone: next ? 'info' : 'ok',
                   text: next
-                    ? 'Modalità Test attivata: ogni modifica verrà simulata in locale con 0 scritture su Firestore.'
-                    : 'Modalità Test disattivata: le modifiche tornano a essere salvate regolarmente su Firestore.',
+                    ? 'Modalità Test attivata: ogni modifica verrà simulata e salvata in coda in locale con 0 scritture su Firestore.'
+                    : pendingBefore > 0
+                      ? `Modalità Test disattivata: invio di ${pendingBefore} operazioni simulate su Firestore in corso...`
+                      : 'Modalità Test disattivata: le modifiche tornano a essere salvate regolarmente su Firestore.',
                 });
               }}
-              className={`inline-flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-xs font-semibold transition-colors ${
+              className={`inline-flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-60 ${
                 settings.firestoreWritesDisabled
                   ? 'bg-indigo-600 hover:bg-indigo-700 text-white dark:bg-indigo-400 dark:hover:bg-indigo-300 dark:text-slate-950'
                   : 'bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-500 dark:hover:bg-sky-400 dark:text-slate-950'
@@ -408,10 +437,10 @@ export function SettingsView({
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 pt-4 border-t border-slate-200/80 dark:border-slate-800/80">
           <div className={`${subSurfaceCls} px-3.5 py-2.5`}>
             <div className="text-[11px] text-slate-500 dark:text-slate-400">
-              Scritture risparmiate (sessione)
+              In coda locale / risparmiate
             </div>
             <div className="text-lg font-bold tabular-nums text-indigo-700 dark:text-indigo-300 mt-0.5">
-              {writeStats.writesSavedCount}
+              {simulatedOps.length} <span className="text-xs font-normal text-slate-500 dark:text-slate-400">in coda · {writeStats.writesSavedCount} sess.</span>
             </div>
           </div>
 
@@ -445,6 +474,150 @@ export function SettingsView({
             )}
           </div>
         </div>
+
+        {/* Flush Progress / Result */}
+        {(flushState.flushing || flushState.lastResult) && (
+          <div
+            className={`mt-3 px-3.5 py-2.5 rounded-lg border text-xs flex flex-wrap items-center justify-between gap-2 ${
+              flushState.flushing
+                ? 'bg-sky-50 border-sky-200 text-sky-900 dark:bg-sky-500/10 dark:border-sky-500/30 dark:text-sky-200'
+                : flushState.lastResult?.failed
+                  ? 'bg-amber-50 border-amber-200 text-amber-900 dark:bg-amber-500/10 dark:border-amber-500/30 dark:text-amber-200'
+                  : 'bg-emerald-50 border-emerald-200 text-emerald-900 dark:bg-emerald-500/10 dark:border-emerald-500/30 dark:text-emerald-200'
+            }`}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              {flushState.flushing ? (
+                <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+              ) : (
+                <CloudUpload className="w-4 h-4 shrink-0" />
+              )}
+              <span>
+                {flushState.flushing
+                  ? 'Sincronizzazione delle operazioni simulate su Firestore in corso...'
+                  : flushState.lastResult?.failed
+                    ? `${flushState.lastResult.flushed} su ${flushState.lastResult.total} operazioni salvate su Firestore. ${flushState.lastResult.errorMessage || ''}`
+                    : `Sincronizzazione completata: ${flushState.lastResult?.flushed || 0} ${(flushState.lastResult?.flushed || 0) === 1 ? 'operazione salvata' : 'operazioni salvate'} su Firestore.`}
+              </span>
+            </div>
+            {!flushState.flushing && flushState.lastResult && (
+              <button
+                type="button"
+                onClick={() => dismissSimulatedFlushResult()}
+                className="text-xs font-semibold opacity-75 hover:opacity-100"
+              >
+                Chiudi
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Visible Queue of Simulated Local Operations */}
+        {(simulatedOps.length > 0 || settings.firestoreWritesDisabled) && (
+          <div className="mt-4 pt-4 border-t border-slate-200/80 dark:border-slate-800/80 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-semibold text-slate-900 dark:text-slate-100">
+                <Clock className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                <span>
+                  Operazioni simulate salvate in locale ({simulatedOps.length})
+                </span>
+              </div>
+
+              {simulatedOps.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {!settings.firestoreWritesDisabled && (
+                    <button
+                      type="button"
+                      disabled={flushState.flushing || readOnly}
+                      onClick={() => void flushSimulatedFirestoreOps()}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-500 dark:hover:bg-sky-400 dark:text-slate-950 transition-colors disabled:opacity-50"
+                    >
+                      <CloudUpload className="w-3 h-3" />
+                      <span>Invia su Firestore ({simulatedOps.length})</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={flushState.flushing}
+                    onClick={() => clearSimulatedFirestoreOps()}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3 h-3 text-rose-500" />
+                    <span>Svuota coda</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {simulatedOps.length === 0 ? (
+              <div className={`${subSurfaceCls} px-3.5 py-2.5 text-xs text-slate-500 dark:text-slate-400`}>
+                Nessuna operazione simulata in attesa. Le modifiche che farai ora nelle varie sezioni appariranno qui e verranno salvate su Firestore appena riattiverai le scritture.
+              </div>
+            ) : (
+              <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1">
+                {simulatedOps.map((op) => {
+                  const timeStr = new Date(op.createdAt).toLocaleTimeString('it-IT', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  });
+                  const badgeCls =
+                    op.kind === 'delete' || op.kind === 'vault_delete'
+                      ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300'
+                      : op.kind === 'vault_upload'
+                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300'
+                        : 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300';
+                  return (
+                    <div
+                      key={op.id}
+                      className={`${subSurfaceCls} px-3 py-2 flex items-start justify-between gap-2 text-xs`}
+                    >
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2 min-w-0">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${badgeCls}`}>
+                            {op.actionLabel}
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 shrink-0">
+                            {op.section}
+                          </span>
+                          <span className="font-semibold text-slate-900 dark:text-slate-100 truncate">
+                            {op.targetTitle}
+                          </span>
+                        </div>
+                        {op.changedDetails && op.changedDetails.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {op.changedDetails.map((detail, idx) => (
+                              <span
+                                key={idx}
+                                className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-500/12 dark:text-amber-300 dark:border-amber-500/30 text-[10px] font-medium"
+                              >
+                                {detail}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                          {timeStr} · {op.writeCount} op
+                        </span>
+                        <button
+                          type="button"
+                          disabled={flushState.flushing}
+                          onClick={() => discardSimulatedFirestoreOp(op.id)}
+                          title="Rimuovi questa operazione dalla coda"
+                          className="p-1 rounded text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       {/* Main 2-column Grid */}

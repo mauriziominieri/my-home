@@ -11,6 +11,8 @@ import {
 import {
   auth,
   db,
+  enqueueSimulatedVaultDelete,
+  enqueueSimulatedVaultUpload,
   guardedWriteBatch as writeBatch,
   isFirestoreWritesDisabled,
   recordFirestoreWritesSaved,
@@ -340,10 +342,28 @@ export async function saveVaultFile(
       cloudTooLarge: false,
     };
     await putLocalCache(localRecord);
+    enqueueSimulatedVaultUpload({
+      fileKey: cleanKey,
+      fileName: safeFileName,
+      mimeType: safeMime,
+      size: file.size,
+      ownerUid: uid,
+    });
     notifyVaultUpdated();
     return localRecord;
   }
 
+  return await uploadVaultBlobToFirestore(record, file, cleanKey, safeFileName, safeMime, uid);
+}
+
+async function uploadVaultBlobToFirestore(
+  record: StoredVaultFile,
+  file: Blob,
+  cleanKey: string,
+  safeFileName: string,
+  safeMime: string,
+  uid: string
+): Promise<StoredVaultFile> {
   try {
     const base64 = await blobToBase64(file);
     const chunks: string[] = [];
@@ -452,6 +472,33 @@ export async function saveVaultFile(
       ? err
       : new Error('Errore durante il caricamento del file su Firestore.');
   }
+}
+
+export async function replayVaultUploadToFirestore(params: {
+  fileKey: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  ownerUid: string;
+}): Promise<void> {
+  const cleanKey = sanitizeVaultFileKey(params.fileKey);
+  const uid = getAuthenticatedUid(params.ownerUid);
+  if (!uid) {
+    throw new Error('Autenticazione richiesta per sincronizzare gli allegati su Firestore.');
+  }
+  const localRec = await getLocalCache(cleanKey);
+  if (!localRec || !localRec.blob || localRec.blob.size <= 0) {
+    // Already deleted locally before flush
+    return;
+  }
+  await uploadVaultBlobToFirestore(
+    localRec,
+    localRec.blob,
+    cleanKey,
+    params.fileName || localRec.fileName,
+    params.mimeType || localRec.mimeType,
+    uid
+  );
 }
 
 export async function getVaultFile(key: string, ownerUid?: string): Promise<StoredVaultFile | null> {
@@ -570,6 +617,10 @@ export async function deleteVaultFile(key: string, ownerUid?: string): Promise<v
 
   if (isFirestoreWritesDisabled()) {
     recordFirestoreWritesSaved(1, `Eliminazione allegato vault (${cleanKey})`);
+    const uid = getAuthenticatedUid(ownerUid);
+    if (uid) {
+      enqueueSimulatedVaultDelete({ keys: [cleanKey], ownerUid: uid });
+    }
     notifyVaultUpdated();
     return;
   }
@@ -617,10 +668,15 @@ export async function deleteVaultFiles(keys: string[], ownerUid?: string): Promi
 
   if (isFirestoreWritesDisabled()) {
     recordFirestoreWritesSaved(cleanKeys.length * 2, 'Eliminazione allegati vault (test)');
+    enqueueSimulatedVaultDelete({ keys: cleanKeys, ownerUid: uid });
     notifyVaultUpdated();
     return;
   }
 
+  await deleteVaultKeysFromFirestore(cleanKeys, uid);
+}
+
+async function deleteVaultKeysFromFirestore(cleanKeys: string[], uid: string): Promise<void> {
   const keysPerBatch = 23;
   try {
     for (let start = 0; start < cleanKeys.length; start += keysPerBatch) {
@@ -646,6 +702,19 @@ export async function deleteVaultFiles(keys: string[], ownerUid?: string): Promi
 
   setVaultCloudStatus('ok');
   notifyVaultUpdated();
+}
+
+export async function replayVaultDeleteToFirestore(params: {
+  keys: string[];
+  ownerUid: string;
+}): Promise<void> {
+  const cleanKeys = Array.from(new Set(params.keys.map(sanitizeVaultFileKey)));
+  if (cleanKeys.length === 0) return;
+  const uid = getAuthenticatedUid(params.ownerUid);
+  if (!uid) {
+    throw new Error('Autenticazione richiesta per sincronizzare le eliminazioni vault.');
+  }
+  await deleteVaultKeysFromFirestore(cleanKeys, uid);
 }
 
 export async function listVaultFileMetadata(ownerUid?: string): Promise<Record<string, VaultFileMeta>> {

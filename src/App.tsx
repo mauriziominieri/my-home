@@ -4,6 +4,7 @@ import {
   collection,
   deleteField,
   doc,
+  DocumentData,
   getDoc,
   getDocs,
   onSnapshot,
@@ -16,11 +17,14 @@ import {
   BookOpen,
   Car,
   CheckCircle2,
+  Clock,
+  CloudUpload,
   Database,
   FlaskConical,
   FolderOpen,
   Home,
   LayoutDashboard,
+  Loader2,
   LogOut,
   Mail,
   Menu,
@@ -40,11 +44,15 @@ import {
 import {
   auth,
   clearGmailAccessToken,
+  clearSimulatedFirestoreOps,
   connectGmailAccount,
   db,
+  discardSimulatedFirestoreOp,
   dismissFirestoreQuotaExceeded,
+  dismissSimulatedFlushResult,
   FIREBASE_PROJECT_ID,
   FirestoreWriteStats,
+  flushSimulatedFirestoreOps,
   getGmailAccessToken,
   GMAIL_OAUTH_PROJECT_ID,
   guardedDeleteDoc as deleteDoc,
@@ -53,12 +61,19 @@ import {
   handleFirestoreError,
   isFirestoreQuotaExceededActive,
   isFirestoreWritesDisabled,
+  mergeSimulatedOpsIntoRawDocs,
   notifyFirestoreQuotaExceeded,
   OperationType,
+  setSimulatedOpDetailHint,
+  setSimulatedOpTitleHint,
   signInPrimaryOwner,
+  SimulatedFirestoreOp,
+  SimulatedFlushState,
   subscribeAuthWithGmailCleanup,
   subscribeFirestoreQuotaExceeded,
   subscribeFirestoreWriteStats,
+  subscribeSimulatedFirestoreOps,
+  subscribeSimulatedFlushState,
 } from './firebase';
 import {
   ArticleAttachmentType,
@@ -94,6 +109,292 @@ function normalizeResearchStatus(raw: unknown): ProductResearchStatus {
     return raw;
   }
   return 'da_valutare';
+}
+
+const RESEARCH_STATUS_LABELS: Record<ProductResearchStatus, string> = {
+  da_valutare: 'Da valutare',
+  da_acquistare: 'Da acquistare',
+  acquistato: 'Acquistato',
+};
+
+const RESEARCH_CATEGORY_LABELS: Record<ProductResearchCategory, string> = {
+  elettrodomestici: 'Elettrodomestici',
+  elettronica: 'Elettronica & Tech',
+  casa_arredo: 'Casa & Arredo',
+  fai_da_te: 'Fai da te & Giardino',
+  auto: 'Auto & Accessori',
+  abbigliamento: 'Abbigliamento',
+  altro: 'Altro',
+};
+
+function formatSimulatedEuro(val?: number): string {
+  if (typeof val !== 'number' || !Number.isFinite(val)) return '—';
+  return `€${val.toFixed(2).replace('.', ',')}`;
+}
+
+function normSimulatedMoney(val?: number): number | undefined {
+  if (typeof val !== 'number' || !Number.isFinite(val) || val < 0) return undefined;
+  return Math.min(1000000, Math.round(val * 100) / 100);
+}
+
+function truncateDetailVal(val: string, max = 30): string {
+  const clean = val.trim();
+  if (clean.length <= max) return clean;
+  return `${clean.slice(0, max - 1)}…`;
+}
+
+function diffProductResearchFields(
+  prev: ProductResearchRecord | undefined,
+  next: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'>
+): { changedFields: string[]; changedDetails: string[] } {
+  const nextStatus = normalizeResearchStatus(next.status);
+  const nextRoom = normalizeResearchRoom(next.room);
+  const nextPrice = normSimulatedMoney(next.priceEur);
+  const nextPaid =
+    nextStatus === 'acquistato' ? normSimulatedMoney(next.paidPriceEur) : undefined;
+
+  if (!prev) {
+    const details = [
+      nextRoom ? `Stanza: ${getResearchRoomLabel(nextRoom)}` : '',
+      next.color?.trim() ? `Colore: ${next.color.trim()}` : '',
+      next.size?.trim() ? `Taglia: ${next.size.trim()}` : '',
+      typeof nextPrice === 'number' ? `Prezzo: ${formatSimulatedEuro(nextPrice)}` : '',
+      `Stato: ${RESEARCH_STATUS_LABELS[nextStatus]}`,
+    ].filter(Boolean);
+    return {
+      changedFields: ['__new__'],
+      changedDetails: details,
+    };
+  }
+
+  const changedFields: string[] = [];
+  const changedDetails: string[] = [];
+
+  const prevColor = (prev.color || '').trim();
+  const nextColor = (next.color || '').trim();
+  if (prevColor !== nextColor) {
+    changedFields.push('color');
+    changedDetails.push(`Colore: ${prevColor || 'Nessuno'} → ${nextColor || 'Rimosso'}`);
+  }
+
+  const prevSize = (prev.size || '').trim();
+  const nextSize = (next.size || '').trim();
+  if (prevSize !== nextSize) {
+    changedFields.push('size');
+    changedDetails.push(`Taglia: ${prevSize || 'Nessuna'} → ${nextSize || 'Rimossa'}`);
+  }
+
+  const prevRoom = normalizeResearchRoom(prev.room);
+  if ((prevRoom || '') !== (nextRoom || '')) {
+    changedFields.push('room');
+    changedDetails.push(
+      `Stanza: ${getResearchRoomLabel(prevRoom)} → ${getResearchRoomLabel(nextRoom)}`
+    );
+  }
+
+  const prevStatus = normalizeResearchStatus(prev.status);
+  if (prevStatus !== nextStatus) {
+    changedFields.push('status');
+    changedDetails.push(
+      `Stato: ${RESEARCH_STATUS_LABELS[prevStatus]} → ${RESEARCH_STATUS_LABELS[nextStatus]}`
+    );
+  }
+
+  const prevPrice = normSimulatedMoney(prev.priceEur);
+  if (prevPrice !== nextPrice) {
+    changedFields.push('priceEur');
+    changedDetails.push(
+      `Prezzo: ${formatSimulatedEuro(prevPrice)} → ${formatSimulatedEuro(nextPrice)}`
+    );
+  }
+
+  const prevPaid =
+    prevStatus === 'acquistato' ? normSimulatedMoney(prev.paidPriceEur) : undefined;
+  if (prevPaid !== nextPaid) {
+    changedFields.push('paidPriceEur');
+    changedDetails.push(
+      `Pagato: ${formatSimulatedEuro(prevPaid)} → ${formatSimulatedEuro(nextPaid)}`
+    );
+  }
+
+  const prevBrand = (prev.brand || '').trim().slice(0, 60);
+  const nextBrand = (next.brand || '').trim().slice(0, 60);
+  if (prevBrand !== nextBrand) {
+    changedFields.push('brand');
+    changedDetails.push(`Marca: ${prevBrand || '—'} → ${nextBrand || '—'}`);
+  }
+
+  const prevStore = (prev.store || '').trim().slice(0, 60);
+  const nextStore = (next.store || '').trim().slice(0, 60);
+  if (prevStore !== nextStore) {
+    changedFields.push('store');
+    changedDetails.push(`Negozio: ${prevStore || '—'} → ${nextStore || '—'}`);
+  }
+
+  if (prev.category !== next.category) {
+    changedFields.push('category');
+    changedDetails.push(
+      `Categoria: ${RESEARCH_CATEGORY_LABELS[prev.category]} → ${RESEARCH_CATEGORY_LABELS[next.category]}`
+    );
+  }
+
+  const prevModel = (prev.model || '').trim().slice(0, 80);
+  const nextModel = (next.model || '').trim().slice(0, 80);
+  if (prevModel !== nextModel) {
+    changedFields.push('model');
+    changedDetails.push(`Modello: ${prevModel || '—'} → ${nextModel || '—'}`);
+  }
+
+  const prevTitle = (prev.title || '').trim().slice(0, 160);
+  const nextTitle = (next.title || '').trim().slice(0, 160);
+  if (prevTitle !== nextTitle) {
+    changedFields.push('title');
+    changedDetails.push('Titolo aggiornato');
+  }
+
+  const prevImg = (prev.imageUrl || '').trim().slice(0, 1000);
+  const nextImg = (next.imageUrl || '').trim().slice(0, 1000);
+  if (prevImg !== nextImg) {
+    changedFields.push('imageUrl');
+    changedDetails.push('Immagine aggiornata');
+  }
+
+  const prevUrl = (prev.url || '').trim().slice(0, 1000);
+  const nextUrl = (next.url || '').trim().slice(0, 1000);
+  if (prevUrl !== nextUrl) {
+    changedFields.push('url');
+    changedDetails.push('Link URL aggiornato');
+  }
+
+  const prevSpecs = (prev.specs || '').trim().slice(0, 2000);
+  const nextSpecs = (next.specs || '').trim().slice(0, 2000);
+  if (prevSpecs !== nextSpecs) {
+    changedFields.push('specs');
+    changedDetails.push('Specifiche aggiornate');
+  }
+
+  const prevNotes = (prev.notes || '').trim().slice(0, 400);
+  const nextNotes = (next.notes || '').trim().slice(0, 400);
+  if (prevNotes !== nextNotes) {
+    changedFields.push('notes');
+    changedDetails.push(
+      nextNotes ? `Note: "${truncateDetailVal(nextNotes, 26)}"` : 'Note rimosse'
+    );
+  }
+
+  return { changedFields, changedDetails };
+}
+
+function diffHomeArticleFields(
+  prev: HomeArticleRecord | undefined,
+  next: Omit<HomeArticleRecord, 'id'>,
+  docId: string
+): { changedFields: string[]; changedDetails: string[] } {
+  if (!prev) {
+    const details = [
+      next.room && !next.room.startsWith('__') ? `Stanza: ${next.room}` : '',
+      next.brand?.trim() && next.room !== '__spesa__' ? `Marca: ${next.brand.trim()}` : '',
+      typeof next.purchasePriceEur === 'number'
+        ? `Prezzo: ${formatSimulatedEuro(next.purchasePriceEur)}`
+        : '',
+    ].filter(Boolean);
+    return {
+      changedFields: ['__new__'],
+      changedDetails: details,
+    };
+  }
+
+  const changedFields: string[] = [];
+  const changedDetails: string[] = [];
+  const isDocRecord =
+    next.room === '__documenti__' ||
+    docId.startsWith('doc_') ||
+    docId.startsWith('resdoc_') ||
+    docId.startsWith('artdoc_');
+  const isSpesaRecord = next.room === '__spesa__' || docId.startsWith('spesa_');
+
+  if (prev.name.trim() !== next.name.trim()) {
+    changedFields.push('name');
+    changedDetails.push(`Nome: ${truncateDetailVal(next.name, 26)}`);
+  }
+  if ((prev.brand || '').trim() !== (next.brand || '').trim()) {
+    changedFields.push('brand');
+    changedDetails.push(
+      `${isDocRecord ? 'Fornitore' : isSpesaRecord ? 'Categoria' : 'Marca'}: ${next.brand?.trim() || '—'}`
+    );
+  }
+  if ((prev.model || '').trim() !== (next.model || '').trim()) {
+    changedFields.push('model');
+    changedDetails.push(`${isDocRecord ? 'Categoria' : 'Modello'}: ${next.model?.trim() || '—'}`);
+  }
+  if ((prev.room || '').trim() !== (next.room || '').trim()) {
+    changedFields.push('room');
+    changedDetails.push(`Stanza: ${prev.room || '—'} → ${next.room || '—'}`);
+  }
+  if (prev.category !== next.category) {
+    changedFields.push('category');
+    changedDetails.push(`Categoria: ${prev.category} → ${next.category}`);
+  }
+  if ((prev.purchaseDate || '').trim() !== (next.purchaseDate || '').trim()) {
+    changedFields.push('purchaseDate');
+    changedDetails.push(
+      `${isDocRecord ? 'Data emissione' : 'Data acquisto'}: ${next.purchaseDate?.trim() || 'Rimossa'}`
+    );
+  }
+  if (normSimulatedMoney(prev.purchasePriceEur) !== normSimulatedMoney(next.purchasePriceEur)) {
+    changedFields.push('purchasePriceEur');
+    changedDetails.push(
+      `Prezzo: ${formatSimulatedEuro(normSimulatedMoney(prev.purchasePriceEur))} → ${formatSimulatedEuro(normSimulatedMoney(next.purchasePriceEur))}`
+    );
+  }
+  if ((prev.warrantyEnd || '').trim() !== (next.warrantyEnd || '').trim()) {
+    changedFields.push('warrantyEnd');
+    changedDetails.push(
+      `${isDocRecord ? 'Scadenza' : 'Fine garanzia'}: ${next.warrantyEnd?.trim() || 'Rimossa'}`
+    );
+  }
+  if (Boolean(prev.familyWarranty) !== Boolean(next.familyWarranty)) {
+    changedFields.push('familyWarranty');
+    changedDetails.push(
+      isSpesaRecord
+        ? next.familyWarranty
+          ? 'Aggiunto a lista spesa'
+          : 'Rimosso da lista spesa'
+        : isDocRecord
+          ? next.familyWarranty
+            ? 'Documento in evidenza'
+            : 'Rimosso da evidenza'
+          : next.familyWarranty
+            ? 'Garanzia Extra Family attivata'
+            : 'Garanzia Extra Family disattivata'
+    );
+  }
+  if ((prev.serialNumber || '').trim() !== (next.serialNumber || '').trim()) {
+    changedFields.push('serialNumber');
+    const nextResDoc = parseResearchDocumentRef(next.serialNumber);
+    const prevResDoc = parseResearchDocumentRef(prev.serialNumber);
+    if (nextResDoc && prevResDoc && nextResDoc.docType !== prevResDoc.docType) {
+      changedDetails.push(`Tipo allegato: ${prevResDoc.docType} → ${nextResDoc.docType}`);
+    } else {
+      changedDetails.push(isDocRecord ? 'Riferimento aggiornato' : 'Seriale aggiornato');
+    }
+  }
+  if ((prev.specs || '').trim() !== (next.specs || '').trim()) {
+    changedFields.push('specs');
+    changedDetails.push(isSpesaRecord ? 'Prezzi supermercati aggiornati' : 'Specifiche aggiornate');
+  }
+  if ((prev.notes || '').trim() !== (next.notes || '').trim()) {
+    changedFields.push('notes');
+    changedDetails.push(
+      next.notes?.trim() ? `Note: "${truncateDetailVal(next.notes.trim(), 24)}"` : 'Note rimosse'
+    );
+  }
+  if ((prev.manualFileKey || '') !== (next.manualFileKey || '')) {
+    changedFields.push('manualFileKey');
+    changedDetails.push(next.manualFileName ? `Manuale: ${truncateDetailVal(next.manualFileName, 24)}` : 'Manuale aggiornato');
+  }
+
+  return { changedFields, changedDetails };
 }
 import { ParsedReadingInput } from './utils/edistribuzioneCsv';
 import {
@@ -322,6 +623,266 @@ const AVAILABLE_YEARS = Array.from(
 );
 const PUBLIC_GROCERY_CACHE_KEY = 'myhome_spesa_cache_public';
 
+interface RawDocEntry {
+  id: string;
+  data: DocumentData;
+}
+
+function mapRawReadings(docs: RawDocEntry[], ownerUid: string): EnergyReading[] {
+  const currentTodayIso = getLocalTodayIso();
+  return docs
+    .map((d) => {
+      const data = d.data;
+      return {
+        id: d.id,
+        ownerId: String(data.ownerId || ownerUid),
+        date: String(data.date || ''),
+        f1Kwh: Number(data.f1Kwh || 0),
+        f2Kwh: Number(data.f2Kwh || 0),
+        f3Kwh: Number(data.f3Kwh || 0),
+        totalKwh: Number(data.totalKwh || 0),
+        peakKw: Number(data.peakKw || 0),
+        estimatedCostEur: Number(data.estimatedCostEur || 0),
+        source: (data.source as ReadingSource) || 'e-distribuzione-api',
+        notes: data.notes ? String(data.notes) : undefined,
+      };
+    })
+    .filter((r) => Boolean(r.date) && r.date <= currentTodayIso);
+}
+
+function mapRawHomeConfig(docs: RawDocEntry[], ownerUid: string): HomeSystemConfig {
+  const mainDoc = docs.find((d) => d.id === 'main');
+  if (!mainDoc) {
+    return { ownerId: ownerUid, ...DEFAULT_HOME_CONFIG };
+  }
+  const data = mainDoc.data;
+  return {
+    ownerId: ownerUid,
+    aristonMode: data.aristonMode || DEFAULT_HOME_CONFIG.aristonMode,
+    aristonProfile: data.aristonProfile || DEFAULT_HOME_CONFIG.aristonProfile,
+    floorFlowTemp: Number(data.floorFlowTemp ?? DEFAULT_HOME_CONFIG.floorFlowTemp),
+    dhwTargetTemp: Number(data.dhwTargetTemp ?? DEFAULT_HOME_CONFIG.dhwTargetTemp),
+    zoneLivingTarget: Number(data.zoneLivingTarget ?? DEFAULT_HOME_CONFIG.zoneLivingTarget),
+    zoneBedroomTarget: Number(data.zoneBedroomTarget ?? DEFAULT_HOME_CONFIG.zoneBedroomTarget),
+    neasmartPower: Boolean(data.neasmartPower ?? DEFAULT_HOME_CONFIG.neasmartPower),
+    neasmartTargetHumidity: Number(
+      data.neasmartTargetHumidity ?? DEFAULT_HOME_CONFIG.neasmartTargetHumidity
+    ),
+    neasmartFanSpeed: data.neasmartFanSpeed || DEFAULT_HOME_CONFIG.neasmartFanSpeed,
+    dewPointProtection: Boolean(
+      data.dewPointProtection ?? DEFAULT_HOME_CONFIG.dewPointProtection
+    ),
+    tariffEurPerKwh: Number(data.tariffEurPerKwh ?? DEFAULT_HOME_CONFIG.tariffEurPerKwh),
+    podCode: String(data.podCode || DEFAULT_HOME_CONFIG.podCode),
+  };
+}
+
+function mapRawClimateLogs(docs: RawDocEntry[], ownerUid: string): ClimateSession[] {
+  return docs
+    .filter((d) => Boolean(d.data?.date))
+    .map((d) => {
+      const data = d.data;
+      return {
+        id: d.id,
+        ownerId: String(data.ownerId || ownerUid),
+        date: String(data.date || ''),
+        mode: (data.mode as ClimateMode) || 'riscaldamento',
+        startTime: String(data.startTime || '09:00'),
+        endTime: String(data.endTime || '20:00'),
+        timeSlots: Array.isArray(data.timeSlots)
+          ? data.timeSlots.map((s) => String(s))
+          : undefined,
+        vmcMax: typeof data.vmcMax === 'boolean' ? data.vmcMax : undefined,
+        targetTemp: typeof data.targetTemp === 'number' ? data.targetTemp : 21,
+        rooms: Array.isArray(data.rooms) ? (data.rooms as RoomId[]) : [],
+        notes: data.notes ? String(data.notes) : undefined,
+      };
+    });
+}
+
+function mapRawElectricityBills(docs: RawDocEntry[]): BillRecord[] {
+  return docs.map((d) => {
+    const data = d.data;
+    return {
+      invoiceNumber: String(data.invoiceNumber || ''),
+      issueDate: String(data.issueDate || ''),
+      sortKey: String(data.sortKey || ''),
+      year: Number(data.year || 2025),
+      period: String(data.period || ''),
+      supplier: String(data.supplier || ''),
+      offerName: String(data.offerName || ''),
+      kwh: Number(data.kwh || 0),
+      punText: String(data.punText || ''),
+      variableCostPerKwh: Number(data.variableCostPerKwh || 0),
+      canoneTv: Number(data.canoneTv || 0),
+      electricityOnly: Number(data.electricityOnly || 0),
+      totalPaid: Number(data.totalPaid || 0),
+      note: data.note ? String(data.note) : undefined,
+      pdfFileKey: data.pdfFileKey ? String(data.pdfFileKey) : undefined,
+    };
+  });
+}
+
+function mapRawWaterBills(docs: RawDocEntry[]): WaterBillRecord[] {
+  return docs.map((d) => {
+    const data = d.data;
+    return {
+      id: d.id,
+      invoiceNumber: String(data.invoiceNumber || ''),
+      issueDate: String(data.issueDate || ''),
+      year: Number(data.year || 2025),
+      period: String(data.period || ''),
+      cubicMeters: Number(data.cubicMeters || 0),
+      fixedCostEur: Number(data.fixedCostEur || 0),
+      totalPaid: Number(data.totalPaid || 0),
+      note: data.note ? String(data.note) : undefined,
+      pdfFileKey: data.pdfFileKey ? String(data.pdfFileKey) : undefined,
+    };
+  });
+}
+
+function mapRawTariBills(docs: RawDocEntry[]): TariBillRecord[] {
+  return docs.map((d) => {
+    const data = d.data;
+    return {
+      id: d.id,
+      noticeNumber: String(data.noticeNumber || ''),
+      issueDate: String(data.issueDate || ''),
+      dueDate: String(data.dueDate || ''),
+      year: Number(data.year || new Date().getFullYear()),
+      period: String(data.period || ''),
+      supplier: String(data.supplier || 'AcegasApsAmga / TARI'),
+      totalPaid: Number(data.totalPaid || 0),
+      paid: Boolean(data.paid),
+      source: data.source === 'gmail-pdf' ? 'gmail-pdf' : 'manuale',
+      note: data.note ? String(data.note) : undefined,
+      pdfFileKey: data.pdfFileKey ? String(data.pdfFileKey) : undefined,
+    };
+  });
+}
+
+function mapRawGsePayments(docs: RawDocEntry[]): GsePaymentRecord[] {
+  return docs.map((d) => {
+    const data = d.data;
+    return {
+      id: d.id,
+      paymentDate: String(data.paymentDate || ''),
+      year: Number(data.year || new Date().getFullYear()),
+      paymentType: (data.paymentType as GsePaymentType) || 'acconto',
+      period: String(data.period || ''),
+      amountEur: Number(data.amountEur || 0),
+      kwhInjected:
+        typeof data.kwhInjected === 'number' ? Number(data.kwhInjected) : undefined,
+      reference: data.reference ? String(data.reference) : undefined,
+      note: data.note ? String(data.note) : undefined,
+      attachmentFileKey: data.attachmentFileKey
+        ? String(data.attachmentFileKey)
+        : undefined,
+    };
+  });
+}
+
+function mapRawHomeArticles(docs: RawDocEntry[]): HomeArticleRecord[] {
+  return docs
+    .filter((d) => d.id !== 'grocery_seed_v1_done' && Boolean(d.data?.name))
+    .map((d) => {
+      const data = d.data;
+      return {
+        id: d.id,
+        name: String(data.name || ''),
+        brand: String(data.brand || ''),
+        model: String(data.model || ''),
+        category: (data.category as HomeArticleCategory) || 'altro',
+        room: String(data.room || 'Casa'),
+        purchaseDate: data.purchaseDate ? String(data.purchaseDate) : undefined,
+        purchasePriceEur:
+          typeof data.purchasePriceEur === 'number'
+            ? Number(data.purchasePriceEur)
+            : undefined,
+        warrantyEnd: data.warrantyEnd ? String(data.warrantyEnd) : undefined,
+        familyWarranty: Boolean(data.familyWarranty),
+        serialNumber: data.serialNumber ? String(data.serialNumber) : undefined,
+        specs: data.specs ? String(data.specs) : undefined,
+        notes: data.notes ? String(data.notes) : undefined,
+        manualFileKey: data.manualFileKey ? String(data.manualFileKey) : undefined,
+        manualFileName: data.manualFileName ? String(data.manualFileName) : undefined,
+        manualExtractText: data.manualExtractText
+          ? String(data.manualExtractText)
+          : undefined,
+      };
+    });
+}
+
+function mapRawVmcDays(docs: RawDocEntry[], ownerUid: string): VmcDayRecord[] {
+  return docs
+    .filter((d) => Boolean(d.data?.date))
+    .map((d) => {
+      const data = d.data;
+      return {
+        id: d.id,
+        ownerId: String(data.ownerId || ownerUid),
+        date: String(data.date || ''),
+        enabled: Boolean(data.enabled),
+        note: data.note ? String(data.note) : undefined,
+      };
+    });
+}
+
+function mapRawProductResearches(
+  docs: RawDocEntry[],
+  ownerUid: string
+): ProductResearchRecord[] {
+  return docs
+    .filter((d) => Boolean(d.data?.url) && Boolean(d.data?.title))
+    .map((d) => {
+      const data = d.data;
+      const createdTs = data.createdAt as { toMillis?: () => number } | undefined;
+      const urlStr = String(data.url || '');
+      const titleStr = String(data.title || '');
+      const normalizedStatus = normalizeResearchStatus(data.status);
+      return {
+        id: d.id,
+        ownerId: String(data.ownerId || ownerUid),
+        url: urlStr,
+        title: titleStr,
+        store: String(data.store || ''),
+        category: (data.category as ProductResearchCategory) || 'altro',
+        status: normalizedStatus,
+        room: resolveResearchRoomWithFallback(
+          d.id,
+          urlStr,
+          data.room ? String(data.room) : undefined,
+          titleStr
+        ),
+        priceEur: typeof data.priceEur === 'number' ? Number(data.priceEur) : undefined,
+        paidPriceEur:
+          normalizedStatus === 'acquistato' && typeof data.paidPriceEur === 'number'
+            ? Number(data.paidPriceEur)
+            : undefined,
+        imageUrl: data.imageUrl ? String(data.imageUrl) : undefined,
+        brand: data.brand ? String(data.brand) : undefined,
+        color: data.color ? String(data.color) : undefined,
+        availableColors: Array.isArray(data.availableColors)
+          ? data.availableColors.map((c) => String(c).trim()).filter(Boolean).slice(0, 24)
+          : undefined,
+        colorImages: sanitizeColorImagesMap(data.colorImages),
+        size: data.size ? String(data.size) : undefined,
+        availableSizes: Array.isArray(data.availableSizes)
+          ? data.availableSizes.map((s) => String(s).trim()).filter(Boolean).slice(0, 24)
+          : undefined,
+        model: data.model ? String(data.model) : undefined,
+        specs: data.specs ? String(data.specs) : undefined,
+        notes: data.notes ? String(data.notes) : undefined,
+        createdAtMs:
+          typeof createdTs?.toMillis === 'function'
+            ? createdTs.toMillis()
+            : typeof data.createdAtMs === 'number'
+              ? data.createdAtMs
+              : 0,
+      };
+    });
+}
+
 export default function App() {
   const { settings: appSettings, updateSettings: updateAppSettings } = useAppSettings();
   const [writeStats, setWriteStats] = useState<FirestoreWriteStats>({
@@ -331,6 +892,12 @@ export default function App() {
     lastActionLabel: null,
     lastActionAt: null,
   });
+  const [simulatedOps, setSimulatedOps] = useState<SimulatedFirestoreOp[]>([]);
+  const [flushState, setFlushState] = useState<SimulatedFlushState>({
+    flushing: false,
+    lastResult: null,
+  });
+  const [showSimulatedQueuePanel, setShowSimulatedQueuePanel] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -348,6 +915,19 @@ export default function App() {
 
   useEffect(() => {
     return subscribeFirestoreWriteStats(setWriteStats);
+  }, []);
+
+  useEffect(() => {
+    return subscribeSimulatedFirestoreOps((ops) => {
+      setSimulatedOps(ops);
+      if (ops.length === 0) {
+        setShowSimulatedQueuePanel(false);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    return subscribeSimulatedFlushState(setFlushState);
   }, []);
 
   const navigateToSection = useCallback((section: NavSection) => {
@@ -411,6 +991,31 @@ export default function App() {
   const gmailSyncInFlightRef = useRef(false);
   const autopilotSyncInFlightRef = useRef(false);
   const lastAutopilotSyncKeyRef = useRef<string | null>(null);
+  const rawSnapshotsRef = useRef<{
+    uid: string | null;
+    energyReadings: RawDocEntry[] | null;
+    homeConfig: RawDocEntry[] | null;
+    climateLogs: RawDocEntry[] | null;
+    electricityBills: RawDocEntry[] | null;
+    waterBills: RawDocEntry[] | null;
+    tariBills: RawDocEntry[] | null;
+    gsePayments: RawDocEntry[] | null;
+    homeArticles: RawDocEntry[] | null;
+    vmcDays: RawDocEntry[] | null;
+    productResearches: RawDocEntry[] | null;
+  }>({
+    uid: null,
+    energyReadings: null,
+    homeConfig: null,
+    climateLogs: null,
+    electricityBills: null,
+    waterBills: null,
+    tariBills: null,
+    gsePayments: null,
+    homeArticles: null,
+    vmcDays: null,
+    productResearches: null,
+  });
   const [todayIso, setTodayIso] = useState<string>(() => getLocalTodayIso());
   const [gmailToken, setGmailToken] = useState<string | null>(() => getGmailAccessToken());
   const [gmailSyncing, setGmailSyncing] = useState(false);
@@ -511,6 +1116,19 @@ export default function App() {
   useEffect(() => {
     if (!authReady) return;
     if (!activeUid) {
+      rawSnapshotsRef.current = {
+        uid: null,
+        energyReadings: null,
+        homeConfig: null,
+        climateLogs: null,
+        electricityBills: null,
+        waterBills: null,
+        tariBills: null,
+        gsePayments: null,
+        homeArticles: null,
+        vmcDays: null,
+        productResearches: null,
+      };
       setFirestoreReadings([]);
       setClimateLogs([]);
       setVmcDays([]);
@@ -525,6 +1143,20 @@ export default function App() {
       return;
     }
 
+    rawSnapshotsRef.current = {
+      uid: activeUid,
+      energyReadings: null,
+      homeConfig: null,
+      climateLogs: null,
+      electricityBills: null,
+      waterBills: null,
+      tariBills: null,
+      gsePayments: null,
+      homeArticles: null,
+      vmcDays: null,
+      productResearches: null,
+    };
+
     setReadingsLoading(true);
     const readingsPath = `users/${activeUid}/energyReadings`;
     const readingsQuery = query(
@@ -535,30 +1167,16 @@ export default function App() {
     const unsubReadings = onSnapshot(
       readingsQuery,
       (snap) => {
-        const list: EnergyReading[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            ownerId: String(data.ownerId || activeUid),
-            date: String(data.date || ''),
-            f1Kwh: Number(data.f1Kwh || 0),
-            f2Kwh: Number(data.f2Kwh || 0),
-            f3Kwh: Number(data.f3Kwh || 0),
-            totalKwh: Number(data.totalKwh || 0),
-            peakKw: Number(data.peakKw || 0),
-            estimatedCostEur: Number(data.estimatedCostEur || 0),
-            source: (data.source as ReadingSource) || 'e-distribuzione-api',
-            notes: data.notes ? String(data.notes) : undefined,
-          };
-        });
-        const currentTodayIso = getLocalTodayIso();
-        const filtered = list.filter((r) => r.date && r.date <= currentTodayIso);
-        setFirestoreReadings(filtered);
+        const rawDocs: RawDocEntry[] = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+        rawSnapshotsRef.current.energyReadings = rawDocs;
+        const baseFiltered = mapRawReadings(rawDocs, activeUid);
+        const mergedDocs = mergeSimulatedOpsIntoRawDocs(readingsPath, rawDocs);
+        setFirestoreReadings(mapRawReadings(mergedDocs, activeUid));
         if (!snap.metadata.fromCache) {
           setFirestoreFallbackNotice(null);
         }
         try {
-          const serialized = JSON.stringify(filtered);
+          const serialized = JSON.stringify(baseFiltered);
           localStorage.setItem(`myhome_readings_cache_${activeUid}`, serialized);
           localStorage.setItem('myhome_readings_cache_last', serialized);
         } catch {
@@ -585,7 +1203,13 @@ export default function App() {
           } catch {
             // ignore
           }
-          setFirestoreReadings(Array.from(byDate.values()));
+          const rawFallback: RawDocEntry[] = Array.from(byDate.values()).map((r) => ({
+            id: r.id,
+            data: { ...r },
+          }));
+          rawSnapshotsRef.current.energyReadings = rawFallback;
+          const mergedDocs = mergeSimulatedOpsIntoRawDocs(readingsPath, rawFallback);
+          setFirestoreReadings(mapRawReadings(mergedDocs, activeUid));
           setReadingsLoading(false);
           return;
         }
@@ -593,29 +1217,22 @@ export default function App() {
       }
     );
 
-    const configPath = `users/${activeUid}/homeConfig/main`;
+    const configCollectionPath = `users/${activeUid}/homeConfig`;
+    const configPath = `${configCollectionPath}/main`;
     const unsubConfig = onSnapshot(
       doc(db, configPath),
       (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          setHomeConfig({
-            ownerId: activeUid,
-            aristonMode: data.aristonMode || DEFAULT_HOME_CONFIG.aristonMode,
-            aristonProfile: data.aristonProfile || DEFAULT_HOME_CONFIG.aristonProfile,
-            floorFlowTemp: Number(data.floorFlowTemp ?? DEFAULT_HOME_CONFIG.floorFlowTemp),
-            dhwTargetTemp: Number(data.dhwTargetTemp ?? DEFAULT_HOME_CONFIG.dhwTargetTemp),
-            zoneLivingTarget: Number(data.zoneLivingTarget ?? DEFAULT_HOME_CONFIG.zoneLivingTarget),
-            zoneBedroomTarget: Number(data.zoneBedroomTarget ?? DEFAULT_HOME_CONFIG.zoneBedroomTarget),
-            neasmartPower: Boolean(data.neasmartPower ?? DEFAULT_HOME_CONFIG.neasmartPower),
-            neasmartTargetHumidity: Number(data.neasmartTargetHumidity ?? DEFAULT_HOME_CONFIG.neasmartTargetHumidity),
-            neasmartFanSpeed: data.neasmartFanSpeed || DEFAULT_HOME_CONFIG.neasmartFanSpeed,
-            dewPointProtection: Boolean(data.dewPointProtection ?? DEFAULT_HOME_CONFIG.dewPointProtection),
-            tariffEurPerKwh: Number(data.tariffEurPerKwh ?? DEFAULT_HOME_CONFIG.tariffEurPerKwh),
-            podCode: String(data.podCode || DEFAULT_HOME_CONFIG.podCode),
-          });
-        } else {
-          setHomeConfig({ ownerId: activeUid, ...DEFAULT_HOME_CONFIG });
+        const rawDocs: RawDocEntry[] = snap.exists()
+          ? [{ id: 'main', data: snap.data() }]
+          : [];
+        rawSnapshotsRef.current.homeConfig = rawDocs;
+        const baseCfg = mapRawHomeConfig(rawDocs, activeUid);
+        const mergedDocs = mergeSimulatedOpsIntoRawDocs(configCollectionPath, rawDocs);
+        setHomeConfig(mapRawHomeConfig(mergedDocs, activeUid));
+        try {
+          localStorage.setItem(`myhome_config_cache_${activeUid}`, JSON.stringify(baseCfg));
+        } catch {
+          // ignore
         }
       },
       (error) => {
@@ -624,16 +1241,19 @@ export default function App() {
           setFirestoreFallbackNotice(
             'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale e dei dati predefiniti.'
           );
+          let rawFallback: RawDocEntry[] = [];
           try {
             const cached = localStorage.getItem(`myhome_config_cache_${activeUid}`);
             if (cached) {
-              setHomeConfig(JSON.parse(cached) as HomeSystemConfig);
-              return;
+              const parsedCfg = JSON.parse(cached) as HomeSystemConfig;
+              rawFallback = [{ id: 'main', data: { ...parsedCfg } }];
             }
           } catch {
             // ignore
           }
-          setHomeConfig({ ownerId: activeUid, ...DEFAULT_HOME_CONFIG });
+          rawSnapshotsRef.current.homeConfig = rawFallback;
+          const mergedDocs = mergeSimulatedOpsIntoRawDocs(configCollectionPath, rawFallback);
+          setHomeConfig(mapRawHomeConfig(mergedDocs, activeUid));
           return;
         }
         handleFirestoreError(error, OperationType.GET, configPath);
@@ -648,27 +1268,13 @@ export default function App() {
     const unsubClimate = onSnapshot(
       climateQuery,
       (snap) => {
-        const list: ClimateSession[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            ownerId: String(data.ownerId || activeUid),
-            date: String(data.date || ''),
-            mode: (data.mode as ClimateMode) || 'riscaldamento',
-            startTime: String(data.startTime || '09:00'),
-            endTime: String(data.endTime || '20:00'),
-            timeSlots: Array.isArray(data.timeSlots)
-              ? data.timeSlots.map((s) => String(s))
-              : undefined,
-            vmcMax: typeof data.vmcMax === 'boolean' ? data.vmcMax : undefined,
-            targetTemp: typeof data.targetTemp === 'number' ? data.targetTemp : 21,
-            rooms: Array.isArray(data.rooms) ? (data.rooms as RoomId[]) : [],
-            notes: data.notes ? String(data.notes) : undefined,
-          };
-        });
-        setClimateLogs(list);
+        const rawDocs: RawDocEntry[] = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+        rawSnapshotsRef.current.climateLogs = rawDocs;
+        const baseList = mapRawClimateLogs(rawDocs, activeUid);
+        const mergedDocs = mergeSimulatedOpsIntoRawDocs(climatePath, rawDocs);
+        setClimateLogs(mapRawClimateLogs(mergedDocs, activeUid));
         try {
-          localStorage.setItem(`myhome_climate_cache_${activeUid}`, JSON.stringify(list));
+          localStorage.setItem(`myhome_climate_cache_${activeUid}`, JSON.stringify(baseList));
         } catch {
           // ignore
         }
@@ -679,12 +1285,19 @@ export default function App() {
           setFirestoreFallbackNotice(
             'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale e dei dati predefiniti.'
           );
+          let rawFallback: RawDocEntry[] = [];
           try {
             const cached = localStorage.getItem(`myhome_climate_cache_${activeUid}`);
-            if (cached) setClimateLogs(JSON.parse(cached) as ClimateSession[]);
+            if (cached) {
+              const parsed = JSON.parse(cached) as ClimateSession[];
+              rawFallback = parsed.map((c) => ({ id: c.id, data: { ...c } }));
+            }
           } catch {
             // ignore
           }
+          rawSnapshotsRef.current.climateLogs = rawFallback;
+          const mergedDocs = mergeSimulatedOpsIntoRawDocs(climatePath, rawFallback);
+          setClimateLogs(mapRawClimateLogs(mergedDocs, activeUid));
           return;
         }
         handleFirestoreError(error, OperationType.LIST, climatePath);
@@ -699,46 +1312,38 @@ export default function App() {
     const unsubElecBills = onSnapshot(
       elecBillsQuery,
       (snap) => {
-        const list: BillRecord[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            invoiceNumber: String(data.invoiceNumber || ''),
-            issueDate: String(data.issueDate || ''),
-            sortKey: String(data.sortKey || ''),
-            year: Number(data.year || 2025),
-            period: String(data.period || ''),
-            supplier: String(data.supplier || ''),
-            offerName: String(data.offerName || ''),
-            kwh: Number(data.kwh || 0),
-            punText: String(data.punText || ''),
-            variableCostPerKwh: Number(data.variableCostPerKwh || 0),
-            canoneTv: Number(data.canoneTv || 0),
-            electricityOnly: Number(data.electricityOnly || 0),
-            totalPaid: Number(data.totalPaid || 0),
-            note: data.note ? String(data.note) : undefined,
-            pdfFileKey: data.pdfFileKey ? String(data.pdfFileKey) : undefined,
-          };
-        });
-
-        setElectricityBills(list);
+        const rawDocs: RawDocEntry[] = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+        rawSnapshotsRef.current.electricityBills = rawDocs;
+        const baseList = mapRawElectricityBills(rawDocs);
+        const mergedDocs = mergeSimulatedOpsIntoRawDocs(elecBillsPath, rawDocs);
+        setElectricityBills(mapRawElectricityBills(mergedDocs));
         try {
-          localStorage.setItem(`myhome_elec_bills_cache_${activeUid}`, JSON.stringify(list));
+          localStorage.setItem(`myhome_elec_bills_cache_${activeUid}`, JSON.stringify(baseList));
         } catch {
           // ignore
         }
-
       },
       (error) => {
         if (isResilientFirestoreOutage(error)) {
           setFirestoreFallbackNotice(
             'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale.'
           );
+          let rawFallback: RawDocEntry[] = [];
           try {
             const cached = localStorage.getItem(`myhome_elec_bills_cache_${activeUid}`);
-            if (cached) setElectricityBills(JSON.parse(cached) as BillRecord[]);
+            if (cached) {
+              const parsed = JSON.parse(cached) as BillRecord[];
+              rawFallback = parsed.map((b, idx) => ({
+                id: `manual_elec_${b.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '') || idx}`,
+                data: { ...b },
+              }));
+            }
           } catch {
             // ignore
           }
+          rawSnapshotsRef.current.electricityBills = rawFallback;
+          const mergedDocs = mergeSimulatedOpsIntoRawDocs(elecBillsPath, rawFallback);
+          setElectricityBills(mapRawElectricityBills(mergedDocs));
           return;
         }
         handleFirestoreError(error, OperationType.LIST, elecBillsPath);
@@ -753,41 +1358,35 @@ export default function App() {
     const unsubWaterBills = onSnapshot(
       waterBillsQuery,
       (snap) => {
-        const list: WaterBillRecord[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            invoiceNumber: String(data.invoiceNumber || ''),
-            issueDate: String(data.issueDate || ''),
-            year: Number(data.year || 2025),
-            period: String(data.period || ''),
-            cubicMeters: Number(data.cubicMeters || 0),
-            fixedCostEur: Number(data.fixedCostEur || 0),
-            totalPaid: Number(data.totalPaid || 0),
-            note: data.note ? String(data.note) : undefined,
-            pdfFileKey: data.pdfFileKey ? String(data.pdfFileKey) : undefined,
-          };
-        });
-
-        setWaterBills(list);
+        const rawDocs: RawDocEntry[] = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+        rawSnapshotsRef.current.waterBills = rawDocs;
+        const baseList = mapRawWaterBills(rawDocs);
+        const mergedDocs = mergeSimulatedOpsIntoRawDocs(waterBillsPath, rawDocs);
+        setWaterBills(mapRawWaterBills(mergedDocs));
         try {
-          localStorage.setItem(`myhome_water_bills_cache_${activeUid}`, JSON.stringify(list));
+          localStorage.setItem(`myhome_water_bills_cache_${activeUid}`, JSON.stringify(baseList));
         } catch {
           // ignore
         }
-
       },
       (error) => {
         if (isResilientFirestoreOutage(error)) {
           setFirestoreFallbackNotice(
             'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale e dei dati predefiniti.'
           );
+          let rawFallback: RawDocEntry[] = [];
           try {
             const cached = localStorage.getItem(`myhome_water_bills_cache_${activeUid}`);
-            if (cached) setWaterBills(JSON.parse(cached) as WaterBillRecord[]);
+            if (cached) {
+              const parsed = JSON.parse(cached) as WaterBillRecord[];
+              rawFallback = parsed.map((w) => ({ id: w.id, data: { ...w } }));
+            }
           } catch {
             // ignore
           }
+          rawSnapshotsRef.current.waterBills = rawFallback;
+          const mergedDocs = mergeSimulatedOpsIntoRawDocs(waterBillsPath, rawFallback);
+          setWaterBills(mapRawWaterBills(mergedDocs));
           return;
         }
         handleFirestoreError(error, OperationType.LIST, waterBillsPath);
@@ -802,26 +1401,13 @@ export default function App() {
     const unsubTariBills = onSnapshot(
       tariBillsQuery,
       (snap) => {
-        const list: TariBillRecord[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            noticeNumber: String(data.noticeNumber || ''),
-            issueDate: String(data.issueDate || ''),
-            dueDate: String(data.dueDate || ''),
-            year: Number(data.year || new Date().getFullYear()),
-            period: String(data.period || ''),
-            supplier: String(data.supplier || 'AcegasApsAmga / TARI'),
-            totalPaid: Number(data.totalPaid || 0),
-            paid: Boolean(data.paid),
-            source: data.source === 'gmail-pdf' ? 'gmail-pdf' : 'manuale',
-            note: data.note ? String(data.note) : undefined,
-            pdfFileKey: data.pdfFileKey ? String(data.pdfFileKey) : undefined,
-          };
-        });
-        setTariBills(list);
+        const rawDocs: RawDocEntry[] = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+        rawSnapshotsRef.current.tariBills = rawDocs;
+        const baseList = mapRawTariBills(rawDocs);
+        const mergedDocs = mergeSimulatedOpsIntoRawDocs(tariBillsPath, rawDocs);
+        setTariBills(mapRawTariBills(mergedDocs));
         try {
-          localStorage.setItem(`myhome_tari_bills_cache_${activeUid}`, JSON.stringify(list));
+          localStorage.setItem(`myhome_tari_bills_cache_${activeUid}`, JSON.stringify(baseList));
         } catch {
           // ignore
         }
@@ -831,12 +1417,19 @@ export default function App() {
           setFirestoreFallbackNotice(
             'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale.'
           );
+          let rawFallback: RawDocEntry[] = [];
           try {
             const cached = localStorage.getItem(`myhome_tari_bills_cache_${activeUid}`);
-            if (cached) setTariBills(JSON.parse(cached) as TariBillRecord[]);
+            if (cached) {
+              const parsed = JSON.parse(cached) as TariBillRecord[];
+              rawFallback = parsed.map((t) => ({ id: t.id, data: { ...t } }));
+            }
           } catch {
             // ignore
           }
+          rawSnapshotsRef.current.tariBills = rawFallback;
+          const mergedDocs = mergeSimulatedOpsIntoRawDocs(tariBillsPath, rawFallback);
+          setTariBills(mapRawTariBills(mergedDocs));
           return;
         }
         handleFirestoreError(error, OperationType.LIST, tariBillsPath);
@@ -848,27 +1441,13 @@ export default function App() {
     const unsubGse = onSnapshot(
       gseQuery,
       (snap) => {
-        const list: GsePaymentRecord[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            paymentDate: String(data.paymentDate || ''),
-            year: Number(data.year || new Date().getFullYear()),
-            paymentType: (data.paymentType as GsePaymentType) || 'acconto',
-            period: String(data.period || ''),
-            amountEur: Number(data.amountEur || 0),
-            kwhInjected:
-              typeof data.kwhInjected === 'number' ? Number(data.kwhInjected) : undefined,
-            reference: data.reference ? String(data.reference) : undefined,
-            note: data.note ? String(data.note) : undefined,
-            attachmentFileKey: data.attachmentFileKey
-              ? String(data.attachmentFileKey)
-              : undefined,
-          };
-        });
-        setGsePayments(list);
+        const rawDocs: RawDocEntry[] = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+        rawSnapshotsRef.current.gsePayments = rawDocs;
+        const baseList = mapRawGsePayments(rawDocs);
+        const mergedDocs = mergeSimulatedOpsIntoRawDocs(gsePath, rawDocs);
+        setGsePayments(mapRawGsePayments(mergedDocs));
         try {
-          localStorage.setItem(`myhome_gse_payments_cache_${activeUid}`, JSON.stringify(list));
+          localStorage.setItem(`myhome_gse_payments_cache_${activeUid}`, JSON.stringify(baseList));
         } catch {
           // ignore
         }
@@ -878,12 +1457,19 @@ export default function App() {
           setFirestoreFallbackNotice(
             'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale e dei dati predefiniti.'
           );
+          let rawFallback: RawDocEntry[] = [];
           try {
             const cached = localStorage.getItem(`myhome_gse_payments_cache_${activeUid}`);
-            if (cached) setGsePayments(JSON.parse(cached) as GsePaymentRecord[]);
+            if (cached) {
+              const parsed = JSON.parse(cached) as GsePaymentRecord[];
+              rawFallback = parsed.map((g) => ({ id: g.id, data: { ...g } }));
+            }
           } catch {
             // ignore
           }
+          rawSnapshotsRef.current.gsePayments = rawFallback;
+          const mergedDocs = mergeSimulatedOpsIntoRawDocs(gsePath, rawFallback);
+          setGsePayments(mapRawGsePayments(mergedDocs));
           return;
         }
         handleFirestoreError(error, OperationType.LIST, gsePath);
@@ -898,42 +1484,17 @@ export default function App() {
     const unsubArticles = onSnapshot(
       articlesQuery,
       (snap) => {
-        const list: HomeArticleRecord[] = snap.docs
-          .filter((d) => d.id !== 'grocery_seed_v1_done')
-          .map((d) => {
-            const data = d.data();
-            return {
-              id: d.id,
-              name: String(data.name || ''),
-              brand: String(data.brand || ''),
-              model: String(data.model || ''),
-              category: (data.category as HomeArticleCategory) || 'altro',
-              room: String(data.room || 'Casa'),
-              purchaseDate: data.purchaseDate ? String(data.purchaseDate) : undefined,
-              purchasePriceEur:
-                typeof data.purchasePriceEur === 'number'
-                  ? Number(data.purchasePriceEur)
-                  : undefined,
-              warrantyEnd: data.warrantyEnd ? String(data.warrantyEnd) : undefined,
-              familyWarranty: Boolean(data.familyWarranty),
-              serialNumber: data.serialNumber ? String(data.serialNumber) : undefined,
-              specs: data.specs ? String(data.specs) : undefined,
-              notes: data.notes ? String(data.notes) : undefined,
-              manualFileKey: data.manualFileKey ? String(data.manualFileKey) : undefined,
-              manualFileName: data.manualFileName ? String(data.manualFileName) : undefined,
-              manualExtractText: data.manualExtractText
-                ? String(data.manualExtractText)
-                : undefined,
-            };
-          });
-
-        setHomeArticles(list);
+        const rawDocs: RawDocEntry[] = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+        rawSnapshotsRef.current.homeArticles = rawDocs;
+        const baseList = mapRawHomeArticles(rawDocs);
+        const mergedDocs = mergeSimulatedOpsIntoRawDocs(articlesPath, rawDocs);
+        setHomeArticles(mapRawHomeArticles(mergedDocs));
         setHomeArticlesLoaded(true);
         try {
-          localStorage.setItem(`myhome_articles_cache_${activeUid}`, JSON.stringify(list));
+          localStorage.setItem(`myhome_articles_cache_${activeUid}`, JSON.stringify(baseList));
           localStorage.setItem(
             PUBLIC_GROCERY_CACHE_KEY,
-            JSON.stringify(list.filter((item) => item.room === SYSTEM_ROOM_GROCERY))
+            JSON.stringify(baseList.filter((item) => item.room === SYSTEM_ROOM_GROCERY))
           );
         } catch {
           // ignore
@@ -944,15 +1505,21 @@ export default function App() {
           setFirestoreFallbackNotice(
             'Connessione Firestore temporaneamente non disponibile o quota raggiunta: utilizzo della cache locale.'
           );
+          let rawFallback: RawDocEntry[] = [];
           try {
             const cached = localStorage.getItem(`myhome_articles_cache_${activeUid}`);
             if (cached) {
-              const articles = JSON.parse(cached) as HomeArticleRecord[];
-              setHomeArticles(articles.filter((article) => article.id !== 'grocery_seed_v1_done'));
+              const articles = (JSON.parse(cached) as HomeArticleRecord[]).filter(
+                (article) => article.id !== 'grocery_seed_v1_done'
+              );
+              rawFallback = articles.map((a) => ({ id: a.id, data: { ...a } }));
             }
           } catch {
             // ignore
           }
+          rawSnapshotsRef.current.homeArticles = rawFallback;
+          const mergedDocs = mergeSimulatedOpsIntoRawDocs(articlesPath, rawFallback);
+          setHomeArticles(mapRawHomeArticles(mergedDocs));
           return;
         }
         handleFirestoreError(error, OperationType.LIST, articlesPath);
@@ -964,31 +1531,32 @@ export default function App() {
     const unsubVmcDays = onSnapshot(
       vmcQuery,
       (snap) => {
-        const list: VmcDayRecord[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            ownerId: String(data.ownerId || activeUid),
-            date: String(data.date || ''),
-            enabled: Boolean(data.enabled),
-            note: data.note ? String(data.note) : undefined,
-          };
-        });
-        setVmcDays(list);
+        const rawDocs: RawDocEntry[] = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+        rawSnapshotsRef.current.vmcDays = rawDocs;
+        const baseList = mapRawVmcDays(rawDocs, activeUid);
+        const mergedDocs = mergeSimulatedOpsIntoRawDocs(vmcPath, rawDocs);
+        setVmcDays(mapRawVmcDays(mergedDocs, activeUid));
         try {
-          localStorage.setItem(`myhome_vmc_cache_${activeUid}`, JSON.stringify(list));
+          localStorage.setItem(`myhome_vmc_cache_${activeUid}`, JSON.stringify(baseList));
         } catch {
           // ignore
         }
       },
       (error) => {
         if (isResilientFirestoreOutage(error)) {
+          let rawFallback: RawDocEntry[] = [];
           try {
             const cached = localStorage.getItem(`myhome_vmc_cache_${activeUid}`);
-            if (cached) setVmcDays(JSON.parse(cached) as VmcDayRecord[]);
+            if (cached) {
+              const parsed = JSON.parse(cached) as VmcDayRecord[];
+              rawFallback = parsed.map((v) => ({ id: v.id, data: { ...v } }));
+            }
           } catch {
             // ignore
           }
+          rawSnapshotsRef.current.vmcDays = rawFallback;
+          const mergedDocs = mergeSimulatedOpsIntoRawDocs(vmcPath, rawFallback);
+          setVmcDays(mapRawVmcDays(mergedDocs, activeUid));
           return;
         }
         handleFirestoreError(error, OperationType.LIST, vmcPath);
@@ -1003,63 +1571,32 @@ export default function App() {
     const unsubResearches = onSnapshot(
       researchesQuery,
       (snap) => {
-        const list: ProductResearchRecord[] = snap.docs.map((d) => {
-          const data = d.data();
-          const createdTs = data.createdAt as { toMillis?: () => number } | undefined;
-          const urlStr = String(data.url || '');
-          const titleStr = String(data.title || '');
-          const normalizedStatus = normalizeResearchStatus(data.status);
-          return {
-            id: d.id,
-            ownerId: String(data.ownerId || activeUid),
-            url: urlStr,
-            title: titleStr,
-            store: String(data.store || ''),
-            category: (data.category as ProductResearchCategory) || 'altro',
-            status: normalizedStatus,
-            room: resolveResearchRoomWithFallback(
-              d.id,
-              urlStr,
-              data.room ? String(data.room) : undefined,
-              titleStr
-            ),
-            priceEur: typeof data.priceEur === 'number' ? Number(data.priceEur) : undefined,
-            paidPriceEur:
-              normalizedStatus === 'acquistato' && typeof data.paidPriceEur === 'number'
-                ? Number(data.paidPriceEur)
-                : undefined,
-            imageUrl: data.imageUrl ? String(data.imageUrl) : undefined,
-            brand: data.brand ? String(data.brand) : undefined,
-            color: data.color ? String(data.color) : undefined,
-            availableColors: Array.isArray(data.availableColors)
-              ? data.availableColors.map((c) => String(c).trim()).filter(Boolean).slice(0, 24)
-              : undefined,
-            colorImages: sanitizeColorImagesMap(data.colorImages),
-            size: data.size ? String(data.size) : undefined,
-            availableSizes: Array.isArray(data.availableSizes)
-              ? data.availableSizes.map((s) => String(s).trim()).filter(Boolean).slice(0, 24)
-              : undefined,
-            model: data.model ? String(data.model) : undefined,
-            specs: data.specs ? String(data.specs) : undefined,
-            notes: data.notes ? String(data.notes) : undefined,
-            createdAtMs: typeof createdTs?.toMillis === 'function' ? createdTs.toMillis() : 0,
-          };
-        });
-        setProductResearches(list);
+        const rawDocs: RawDocEntry[] = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+        rawSnapshotsRef.current.productResearches = rawDocs;
+        const baseList = mapRawProductResearches(rawDocs, activeUid);
+        const mergedDocs = mergeSimulatedOpsIntoRawDocs(researchesPath, rawDocs);
+        setProductResearches(mapRawProductResearches(mergedDocs, activeUid));
         try {
-          localStorage.setItem(`myhome_ricerche_cache_${activeUid}`, JSON.stringify(list));
+          localStorage.setItem(`myhome_ricerche_cache_${activeUid}`, JSON.stringify(baseList));
         } catch {
           // ignore
         }
       },
       (error) => {
         if (isResilientFirestoreOutage(error)) {
+          let rawFallback: RawDocEntry[] = [];
           try {
             const cached = localStorage.getItem(`myhome_ricerche_cache_${activeUid}`);
-            if (cached) setProductResearches(JSON.parse(cached) as ProductResearchRecord[]);
+            if (cached) {
+              const parsed = JSON.parse(cached) as ProductResearchRecord[];
+              rawFallback = parsed.map((r) => ({ id: r.id, data: { ...r } }));
+            }
           } catch {
             // ignore
           }
+          rawSnapshotsRef.current.productResearches = rawFallback;
+          const mergedDocs = mergeSimulatedOpsIntoRawDocs(researchesPath, rawFallback);
+          setProductResearches(mapRawProductResearches(mergedDocs, activeUid));
           return;
         }
         handleFirestoreError(error, OperationType.LIST, researchesPath);
@@ -1079,6 +1616,92 @@ export default function App() {
       unsubResearches();
     };
   }, [authReady, activeUid, user]);
+
+  // Recompute all state immediately whenever simulatedOps changes (add, discard, clear, flush)
+  useEffect(() => {
+    if (!authReady || !activeUid) return;
+    const raw = rawSnapshotsRef.current;
+    if (raw.uid !== activeUid) return;
+
+    if (raw.energyReadings) {
+      setFirestoreReadings(
+        mapRawReadings(
+          mergeSimulatedOpsIntoRawDocs(`users/${activeUid}/energyReadings`, raw.energyReadings),
+          activeUid
+        )
+      );
+    }
+    if (raw.homeConfig) {
+      setHomeConfig(
+        mapRawHomeConfig(
+          mergeSimulatedOpsIntoRawDocs(`users/${activeUid}/homeConfig`, raw.homeConfig),
+          activeUid
+        )
+      );
+    }
+    if (raw.climateLogs) {
+      setClimateLogs(
+        mapRawClimateLogs(
+          mergeSimulatedOpsIntoRawDocs(`users/${activeUid}/climateLogs`, raw.climateLogs),
+          activeUid
+        )
+      );
+    }
+    if (raw.electricityBills) {
+      setElectricityBills(
+        mapRawElectricityBills(
+          mergeSimulatedOpsIntoRawDocs(`users/${activeUid}/electricityBills`, raw.electricityBills)
+        )
+      );
+    }
+    if (raw.waterBills) {
+      setWaterBills(
+        mapRawWaterBills(
+          mergeSimulatedOpsIntoRawDocs(`users/${activeUid}/waterBills`, raw.waterBills)
+        )
+      );
+    }
+    if (raw.tariBills) {
+      setTariBills(
+        mapRawTariBills(
+          mergeSimulatedOpsIntoRawDocs(`users/${activeUid}/tariBills`, raw.tariBills)
+        )
+      );
+    }
+    if (raw.gsePayments) {
+      setGsePayments(
+        mapRawGsePayments(
+          mergeSimulatedOpsIntoRawDocs(`users/${activeUid}/gsePayments`, raw.gsePayments)
+        )
+      );
+    }
+    if (raw.homeArticles) {
+      setHomeArticles(
+        mapRawHomeArticles(
+          mergeSimulatedOpsIntoRawDocs(`users/${activeUid}/homeArticles`, raw.homeArticles)
+        )
+      );
+    }
+    if (raw.vmcDays) {
+      setVmcDays(
+        mapRawVmcDays(
+          mergeSimulatedOpsIntoRawDocs(`users/${activeUid}/vmcDays`, raw.vmcDays),
+          activeUid
+        )
+      );
+    }
+    if (raw.productResearches) {
+      setProductResearches(
+        mapRawProductResearches(
+          mergeSimulatedOpsIntoRawDocs(
+            `users/${activeUid}/productResearches`,
+            raw.productResearches
+          ),
+          activeUid
+        )
+      );
+    }
+  }, [simulatedOps, authReady, activeUid]);
 
   useEffect(() => {
     if (!authReady || activeUid || !publicOwnerUid) return;
@@ -2049,6 +2672,16 @@ export default function App() {
     }
     try {
       const batch = writeBatch(db);
+      setSimulatedOpDetailHint(`${basePath}/${docId}`, {
+        title: `${session.mode} · ${session.date}`,
+        actionLabel: 'Nuova sessione',
+        changedFields: ['__new__'],
+        changedDetails: [
+          `Modalità: ${session.mode}`,
+          `Orario: ${session.startTime}–${session.endTime}`,
+          `Target: ${session.targetTemp}°C`,
+        ],
+      });
       batch.set(doc(db, basePath, docId), payload);
       if (typeof session.vmcMax === 'boolean') {
         const vmcDocId = `vmc_${session.date.replace(/-/g, '')}`;
@@ -2091,6 +2724,7 @@ export default function App() {
   ) {
     if (!user) return;
     const path = `users/${user.uid}/climateLogs/${id}`;
+    const prevLog = climateLogs.find((l) => l.id === id);
     const payload: Record<string, unknown> = {
       ownerId: user.uid,
       date: session.date,
@@ -2106,8 +2740,34 @@ export default function App() {
       rooms: session.rooms,
       notes: session.notes ? session.notes.slice(0, 240) : '',
     };
+    const climateDetails: string[] = [];
+    const climateFields: string[] = [];
+    if (prevLog) {
+      if (prevLog.mode !== session.mode) {
+        climateFields.push('mode');
+        climateDetails.push(`Modalità: ${prevLog.mode} → ${session.mode}`);
+      }
+      if (prevLog.startTime !== session.startTime || prevLog.endTime !== session.endTime) {
+        climateFields.push('time');
+        climateDetails.push(`Orario: ${session.startTime}–${session.endTime}`);
+      }
+      if (prevLog.targetTemp !== session.targetTemp) {
+        climateFields.push('targetTemp');
+        climateDetails.push(`Target: ${prevLog.targetTemp}°C → ${session.targetTemp}°C`);
+      }
+      if (Boolean(prevLog.vmcMax) !== Boolean(session.vmcMax)) {
+        climateFields.push('vmcMax');
+        climateDetails.push(`VMC Max: ${session.vmcMax ? 'Attiva' : 'Spenta'}`);
+      }
+    }
     try {
       const batch = writeBatch(db);
+      setSimulatedOpDetailHint(path, {
+        title: `${session.mode} · ${session.date}`,
+        actionLabel: 'Modifica',
+        changedFields: climateFields.length > 0 ? climateFields : undefined,
+        changedDetails: climateDetails.length > 0 ? climateDetails : undefined,
+      });
       batch.set(doc(db, path), payload, { merge: true });
       if (typeof session.vmcMax === 'boolean') {
         const vmcDocId = `vmc_${session.date.replace(/-/g, '')}`;
@@ -2142,6 +2802,10 @@ export default function App() {
   async function handleDeleteClimateLog(id: string) {
     if (!user) return;
     const path = `users/${user.uid}/climateLogs/${id}`;
+    const existingLog = climateLogs.find((l) => l.id === id);
+    if (existingLog) {
+      setSimulatedOpTitleHint(path, `${existingLog.mode} · ${existingLog.date}`);
+    }
     try {
       await deleteDoc(doc(db, path));
       if (isFirestoreWritesDisabled()) {
@@ -2283,6 +2947,33 @@ export default function App() {
       payload.notes = item.notes.trim().slice(0, 400);
     }
     try {
+      const newDiff = diffProductResearchFields(undefined, {
+        ...item,
+        url: urlTrim,
+        title: String(payload.title),
+        store: String(payload.store),
+        status: payload.status as ProductResearchStatus,
+        room: normalizedRoom,
+        priceEur: typeof payload.priceEur === 'number' ? payload.priceEur : undefined,
+        paidPriceEur:
+          typeof payload.paidPriceEur === 'number' ? payload.paidPriceEur : undefined,
+        imageUrl: typeof payload.imageUrl === 'string' ? payload.imageUrl : undefined,
+        brand: typeof payload.brand === 'string' ? payload.brand : undefined,
+        color: typeof payload.color === 'string' ? payload.color : undefined,
+        availableColors: cleanColors.length > 0 ? cleanColors : undefined,
+        colorImages: cleanColorImages || undefined,
+        size: typeof payload.size === 'string' ? payload.size : undefined,
+        availableSizes: cleanSizes.length > 0 ? cleanSizes : undefined,
+        model: typeof payload.model === 'string' ? payload.model : undefined,
+        specs: typeof payload.specs === 'string' ? payload.specs : undefined,
+        notes: typeof payload.notes === 'string' ? payload.notes : undefined,
+      });
+      setSimulatedOpDetailHint(`${basePath}/${docId}`, {
+        title: String(payload.title),
+        actionLabel: 'Nuovo prodotto',
+        changedFields: newDiff.changedFields,
+        changedDetails: newDiff.changedDetails,
+      });
       await setDoc(doc(db, basePath, docId), payload);
       if (isFirestoreWritesDisabled()) {
         setProductResearches((prev) => [
@@ -2403,8 +3094,78 @@ export default function App() {
       specs: item.specs && item.specs.trim() ? item.specs.trim().slice(0, 2000) : deleteField(),
       notes: item.notes && item.notes.trim() ? item.notes.trim().slice(0, 400) : deleteField(),
     };
+    const prevResearch = productResearches.find((r) => r.id === id);
+    const nextSnapshotForDiff: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'> = {
+      ...item,
+      url: urlTrim,
+      title: String(payload.title),
+      store: String(payload.store),
+      status: normalizedStatus,
+      room: normalizedRoom,
+      priceEur: typeof payload.priceEur === 'number' ? payload.priceEur : undefined,
+      paidPriceEur: typeof payload.paidPriceEur === 'number' ? payload.paidPriceEur : undefined,
+      imageUrl: typeof payload.imageUrl === 'string' ? payload.imageUrl : undefined,
+      brand: typeof payload.brand === 'string' ? payload.brand : undefined,
+      color: typeof payload.color === 'string' ? payload.color : undefined,
+      availableColors: cleanColors.length > 0 ? cleanColors : undefined,
+      colorImages: cleanColorImages || undefined,
+      size: typeof payload.size === 'string' ? payload.size : undefined,
+      availableSizes: cleanSizes.length > 0 ? cleanSizes : undefined,
+      model: typeof payload.model === 'string' ? payload.model : undefined,
+      specs: typeof payload.specs === 'string' ? payload.specs : undefined,
+      notes: typeof payload.notes === 'string' ? payload.notes : undefined,
+    };
+    const updateDiff = diffProductResearchFields(prevResearch, nextSnapshotForDiff);
+    const changedKeys = new Set(updateDiff.changedFields);
+    if (prevResearch) {
+      if (
+        JSON.stringify(prevResearch.availableColors || []) !== JSON.stringify(cleanColors)
+      ) {
+        changedKeys.add('availableColors');
+      }
+      if (
+        JSON.stringify(prevResearch.availableSizes || []) !== JSON.stringify(cleanSizes)
+      ) {
+        changedKeys.add('availableSizes');
+      }
+      if (
+        JSON.stringify(prevResearch.colorImages || {}) !==
+        JSON.stringify(cleanColorImages || {})
+      ) {
+        changedKeys.add('colorImages');
+      }
+    }
+    if (prevResearch && changedKeys.size === 0) {
+      return;
+    }
+    const baseResearchRaw = rawSnapshotsRef.current.productResearches?.find((d) => d.id === id);
+    const baseResearch =
+      isFirestoreWritesDisabled() && baseResearchRaw
+        ? mapRawProductResearches([baseResearchRaw], user.uid)[0]
+        : undefined;
+    const queueDiff = baseResearch
+      ? diffProductResearchFields(baseResearch, nextSnapshotForDiff)
+      : updateDiff;
+    let writePayload: Record<string, unknown> = payload;
+    if (prevResearch && changedKeys.size > 0) {
+      const partialPayload: Record<string, unknown> = {
+        ownerId: user.uid,
+      };
+      for (const key of changedKeys) {
+        if (key in payload) {
+          partialPayload[key] = payload[key];
+        }
+      }
+      writePayload = partialPayload;
+    }
     try {
-      await setDoc(doc(db, path), payload, { merge: true });
+      setSimulatedOpDetailHint(path, {
+        title: String(payload.title),
+        actionLabel: 'Modifica',
+        changedFields: queueDiff.changedFields,
+        changedDetails: queueDiff.changedDetails,
+      });
+      await setDoc(doc(db, path), writePayload, { merge: true });
       if (isFirestoreWritesDisabled()) {
         setProductResearches((prev) =>
           prev.map((r) =>
@@ -2448,7 +3209,7 @@ export default function App() {
           writeExtendedRoomOverride(id, urlTrim, normalizedRoom);
           await setDoc(
             doc(db, path),
-            { ...payload, room: deleteField() },
+            { ...writePayload, room: deleteField() },
             { merge: true }
           );
           setProductResearches((prev) =>
@@ -2468,13 +3229,19 @@ export default function App() {
   async function handleDeleteProductResearch(id: string) {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
     const path = `users/${user.uid}/productResearches/${id}`;
+    const targetResearch = productResearches.find((r) => r.id === id);
+    if (targetResearch) {
+      setSimulatedOpTitleHint(path, targetResearch.title);
+    }
     const linkedDocs = getDocumentsForResearch(homeDocuments, id);
     try {
       await deleteDoc(doc(db, path));
       const keysToDelete: string[] = [];
       for (const linked of linkedDocs) {
         if (/^[a-zA-Z0-9_-]+$/.test(linked.id)) {
-          await deleteDoc(doc(db, `users/${user.uid}/homeArticles/${linked.id}`));
+          const linkedPath = `users/${user.uid}/homeArticles/${linked.id}`;
+          setSimulatedOpTitleHint(linkedPath, linked.title || linked.fileName || linked.id);
+          await deleteDoc(doc(db, linkedPath));
         }
         if (linked.attachmentKey) keysToDelete.push(linked.attachmentKey);
       }
@@ -2502,7 +3269,55 @@ export default function App() {
       ...patch,
       ownerId: user.uid,
     };
-    setHomeConfig(nextConfig);
+    const cfgFields: string[] = [];
+    const cfgDetails: string[] = [];
+    if (patch.aristonMode !== undefined && patch.aristonMode !== homeConfig.aristonMode) {
+      cfgFields.push('aristonMode');
+      cfgDetails.push(`Ariston: ${homeConfig.aristonMode} → ${patch.aristonMode}`);
+    }
+    if (patch.aristonProfile !== undefined && patch.aristonProfile !== homeConfig.aristonProfile) {
+      cfgFields.push('aristonProfile');
+      cfgDetails.push(`Profilo: ${homeConfig.aristonProfile} → ${patch.aristonProfile}`);
+    }
+    if (patch.floorFlowTemp !== undefined && patch.floorFlowTemp !== homeConfig.floorFlowTemp) {
+      cfgFields.push('floorFlowTemp');
+      cfgDetails.push(`Mandata: ${homeConfig.floorFlowTemp}°C → ${patch.floorFlowTemp}°C`);
+    }
+    if (patch.dhwTargetTemp !== undefined && patch.dhwTargetTemp !== homeConfig.dhwTargetTemp) {
+      cfgFields.push('dhwTargetTemp');
+      cfgDetails.push(`ACS: ${homeConfig.dhwTargetTemp}°C → ${patch.dhwTargetTemp}°C`);
+    }
+    if (patch.zoneLivingTarget !== undefined && patch.zoneLivingTarget !== homeConfig.zoneLivingTarget) {
+      cfgFields.push('zoneLivingTarget');
+      cfgDetails.push(`Zona giorno: ${homeConfig.zoneLivingTarget}°C → ${patch.zoneLivingTarget}°C`);
+    }
+    if (patch.zoneBedroomTarget !== undefined && patch.zoneBedroomTarget !== homeConfig.zoneBedroomTarget) {
+      cfgFields.push('zoneBedroomTarget');
+      cfgDetails.push(`Zona notte: ${homeConfig.zoneBedroomTarget}°C → ${patch.zoneBedroomTarget}°C`);
+    }
+    if (patch.neasmartPower !== undefined && patch.neasmartPower !== homeConfig.neasmartPower) {
+      cfgFields.push('neasmartPower');
+      cfgDetails.push(`Nea Smart: ${patch.neasmartPower ? 'Acceso' : 'Spento'}`);
+    }
+    if (patch.neasmartTargetHumidity !== undefined && patch.neasmartTargetHumidity !== homeConfig.neasmartTargetHumidity) {
+      cfgFields.push('neasmartTargetHumidity');
+      cfgDetails.push(`Umidità: ${patch.neasmartTargetHumidity}%`);
+    }
+    if (patch.neasmartFanSpeed !== undefined && patch.neasmartFanSpeed !== homeConfig.neasmartFanSpeed) {
+      cfgFields.push('neasmartFanSpeed');
+      cfgDetails.push(`Ventole: ${patch.neasmartFanSpeed}`);
+    }
+    if (patch.tariffEurPerKwh !== undefined && patch.tariffEurPerKwh !== homeConfig.tariffEurPerKwh) {
+      cfgFields.push('tariffEurPerKwh');
+      cfgDetails.push(`Tariffa: €${patch.tariffEurPerKwh}/kWh`);
+    }
+    if (patch.podCode !== undefined && patch.podCode !== homeConfig.podCode) {
+      cfgFields.push('podCode');
+      cfgDetails.push(`POD: ${patch.podCode}`);
+    }
+    if (!isFirestoreWritesDisabled() || !rawSnapshotsRef.current.homeConfig) {
+      setHomeConfig(nextConfig);
+    }
     if (!isFirestoreWritesDisabled()) {
       try {
         localStorage.setItem(`myhome_config_cache_${user.uid}`, JSON.stringify(nextConfig));
@@ -2510,11 +3325,83 @@ export default function App() {
         // ignore
       }
     }
+    const configExistsInBase = (rawSnapshotsRef.current.homeConfig?.length ?? 0) > 0;
+    if (configExistsInBase && cfgFields.length === 0) {
+      return;
+    }
+    const baseConfig =
+      isFirestoreWritesDisabled() && configExistsInBase && rawSnapshotsRef.current.homeConfig
+        ? mapRawHomeConfig(rawSnapshotsRef.current.homeConfig, user.uid)
+        : homeConfig;
+    const queueCfgFields: string[] = [];
+    const queueCfgDetails: string[] = [];
+    if (nextConfig.aristonMode !== baseConfig.aristonMode) {
+      queueCfgFields.push('aristonMode');
+      queueCfgDetails.push(`Ariston: ${baseConfig.aristonMode} → ${nextConfig.aristonMode}`);
+    }
+    if (nextConfig.aristonProfile !== baseConfig.aristonProfile) {
+      queueCfgFields.push('aristonProfile');
+      queueCfgDetails.push(`Profilo: ${baseConfig.aristonProfile} → ${nextConfig.aristonProfile}`);
+    }
+    if (nextConfig.floorFlowTemp !== baseConfig.floorFlowTemp) {
+      queueCfgFields.push('floorFlowTemp');
+      queueCfgDetails.push(`Mandata: ${baseConfig.floorFlowTemp}°C → ${nextConfig.floorFlowTemp}°C`);
+    }
+    if (nextConfig.dhwTargetTemp !== baseConfig.dhwTargetTemp) {
+      queueCfgFields.push('dhwTargetTemp');
+      queueCfgDetails.push(`ACS: ${baseConfig.dhwTargetTemp}°C → ${nextConfig.dhwTargetTemp}°C`);
+    }
+    if (nextConfig.zoneLivingTarget !== baseConfig.zoneLivingTarget) {
+      queueCfgFields.push('zoneLivingTarget');
+      queueCfgDetails.push(`Zona giorno: ${baseConfig.zoneLivingTarget}°C → ${nextConfig.zoneLivingTarget}°C`);
+    }
+    if (nextConfig.zoneBedroomTarget !== baseConfig.zoneBedroomTarget) {
+      queueCfgFields.push('zoneBedroomTarget');
+      queueCfgDetails.push(`Zona notte: ${baseConfig.zoneBedroomTarget}°C → ${nextConfig.zoneBedroomTarget}°C`);
+    }
+    if (nextConfig.neasmartPower !== baseConfig.neasmartPower) {
+      queueCfgFields.push('neasmartPower');
+      queueCfgDetails.push(`Nea Smart: ${nextConfig.neasmartPower ? 'Acceso' : 'Spento'}`);
+    }
+    if (nextConfig.neasmartTargetHumidity !== baseConfig.neasmartTargetHumidity) {
+      queueCfgFields.push('neasmartTargetHumidity');
+      queueCfgDetails.push(`Umidità: ${nextConfig.neasmartTargetHumidity}%`);
+    }
+    if (nextConfig.neasmartFanSpeed !== baseConfig.neasmartFanSpeed) {
+      queueCfgFields.push('neasmartFanSpeed');
+      queueCfgDetails.push(`Ventole: ${nextConfig.neasmartFanSpeed}`);
+    }
+    if (nextConfig.tariffEurPerKwh !== baseConfig.tariffEurPerKwh) {
+      queueCfgFields.push('tariffEurPerKwh');
+      queueCfgDetails.push(`Tariffa: €${nextConfig.tariffEurPerKwh}/kWh`);
+    }
+    if (nextConfig.podCode !== baseConfig.podCode) {
+      queueCfgFields.push('podCode');
+      queueCfgDetails.push(`POD: ${nextConfig.podCode}`);
+    }
     try {
-      await setDoc(doc(db, configPath), {
-        ...nextConfig,
-        updatedAt: serverTimestamp(),
+      setSimulatedOpDetailHint(configPath, {
+        title: nextConfig.podCode ? `POD ${nextConfig.podCode}` : 'Configurazione impianto',
+        actionLabel: 'Modifica',
+        changedFields: queueCfgFields.length > 0 ? queueCfgFields : undefined,
+        changedDetails: queueCfgDetails.length > 0 ? queueCfgDetails : undefined,
       });
+      if (configExistsInBase) {
+        await setDoc(
+          doc(db, configPath),
+          {
+            ...patch,
+            ownerId: user.uid,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } else {
+        await setDoc(doc(db, configPath), {
+          ...nextConfig,
+          updatedAt: serverTimestamp(),
+        });
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, configPath);
     }
@@ -2835,6 +3722,12 @@ export default function App() {
       payload.note = bill.note.trim().slice(0, 240);
     }
     try {
+      setSimulatedOpDetailHint(`${basePath}/${docId}`, {
+        title: bill.period || bill.noticeNumber,
+        actionLabel: 'Modifica',
+        changedFields: ['paid'],
+        changedDetails: [`Stato TARI: ${bill.paid ? 'Pagata → Da pagare' : 'Da pagare → Pagata'}`],
+      });
       await setDoc(doc(db, basePath, docId), payload);
       if (isFirestoreWritesDisabled()) {
         setTariBills((prev) =>
@@ -2852,6 +3745,9 @@ export default function App() {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
     const target = tariBills.find((t) => t.id === id);
     const path = `users/${user.uid}/tariBills/${id}`;
+    if (target) {
+      setSimulatedOpTitleHint(path, target.period || target.noticeNumber || id);
+    }
     try {
       await deleteDoc(doc(db, path));
       if (target) {
@@ -2947,6 +3843,9 @@ export default function App() {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
     const path = `users/${user.uid}/gsePayments/${id}`;
     const payment = gsePayments.find((entry) => entry.id === id);
+    if (payment) {
+      setSimulatedOpTitleHint(path, payment.period || payment.paymentDate || id);
+    }
     try {
       await deleteDoc(doc(db, path));
       if (payment?.attachmentFileKey) {
@@ -3035,6 +3934,13 @@ export default function App() {
       payload.manualExtractText = article.manualExtractText.trim().slice(0, 12_000);
     }
     try {
+      const artDiff = diffHomeArticleFields(undefined, article, docId);
+      setSimulatedOpDetailHint(`${basePath}/${docId}`, {
+        title: article.name.slice(0, 80),
+        actionLabel: 'Nuovo elemento',
+        changedFields: artDiff.changedFields,
+        changedDetails: artDiff.changedDetails,
+      });
       await setDoc(doc(db, basePath, docId), payload);
       if (isFirestoreWritesDisabled()) {
         setHomeArticles((prev) => [
@@ -3698,8 +4604,79 @@ export default function App() {
     if (article.manualExtractText?.trim()) {
       payload.manualExtractText = article.manualExtractText.trim().slice(0, 12_000);
     }
+    const prevArticle = homeArticles.find((entry) => entry.id === id);
+    const artUpdateDiff = diffHomeArticleFields(prevArticle, article, id);
+    const changedArticleKeys = new Set(artUpdateDiff.changedFields);
+    if (prevArticle) {
+      if ((prevArticle.manualFileName || '') !== (uploadedManual?.fileName || article.manualFileName || '')) {
+        changedArticleKeys.add('manualFileKey');
+        changedArticleKeys.add('manualFileName');
+      }
+      if ((prevArticle.manualExtractText || '').trim() !== (article.manualExtractText || '').trim()) {
+        changedArticleKeys.add('manualExtractText');
+      }
+    }
+    const optionalArticleFields = [
+      'purchaseDate',
+      'purchasePriceEur',
+      'warrantyEnd',
+      'serialNumber',
+      'specs',
+      'notes',
+      'manualFileKey',
+      'manualFileName',
+      'manualExtractText',
+    ];
+    if (prevArticle && changedArticleKeys.size === 0 && !manualFile) {
+      return;
+    }
+    const baseArticleRaw = rawSnapshotsRef.current.homeArticles?.find((d) => d.id === id);
+    const baseArticle =
+      isFirestoreWritesDisabled() && baseArticleRaw
+        ? mapRawHomeArticles([baseArticleRaw])[0]
+        : undefined;
+    const queueArtDiff = baseArticle
+      ? diffHomeArticleFields(
+          baseArticle,
+          {
+            ...article,
+            manualFileKey: uploadedManual?.key ?? article.manualFileKey,
+            manualFileName: uploadedManual?.fileName ?? article.manualFileName,
+          },
+          id
+        )
+      : artUpdateDiff;
+    let useArticleMerge = false;
+    let articleWritePayload: Record<string, unknown> = payload;
+    if (prevArticle && changedArticleKeys.size > 0) {
+      useArticleMerge = true;
+      const partialArticlePayload: Record<string, unknown> = {
+        ownerId: user.uid,
+      };
+      if (changedArticleKeys.has('manualFileKey')) {
+        changedArticleKeys.add('manualFileName');
+      }
+      for (const key of changedArticleKeys) {
+        if (key in payload) {
+          partialArticlePayload[key] = payload[key];
+        } else if (optionalArticleFields.includes(key)) {
+          partialArticlePayload[key] = deleteField();
+        }
+      }
+      articleWritePayload = partialArticlePayload;
+    }
     try {
-      await setDoc(doc(db, path), payload);
+      setSimulatedOpDetailHint(path, {
+        title: article.name.slice(0, 80),
+        actionLabel: 'Modifica',
+        changedFields: queueArtDiff.changedFields,
+        changedDetails: queueArtDiff.changedDetails,
+      });
+      if (useArticleMerge) {
+        await setDoc(doc(db, path), articleWritePayload, { merge: true });
+      } else {
+        await setDoc(doc(db, path), articleWritePayload);
+      }
       if (isFirestoreWritesDisabled()) {
         setHomeArticles((prev) => {
           const exists = prev.some((entry) => entry.id === id);
@@ -3731,6 +4708,9 @@ export default function App() {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(docId)) return;
     const targetDoc = homeDocuments.find((d) => d.id === docId);
     const path = `users/${user.uid}/homeArticles/${docId}`;
+    if (targetDoc) {
+      setSimulatedOpTitleHint(path, targetDoc.title || targetDoc.fileName || docId);
+    }
     try {
       await deleteDoc(doc(db, path));
       if (targetDoc?.attachmentKey) {
@@ -3749,6 +4729,9 @@ export default function App() {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
     const path = `users/${user.uid}/homeArticles/${id}`;
     const article = homeArticles.find((entry) => entry.id === id);
+    if (article) {
+      setSimulatedOpTitleHint(path, article.name || id);
+    }
     const linkedDocs = articleDocuments.filter(
       (d) => parseArticleDocumentRef(d.referenceCode)?.articleId === id
     );
@@ -3758,7 +4741,9 @@ export default function App() {
       if (article?.manualFileKey) keysToDelete.push(article.manualFileKey);
       for (const linked of linkedDocs) {
         if (/^[a-zA-Z0-9_-]+$/.test(linked.id)) {
-          await deleteDoc(doc(db, `users/${user.uid}/homeArticles/${linked.id}`));
+          const linkedPath = `users/${user.uid}/homeArticles/${linked.id}`;
+          setSimulatedOpTitleHint(linkedPath, linked.title || linked.fileName || linked.id);
+          await deleteDoc(doc(db, linkedPath));
         }
         if (linked.attachmentKey) keysToDelete.push(linked.attachmentKey);
       }
@@ -3858,7 +4843,7 @@ export default function App() {
           </button>
         </div>
 
-        <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
+        <nav className="flex-1 p-2 space-y-1 overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const active = activeNav === item.id;
@@ -3868,7 +4853,7 @@ export default function App() {
                 type="button"
                 title={item.label}
                 onClick={() => navigateToSection(item.id)}
-                className={`w-full flex items-center gap-3 px-2.5 py-2.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+                className={`w-full flex items-center gap-3 px-2.5 py-2.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap overflow-hidden ${
                   active
                     ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950 shadow-xs'
                     : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
@@ -3876,7 +4861,7 @@ export default function App() {
               >
                 <Icon className="w-4 h-4 shrink-0" />
                 <span
-                  className={`transition-opacity duration-150 ${
+                  className={`min-w-0 truncate transition-opacity duration-150 ${
                     sidebarPinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                   }`}
                 >
@@ -3948,7 +4933,7 @@ export default function App() {
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+            <nav className="flex-1 p-3 space-y-1 overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
                 const active = activeNav === item.id;
@@ -4008,15 +4993,33 @@ export default function App() {
               POD <span className="text-sky-600 dark:text-sky-400">{homeConfig.podCode}</span> · 6 kW
             </div>
 
-            {appSettings.firestoreWritesDisabled && (
+            {(appSettings.firestoreWritesDisabled || simulatedOps.length > 0) && (
               <button
                 type="button"
-                onClick={() => navigateToSection('impostazioni')}
-                title="Modalità Test attiva: le scritture su Firestore sono bloccate"
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 dark:bg-indigo-500/15 dark:text-indigo-200 dark:border-indigo-500/35 dark:hover:bg-indigo-500/25 transition-colors whitespace-nowrap"
+                onClick={() =>
+                  simulatedOps.length > 0
+                    ? setShowSimulatedQueuePanel((prev) => !prev)
+                    : navigateToSection('impostazioni')
+                }
+                aria-expanded={simulatedOps.length > 0 ? showSimulatedQueuePanel : undefined}
+                title={
+                  appSettings.firestoreWritesDisabled
+                    ? 'Modalità Test attiva: clicca per aprire l’elenco delle operazioni simulate'
+                    : 'Operazioni simulate in locale in attesa di invio a Firestore'
+                }
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-lg border transition-colors whitespace-nowrap ${
+                  showSimulatedQueuePanel && simulatedOps.length > 0
+                    ? 'bg-indigo-600 text-white border-indigo-600 dark:bg-indigo-500 dark:text-slate-950 dark:border-indigo-400 shadow-xs'
+                    : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 dark:bg-indigo-500/15 dark:text-indigo-200 dark:border-indigo-500/35 dark:hover:bg-indigo-500/25'
+                }`}
               >
                 <FlaskConical className="w-3.5 h-3.5 shrink-0" />
-                <span className="hidden sm:inline">Test DB ({writeStats.writesSavedCount})</span>
+                <span className="hidden sm:inline">
+                  {appSettings.firestoreWritesDisabled
+                    ? `Test DB (${simulatedOps.length})`
+                    : `Coda DB (${simulatedOps.length})`}
+                </span>
+                <span className="sm:hidden">{simulatedOps.length}</span>
               </button>
             )}
 
@@ -4107,65 +5110,261 @@ export default function App() {
           </div>
         </header>
 
-        {appSettings.firestoreWritesDisabled && (
-          <div className="px-4 sm:px-6 py-2 bg-indigo-50 border-b border-indigo-200 text-xs text-indigo-900 dark:bg-indigo-950/60 dark:border-indigo-500/35 dark:text-indigo-100 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <FlaskConical className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-300 shrink-0" />
-              <span>
-                <strong>Modalità Test Browser attiva:</strong> tutte le scritture su Firestore sono disattivate (0 quota consumata · {writeStats.writesSavedCount} operazioni simulate in questa sessione).
-              </span>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => updateAppSettings({ firestoreWritesDisabled: false })}
-                className="px-2.5 py-1 text-[11px] font-semibold rounded-md bg-indigo-600 hover:bg-indigo-700 text-white dark:bg-indigo-500 dark:hover:bg-indigo-400 dark:text-slate-950 transition-colors"
+        {(appSettings.firestoreWritesDisabled ||
+          simulatedOps.length > 0 ||
+          flushState.flushing ||
+          flushState.lastResult ||
+          firestoreQuotaExceeded) && (
+          <div className="sticky top-14 z-30 shadow-xs">
+            {appSettings.firestoreWritesDisabled && (
+              <div className="px-4 sm:px-6 py-1.5 sm:py-2 bg-indigo-50/95 border-b border-indigo-200 text-xs text-indigo-900 dark:bg-indigo-950/90 backdrop-blur-md dark:border-indigo-500/35 dark:text-indigo-100 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <FlaskConical className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-300 shrink-0" />
+                  <span className="truncate sm:whitespace-normal">
+                    <strong>Modalità Test Browser attiva:</strong>{' '}
+                    <span className="hidden md:inline">
+                      tutte le modifiche sono salvate in locale con 0 quota consumata{' '}
+                    </span>
+                    ({simulatedOps.length}{' '}
+                    {simulatedOps.length === 1
+                      ? 'operazione simulata in coda'
+                      : 'operazioni simulate in coda'}
+                    {writeStats.writesSavedCount > 0
+                      ? ` · ${writeStats.writesSavedCount} scritture risparmiate`
+                      : ''}
+                    ).
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 shrink-0">
+                  {simulatedOps.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowSimulatedQueuePanel((prev) => !prev)}
+                      className="px-2.5 py-1 text-[11px] font-semibold rounded-md border border-indigo-300 dark:border-indigo-400/50 bg-white/85 hover:bg-white text-indigo-800 dark:bg-indigo-900/60 dark:hover:bg-indigo-900 dark:text-indigo-100 transition-colors"
+                    >
+                      {showSimulatedQueuePanel
+                        ? 'Nascondi operazioni'
+                        : `Vedi operazioni (${simulatedOps.length})`}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={flushState.flushing}
+                    onClick={() => updateAppSettings({ firestoreWritesDisabled: false })}
+                    className="px-2.5 py-1 text-[11px] font-semibold rounded-md bg-indigo-600 hover:bg-indigo-700 text-white dark:bg-indigo-500 dark:hover:bg-indigo-400 dark:text-slate-950 transition-colors disabled:opacity-60"
+                  >
+                    {simulatedOps.length > 0
+                      ? `Riattiva DB e salva (${simulatedOps.length})`
+                      : 'Riattiva scritture DB'}
+                  </button>
+                  {activeNav !== 'impostazioni' && (
+                    <button
+                      type="button"
+                      onClick={() => navigateToSection('impostazioni')}
+                      className="hidden sm:inline-block px-2 py-1 text-[11px] font-medium underline text-indigo-700 dark:text-indigo-300 hover:opacity-80"
+                    >
+                      Impostazioni
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {!appSettings.firestoreWritesDisabled && simulatedOps.length > 0 && (
+              <div className="px-4 sm:px-6 py-1.5 sm:py-2 bg-sky-50/95 border-b border-sky-200 text-xs text-sky-900 dark:bg-sky-950/90 backdrop-blur-md dark:border-sky-500/35 dark:text-sky-100 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Clock className="w-3.5 h-3.5 text-sky-600 dark:text-sky-300 shrink-0" />
+                  <span>
+                    <strong>Operazioni simulate in attesa:</strong>{' '}
+                    {simulatedOps.length}{' '}
+                    {simulatedOps.length === 1
+                      ? 'operazione salvata in locale non è ancora su Firestore.'
+                      : 'operazioni salvate in locale non sono ancora su Firestore.'}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowSimulatedQueuePanel((prev) => !prev)}
+                    className="px-2.5 py-1 text-[11px] font-semibold rounded-md border border-sky-300 dark:border-sky-400/50 bg-white/85 hover:bg-white text-sky-800 dark:bg-sky-900/60 dark:hover:bg-sky-900 dark:text-sky-100 transition-colors"
+                  >
+                    {showSimulatedQueuePanel
+                      ? 'Nascondi coda'
+                      : `Vedi operazioni (${simulatedOps.length})`}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={flushState.flushing || !canEdit}
+                    onClick={() => void flushSimulatedFirestoreOps()}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-500 dark:hover:bg-sky-400 dark:text-slate-950 transition-colors disabled:opacity-50"
+                  >
+                    <CloudUpload className="w-3 h-3" />
+                    <span>Invia ora su Firestore</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {showSimulatedQueuePanel && simulatedOps.length > 0 && (
+              <div className="px-4 sm:px-6 py-3 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shadow-lg space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                    <Clock className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                    <span>
+                      Operazioni simulate salvate in locale ({simulatedOps.length})
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={flushState.flushing}
+                      onClick={() => clearSimulatedFirestoreOps()}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3 h-3 text-rose-500" />
+                      <span>Svuota coda</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowSimulatedQueuePanel(false)}
+                      className="px-2 py-1 text-[11px] font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
+                    >
+                      Chiudi
+                    </button>
+                  </div>
+                </div>
+                <div className="max-h-[45vh] sm:max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                  {simulatedOps.map((op) => {
+                    const timeStr = new Date(op.createdAt).toLocaleTimeString('it-IT', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                    });
+                    const badgeCls =
+                      op.kind === 'delete' || op.kind === 'vault_delete'
+                        ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300'
+                        : op.kind === 'vault_upload'
+                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300'
+                          : 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300';
+                    return (
+                      <div
+                        key={op.id}
+                        className="px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 flex items-start justify-between gap-2 text-xs"
+                      >
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2 min-w-0">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${badgeCls}`}>
+                              {op.actionLabel}
+                            </span>
+                            <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 shrink-0">
+                              {op.section}
+                            </span>
+                            <span className="font-semibold text-slate-900 dark:text-slate-100 truncate">
+                              {op.targetTitle}
+                            </span>
+                          </div>
+                          {op.changedDetails && op.changedDetails.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {op.changedDetails.map((detail, idx) => (
+                                <span
+                                  key={idx}
+                                  className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-500/12 dark:text-amber-300 dark:border-amber-500/30 text-[10px] font-medium"
+                                >
+                                  {detail}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                            {timeStr} · {op.writeCount} op
+                          </span>
+                          <button
+                            type="button"
+                            disabled={flushState.flushing}
+                            onClick={() => discardSimulatedFirestoreOp(op.id)}
+                            title="Rimuovi questa operazione dalla coda"
+                            className="p-1 rounded text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {(flushState.flushing || flushState.lastResult) && (
+              <div
+                className={`px-4 sm:px-6 py-2 border-b text-xs backdrop-blur-md flex flex-wrap items-center justify-between gap-2 ${
+                  flushState.flushing
+                    ? 'bg-sky-50/95 border-sky-200 text-sky-900 dark:bg-sky-950/90 dark:border-sky-500/35 dark:text-sky-100'
+                    : flushState.lastResult?.failed
+                      ? 'bg-amber-50/95 border-amber-200 text-amber-950 dark:bg-amber-950/90 dark:border-amber-500/35 dark:text-amber-100'
+                      : 'bg-emerald-50/95 border-emerald-200 text-emerald-950 dark:bg-emerald-950/90 dark:border-emerald-500/35 dark:text-emerald-100'
+                }`}
               >
-                Riattiva scritture DB
-              </button>
-              {activeNav !== 'impostazioni' && (
+                <div className="flex items-center gap-2 min-w-0">
+                  {flushState.flushing ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                  ) : (
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  )}
+                  <span>
+                    {flushState.flushing
+                      ? 'Sincronizzazione su Firestore delle operazioni simulate in locale in corso...'
+                      : flushState.lastResult?.failed
+                        ? `Sincronizzate ${flushState.lastResult.flushed} su ${flushState.lastResult.total} operazioni su Firestore. ${flushState.lastResult.errorMessage || ''}`
+                        : `Sincronizzazione completata: ${flushState.lastResult?.flushed || 0} ${(flushState.lastResult?.flushed || 0) === 1 ? 'operazione simulata salvata' : 'operazioni simulate salvate'} su Firestore.`}
+                  </span>
+                </div>
+                {!flushState.flushing && flushState.lastResult && (
+                  <button
+                    type="button"
+                    onClick={() => dismissSimulatedFlushResult()}
+                    className="text-xs font-semibold opacity-75 hover:opacity-100"
+                  >
+                    Chiudi
+                  </button>
+                )}
+              </div>
+            )}
+
+            {firestoreQuotaExceeded && (
+              <div
+                role="alert"
+                className="px-4 sm:px-6 py-2.5 bg-amber-50/95 border-b border-amber-300 text-amber-950 dark:bg-amber-950/95 backdrop-blur-sm dark:border-amber-500/50 text-xs dark:text-amber-100 flex flex-wrap items-center justify-between gap-2.5 shadow-md"
+              >
+                <div className="flex items-start sm:items-center gap-2 min-w-0">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5 sm:mt-0" />
+                  <span className="leading-relaxed">
+                    <strong className="font-semibold text-amber-900 dark:text-amber-200">
+                      Quota gratuita giornaliera Firestore esaurita:
+                    </strong>{' '}
+                    i nuovi salvataggi e il caricamento file su cloud sono bloccati fino al reset automatico di domani.{' '}
+                    <a
+                      href="https://firebase.google.com/pricing#cloud-firestore"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline text-amber-700 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-100 font-medium"
+                    >
+                      Dettagli limiti Spark
+                    </a>
+                  </span>
+                </div>
                 <button
                   type="button"
-                  onClick={() => navigateToSection('impostazioni')}
-                  className="px-2 py-1 text-[11px] font-medium underline text-indigo-700 dark:text-indigo-300 hover:opacity-80"
+                  onClick={() => dismissFirestoreQuotaExceeded()}
+                  className="text-amber-700 hover:text-amber-950 dark:text-amber-200/80 dark:hover:text-amber-100 p-1 rounded shrink-0"
+                  aria-label="Chiudi avviso quota Firestore"
                 >
-                  Impostazioni
+                  <X className="w-3.5 h-3.5" />
                 </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {firestoreQuotaExceeded && (
-          <div
-            role="alert"
-            className="sticky top-14 z-30 px-4 sm:px-6 py-2.5 bg-amber-50/95 border-b border-amber-300 text-amber-950 dark:bg-amber-950/95 backdrop-blur-sm dark:border-amber-500/50 text-xs dark:text-amber-100 flex flex-wrap items-center justify-between gap-2.5 shadow-md"
-          >
-            <div className="flex items-start sm:items-center gap-2 min-w-0">
-              <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5 sm:mt-0" />
-              <span className="leading-relaxed">
-                <strong className="font-semibold text-amber-900 dark:text-amber-200">
-                  Quota gratuita giornaliera Firestore esaurita:
-                </strong>{' '}
-                i nuovi salvataggi e il caricamento file su cloud sono bloccati fino al reset automatico di domani.{' '}
-                <a
-                  href="https://firebase.google.com/pricing#cloud-firestore"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline text-amber-700 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-100 font-medium"
-                >
-                  Dettagli limiti Spark
-                </a>
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => dismissFirestoreQuotaExceeded()}
-              className="text-amber-700 hover:text-amber-950 dark:text-amber-200/80 dark:hover:text-amber-100 p-1 rounded shrink-0"
-              aria-label="Chiudi avviso quota Firestore"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
+              </div>
+            )}
           </div>
         )}
 

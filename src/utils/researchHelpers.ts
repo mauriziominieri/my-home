@@ -748,3 +748,58 @@ export function findSizePrice(
   );
   return compactMatch ? compactMatch[1] : undefined;
 }
+
+export function normalizeSizeOptionKey(raw: string): string {
+  return raw.trim().toLowerCase().replace(/\s+/g, '');
+}
+
+export function normalizeColorOptionKey(raw: string): string {
+  return raw.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+export function mergePreservedVariantOptions(params: {
+  previousOptions?: string[];
+  liveOptions?: string[];
+  extraOptions?: Array<string | undefined>;
+  normalizeKey: (val: string) => string;
+  maxCount?: number;
+}): string[] | undefined {
+  const { previousOptions, liveOptions, extraOptions, normalizeKey, maxCount = 24 } = params;
+  const result: string[] = [];
+  const seen = new Set<string>();
+
+  const pushOption = (raw?: string) => {
+    const clean = (raw || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (!clean) return;
+    const key = normalizeKey(clean);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    result.push(clean);
+  };
+
+  for (const prev of previousOptions || []) pushOption(prev);
+  for (const live of liveOptions || []) pushOption(live);
+  for (const extra of extraOptions || []) pushOption(extra);
+
+  if (result.length === 0) return undefined;
+  return result.slice(0, maxCount);
+}
+
+export function computeMissingLiveOptions(
+  mergedOptions: string[] | undefined,
+  liveOptions: string[] | undefined,
+  normalizeKey: (val: string) => string
+): string[] {
+  if (!mergedOptions || mergedOptions.length === 0 || !liveOptions || liveOptions.length === 0) {
+    return [];
+  }
+  const liveKeys = new Set(
+    liveOptions.map((opt) => normalizeKey(opt)).filter(Boolean)
+  );
+  if (liveKeys.size === 0) return [];
+  return mergedOptions.filter((opt) => {
+    const key = normalizeKey(opt);
+    return Boolean(key) && !liveKeys.has(key);
+  });
+}
+
