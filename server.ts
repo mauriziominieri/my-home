@@ -3227,29 +3227,52 @@ async function startServer() {
       const apiUrl = `https://archive.org/wayback/available?url=${encodeURIComponent(targetUrl)}`;
       const resp = await fetch(apiUrl, {
         method: 'GET',
-        signal: AbortSignal.timeout(5500),
+        signal: AbortSignal.timeout(7500),
         headers: {
           Accept: 'application/json',
           'User-Agent': 'MyHomeProductInspector/1.0',
         },
       });
-      if (!resp.ok) return undefined;
-      const data = (await resp.json()) as {
-        archived_snapshots?: {
-          closest?: { available?: boolean; status?: string; timestamp?: string; url?: string };
+      if (resp.ok) {
+        const data = (await resp.json()) as {
+          archived_snapshots?: {
+            closest?: { available?: boolean; status?: string; timestamp?: string; url?: string };
+          };
         };
-      };
-      const closest = data?.archived_snapshots?.closest;
-      if (
-        closest?.available &&
-        closest.status === '200' &&
-        closest.timestamp &&
-        /^\d{8,14}$/.test(closest.timestamp)
-      ) {
-        return `https://web.archive.org/web/${closest.timestamp}id_/${targetUrl}`;
+        const closest = data?.archived_snapshots?.closest;
+        if (
+          closest?.available &&
+          closest.status === '200' &&
+          closest.timestamp &&
+          /^\d{8,14}$/.test(closest.timestamp)
+        ) {
+          return `https://web.archive.org/web/${closest.timestamp}id_/${targetUrl}`;
+        }
       }
     } catch {
-      // ignore Wayback availability lookup failures
+      // Fall through to Wayback CDX API fallback below
+    }
+    try {
+      const cdxUrl = `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(
+        targetUrl
+      )}&output=json&limit=1&filter=statuscode:200&sort=reverse`;
+      const cdxResp = await fetch(cdxUrl, {
+        method: 'GET',
+        signal: AbortSignal.timeout(6500),
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'MyHomeProductInspector/1.0',
+        },
+      });
+      if (cdxResp.ok) {
+        const rows = (await cdxResp.json()) as string[][];
+        const ts = Array.isArray(rows) && rows.length > 1 ? String(rows[1]?.[1] || '') : '';
+        if (/^\d{8,14}$/.test(ts)) {
+          return `https://web.archive.org/web/${ts}id_/${targetUrl}`;
+        }
+      }
+    } catch {
+      // ignore Wayback CDX lookup failures
     }
     return undefined;
   }
@@ -4677,7 +4700,8 @@ async function startServer() {
 
     const fetchBinaryWithTlsFallback = async (
       targetUrl: string,
-      hopsLeft = 4
+      hopsLeft = 4,
+      attemptTimeoutMs = 9500
     ): Promise<{
       status: number;
       contentType: string;
@@ -4689,7 +4713,7 @@ async function startServer() {
         const resp = await fetch(targetUrl, {
           method: 'GET',
           redirect: 'follow',
-          signal: AbortSignal.timeout(12000),
+          signal: AbortSignal.timeout(attemptTimeoutMs),
           headers: reqHeaders,
         });
         const contentLen = Number(resp.headers.get('content-length') || 0);
@@ -4752,7 +4776,7 @@ async function startServer() {
             {
               method: 'GET',
               headers: reqHeaders,
-              timeout: 12000,
+              timeout: attemptTimeoutMs,
               ...(u.protocol === 'https:' ? { rejectUnauthorized: false } : {}),
             },
             (resp) => {
@@ -4763,7 +4787,7 @@ async function startServer() {
                 try {
                   const nextUrl = new URL(loc, u).toString();
                   if (!isPrivateOrLocalHostname(new URL(nextUrl).hostname)) {
-                    void fetchBinaryWithTlsFallback(nextUrl, hopsLeft - 1)
+                    void fetchBinaryWithTlsFallback(nextUrl, hopsLeft - 1, attemptTimeoutMs)
                       .then(finishResolve)
                       .catch(finishReject);
                     return;
@@ -4809,7 +4833,7 @@ async function startServer() {
           );
           hardTimer = setTimeout(() => {
             r.destroy(new Error('Document fetch hard timeout'));
-          }, 12500);
+          }, Math.max(12500, attemptTimeoutMs + 3000));
           r.on('timeout', () => r.destroy(new Error('Document fetch timeout')));
           r.on('error', finishReject);
           r.end();
@@ -4818,7 +4842,24 @@ async function startServer() {
     };
 
     try {
-      let result = await fetchBinaryWithTlsFallback(parsedDocUrl.toString());
+      let result: {
+        status: number;
+        contentType: string;
+        contentDisposition: string;
+        buffer: Buffer;
+        tooLarge: boolean;
+      };
+      try {
+        result = await fetchBinaryWithTlsFallback(parsedDocUrl.toString(), 4, 8000);
+      } catch {
+        result = {
+          status: 0,
+          contentType: '',
+          contentDisposition: '',
+          buffer: Buffer.alloc(0),
+          tooLarge: false,
+        };
+      }
       if (result.tooLarge) {
         res.status(200).json({ ok: false, reason: 'too_large', url: parsedDocUrl.toString() });
         return;
@@ -4831,6 +4872,7 @@ async function startServer() {
       };
 
       if (
+        result.status === 0 ||
         result.status === 403 ||
         result.status === 503 ||
         result.status === 429 ||
@@ -4839,7 +4881,7 @@ async function startServer() {
       ) {
         const wbDocUrl = await resolveWaybackSnapshotUrl(parsedDocUrl.toString());
         if (wbDocUrl) {
-          const wbResult = await fetchBinaryWithTlsFallback(wbDocUrl);
+          const wbResult = await fetchBinaryWithTlsFallback(wbDocUrl, 4, 14000);
           if (wbResult.tooLarge) {
             res.status(200).json({ ok: false, reason: 'too_large', url: parsedDocUrl.toString() });
             return;

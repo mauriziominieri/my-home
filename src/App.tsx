@@ -5867,7 +5867,36 @@ export default function App() {
           firestoreQuotaExceeded) && (
           <div className="sticky top-14 z-30 shadow-xs">
             {appSettings.firestoreWritesDisabled && (
-              <div className="px-4 sm:px-6 py-1.5 sm:py-2 bg-amber-50/95 border-b border-amber-300 text-xs text-amber-950 dark:bg-amber-950/85 backdrop-blur-md dark:border-amber-500/40 dark:text-amber-100 flex flex-wrap items-center justify-between gap-2">
+              <div
+                onClick={() => {
+                  if (simulatedOps.length > 0) {
+                    setShowSimulatedQueuePanel((prev) => !prev);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (simulatedOps.length > 0 && (e.key === 'Enter' || e.key === ' ')) {
+                    if (e.target === e.currentTarget) {
+                      e.preventDefault();
+                      setShowSimulatedQueuePanel((prev) => !prev);
+                    }
+                  }
+                }}
+                role={simulatedOps.length > 0 ? 'button' : undefined}
+                tabIndex={simulatedOps.length > 0 ? 0 : undefined}
+                aria-expanded={simulatedOps.length > 0 ? showSimulatedQueuePanel : undefined}
+                title={
+                  simulatedOps.length > 0
+                    ? showSimulatedQueuePanel
+                      ? 'Clicca per nascondere le operazioni in coda'
+                      : 'Clicca per vedere le operazioni in coda'
+                    : undefined
+                }
+                className={`px-4 sm:px-6 py-1.5 sm:py-2 bg-amber-50/95 border-b border-amber-300 text-xs text-amber-950 dark:bg-amber-950/85 backdrop-blur-md dark:border-amber-500/40 dark:text-amber-100 flex flex-wrap items-center justify-between gap-2 transition-colors ${
+                  simulatedOps.length > 0
+                    ? 'cursor-pointer hover:bg-amber-100/90 dark:hover:bg-amber-950/95'
+                    : ''
+                }`}
+              >
                 <div className="flex items-center gap-2 min-w-0">
                   <FlaskConical className="w-3.5 h-3.5 text-amber-700 dark:text-amber-300 shrink-0" />
                   <span className="truncate sm:whitespace-normal">
@@ -5889,7 +5918,10 @@ export default function App() {
                   {simulatedOps.length > 0 && (
                     <button
                       type="button"
-                      onClick={() => setShowSimulatedQueuePanel((prev) => !prev)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowSimulatedQueuePanel((prev) => !prev);
+                      }}
                       className="px-2.5 py-1 text-[11px] font-semibold rounded-md border border-amber-300 dark:border-amber-400/50 bg-white/85 hover:bg-white text-amber-900 dark:bg-amber-900/50 dark:hover:bg-amber-900/80 dark:text-amber-100 transition-colors"
                     >
                       {showSimulatedQueuePanel
@@ -5899,23 +5931,22 @@ export default function App() {
                   )}
                   <button
                     type="button"
-                    disabled={flushState.flushing}
-                    onClick={() => setPendingDbActionModal('reenable')}
-                    className="px-2.5 py-1 text-[11px] font-semibold rounded-md bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-400 dark:hover:bg-emerald-300 dark:text-slate-950 transition-colors disabled:opacity-60"
+                    disabled={flushState.flushing || (simulatedOps.length > 0 && !canEdit)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPendingDbActionModal(simulatedOps.length > 0 ? 'flush' : 'reenable');
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-400 dark:hover:bg-emerald-300 dark:text-slate-950 transition-colors disabled:opacity-60"
                   >
-                    {simulatedOps.length > 0
-                      ? `Riattiva DB e salva (${simulatedOps.length})`
-                      : 'Riattiva scritture DB'}
+                    {simulatedOps.length > 0 ? (
+                      <>
+                        <CloudUpload className="w-3 h-3" />
+                        <span>Salva ({simulatedOps.length})</span>
+                      </>
+                    ) : (
+                      <span>Riattiva scritture DB</span>
+                    )}
                   </button>
-                  {activeNav !== 'impostazioni' && (
-                    <button
-                      type="button"
-                      onClick={() => navigateToSection('impostazioni')}
-                      className="hidden sm:inline-block px-2 py-1 text-[11px] font-medium underline text-amber-800 dark:text-amber-200 hover:opacity-80"
-                    >
-                      Impostazioni
-                    </button>
-                  )}
                 </div>
               </div>
             )}
@@ -6653,7 +6684,7 @@ export default function App() {
                   <p className="leading-relaxed">
                     {pendingDbActionModal === 'reenable'
                       ? 'Riattivando le scritture su Firestore, tutte le operazioni simulate in coda verranno salvate automaticamente in '
-                      : 'Tutte le operazioni simulate in coda verranno inviate su Firestore in '}
+                      : 'Tutte le operazioni simulate in coda verranno salvate su Firestore in '}
                     <strong className="text-slate-900 dark:text-slate-100">
                       {simulatedBatchPlan.batchCommitsCount <= 1
                         ? 'un unico blocco batch'
@@ -6675,6 +6706,14 @@ export default function App() {
                             } allegati Vault`
                           : ''}
                         ).
+                      </>
+                    )}
+                    {pendingDbActionModal === 'flush' && appSettings.firestoreWritesDisabled && (
+                      <>
+                        {' '}
+                        <span className="font-semibold text-amber-700 dark:text-amber-300">
+                          La Modalità Test Browser resterà attiva.
+                        </span>
                       </>
                     )}
                   </p>
@@ -6747,7 +6786,7 @@ export default function App() {
                   {simulatedOps.length > 0
                     ? pendingDbActionModal === 'reenable'
                       ? `Conferma e salva tutto (${simulatedOps.length})`
-                      : `Invia tutto in blocco (${simulatedOps.length})`
+                      : `Salva (${simulatedOps.length})`
                     : 'Conferma e riattiva DB'}
                 </span>
               </button>

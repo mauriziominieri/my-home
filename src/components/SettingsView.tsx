@@ -554,23 +554,21 @@ export function SettingsView({
 
               {simulatedOps.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2">
-                  {!settings.firestoreWritesDisabled && (
-                    <button
-                      type="button"
-                      disabled={flushState.flushing || readOnly}
-                      onClick={() => {
-                        if (onRequestFlushFirestoreOps) {
-                          onRequestFlushFirestoreOps();
-                        } else {
-                          void flushSimulatedFirestoreOps();
-                        }
-                      }}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-400 dark:hover:bg-emerald-300 dark:text-slate-950 transition-colors disabled:opacity-50"
-                    >
-                      <CloudUpload className="w-3 h-3" />
-                      <span>Invia su Firestore ({simulatedOps.length})</span>
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    disabled={flushState.flushing || readOnly}
+                    onClick={() => {
+                      if (onRequestFlushFirestoreOps) {
+                        onRequestFlushFirestoreOps();
+                      } else {
+                        void flushSimulatedFirestoreOps();
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-400 dark:hover:bg-emerald-300 dark:text-slate-950 transition-colors disabled:opacity-50"
+                  >
+                    <CloudUpload className="w-3 h-3" />
+                    <span>Salva su Firestore ({simulatedOps.length})</span>
+                  </button>
                   <button
                     type="button"
                     disabled={flushState.flushing}

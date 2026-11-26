@@ -1301,6 +1301,12 @@ export function ResearchesView({
   const [pendingDraftFoundDocs, setPendingDraftFoundDocs] = useState<
     Record<string, InspectedDocumentLink[]>
   >({});
+  const [optionalOlderDocsById, setOptionalOlderDocsById] = useState<
+    Record<string, InspectedDocumentLink[]>
+  >({});
+  const [attachingOptionalDocUrl, setAttachingOptionalDocUrl] = useState<string | null>(null);
+  const [retryingDocId, setRetryingDocId] = useState<string | null>(null);
+  const knownOlderDocUrlsRef = useRef<Set<string>>(new Set());
 
   const allResearches = useMemo(
     () => [...pendingDraftItems, ...researches],
@@ -2027,17 +2033,37 @@ export function ResearchesView({
     researchId: string,
     productTitle: string,
     provider: string,
-    docs: InspectedDocumentLink[]
+    docs: InspectedDocumentLink[],
+    options?: { upgradeLinkOnly?: boolean }
   ): Promise<{ downloaded: number; linked: number }> {
     if (!researchId || docs.length === 0) return { downloaded: 0, linked: 0 };
     const existingDocs = getDocumentsForResearch(researchDocuments, researchId);
-    const existingUrlSet = new Set(
+    const isLinkOnlyDocRecord = (d: HomeDocumentRecord): boolean =>
+      !d.fileSize && Boolean((d.cloudUrl || '').trim());
+    const isLinkOnlyTooLarge = (d: HomeDocumentRecord): boolean => {
+      const n = (d.notes || '').toLowerCase();
+      return n.includes('> 6') || n.includes('troppo grande');
+    };
+    const existingArchivedUrlSet = new Set(
       existingDocs
+        .filter((d) => !isLinkOnlyDocRecord(d))
         .map((d) => (d.cloudUrl || '').split('#')[0].toLowerCase())
         .filter(Boolean)
     );
+    const existingLinkOnlyByUrl = new Map<string, HomeDocumentRecord>();
+    for (const d of existingDocs) {
+      if (isLinkOnlyDocRecord(d)) {
+        const key = (d.cloudUrl || '').split('#')[0].toLowerCase();
+        if (key && !existingLinkOnlyByUrl.has(key)) {
+          existingLinkOnlyByUrl.set(key, d);
+        }
+      }
+    }
     const existingFileNameSet = new Set(
-      existingDocs.map((d) => (d.fileName || '').trim().toLowerCase()).filter(Boolean)
+      existingDocs
+        .filter((d) => !isLinkOnlyDocRecord(d))
+        .map((d) => (d.fileName || '').trim().toLowerCase())
+        .filter(Boolean)
     );
     // Title-based deduplication only applies to legacy saved docs that have no cloudUrl stored;
     // docs with distinct URLs/filenames (e.g. multiple revisions of a manual or datasheet) must all be preserved.
@@ -2070,17 +2096,26 @@ export function ResearchesView({
 
     for (const docItem of docsToAttach) {
       const normUrl = docItem.url.split('#')[0].toLowerCase();
-      if (existingUrlSet.has(normUrl)) continue;
+      if (existingArchivedUrlSet.has(normUrl)) continue;
+      const existingLinkDoc = existingLinkOnlyByUrl.get(normUrl);
+      if (existingLinkDoc && (!options?.upgradeLinkOnly || isLinkOnlyTooLarge(existingLinkDoc))) {
+        continue;
+      }
       const urlFileName = extractUniqueUrlFileName(docItem.url);
       if (urlFileName && existingFileNameSet.has(urlFileName)) continue;
 
+      const existingRefDocType = existingLinkDoc
+        ? parseResearchDocumentRef(existingLinkDoc.referenceCode)?.docType
+        : undefined;
       const docType: ArticleAttachmentType =
-        docItem.kind === 'certificato' ? 'garanzia_extra_family' : 'manuale';
+        existingRefDocType || (docItem.kind === 'certificato' ? 'garanzia_extra_family' : 'manuale');
       const cleanDocTitle = docItem.title.trim().slice(0, 48);
       const cleanProd = productTitle.trim().slice(0, 28);
-      const fullTitle = cleanProd
-        ? `${cleanDocTitle} · ${cleanProd}`.slice(0, 80)
-        : cleanDocTitle.slice(0, 80);
+      const fullTitle = existingLinkDoc?.title?.trim()
+        ? existingLinkDoc.title.trim().slice(0, 80)
+        : cleanProd
+          ? `${cleanDocTitle} · ${cleanProd}`.slice(0, 80)
+          : cleanDocTitle.slice(0, 80);
       const cleanDocTitleLow = cleanDocTitle.toLowerCase();
       const fullTitleLow = fullTitle.toLowerCase();
       const alreadyHasLegacySameTitle = legacyNoUrlTitleList.some(
@@ -2159,9 +2194,16 @@ export function ResearchesView({
             file,
             docItem.url
           );
+          if (existingLinkDoc) {
+            try {
+              await onDeleteResearchDocument(existingLinkDoc.id);
+            } catch {
+              // ignore cleanup failure after replacement upload
+            }
+          }
           downloaded += 1;
           existingFileNameSet.add(fileName.toLowerCase());
-          existingUrlSet.add(normUrl);
+          existingArchivedUrlSet.add(normUrl);
           return 'uploaded';
         } catch {
           return 'failed';
@@ -2169,6 +2211,7 @@ export function ResearchesView({
       };
 
       let uploadOutcome: 'uploaded' | 'duplicate' | 'failed' = 'failed';
+      let fetchFailureReason = '';
       const fetchDocApiUrl = resolveApiUrl('/api/researches/fetch-document');
       if (fetchDocApiUrl) {
         try {
@@ -2179,7 +2222,7 @@ export function ResearchesView({
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ url: docItem.url, title: cleanDocTitle }),
             },
-            18_000
+            28_000
           );
           if (resp.status === 405 || resp.status === 404) {
             if (fetchDocApiUrl.startsWith('/') && isStaticHostingOrigin()) {
@@ -2189,11 +2232,24 @@ export function ResearchesView({
             const ct = String(resp.headers.get('content-type') || '').toLowerCase();
             if (resp.ok && !ct.includes('application/json')) {
               const blob = await resp.blob();
-              uploadOutcome = await tryUploadBlobToVault(
-                blob,
-                ct,
-                resp.headers.get('x-document-filename')
-              );
+              if (blob.size > MAX_CLOUD_FILE_BYTES) {
+                fetchFailureReason = 'too_large';
+              } else {
+                uploadOutcome = await tryUploadBlobToVault(
+                  blob,
+                  ct,
+                  resp.headers.get('x-document-filename')
+                );
+              }
+            } else if (resp.ok && ct.includes('application/json')) {
+              try {
+                const errMeta = (await resp.json()) as { ok?: boolean; reason?: string };
+                if (typeof errMeta?.reason === 'string') {
+                  fetchFailureReason = errMeta.reason;
+                }
+              } catch {
+                // ignore json parse issue
+              }
             }
           }
         } catch {
@@ -2202,7 +2258,7 @@ export function ResearchesView({
       }
 
       // Direct browser fetch fallback (uses user's residential IP when server datacenter IP is WAF-blocked or on static host)
-      if (uploadOutcome === 'failed') {
+      if (uploadOutcome === 'failed' && fetchFailureReason !== 'too_large') {
         try {
           const directResp = await fetchWithTimeout(
             docItem.url,
@@ -2212,37 +2268,47 @@ export function ResearchesView({
           const directCt = String(directResp.headers.get('content-type') || '').toLowerCase();
           if (directResp.ok && !directCt.includes('text/html')) {
             const directBlob = await directResp.blob();
-            uploadOutcome = await tryUploadBlobToVault(
-              directBlob,
-              directCt,
-              directResp.headers.get('content-disposition')?.match(
-                /filename\*?=(?:UTF-8''|["']?)([^"';\r\n]+)["']?/i
-              )?.[1]
-            );
+            if (directBlob.size > MAX_CLOUD_FILE_BYTES) {
+              fetchFailureReason = 'too_large';
+            } else {
+              uploadOutcome = await tryUploadBlobToVault(
+                directBlob,
+                directCt,
+                directResp.headers.get('content-disposition')?.match(
+                  /filename\*?=(?:UTF-8''|["']?)([^"';\r\n]+)["']?/i
+                )?.[1]
+              );
+            }
+          } else if (directCt.includes('text/html') && !fetchFailureReason) {
+            fetchFailureReason = 'html_page';
           }
         } catch {
           // CORS or network block on direct fetch -> fall back to direct link below
         }
       }
 
-      if (uploadOutcome === 'failed' && onAddResearchDocumentLink) {
+      if (uploadOutcome === 'failed' && !existingLinkDoc && onAddResearchDocumentLink) {
         try {
-          const kindLabel =
-            docItem.kind === 'bim_3d'
-              ? 'File 3D / BIM ufficiale'
-              : docItem.kind === 'scheda'
-                ? 'Scheda tecnica ufficiale'
-                : 'Documento ufficiale';
+          const reasonDetail =
+            fetchFailureReason === 'too_large'
+              ? 'File > 6 MB (limite archivio Firestore): salvato solo link diretto'
+              : fetchFailureReason === 'blocked'
+                ? 'Download bloccato dal sito di origine: salvato solo link diretto'
+                : fetchFailureReason === 'html_page'
+                  ? 'Link a pagina web (non PDF diretto): salvato solo link diretto'
+                  : fetchFailureReason === 'network_error'
+                    ? 'Sito non scaricabile automaticamente: salvato solo link diretto'
+                    : 'Download automatico non disponibile: salvato solo link diretto';
           await onAddResearchDocumentLink(
             researchId,
             docType,
             fullTitle,
             provider,
             docItem.url,
-            `${kindLabel} da ${provider}`
+            `${reasonDetail} (${provider})`
           );
           linked += 1;
-          existingUrlSet.add(normUrl);
+          existingLinkOnlyByUrl.set(normUrl, {} as HomeDocumentRecord);
         } catch {
           // Ignore individual link-save errors
         }
@@ -2255,17 +2321,37 @@ export function ResearchesView({
   function hasNewInspectedDocuments(
     researchId: string,
     productTitle: string,
-    docs?: InspectedDocumentLink[]
+    docs?: InspectedDocumentLink[],
+    includeLinkOnlyUpgrade = false
   ): boolean {
     if (!researchId || !docs || docs.length === 0) return false;
     const existingDocs = getDocumentsForResearch(researchDocuments, researchId);
-    const existingUrlSet = new Set(
+    const isLinkOnlyDocRecord = (d: HomeDocumentRecord): boolean =>
+      !d.fileSize && Boolean((d.cloudUrl || '').trim());
+    const isLinkOnlyTooLarge = (d: HomeDocumentRecord): boolean => {
+      const n = (d.notes || '').toLowerCase();
+      return n.includes('> 6') || n.includes('troppo grande');
+    };
+    const existingArchivedUrlSet = new Set(
       existingDocs
+        .filter((d) => !isLinkOnlyDocRecord(d))
+        .map((d) => (d.cloudUrl || '').split('#')[0].toLowerCase())
+        .filter(Boolean)
+    );
+    const existingNonUpgradeableLinkUrlSet = new Set(
+      existingDocs
+        .filter(
+          (d) =>
+            isLinkOnlyDocRecord(d) && (!includeLinkOnlyUpgrade || isLinkOnlyTooLarge(d))
+        )
         .map((d) => (d.cloudUrl || '').split('#')[0].toLowerCase())
         .filter(Boolean)
     );
     const existingFileNameSet = new Set(
-      existingDocs.map((d) => (d.fileName || '').trim().toLowerCase()).filter(Boolean)
+      existingDocs
+        .filter((d) => !isLinkOnlyDocRecord(d))
+        .map((d) => (d.fileName || '').trim().toLowerCase())
+        .filter(Boolean)
     );
     const legacyNoUrlTitleList = existingDocs
       .filter((d) => !(d.cloudUrl || '').trim())
@@ -2278,7 +2364,8 @@ export function ResearchesView({
 
     for (const docItem of activeDocs.slice(0, 12)) {
       const normUrl = docItem.url.split('#')[0].toLowerCase();
-      if (existingUrlSet.has(normUrl)) continue;
+      if (existingArchivedUrlSet.has(normUrl)) continue;
+      if (existingNonUpgradeableLinkUrlSet.has(normUrl)) continue;
       let urlFileName = '';
       try {
         const parsed = new URL(docItem.url);
@@ -2397,6 +2484,87 @@ export function ResearchesView({
         return;
       }
 
+      const selectedDocs = (inspected.documents || []).slice(0, 12);
+      const activeDocsToAttach = selectedDocs.filter((d) => !d.excluded);
+      const olderExcludedDocs = selectedDocs.filter((d) => Boolean(d.excluded));
+
+      if (writesDisabled) {
+        const createdId = await onAddResearch(candidatePayload);
+        let autoStats = { downloaded: 0, linked: 0 };
+        if (typeof createdId === 'string' && createdId) {
+          if (activeDocsToAttach.length > 0) {
+            autoStats = await autoAttachInspectedDocuments(
+              createdId,
+              candidatePayload.title,
+              candidatePayload.brand || candidatePayload.store,
+              activeDocsToAttach
+            );
+          }
+          if (olderExcludedDocs.length > 0) {
+            olderExcludedDocs.forEach((d) => {
+              knownOlderDocUrlsRef.current.add(d.url.split('#')[0].toLowerCase());
+            });
+            setOptionalOlderDocsById((prev) => ({
+              ...prev,
+              [createdId]: olderExcludedDocs,
+            }));
+          }
+          if (selectedDocs.length > 0 || autoStats.downloaded > 0 || autoStats.linked > 0) {
+            setOpenAttachmentsIds((prev) => ({
+              ...prev,
+              [createdId]: true,
+            }));
+          }
+        }
+        setLinkInput('');
+        setDraftOpen(false);
+        const savedAttachmentsCount = autoStats.downloaded + autoStats.linked;
+        const linkOnlyHint =
+          autoStats.linked > 0
+            ? `${autoStats.linked} salvat${autoStats.linked === 1 ? 'o' : 'i'} come solo link diretto`
+            : '';
+        const olderHint =
+          olderExcludedDocs.length > 0
+            ? `${olderExcludedDocs.length} ${
+                olderExcludedDocs.length === 1 ? 'versione vecchia ignorata' : 'versioni vecchie ignorate'
+              } (apri Allegati per includerle)`
+            : '';
+        const directBits = [
+          typeof inspected.priceEur === 'number' ? `€ ${inspected.priceEur.toFixed(2)}` : '',
+          resolvedRoom ? `stanza ${getResearchRoomLabel(resolvedRoom)}` : '',
+          inspected.color ? `colore ${inspected.color}` : '',
+          inspected.size ? `taglia ${inspected.size}` : '',
+          inspected.imageUrl ? 'immagine' : '',
+          savedAttachmentsCount > 0
+            ? `${savedAttachmentsCount} ${savedAttachmentsCount === 1 ? 'allegato' : 'allegati'}`
+            : '',
+          linkOnlyHint,
+          olderHint,
+        ].filter(Boolean);
+
+        if (inspected.fallbackReason === 'static_hosting') {
+          setLinkNotice(
+            `Prodotto "${inspected.title}" salvato in coda locale dal solo link (GitHub Pages statico): il browser non può leggere ${inspected.store} per blocco CORS.`
+          );
+        } else if (
+          inspected.blockedBySite &&
+          inspected.extractedFrom !== 'page-meta' &&
+          !inspected.documents?.length &&
+          !inspected.imageUrl
+        ) {
+          setLinkNotice(
+            `Prodotto "${inspected.title}" salvato in coda locale: ${inspected.store} blocca l'accesso automatico (anti-bot), puoi completare i dettagli manualmente.`
+          );
+        } else {
+          setFeedback(
+            `Prodotto "${inspected.title}" aggiunto alla coda Test${
+              directBits.length > 0 ? ` (${directBits.join(', ')})` : ''
+            }. Clicca "Salva" nella barra in alto per inviare su Firestore.`
+          );
+        }
+        return;
+      }
+
       const draftId = `${LOCAL_DRAFT_PREFIX}${Date.now()}_${Math.random()
         .toString(36)
         .slice(2, 6)}`;
@@ -2408,11 +2576,10 @@ export function ResearchesView({
       };
 
       setPendingDraftItems((prev) => [draftRecord, ...prev]);
-      if (inspected.documents?.length) {
-        const cappedDocs = inspected.documents.slice(0, 12);
+      if (selectedDocs.length > 0) {
         setPendingDraftFoundDocs((prev) => ({
           ...prev,
-          [draftId]: cappedDocs,
+          [draftId]: selectedDocs,
         }));
         setOpenAttachmentsIds((prev) => ({
           ...prev,
@@ -2428,8 +2595,8 @@ export function ResearchesView({
 
       setLinkInput('');
       setDraftOpen(false);
-      const selectedDocsCount = (inspected.documents || []).filter((d) => !d.excluded).length;
-      const olderDocsCount = (inspected.documents || []).filter((d) => Boolean(d.excluded)).length;
+      const selectedDocsCount = activeDocsToAttach.length;
+      const olderDocsCount = olderExcludedDocs.length;
       const docsFoundLabel =
         selectedDocsCount > 0 || olderDocsCount > 0
           ? olderDocsCount > 0
@@ -2465,9 +2632,7 @@ export function ResearchesView({
         !inspected.imageUrl
       ) {
         setLinkNotice(
-          `Bozza "${inspected.title}" inserita in pagina da ${inspected.store} (${
-            writesDisabled ? 'non ancora salvata nella coda locale' : 'non ancora salvata su Firestore'
-          }). ${inspected.store} blocca l'accesso automatico (anti-bot)${
+          `Bozza "${inspected.title}" inserita in pagina da ${inspected.store} (non ancora salvata su Firestore). ${inspected.store} blocca l'accesso automatico (anti-bot)${
             inspected.aiKeyMissing
               ? ' e la ricerca online AI non è attiva su questo server (GEMINI_API_KEY non configurata)'
               : ''
@@ -2476,14 +2641,8 @@ export function ResearchesView({
       } else {
         setFeedback(
           foundBits.length > 0
-            ? `"${inspected.title}" inserito in pagina in bozza (${foundBits.join(', ')}). ${
-                writesDisabled
-                  ? 'Nessun salvataggio finché non clicchi "Salva modifiche".'
-                  : 'Nessuna scrittura su Firestore finché non clicchi "Salva modifiche".'
-              }`
-            : `Link di ${inspected.store} inserito in pagina in bozza: clicca "Salva modifiche" sulla scheda per ${
-                writesDisabled ? 'simularlo in locale' : 'salvarlo'
-              }.`
+            ? `"${inspected.title}" inserito in pagina in bozza (${foundBits.join(', ')}). Nessuna scrittura su Firestore finché non clicchi "Salva modifiche".`
+            : `Link di ${inspected.store} inserito in pagina in bozza: clicca "Salva modifiche" sulla scheda per salvarlo.`
         );
       }
     } catch (err) {
@@ -2825,6 +2984,10 @@ export function ResearchesView({
     };
 
     if (isLocalDraftId(item.id)) {
+      if (writesDisabled) {
+        void executeSaveEdit({ item, isNewDraft: true, payload });
+        return;
+      }
       setPendingEditSave({
         item,
         isNewDraft: true,
@@ -2841,6 +3004,11 @@ export function ResearchesView({
       return;
     }
 
+    if (writesDisabled) {
+      void executeSaveEdit({ item, payload });
+      return;
+    }
+
     setPendingEditSave({
       item,
       payload,
@@ -2849,7 +3017,22 @@ export function ResearchesView({
 
   async function confirmSaveEdit() {
     if (!pendingEditSave || readOnly) return;
-    const { item, payload, isNewDraft, skipProductUpdate, docTypeChanges } = pendingEditSave;
+    await executeSaveEdit(pendingEditSave);
+  }
+
+  async function executeSaveEdit(targetSave: {
+    item: ProductResearchRecord;
+    payload: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'>;
+    isNewDraft?: boolean;
+    skipProductUpdate?: boolean;
+    docTypeChanges?: Array<{
+      docId: string;
+      researchId: string;
+      nextType: ArticleAttachmentType;
+    }>;
+  }) {
+    if (readOnly) return;
+    const { item, payload, isNewDraft, skipProductUpdate, docTypeChanges } = targetSave;
     setSavingEdit(true);
     setLinkError(null);
     setLinkNotice(null);
@@ -3190,11 +3373,16 @@ export function ResearchesView({
         (other) => other.id !== item.id && !hasResearchPayloadChanges(other, proposedPayload)
       );
       const willUpdateBase = fieldsChanged && !otherIdenticalItem;
+      const olderInspectedDocs = (inspected.documents || []).filter((d) => Boolean(d.isOlderVersion));
+      olderInspectedDocs.forEach((d) => {
+        knownOlderDocUrlsRef.current.add(d.url.split('#')[0].toLowerCase());
+      });
       const nonOlderInspectedDocs = (inspected.documents || []).filter((d) => !d.isOlderVersion);
       const hasNewDocs = hasNewInspectedDocuments(
         item.id,
         nextTitle,
-        nonOlderInspectedDocs
+        nonOlderInspectedDocs,
+        true
       );
 
       const baseAfterRefresh: ProductResearchRecord = willUpdateBase
@@ -3261,6 +3449,27 @@ export function ResearchesView({
         });
       };
 
+      if (olderInspectedDocs.length > 0) {
+        const existingDocUrls = new Set(
+          getDocumentsForResearch(researchDocuments, item.id)
+            .map((d) => (d.cloudUrl || '').split('#')[0].toLowerCase())
+            .filter(Boolean)
+        );
+        const newOlderToStore = olderInspectedDocs.filter(
+          (d) => !existingDocUrls.has(d.url.split('#')[0].toLowerCase())
+        );
+        if (newOlderToStore.length > 0) {
+          setOptionalOlderDocsById((prev) => {
+            const curr = prev[item.id] || [];
+            const currUrls = new Set(curr.map((d) => d.url.split('#')[0].toLowerCase()));
+            const toAppend = newOlderToStore.filter(
+              (d) => !currUrls.has(d.url.split('#')[0].toLowerCase())
+            );
+            return toAppend.length > 0 ? { ...prev, [item.id]: [...curr, ...toAppend] } : prev;
+          });
+        }
+      }
+
       if ((!fieldsChanged || Boolean(otherIdenticalItem)) && !hasNewDocs) {
         preservePendingSelectionsAfterRefresh();
         setBrokenImages((prev) => {
@@ -3288,7 +3497,8 @@ export function ResearchesView({
           item.id,
           nextTitle,
           nextBrand || nextStore,
-          nonOlderInspectedDocs
+          nonOlderInspectedDocs,
+          { upgradeLinkOnly: true }
         );
       }
 
@@ -3299,6 +3509,9 @@ export function ResearchesView({
         return next;
       });
       const totalDocs = docStats.downloaded + docStats.linked;
+      if (totalDocs > 0) {
+        setOpenAttachmentsIds((prev) => ({ ...prev, [item.id]: true }));
+      }
       if (
         inspected.blockedBySite &&
         inspected.extractedFrom !== 'page-meta' &&
@@ -3311,6 +3524,10 @@ export function ResearchesView({
           } blocca l'accesso automatico (anti-bot)${
             inspected.aiKeyMissing ? ' e la ricerca online AI non è attiva su questo server' : ''
           }: eventuali foto, prezzi o documenti vanno inseriti manualmente.`
+        );
+      } else if (!willUpdateBase && totalDocs === 0) {
+        setLinkNotice(
+          `Nessuna modifica online per "${nextTitle || item.title}": i link esterni già presenti non sono ancora scaricabili automaticamente (0 operazioni Firestore).`
         );
       } else {
         const docSummaryParts = [
@@ -3515,6 +3732,52 @@ export function ResearchesView({
     });
   }
 
+  function applyQuickCardPatch(
+    item: ProductResearchRecord,
+    patch: {
+      title?: string;
+      color?: string;
+      imageUrl?: string;
+      colorImages?: Record<string, string>;
+      size?: string;
+      priceEur?: number | null;
+      sizePrices?: Record<string, number>;
+      room?: string | null;
+      status?: ProductResearchStatus;
+      paidPriceEur?: number | null;
+    }
+  ): Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'> | null {
+    if (writesDisabled && !isLocalDraftId(item.id)) {
+      setFeedback(null);
+      setLinkError(null);
+      const nextPayload = buildPreservedUpdatePayload(item, {
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.color !== undefined ? { color: patch.color } : {}),
+        ...(patch.imageUrl !== undefined ? { imageUrl: patch.imageUrl } : {}),
+        ...(patch.colorImages !== undefined ? { colorImages: patch.colorImages } : {}),
+        ...(patch.size !== undefined ? { size: patch.size } : {}),
+        ...(patch.priceEur !== undefined
+          ? { priceEur: patch.priceEur === null ? undefined : patch.priceEur }
+          : {}),
+        ...(patch.sizePrices !== undefined ? { sizePrices: patch.sizePrices } : {}),
+        ...(patch.room !== undefined
+          ? { room: normalizeResearchRoom(patch.room || undefined) }
+          : {}),
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.paidPriceEur !== undefined
+          ? {
+              paidPriceEur:
+                patch.paidPriceEur === null ? undefined : patch.paidPriceEur,
+            }
+          : {}),
+      });
+      void onUpdateResearch(item.id, nextPayload);
+      return nextPayload;
+    }
+    stageCardEdit(item, patch);
+    return null;
+  }
+
   function handleQuickDocTypeChange(
     item: ProductResearchRecord,
     docItem: HomeDocumentRecord,
@@ -3523,7 +3786,18 @@ export function ResearchesView({
     if (readOnly || !onUpdateResearchDocumentType) return;
     setFeedback(null);
     setLinkError(null);
-    const savedType = parseResearchDocumentRef(docItem.referenceCode)?.docType || 'altro';
+    const parsedRef = parseResearchDocumentRef(docItem.referenceCode);
+    const savedType = parsedRef?.docType || 'altro';
+    if (writesDisabled && !isLocalDraftId(item.id)) {
+      if (nextType !== savedType) {
+        void onUpdateResearchDocumentType(
+          docItem.id,
+          parsedRef?.researchId || item.id,
+          nextType
+        );
+      }
+      return;
+    }
     setPendingCardEdits((prev) => {
       const existingEntry = prev[item.id] || {};
       const nextDocTypes = { ...(existingEntry.docTypes || {}) };
@@ -3734,7 +4008,7 @@ export function ResearchesView({
       setInlinePaidEditId(null);
       setInlinePaidValue('');
     }
-    stageCardEdit(item, {
+    applyQuickCardPatch(item, {
       status: nextStatus,
       ...(nextStatus !== 'acquistato' ? { paidPriceEur: null } : {}),
     });
@@ -3743,7 +4017,7 @@ export function ResearchesView({
   function handleQuickRoomChange(item: ProductResearchRecord, nextRoomRaw: string) {
     if (readOnly) return;
     const normalized = normalizeResearchRoom(nextRoomRaw);
-    stageCardEdit(item, { room: normalized ?? null });
+    applyQuickCardPatch(item, { room: normalized ?? null });
   }
 
   function handleQuickColorSelect(item: ProductResearchRecord, nextColor: string) {
@@ -3774,7 +4048,7 @@ export function ResearchesView({
         return copy;
       });
     }
-    stageCardEdit(item, {
+    const immediatePayload = applyQuickCardPatch(item, {
       color: nextColor,
       title: nextTitle,
       ...(nextVariantImg ? { imageUrl: nextVariantImg } : {}),
@@ -3817,6 +4091,16 @@ export function ResearchesView({
                 return copy;
               });
             }
+            if (writesDisabled && !isLocalDraftId(item.id) && immediatePayload) {
+              if (targetColor === nextColor) {
+                void onUpdateResearch(item.id, {
+                  ...immediatePayload,
+                  colorImages: inspected.colorImages,
+                  ...(fetchedVariantImg ? { imageUrl: fetchedVariantImg } : {}),
+                });
+              }
+              return;
+            }
             setPendingCardEdits((prev) => {
               if (!prev[item.id]) return prev;
               return {
@@ -3858,7 +4142,7 @@ export function ResearchesView({
       effective.sizePrices || lazySizePrices[item.id] || readCachedSizePrices(item.url);
     const nextVariantPrice = findSizePrice(knownSizePrices, nextSize);
 
-    stageCardEdit(item, {
+    const immediatePayload = applyQuickCardPatch(item, {
       size: nextSize,
       title: nextTitle,
       ...(typeof nextVariantPrice === 'number' ? { priceEur: nextVariantPrice } : {}),
@@ -3894,6 +4178,19 @@ export function ResearchesView({
             writeCachedSizePrices(item.url, inspected.sizePrices);
             const targetSize = latestQuickSizeRef.current[item.id] || nextSize;
             const fetchedPrice = findSizePrice(inspected.sizePrices, targetSize);
+            if (writesDisabled && !isLocalDraftId(item.id) && immediatePayload) {
+              if (targetSize === nextSize) {
+                void onUpdateResearch(item.id, {
+                  ...immediatePayload,
+                  sizePrices: {
+                    ...(immediatePayload.sizePrices || item.sizePrices || {}),
+                    ...inspected.sizePrices,
+                  },
+                  ...(typeof fetchedPrice === 'number' ? { priceEur: fetchedPrice } : {}),
+                });
+              }
+              return;
+            }
             setPendingCardEdits((prev) => {
               if (!prev[item.id]) return prev;
               return {
@@ -3928,7 +4225,7 @@ export function ResearchesView({
   function handleSaveInlinePaidPrice(item: ProductResearchRecord) {
     if (readOnly || getEffectiveItem(item).status !== 'acquistato') return;
     const validPaid = parseOptionalPriceInput(inlinePaidValue);
-    stageCardEdit(item, { paidPriceEur: validPaid ?? null });
+    applyQuickCardPatch(item, { paidPriceEur: validPaid ?? null });
     setInlinePaidEditId(null);
     setInlinePaidValue('');
   }
@@ -4052,19 +4349,26 @@ export function ResearchesView({
 
     try {
       let binaryUploaded = false;
+      let manualReason = '';
       const fetchDocApiUrl = resolveApiUrl('/api/researches/fetch-document');
       try {
         const dlResp = fetchDocApiUrl
-          ? await fetch(fetchDocApiUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ url: validUrl }),
-            })
-          : await fetch(validUrl, { method: 'GET', mode: 'cors' });
+          ? await fetchWithTimeout(
+              fetchDocApiUrl,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: validUrl }),
+              },
+              28_000
+            )
+          : await fetchWithTimeout(validUrl, { method: 'GET', mode: 'cors' }, 10_000);
         const dlCt = (dlResp.headers.get('content-type') || '').toLowerCase();
         if (dlResp.ok && !dlCt.includes('application/json') && !dlCt.includes('text/html')) {
           const blob = await dlResp.blob();
-          if (blob.size > 0 && blob.size <= MAX_CLOUD_FILE_BYTES) {
+          if (blob.size > MAX_CLOUD_FILE_BYTES) {
+            manualReason = 'too_large';
+          } else if (blob.size > 0) {
             const rawHeaderName =
               dlResp.headers.get('x-document-filename') ||
               dlResp.headers.get('content-disposition')?.match(
@@ -4103,6 +4407,13 @@ export function ResearchesView({
               validUrl
             );
             binaryUploaded = true;
+          }
+        } else if (dlResp.ok && dlCt.includes('application/json')) {
+          try {
+            const errJson = (await dlResp.json()) as { reason?: string };
+            if (typeof errJson?.reason === 'string') manualReason = errJson.reason;
+          } catch {
+            // ignore parse error
           }
         }
       } catch {
@@ -4148,13 +4459,21 @@ export function ResearchesView({
           ? inspectedTitle.slice(0, 80)
           : `${item.title.slice(0, 34)} · ${fallbackSlug.slice(0, 38)}`.slice(0, 80);
         const provider = (inspectedSite || item.brand || item.store || 'Prodotti').slice(0, 80);
+        const linkNote =
+          manualReason === 'too_large'
+            ? `File > 6 MB (limite archivio Firestore): salvato solo link diretto (${typeLabel})`
+            : manualReason === 'blocked'
+              ? `Download bloccato dal sito: salvato solo link diretto (${typeLabel})`
+              : manualReason === 'html_page'
+                ? `Link a pagina web (non file diretto): ${typeLabel}`
+                : `Solo link diretto allegato a prodotto (${typeLabel})`;
         await onAddResearchDocumentLink(
           item.id,
           docType,
           docTitle,
           provider,
           validUrl,
-          `Link allegato a prodotto (${typeLabel})`
+          linkNote
         );
       }
 
@@ -4231,6 +4550,198 @@ export function ResearchesView({
       setLinkError(err instanceof Error ? err.message : 'Impossibile scaricare il file allegato.');
     } finally {
       setDownloadingDocId(null);
+    }
+  }
+
+  async function handleRetryLinkOnlyDocDownload(
+    item: ProductResearchRecord,
+    docItem: HomeDocumentRecord
+  ) {
+    if (readOnly || !docItem.cloudUrl) return;
+    const targetUrl = docItem.cloudUrl.trim();
+    const parsedRef = parseResearchDocumentRef(docItem.referenceCode);
+    const docType: ArticleAttachmentType = parsedRef?.docType || 'manuale';
+    const cleanTitle = (docItem.title || 'Documento').trim().slice(0, 80);
+    const provider = (docItem.provider || item.brand || item.store || 'Prodotti').slice(0, 80);
+
+    setRetryingDocId(docItem.id);
+    setLinkError(null);
+    setLinkNotice(null);
+
+    try {
+      let fetchedBlob: Blob | null = null;
+      let fetchedCt = '';
+      let rawHeaderName: string | null = null;
+      let failureReason = '';
+
+      const fetchDocApiUrl = resolveApiUrl('/api/researches/fetch-document');
+      if (fetchDocApiUrl) {
+        try {
+          const resp = await fetchWithTimeout(
+            fetchDocApiUrl,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: targetUrl, title: cleanTitle }),
+            },
+            28_000
+          );
+          const ct = String(resp.headers.get('content-type') || '').toLowerCase();
+          if (resp.ok && !ct.includes('application/json')) {
+            const blob = await resp.blob();
+            if (blob.size > MAX_CLOUD_FILE_BYTES) {
+              failureReason = 'too_large';
+            } else if (blob.size > 0 && !ct.includes('text/html')) {
+              fetchedBlob = blob;
+              fetchedCt = ct;
+              rawHeaderName = resp.headers.get('x-document-filename');
+            }
+          } else if (resp.ok && ct.includes('application/json')) {
+            const errMeta = (await resp.json().catch(() => null)) as { reason?: string } | null;
+            if (typeof errMeta?.reason === 'string') {
+              failureReason = errMeta.reason;
+            }
+          }
+        } catch {
+          // Fall through to direct browser CORS fetch
+        }
+      }
+
+      if (!fetchedBlob && failureReason !== 'too_large') {
+        try {
+          const directResp = await fetchWithTimeout(targetUrl, { method: 'GET', mode: 'cors' }, 10_000);
+          const directCt = String(directResp.headers.get('content-type') || '').toLowerCase();
+          if (directResp.ok && !directCt.includes('text/html')) {
+            const directBlob = await directResp.blob();
+            if (directBlob.size > MAX_CLOUD_FILE_BYTES) {
+              failureReason = 'too_large';
+            } else if (directBlob.size > 0) {
+              fetchedBlob = directBlob;
+              fetchedCt = directCt;
+              rawHeaderName =
+                directResp.headers
+                  .get('content-disposition')
+                  ?.match(/filename\*?=(?:UTF-8''|["']?)([^"';\r\n]+)["']?/i)?.[1] || null;
+            }
+          } else if (directCt.includes('text/html') && !failureReason) {
+            failureReason = 'html_page';
+          }
+        } catch {
+          // Ignore CORS/network block
+        }
+      }
+
+      if (!fetchedBlob) {
+        setLinkNotice(
+          failureReason === 'too_large'
+            ? 'Il file supera il limite di 6 MB: resta salvato come link diretto (puoi comunque caricare un PDF ridotto dal pulsante Carica file).'
+            : failureReason === 'html_page'
+              ? 'Il link punta a una pagina web e non a un file PDF diretto: resta come collegamento esterno.'
+              : 'Il sito blocca ancora il download automatico (e non risulta una copia archiviata utilizzabile): resta come link diretto oppure puoi usare Carica file.'
+        );
+        return;
+      }
+
+      let fileName = '';
+      if (rawHeaderName) {
+        try {
+          fileName = decodeURIComponent(rawHeaderName).trim();
+        } catch {
+          fileName = rawHeaderName.trim();
+        }
+      }
+      if (!fileName) {
+        try {
+          const seg = decodeURIComponent(new URL(targetUrl).pathname.split('/').pop() || '').trim();
+          if (/\.[a-z0-9]{2,5}$/i.test(seg)) fileName = seg;
+        } catch {
+          // Ignore URL parse error
+        }
+      }
+      if (!fileName) {
+        fileName = `${cleanTitle.replace(/[^\p{L}\p{N}_-]+/gu, '-').slice(0, 48) || 'documento'}.${
+          fetchedCt.includes('zip') ? 'zip' : 'pdf'
+        }`;
+      }
+
+      const fileObj = new File([fetchedBlob], fileName, {
+        type: fetchedBlob.type || fetchedCt.split(';')[0] || 'application/pdf',
+      });
+
+      await onUploadResearchDocument(item.id, docType, cleanTitle, provider, fileObj, targetUrl);
+      try {
+        await onDeleteResearchDocument(docItem.id);
+      } catch {
+        // Ignore cleanup failure after replacement succeeded
+      }
+      setFeedback(
+        `File "${fileName}" scaricato e salvato nell'archivio al posto del link diretto.`
+      );
+    } catch (err) {
+      setLinkError(
+        err instanceof Error ? err.message : 'Errore durante il nuovo tentativo di download.'
+      );
+    } finally {
+      setRetryingDocId(null);
+    }
+  }
+
+  async function handleUncheckSavedDoc(
+    item: ProductResearchRecord,
+    docItem: HomeDocumentRecord
+  ) {
+    if (readOnly) return;
+    const targetUrl = (docItem.cloudUrl || '').trim();
+    if (!targetUrl) {
+      setPendingDeleteDoc({
+        doc: docItem,
+        productTitle: getEffectiveItem(item).title,
+      });
+      return;
+    }
+    const parsedRef = parseResearchDocumentRef(docItem.referenceCode);
+    const savedDocType = parsedRef?.docType || 'manuale';
+    const rawTitle = (docItem.title || '').trim();
+    const prodLow = item.title.trim().toLowerCase();
+    const sepIdx = rawTitle.lastIndexOf(' · ');
+    let cleanDocTitle = rawTitle || docItem.fileName || 'Allegato';
+    if (sepIdx > 0 && prodLow) {
+      const left = rawTitle.slice(0, sepIdx).trim();
+      const right = rawTitle.slice(sepIdx + 3).trim().toLowerCase();
+      if (right && prodLow.startsWith(right)) {
+        cleanDocTitle = left;
+      }
+    }
+    const normUrl = targetUrl.split('#')[0].toLowerCase();
+    const wasOlder = knownOlderDocUrlsRef.current.has(normUrl);
+
+    setAttachingOptionalDocUrl(targetUrl);
+    setLinkError(null);
+    try {
+      await onDeleteResearchDocument(docItem.id);
+      setOptionalOlderDocsById((prev) => {
+        const curr = prev[item.id] || [];
+        if (curr.some((d) => d.url.split('#')[0].toLowerCase() === normUrl)) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [item.id]: [
+            ...curr,
+            {
+              title: cleanDocTitle,
+              url: targetUrl,
+              kind: savedDocType === 'garanzia_extra_family' ? 'certificato' : 'manuale',
+              isOlderVersion: wasOlder || undefined,
+              excluded: true,
+            },
+          ],
+        };
+      });
+    } catch (err) {
+      setLinkError(err instanceof Error ? err.message : 'Impossibile escludere l’allegato.');
+    } finally {
+      setAttachingOptionalDocUrl(null);
     }
   }
 
@@ -5887,9 +6398,25 @@ export function ResearchesView({
             const isEditing = editingId === item.id;
             const imageBroken = Boolean(effectiveItem.imageUrl) && brokenImages[item.id] === effectiveItem.imageUrl;
             const itemDocs = isLocalDraft ? [] : getDocumentsForResearch(researchDocuments, item.id);
+            const itemDocUrlSet = new Set(
+              itemDocs.map((d) => (d.cloudUrl || '').split('#')[0].toLowerCase()).filter(Boolean)
+            );
+            const optionalOlderDocs = !isLocalDraft
+              ? (optionalOlderDocsById[item.id] || []).filter(
+                  (d) => !itemDocUrlSet.has(d.url.split('#')[0].toLowerCase())
+                )
+              : [];
+            const linkOnlyDocsCount = itemDocs.filter(
+              (d) => !d.fileSize && Boolean(d.cloudUrl)
+            ).length;
+            const archivedDocsCount = itemDocs.length - linkOnlyDocsCount;
             const queuedDraftDocs = isLocalDraft
               ? (pendingDraftFoundDocs[item.id] || []).slice(0, 12)
               : [];
+            const allSavedDocsLinkOnly =
+              itemDocs.length > 0 &&
+              linkOnlyDocsCount === itemDocs.length &&
+              queuedDraftDocs.length === 0;
             const totalAttachmentCount =
               itemDocs.length + queuedDraftDocs.filter((d) => !d.excluded).length;
             const specEntries = parseSpecLines(item.specs);
@@ -6646,14 +7173,22 @@ export function ResearchesView({
                       title={
                         queuedDraftDocs.length > 0
                           ? `Allegati (${totalAttachmentCount} rilevati, pronti al salvataggio)`
-                          : `Allegati (${totalAttachmentCount})`
+                          : allSavedDocsLinkOnly
+                            ? `Allegati (${totalAttachmentCount}): salvati solo come link diretti esterni (non archiviati come file)`
+                            : linkOnlyDocsCount > 0
+                              ? `Allegati (${totalAttachmentCount}): ${archivedDocsCount} file archiviati e ${linkOnlyDocsCount} solo link diretti`
+                              : `Allegati (${totalAttachmentCount})`
                       }
                       className={`inline-flex items-center gap-1 px-1.5 py-1 sm:px-2 sm:py-1.5 text-[11px] rounded-lg border transition-colors whitespace-nowrap ${
-                        totalAttachmentCount > 0
+                        allSavedDocsLinkOnly
                           ? isAttachOpen
-                            ? 'font-semibold text-emerald-900 bg-emerald-100 border-emerald-400 dark:text-emerald-100 dark:bg-emerald-500/30 dark:border-emerald-400/80 shadow-sm shadow-emerald-500/20'
-                            : 'font-semibold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 border-emerald-300 dark:text-emerald-200 dark:hover:text-emerald-100 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30 dark:border-emerald-400/60'
-                          : 'font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 dark:text-slate-400 dark:hover:text-slate-200 dark:bg-slate-800/70 dark:hover:bg-slate-800 border-transparent'
+                            ? 'font-semibold text-amber-950 bg-amber-100 border-amber-400 dark:text-amber-100 dark:bg-amber-500/30 dark:border-amber-400/80 shadow-sm shadow-amber-500/15'
+                            : 'font-semibold text-amber-900 hover:text-amber-950 bg-amber-50 hover:bg-amber-100 border-amber-300 dark:text-amber-200 dark:hover:text-amber-100 dark:bg-amber-500/20 dark:hover:bg-amber-500/30 dark:border-amber-400/60'
+                          : totalAttachmentCount > 0
+                            ? isAttachOpen
+                              ? 'font-semibold text-emerald-900 bg-emerald-100 border-emerald-400 dark:text-emerald-100 dark:bg-emerald-500/30 dark:border-emerald-400/80 shadow-sm shadow-emerald-500/20'
+                              : 'font-semibold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 border-emerald-300 dark:text-emerald-200 dark:hover:text-emerald-100 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30 dark:border-emerald-400/60'
+                            : 'font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 dark:text-slate-400 dark:hover:text-slate-200 dark:bg-slate-800/70 dark:hover:bg-slate-800 border-transparent'
                       } ${
                         isAttachChanged
                           ? 'ring-2 ring-amber-400/80'
@@ -6662,13 +7197,35 @@ export function ResearchesView({
                             : ''
                       }`}
                     >
-                      <Paperclip
-                        className={`w-3 h-3 ${
-                          totalAttachmentCount > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
-                        }`}
-                      />
-                      <span className="sm:hidden tabular-nums">{totalAttachmentCount}</span>
-                      <span className="hidden sm:inline">Allegati ({totalAttachmentCount})</span>
+                      {allSavedDocsLinkOnly ? (
+                        <Link2 className="w-3 h-3 text-amber-700 dark:text-amber-300" />
+                      ) : (
+                        <Paperclip
+                          className={`w-3 h-3 ${
+                            totalAttachmentCount > 0
+                              ? 'text-emerald-600 dark:text-emerald-300'
+                              : 'text-slate-500 dark:text-slate-400'
+                          }`}
+                        />
+                      )}
+                      <span className="sm:hidden inline-flex items-center gap-0.5 tabular-nums">
+                        {totalAttachmentCount}
+                        {linkOnlyDocsCount > 0 && !allSavedDocsLinkOnly && (
+                          <Link2 className="w-2.5 h-2.5 text-amber-700 dark:text-amber-300" />
+                        )}
+                      </span>
+                      <span className="hidden sm:inline-flex items-center gap-1">
+                        <span>Allegati ({totalAttachmentCount})</span>
+                        {allSavedDocsLinkOnly ? (
+                          <span className="px-1 py-0 rounded bg-amber-200/80 text-amber-950 dark:bg-amber-400/25 dark:text-amber-100 text-[9px] font-bold">
+                            solo link
+                          </span>
+                        ) : linkOnlyDocsCount > 0 ? (
+                          <span className="px-1 py-0 rounded bg-amber-100 text-amber-900 dark:bg-amber-500/25 dark:text-amber-200 text-[9px] font-semibold">
+                            +{linkOnlyDocsCount} link
+                          </span>
+                        ) : null}
+                      </span>
                     </button>
                   )}
                   {inListFooter && !readOnly && (
@@ -7333,12 +7890,23 @@ export function ResearchesView({
                                   [item.id]: !isAttachOpen,
                                 }))
                               }
+                              title={
+                                allSavedDocsLinkOnly
+                                  ? `Allegati (${totalAttachmentCount}): salvati solo come link diretti esterni (non archiviati come file)`
+                                  : linkOnlyDocsCount > 0
+                                    ? `Allegati (${totalAttachmentCount}): ${archivedDocsCount} file archiviati e ${linkOnlyDocsCount} solo link diretti`
+                                    : `Allegati (${totalAttachmentCount})`
+                              }
                               className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] transition-colors ${
-                                totalAttachmentCount > 0
+                                allSavedDocsLinkOnly
                                   ? isAttachOpen
-                                    ? 'font-semibold text-emerald-900 bg-emerald-100 border-emerald-400 dark:text-emerald-100 dark:bg-emerald-500/30 dark:border-emerald-400/80'
-                                    : 'font-semibold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 border-emerald-300 dark:text-emerald-200 dark:hover:text-emerald-100 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30 dark:border-emerald-400/60'
-                                  : 'font-medium text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 border-transparent hover:bg-slate-100 dark:hover:bg-slate-800/70'
+                                    ? 'font-semibold text-amber-950 bg-amber-100 border-amber-400 dark:text-amber-100 dark:bg-amber-500/30 dark:border-amber-400/80'
+                                    : 'font-semibold text-amber-900 hover:text-amber-950 bg-amber-50 hover:bg-amber-100 border-amber-300 dark:text-amber-200 dark:hover:text-amber-100 dark:bg-amber-500/20 dark:hover:bg-amber-500/30 dark:border-amber-400/60'
+                                  : totalAttachmentCount > 0
+                                    ? isAttachOpen
+                                      ? 'font-semibold text-emerald-900 bg-emerald-100 border-emerald-400 dark:text-emerald-100 dark:bg-emerald-500/30 dark:border-emerald-400/80'
+                                      : 'font-semibold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 border-emerald-300 dark:text-emerald-200 dark:hover:text-emerald-100 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30 dark:border-emerald-400/60'
+                                    : 'font-medium text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 border-transparent hover:bg-slate-100 dark:hover:bg-slate-800/70'
                               } ${
                                 isAttachChanged
                                   ? 'ring-2 ring-amber-400/80'
@@ -7347,22 +7915,45 @@ export function ResearchesView({
                                     : ''
                               }`}
                             >
-                              <Paperclip
-                                className={`w-3.5 h-3.5 ${
-                                  totalAttachmentCount > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
-                                }`}
-                              />
+                              {allSavedDocsLinkOnly ? (
+                                <Link2 className="w-3.5 h-3.5 text-amber-700 dark:text-amber-300" />
+                              ) : (
+                                <Paperclip
+                                  className={`w-3.5 h-3.5 ${
+                                    totalAttachmentCount > 0
+                                      ? 'text-emerald-600 dark:text-emerald-300'
+                                      : 'text-slate-500 dark:text-slate-400'
+                                  }`}
+                                />
+                              )}
                               <span>Allegati ({totalAttachmentCount})</span>
+                              {allSavedDocsLinkOnly ? (
+                                <span className="px-1 py-0 rounded bg-amber-200/80 text-amber-950 dark:bg-amber-400/25 dark:text-amber-100 text-[9px] font-bold">
+                                  solo link
+                                </span>
+                              ) : linkOnlyDocsCount > 0 ? (
+                                <span className="px-1 py-0 rounded bg-amber-100 text-amber-900 dark:bg-amber-500/25 dark:text-amber-200 text-[9px] font-semibold">
+                                  +{linkOnlyDocsCount} link
+                                </span>
+                              ) : null}
                               {isAttachOpen ? (
                                 <ChevronUp
                                   className={`w-3 h-3 ${
-                                    totalAttachmentCount > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
+                                    allSavedDocsLinkOnly
+                                      ? 'text-amber-700 dark:text-amber-300'
+                                      : totalAttachmentCount > 0
+                                        ? 'text-emerald-600 dark:text-emerald-300'
+                                        : 'text-slate-500 dark:text-slate-400'
                                   }`}
                                 />
                               ) : (
                                 <ChevronDown
                                   className={`w-3 h-3 ${
-                                    totalAttachmentCount > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
+                                    allSavedDocsLinkOnly
+                                      ? 'text-amber-700 dark:text-amber-300'
+                                      : totalAttachmentCount > 0
+                                        ? 'text-emerald-600 dark:text-emerald-300'
+                                        : 'text-slate-500 dark:text-slate-400'
                                   }`}
                                 />
                               )}
@@ -7644,202 +8235,403 @@ export function ResearchesView({
                           );
                         })()}
 
-                        {isAttachOpen && itemDocs.length > 0 && (
-                          <div className={isList ? 'grid grid-cols-1 md:grid-cols-2 gap-1.5' : 'space-y-1.5'}>
-                            {itemDocs.map((docItem) => {
-                                const parsedRef = parseResearchDocumentRef(docItem.referenceCode);
-                                const savedDocType = parsedRef?.docType || 'altro';
-                                const effectiveDocType =
-                                  pendingCardEdits[item.id]?.docTypes?.[docItem.id] ?? savedDocType;
-                                const docMeta = getAttachmentTypeMeta(effectiveDocType);
-                                const isImg = docItem.fileMime?.startsWith('image/');
-                                const isLinkOnlyDoc = !docItem.fileSize && Boolean(docItem.cloudUrl);
-                                const openTabHref = isLinkOnlyDoc
-                                  ? docItem.cloudUrl
-                                  : vaultDocUrls[docItem.id];
-                                const cardDocDisplayTitle = (() => {
-                                  const rawTitle = (docItem.title || '').trim();
-                                  const prodLow = effectiveItem.title.trim().toLowerCase();
-                                  const sepIdx = rawTitle.lastIndexOf(' · ');
-                                  if (sepIdx > 0 && prodLow) {
-                                    const left = rawTitle.slice(0, sepIdx).trim();
-                                    const right = rawTitle.slice(sepIdx + 3).trim().toLowerCase();
-                                    if (right && prodLow.startsWith(right)) {
-                                      return left;
-                                    }
-                                    if (left && prodLow.startsWith(left.toLowerCase())) {
-                                      return docItem.fileName || rawTitle.slice(sepIdx + 3).trim() || rawTitle;
-                                    }
-                                  }
-                                  return rawTitle || docItem.fileName || 'Allegato';
-                                })();
-                                return (
-                                  <div
-                                    key={docItem.id}
-                                    className="flex items-center justify-between gap-2 bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-md px-2 py-1.5 text-[11px]"
-                                  >
-                                    <div className="min-w-0 flex items-center gap-1.5">
-                                      {isImg ? (
-                                        <ImageIcon className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-300 shrink-0" />
-                                      ) : isLinkOnlyDoc ? (
-                                        <Link2 className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
-                                      ) : (
-                                        <FileText className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
-                                      )}
-                                      <div className="min-w-0">
-                                        {openTabHref ? (
-                                          <a
-                                            href={openTabHref}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="block text-slate-800 hover:text-sky-600 dark:text-slate-200 dark:hover:text-sky-300 font-medium truncate transition-colors"
-                                            title={`Apri in nuova scheda: ${docItem.title || docItem.fileName}`}
-                                          >
-                                            {cardDocDisplayTitle}
-                                          </a>
-                                        ) : (
-                                          <button
-                                            type="button"
-                                            disabled={openingDocId === docItem.id}
-                                            onClick={() => void handleOpenDocInNewTab(docItem)}
-                                            className="block w-full text-left text-slate-800 hover:text-sky-600 dark:text-slate-200 dark:hover:text-sky-300 font-medium truncate transition-colors disabled:opacity-50"
-                                            title={`Apri in nuova scheda: ${docItem.title || docItem.fileName}`}
-                                          >
-                                            {cardDocDisplayTitle}
-                                          </button>
-                                        )}
-                                        <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
-                                          {!readOnly && onUpdateResearchDocumentType ? (
-                                            <select
-                                              value={effectiveDocType}
+                        {isAttachOpen && (itemDocs.length > 0 || optionalOlderDocs.length > 0) && (
+                          <div className="space-y-2">
+                            {itemDocs.length > 0 && (
+                              <div className={isList ? 'grid grid-cols-1 md:grid-cols-2 gap-1.5' : 'space-y-1.5'}>
+                                {itemDocs.map((docItem) => {
+                                    const parsedRef = parseResearchDocumentRef(docItem.referenceCode);
+                                    const savedDocType = parsedRef?.docType || 'altro';
+                                    const effectiveDocType =
+                                      pendingCardEdits[item.id]?.docTypes?.[docItem.id] ?? savedDocType;
+                                    const docMeta = getAttachmentTypeMeta(effectiveDocType);
+                                    const isImg = docItem.fileMime?.startsWith('image/');
+                                    const isLinkOnlyDoc = !docItem.fileSize && Boolean(docItem.cloudUrl);
+                                    const isRetryingHere = retryingDocId === docItem.id;
+                                    const docNormUrl = (docItem.cloudUrl || '').split('#')[0].toLowerCase();
+                                    const isTogglingHere =
+                                      Boolean(docNormUrl) &&
+                                      attachingOptionalDocUrl?.split('#')[0].toLowerCase() === docNormUrl;
+                                    const isWasOlderDoc =
+                                      Boolean(docNormUrl) && knownOlderDocUrlsRef.current.has(docNormUrl);
+                                    const openTabHref = isLinkOnlyDoc
+                                      ? docItem.cloudUrl
+                                      : vaultDocUrls[docItem.id];
+                                    const notesLow = (docItem.notes || '').toLowerCase();
+                                    const linkReasonShort = notesLow.includes('> 6') || notesLow.includes('troppo grande')
+                                      ? 'File > 6 MB (limite archivio)'
+                                      : notesLow.includes('bloccato')
+                                        ? 'Download bloccato dal sito'
+                                        : notesLow.includes('pagina web')
+                                          ? 'Pagina web esterna'
+                                          : 'Solo link esterno · file non archiviato';
+                                    const cardDocDisplayTitle = (() => {
+                                      const rawTitle = (docItem.title || '').trim();
+                                      const prodLow = effectiveItem.title.trim().toLowerCase();
+                                      const sepIdx = rawTitle.lastIndexOf(' · ');
+                                      if (sepIdx > 0 && prodLow) {
+                                        const left = rawTitle.slice(0, sepIdx).trim();
+                                        const right = rawTitle.slice(sepIdx + 3).trim().toLowerCase();
+                                        if (right && prodLow.startsWith(right)) {
+                                          return left;
+                                        }
+                                        if (left && prodLow.startsWith(left.toLowerCase())) {
+                                          return docItem.fileName || rawTitle.slice(sepIdx + 3).trim() || rawTitle;
+                                        }
+                                      }
+                                      return rawTitle || docItem.fileName || 'Allegato';
+                                    })();
+                                    return (
+                                      <div
+                                        key={docItem.id}
+                                        className={`flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-[11px] border ${
+                                          isLinkOnlyDoc || isWasOlderDoc
+                                            ? 'bg-amber-50/70 dark:bg-amber-950/25 border-amber-300/80 dark:border-amber-500/40'
+                                            : 'bg-slate-50 dark:bg-slate-950/70 border-slate-200 dark:border-slate-800'
+                                        }`}
+                                      >
+                                        <div className="min-w-0 flex items-center gap-1.5">
+                                          {!readOnly && (
+                                            <button
+                                              type="button"
                                               disabled={
-                                                isSavingPendingHere ||
-                                                (savingEdit && pendingEditSave?.item.id === item.id)
+                                                deletingDocId === docItem.id ||
+                                                isTogglingHere ||
+                                                isRetryingHere
                                               }
-                                              title="Modifica tipo allegato"
-                                              aria-label={`Modifica tipo per ${cardDocDisplayTitle}`}
-                                              onChange={(e) =>
-                                                handleQuickDocTypeChange(
-                                                  item,
-                                                  docItem,
-                                                  e.target.value as ArticleAttachmentType
-                                                )
+                                              onClick={() => void handleUncheckSavedDoc(item, docItem)}
+                                              aria-label={`Escludi allegato ${cardDocDisplayTitle}`}
+                                              aria-pressed={true}
+                                              title={
+                                                docItem.cloudUrl
+                                                  ? 'Spuntato · clicca la casella per escludere questo allegato'
+                                                  : 'Rimuovi allegato locale'
                                               }
-                                              className={`px-1.5 py-0.5 rounded border text-[10px] font-medium cursor-pointer focus:outline-none focus:ring-1 focus:ring-sky-500/60 disabled:opacity-50 dark:[color-scheme:dark] ${docMeta.badgeClass}`}
+                                              className={`inline-flex items-center justify-center w-4 h-4 rounded border shrink-0 transition-colors cursor-pointer disabled:opacity-50 ${
+                                                isLinkOnlyDoc || isWasOlderDoc
+                                                  ? 'border-amber-600 bg-amber-600 text-white hover:bg-amber-700 dark:border-amber-400 dark:bg-amber-400 dark:text-slate-950'
+                                                  : 'border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 dark:border-emerald-400 dark:bg-emerald-400 dark:text-slate-950'
+                                              }`}
                                             >
-                                              {ATTACHMENT_TYPE_OPTIONS.map((opt) => (
-                                                <option
-                                                  key={opt.value}
-                                                  value={opt.value}
-                                                  className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100"
-                                                >
-                                                  {opt.label}
-                                                </option>
-                                              ))}
-                                            </select>
-                                          ) : (
-                                            <span
-                                              className={`px-1.5 py-0.5 rounded border ${docMeta.badgeClass}`}
-                                            >
-                                              {docMeta.label}
-                                            </span>
+                                              {isTogglingHere ? (
+                                                <Loader2 className="w-3 h-3 animate-spin" />
+                                              ) : (
+                                                <Check className="w-3 h-3" />
+                                              )}
+                                            </button>
                                           )}
-                                          {docItem.fileSize ? (
-                                            <span>{formatFileSize(docItem.fileSize)}</span>
+                                          {isImg ? (
+                                            <ImageIcon className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-300 shrink-0" />
                                           ) : isLinkOnlyDoc ? (
-                                            <span
-                                              className="text-sky-700 dark:text-sky-300/90"
-                                              title="Il sito di origine ha bloccato il download automatico: puoi caricare il file manualmente nell'archivio"
+                                            <Link2 className="w-3.5 h-3.5 text-amber-700 dark:text-amber-300 shrink-0" />
+                                          ) : (
+                                            <FileText className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
+                                          )}
+                                          <div className="min-w-0">
+                                            {openTabHref ? (
+                                              <a
+                                                href={openTabHref}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="block text-slate-800 hover:text-sky-600 dark:text-slate-200 dark:hover:text-sky-300 font-medium truncate transition-colors"
+                                                title={`Apri in nuova scheda: ${docItem.title || docItem.fileName}`}
+                                              >
+                                                {cardDocDisplayTitle}
+                                              </a>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                disabled={openingDocId === docItem.id}
+                                                onClick={() => void handleOpenDocInNewTab(docItem)}
+                                                className="block w-full text-left text-slate-800 hover:text-sky-600 dark:text-slate-200 dark:hover:text-sky-300 font-medium truncate transition-colors disabled:opacity-50"
+                                                title={`Apri in nuova scheda: ${docItem.title || docItem.fileName}`}
+                                              >
+                                                {cardDocDisplayTitle}
+                                              </button>
+                                            )}
+                                            <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                                              {!readOnly && onUpdateResearchDocumentType ? (
+                                                <select
+                                                  value={effectiveDocType}
+                                                  disabled={
+                                                    isSavingPendingHere ||
+                                                    (savingEdit && pendingEditSave?.item.id === item.id)
+                                                  }
+                                                  title="Modifica tipo allegato"
+                                                  aria-label={`Modifica tipo per ${cardDocDisplayTitle}`}
+                                                  onChange={(e) =>
+                                                    handleQuickDocTypeChange(
+                                                      item,
+                                                      docItem,
+                                                      e.target.value as ArticleAttachmentType
+                                                    )
+                                                  }
+                                                  className={`px-1.5 py-0.5 rounded border text-[10px] font-medium cursor-pointer focus:outline-none focus:ring-1 focus:ring-sky-500/60 disabled:opacity-50 dark:[color-scheme:dark] ${docMeta.badgeClass}`}
+                                                >
+                                                  {ATTACHMENT_TYPE_OPTIONS.map((opt) => (
+                                                    <option
+                                                      key={opt.value}
+                                                      value={opt.value}
+                                                      className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100"
+                                                    >
+                                                      {opt.label}
+                                                    </option>
+                                                  ))}
+                                                </select>
+                                              ) : (
+                                                <span
+                                                  className={`px-1.5 py-0.5 rounded border ${docMeta.badgeClass}`}
+                                                >
+                                                  {docMeta.label}
+                                                </span>
+                                              )}
+                                              {docItem.fileSize ? (
+                                                <span>{formatFileSize(docItem.fileSize)}</span>
+                                              ) : isLinkOnlyDoc ? (
+                                                <span
+                                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100/90 border border-amber-300/80 text-amber-900 dark:bg-amber-500/20 dark:border-amber-400/50 dark:text-amber-200 font-medium"
+                                                  title={
+                                                    docItem.notes ||
+                                                    'Solo link diretto esterno: file non archiviato in locale/Firestore (es. > 6 MB o download bloccato). Puoi comunque caricare un file manualmente.'
+                                                  }
+                                                >
+                                                  {linkReasonShort}
+                                                </span>
+                                              ) : null}
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        <div className="flex items-center gap-1 shrink-0">
+                                          {openTabHref ? (
+                                            <a
+                                              href={openTabHref}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              title="Apri in nuova scheda"
+                                              className="p-1 text-sky-600 hover:bg-slate-200/70 dark:text-sky-300 dark:hover:bg-slate-800 rounded transition-colors"
                                             >
-                                              Link diretto
-                                            </span>
-                                          ) : null}
+                                              <ExternalLink className="w-3.5 h-3.5" />
+                                            </a>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              disabled={openingDocId === docItem.id}
+                                              onClick={() => void handleOpenDocInNewTab(docItem)}
+                                              title="Apri in nuova scheda"
+                                              className="p-1 text-sky-600 hover:bg-slate-200/70 dark:text-sky-300 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                                            >
+                                              {openingDocId === docItem.id ? (
+                                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                              ) : (
+                                                <ExternalLink className="w-3.5 h-3.5" />
+                                              )}
+                                            </button>
+                                          )}
+                                          {isLinkOnlyDoc && !readOnly && (
+                                            <>
+                                              <button
+                                                type="button"
+                                                disabled={isRetryingHere || isUploadingHere}
+                                                onClick={() =>
+                                                  void handleRetryLinkOnlyDocDownload(item, docItem)
+                                                }
+                                                title="Riprova a scaricare e archiviare il PDF dal sito (o da Wayback Machine)"
+                                                className="p-1 text-amber-700 hover:bg-amber-100/80 dark:text-amber-300 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                                              >
+                                                {isRetryingHere ? (
+                                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                ) : (
+                                                  <RefreshCw className="w-3.5 h-3.5" />
+                                                )}
+                                              </button>
+                                              <button
+                                                type="button"
+                                                disabled={isUploadingHere || isRetryingHere}
+                                                onClick={() =>
+                                                  triggerCardFileUpload(
+                                                    item,
+                                                    parsedRef?.docType || 'manuale',
+                                                    docItem
+                                                  )
+                                                }
+                                                title="Salva file nell'archivio (<= 6 MB) al posto del link diretto"
+                                                className="p-1 text-indigo-600 hover:bg-slate-200/70 dark:text-indigo-300 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                                              >
+                                                {isUploadingHere ? (
+                                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                ) : (
+                                                  <Upload className="w-3.5 h-3.5" />
+                                                )}
+                                              </button>
+                                            </>
+                                          )}
+                                          {!isLinkOnlyDoc && (
+                                            <button
+                                              type="button"
+                                              disabled={downloadingDocId === docItem.id}
+                                              onClick={() => void handleDownloadDoc(docItem)}
+                                              title="Scarica allegato"
+                                              className="p-1 text-emerald-600 hover:bg-slate-200/70 dark:text-emerald-300 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                                            >
+                                              {downloadingDocId === docItem.id ? (
+                                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                              ) : (
+                                                <Download className="w-3.5 h-3.5" />
+                                              )}
+                                            </button>
+                                          )}
+                                          {!readOnly && (
+                                            <button
+                                              type="button"
+                                              disabled={deletingDocId === docItem.id || isRetryingHere}
+                                              onClick={() =>
+                                                setPendingDeleteDoc({
+                                                  doc: docItem,
+                                                  productTitle: effectiveItem.title,
+                                                })
+                                              }
+                                              title="Rimuovi allegato"
+                                              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-slate-200/70 dark:text-slate-500 dark:hover:text-rose-400 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                          )}
                                         </div>
                                       </div>
-                                    </div>
+                                    );
+                                  })}
+                              </div>
+                            )}
 
-                                    <div className="flex items-center gap-1 shrink-0">
-                                      {openTabHref ? (
-                                        <a
-                                          href={openTabHref}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          title="Apri in nuova scheda"
-                                          className="p-1 text-sky-600 hover:bg-slate-200/70 dark:text-sky-300 dark:hover:bg-slate-800 rounded transition-colors"
-                                        >
-                                          <ExternalLink className="w-3.5 h-3.5" />
-                                        </a>
-                                      ) : (
-                                        <button
-                                          type="button"
-                                          disabled={openingDocId === docItem.id}
-                                          onClick={() => void handleOpenDocInNewTab(docItem)}
-                                          title="Apri in nuova scheda"
-                                          className="p-1 text-sky-600 hover:bg-slate-200/70 dark:text-sky-300 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
-                                        >
-                                          {openingDocId === docItem.id ? (
-                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                          ) : (
-                                            <ExternalLink className="w-3.5 h-3.5" />
-                                          )}
-                                        </button>
-                                      )}
-                                      {isLinkOnlyDoc && !readOnly && (
-                                        <button
-                                          type="button"
-                                          disabled={isUploadingHere}
-                                          onClick={() =>
-                                            triggerCardFileUpload(
-                                              item,
-                                              parsedRef?.docType || 'manuale',
-                                              docItem
-                                            )
-                                          }
-                                          title="Salva file nell'archivio al posto del link diretto"
-                                          className="p-1 text-indigo-600 hover:bg-slate-200/70 dark:text-indigo-300 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
-                                        >
-                                          {isUploadingHere ? (
-                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                          ) : (
-                                            <Upload className="w-3.5 h-3.5" />
-                                          )}
-                                        </button>
-                                      )}
-                                      {!isLinkOnlyDoc && (
-                                        <button
-                                          type="button"
-                                          disabled={downloadingDocId === docItem.id}
-                                          onClick={() => void handleDownloadDoc(docItem)}
-                                          title="Scarica allegato"
-                                          className="p-1 text-emerald-600 hover:bg-slate-200/70 dark:text-emerald-300 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
-                                        >
-                                          {downloadingDocId === docItem.id ? (
-                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                          ) : (
-                                            <Download className="w-3.5 h-3.5" />
-                                          )}
-                                        </button>
-                                      )}
-                                      {!readOnly && (
-                                        <button
-                                          type="button"
-                                          disabled={deletingDocId === docItem.id}
-                                          onClick={() =>
-                                            setPendingDeleteDoc({
-                                              doc: docItem,
-                                              productTitle: effectiveItem.title,
-                                            })
-                                          }
-                                          title="Rimuovi allegato"
-                                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-slate-200/70 dark:text-slate-500 dark:hover:text-rose-400 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
-                                        >
-                                          <Trash2 className="w-3.5 h-3.5" />
-                                        </button>
-                                      )}
-                                    </div>
+                            {optionalOlderDocs.length > 0 && !readOnly && (() => {
+                              const hasOlder = optionalOlderDocs.some((d) => Boolean(d.isOlderVersion));
+                              const hasNormalExcluded = optionalOlderDocs.some((d) => !d.isOlderVersion);
+                              const excludedHeading =
+                                hasOlder && hasNormalExcluded
+                                  ? `Allegati esclusi / versioni vecchie (${optionalOlderDocs.length}) · spunta per includere:`
+                                  : hasOlder
+                                    ? `Versioni vecchie ignorate di default (${optionalOlderDocs.length}) · spunta per includere:`
+                                    : `Allegati esclusi (${optionalOlderDocs.length}) · spunta per reincludere:`;
+                              return (
+                                <div className="space-y-1.5 pt-1 border-t border-dashed border-amber-300/70 dark:border-amber-500/35">
+                                  <div className="text-[10px] font-medium text-amber-800 dark:text-amber-300 px-0.5">
+                                    {excludedHeading}
                                   </div>
-                                );
-                              })}
+                                  <div className={isList ? 'grid grid-cols-1 md:grid-cols-2 gap-1.5' : 'space-y-1.5'}>
+                                    {optionalOlderDocs.map((olderDoc) => {
+                                      const mappedDocType: ArticleAttachmentType =
+                                        olderDoc.kind === 'certificato' ? 'garanzia_extra_family' : 'manuale';
+                                      const docMeta = getAttachmentTypeMeta(mappedDocType);
+                                      const isOlder = Boolean(olderDoc.isOlderVersion);
+                                      const isAttachingOlder = attachingOptionalDocUrl === olderDoc.url;
+                                      const attachExcludedDoc = async () => {
+                                        if (attachingOptionalDocUrl) return;
+                                        if (isOlder) {
+                                          knownOlderDocUrlsRef.current.add(
+                                            olderDoc.url.split('#')[0].toLowerCase()
+                                          );
+                                        }
+                                        setAttachingOptionalDocUrl(olderDoc.url);
+                                        try {
+                                          await autoAttachInspectedDocuments(
+                                            item.id,
+                                            effectiveItem.title,
+                                            effectiveItem.brand || effectiveItem.store,
+                                            [{ ...olderDoc, excluded: false }],
+                                            { upgradeLinkOnly: true }
+                                          );
+                                          setOptionalOlderDocsById((prev) => {
+                                            const curr = prev[item.id] || [];
+                                            const next = curr.filter((d) => d.url !== olderDoc.url);
+                                            if (next.length === 0) {
+                                              const copy = { ...prev };
+                                              delete copy[item.id];
+                                              return copy;
+                                            }
+                                            return { ...prev, [item.id]: next };
+                                          });
+                                        } finally {
+                                          setAttachingOptionalDocUrl(null);
+                                        }
+                                      };
+                                      return (
+                                        <div
+                                          key={olderDoc.url}
+                                          role="button"
+                                          tabIndex={0}
+                                          aria-pressed={false}
+                                          onClick={() => void attachExcludedDoc()}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                              e.preventDefault();
+                                              void attachExcludedDoc();
+                                            }
+                                          }}
+                                          title={
+                                            isOlder
+                                              ? 'Versione precedente ignorata — clicca per includerla e scaricarla'
+                                              : 'File escluso — clicca per reincluderlo e scaricarlo'
+                                          }
+                                          className={`flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-[11px] border border-dashed transition-all select-none cursor-pointer ${
+                                            attachingOptionalDocUrl ? 'opacity-60 pointer-events-none' : 'opacity-85 hover:opacity-100'
+                                          } ${
+                                            isOlder
+                                              ? 'bg-amber-50/40 hover:bg-amber-100/60 dark:bg-amber-950/15 dark:hover:bg-amber-950/35 border-amber-300/80 dark:border-amber-500/40'
+                                              : 'bg-slate-100/70 hover:bg-slate-200/60 dark:bg-slate-900/60 dark:hover:bg-slate-800/70 border-slate-300 dark:border-slate-700'
+                                          }`}
+                                        >
+                                          <div className="min-w-0 flex items-center gap-2">
+                                            <span
+                                              className={`inline-flex items-center justify-center w-4 h-4 rounded border shrink-0 transition-colors ${
+                                                isOlder
+                                                  ? 'border-amber-400 dark:border-amber-500/70 bg-white/80 dark:bg-slate-950/40'
+                                                  : 'border-slate-400 dark:border-slate-600 bg-white/80 dark:bg-slate-950/40'
+                                              }`}
+                                            >
+                                              {isAttachingOlder && (
+                                                <Loader2 className="w-3 h-3 animate-spin text-amber-600 dark:text-amber-300" />
+                                              )}
+                                            </span>
+                                            <div className="min-w-0">
+                                              <div className="truncate text-slate-500 dark:text-slate-400 line-through">
+                                                {olderDoc.title}
+                                              </div>
+                                              <div className="flex flex-wrap items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                                                <span className={`px-1.5 py-0.5 rounded border ${docMeta.badgeClass}`}>
+                                                  {docMeta.label}
+                                                </span>
+                                                <span
+                                                  className={`px-1.5 py-0.5 rounded font-medium ${
+                                                    isOlder
+                                                      ? 'bg-amber-100 text-amber-800 border border-amber-300/80 dark:bg-amber-500/20 dark:text-amber-200 dark:border-amber-500/40'
+                                                      : 'bg-slate-200/80 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                                                  }`}
+                                                >
+                                                  {isOlder ? 'Versione vecchia · ignorata' : 'Escluso · clicca per includere'}
+                                                </span>
+                                              </div>
+                                            </div>
+                                          </div>
+                                          <div className="flex items-center gap-1 shrink-0">
+                                            <a
+                                              href={olderDoc.url}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              onClick={(e) => e.stopPropagation()}
+                                              title="Apri anteprima originale in nuova scheda"
+                                              className="p-1 text-sky-600 hover:bg-sky-100/80 dark:text-sky-300 dark:hover:bg-slate-800 rounded transition-colors"
+                                            >
+                                              <ExternalLink className="w-3.5 h-3.5" />
+                                            </a>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </div>
                         )}
                       </div>

@@ -9,6 +9,7 @@ import {
 import {
   auth,
   db,
+  directWriteBatch,
   enqueueSimulatedVaultDelete,
   enqueueSimulatedVaultUpload,
   guardedWriteBatch as writeBatch,
@@ -367,7 +368,8 @@ async function uploadVaultBlobToFirestore(
   cleanKey: string,
   safeFileName: string,
   safeMime: string,
-  uid: string
+  uid: string,
+  useDirectBatch = false
 ): Promise<StoredVaultFile> {
   try {
     const base64 = await blobToBase64(file);
@@ -396,10 +398,11 @@ async function uploadVaultBlobToFirestore(
     }
 
     // Write chunks in <= 4-op batches (~2.4 MB base64 max per commit)
+    const batchFactory = useDirectBatch ? directWriteBatch : writeBatch;
     const CHUNKS_PER_BATCH = 4;
     for (let start = 0; start < chunks.length; start += CHUNKS_PER_BATCH) {
       const slice = chunks.slice(start, start + CHUNKS_PER_BATCH);
-      const batch = writeBatch(db);
+      const batch = batchFactory(db);
       slice.forEach((chunkData, offset) => {
         const idx = start + offset;
         const chunkId = `${cleanKey}_chunk_${idx}`;
@@ -415,7 +418,7 @@ async function uploadVaultBlobToFirestore(
     }
 
     // Finalize metadata doc + clean any shrinking surplus chunks
-    const finalBatch = writeBatch(db);
+    const finalBatch = batchFactory(db);
     finalBatch.set(metaRef, {
       ownerId: uid,
       fileKey: cleanKey,
@@ -502,7 +505,8 @@ export async function replayVaultUploadToFirestore(params: {
     cleanKey,
     params.fileName || localRec.fileName,
     params.mimeType || localRec.mimeType,
-    uid
+    uid,
+    true
   );
 }
 
@@ -686,11 +690,16 @@ export async function deleteVaultFiles(keys: string[], ownerUid?: string): Promi
   await deleteVaultKeysFromFirestore(cleanKeys, uid);
 }
 
-async function deleteVaultKeysFromFirestore(cleanKeys: string[], uid: string): Promise<void> {
+async function deleteVaultKeysFromFirestore(
+  cleanKeys: string[],
+  uid: string,
+  useDirectBatch = false
+): Promise<void> {
   const keysPerBatch = 23;
+  const batchFactory = useDirectBatch ? directWriteBatch : writeBatch;
   try {
     for (let start = 0; start < cleanKeys.length; start += keysPerBatch) {
-      const batch = writeBatch(db);
+      const batch = batchFactory(db);
       for (const key of cleanKeys.slice(start, start + keysPerBatch)) {
         batch.delete(doc(db, `users/${uid}/vaultFiles`, key));
         for (let index = 0; index < 16; index++) {
@@ -724,7 +733,7 @@ export async function replayVaultDeleteToFirestore(params: {
   if (!uid) {
     throw new Error('Autenticazione richiesta per sincronizzare le eliminazioni vault.');
   }
-  await deleteVaultKeysFromFirestore(cleanKeys, uid);
+  await deleteVaultKeysFromFirestore(cleanKeys, uid, true);
 }
 
 export async function listVaultFileMetadata(

@@ -1631,10 +1631,6 @@ export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult
     return { total: 0, flushed: 0, failed: 0, docWrites: 0, batchCommits: 0, at: Date.now() };
   }
 
-  if (firestoreWriteStats.writesDisabled) {
-    return { total: snapshot.length, flushed: 0, failed: 0, docWrites: 0, batchCommits: 0, at: Date.now() };
-  }
-
   if (!auth.currentUser) {
     const res: SimulatedFlushResult = {
       total: snapshot.length,
@@ -2279,6 +2275,41 @@ export function guardedWriteBatch(firestore: Firestore): ReturnType<typeof rawWr
     }
     await raceWithFirestoreQuotaAbort(origCommit());
     recordFirestoreWritesExecuted(opCount, `batch (${opCount} op)`, { deletes: deleteCount });
+  };
+
+  return batch;
+}
+
+export function directWriteBatch(firestore: Firestore): ReturnType<typeof rawWriteBatch> {
+  const batch = rawWriteBatch(firestore);
+  let opCount = 0;
+  let deleteCount = 0;
+
+  const origSet = batch.set.bind(batch);
+  const origUpdate = batch.update.bind(batch);
+  const origDelete = batch.delete.bind(batch);
+  const origCommit = batch.commit.bind(batch);
+
+  batch.set = ((...args: unknown[]) => {
+    opCount += 1;
+    return (origSet as (...inner: unknown[]) => ReturnType<typeof batch.set>)(...args);
+  }) as typeof batch.set;
+
+  batch.update = ((...args: unknown[]) => {
+    opCount += 1;
+    return (origUpdate as (...inner: unknown[]) => ReturnType<typeof batch.update>)(...args);
+  }) as typeof batch.update;
+
+  batch.delete = ((...args: unknown[]) => {
+    opCount += 1;
+    deleteCount += 1;
+    return (origDelete as (...inner: unknown[]) => ReturnType<typeof batch.delete>)(...args);
+  }) as typeof batch.delete;
+
+  batch.commit = async () => {
+    if (opCount === 0) return;
+    await raceWithFirestoreQuotaAbort(origCommit());
+    recordFirestoreWritesExecuted(opCount, `sync blocco (${opCount} op)`, { deletes: deleteCount });
   };
 
   return batch;
