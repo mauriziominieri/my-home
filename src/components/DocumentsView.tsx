@@ -44,6 +44,7 @@ import {
   TariBillRecord,
   WaterBillRecord,
 } from '../types/home';
+import { resolveApiUrl } from '../utils/apiBase';
 import {
   buildDocumentSharePayload,
   buildElectricityBillSharePayload,
@@ -1031,19 +1032,22 @@ export function DocumentsView({
           }
 
           // 2) Server-side smart classifier (AI Gemini con fallback deterministico + abbinamento prodotti)
-          const response = await fetch('/api/documents/classify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              fileName: file.name,
-              mimeType: file.type || (pdfFile ? 'application/pdf' : 'application/octet-stream'),
-              textContent: extractedText.slice(0, 18_000),
-              imageBase64: imageBase64 || undefined,
-              products: productsPayload,
-            }),
-          });
+          const classifyApiUrl = resolveApiUrl('/api/documents/classify');
+          const response = classifyApiUrl
+            ? await fetch(classifyApiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  fileName: file.name,
+                  mimeType: file.type || (pdfFile ? 'application/pdf' : 'application/octet-stream'),
+                  textContent: extractedText.slice(0, 18_000),
+                  imageBase64: imageBase64 || undefined,
+                  products: productsPayload,
+                }),
+              })
+            : null;
 
-          const classification: ClassifyApiResponse = response.ok
+          const classification: ClassifyApiResponse = response?.ok
             ? ((await response.json()) as ClassifyApiResponse)
             : {
                 target: 'document',
@@ -1215,12 +1219,15 @@ export function DocumentsView({
     try {
       // 1) Try binary download first (e.g. direct PDF / datasheet / ZIP / image link)
       let downloadedFile: File | null = null;
+      const fetchDocApiUrl = resolveApiUrl('/api/researches/fetch-document');
       try {
-        const dlResp = await fetch('/api/researches/fetch-document', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: cleanUrl }),
-        });
+        const dlResp = fetchDocApiUrl
+          ? await fetch(fetchDocApiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: cleanUrl }),
+            })
+          : await fetch(cleanUrl, { method: 'GET', mode: 'cors' });
         const dlCt = (dlResp.headers.get('content-type') || '').toLowerCase();
         if (dlResp.ok && !dlCt.includes('application/json') && !dlCt.includes('text/html')) {
           const blob = await dlResp.blob();
@@ -1305,19 +1312,22 @@ export function DocumentsView({
           }
         }
 
-        const clsResp = await fetch('/api/documents/classify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fileName: downloadedFile.name,
-            mimeType: downloadedFile.type || (pdfFile ? 'application/pdf' : 'application/octet-stream'),
-            textContent: extractedText.slice(0, 18_000),
-            imageBase64: imageBase64 || undefined,
-            cloudUrl: cleanUrl,
-            products: productsPayload,
-          }),
-        });
-        const classification: ClassifyApiResponse = clsResp.ok
+        const classifyApiUrl = resolveApiUrl('/api/documents/classify');
+        const clsResp = classifyApiUrl
+          ? await fetch(classifyApiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                fileName: downloadedFile.name,
+                mimeType: downloadedFile.type || (pdfFile ? 'application/pdf' : 'application/octet-stream'),
+                textContent: extractedText.slice(0, 18_000),
+                imageBase64: imageBase64 || undefined,
+                cloudUrl: cleanUrl,
+                products: productsPayload,
+              }),
+            })
+          : null;
+        const classification: ClassifyApiResponse = clsResp?.ok
           ? ((await clsResp.json()) as ClassifyApiResponse)
           : {
               target: 'document',
@@ -1406,26 +1416,29 @@ export function DocumentsView({
       let inspectedSite = '';
       let inspectedDesc = '';
       let inspectedSnippet = '';
-      try {
-        const inspectResp = await fetch('/api/documents/inspect-link', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: cleanUrl }),
-        });
-        if (inspectResp.ok) {
-          const meta = (await inspectResp.json()) as {
-            title?: string;
-            siteName?: string;
-            description?: string;
-            textSnippet?: string;
-          };
-          inspectedTitle = (meta.title || '').trim();
-          inspectedSite = (meta.siteName || '').trim();
-          inspectedDesc = (meta.description || '').trim();
-          inspectedSnippet = (meta.textSnippet || '').trim();
+      const inspectLinkApiUrl = resolveApiUrl('/api/documents/inspect-link');
+      if (inspectLinkApiUrl) {
+        try {
+          const inspectResp = await fetch(inspectLinkApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: cleanUrl }),
+          });
+          if (inspectResp.ok) {
+            const meta = (await inspectResp.json()) as {
+              title?: string;
+              siteName?: string;
+              description?: string;
+              textSnippet?: string;
+            };
+            inspectedTitle = (meta.title || '').trim();
+            inspectedSite = (meta.siteName || '').trim();
+            inspectedDesc = (meta.description || '').trim();
+            inspectedSnippet = (meta.textSnippet || '').trim();
+          }
+        } catch {
+          // fallback cleanly to URL heuristics below
         }
-      } catch {
-        // fallback cleanly to URL heuristics below
       }
 
       let urlSlugName = 'Documento da Link';
@@ -1443,18 +1456,21 @@ export function DocumentsView({
       }
 
       const combinedText = [inspectedTitle, inspectedDesc, inspectedSnippet].filter(Boolean).join('\n');
-      const clsResp = await fetch('/api/documents/classify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fileName: inspectedTitle || urlSlugName,
-          mimeType: 'text/html',
-          textContent: combinedText.slice(0, 18_000),
-          cloudUrl: cleanUrl,
-          products: productsPayload,
-        }),
-      });
-      const classification: ClassifyApiResponse = clsResp.ok
+      const classifyLinkApiUrl = resolveApiUrl('/api/documents/classify');
+      const clsResp = classifyLinkApiUrl
+        ? await fetch(classifyLinkApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fileName: inspectedTitle || urlSlugName,
+              mimeType: 'text/html',
+              textContent: combinedText.slice(0, 18_000),
+              cloudUrl: cleanUrl,
+              products: productsPayload,
+            }),
+          })
+        : null;
+      const classification: ClassifyApiResponse = clsResp?.ok
         ? ((await clsResp.json()) as ClassifyApiResponse)
         : {
             target: 'document',

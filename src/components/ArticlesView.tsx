@@ -39,6 +39,7 @@ import {
   HomeArticleRecord,
   HomeDocumentRecord,
 } from '../types/home';
+import { resolveApiUrl } from '../utils/apiBase';
 import {
   ARTICLE_ROOM_PRESETS,
   ArticleManualGuide,
@@ -817,7 +818,11 @@ export function ArticlesView({
     setFetchingManualOnline(true);
     setActionError('');
     try {
-      const res = await fetch('/api/articles/manual', {
+      const manualApiUrl = resolveApiUrl('/api/articles/manual');
+      if (!manualApiUrl) {
+        throw new Error('Servizio scheda manuale online disponibile solo con server backend.');
+      }
+      const res = await fetch(manualApiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({

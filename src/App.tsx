@@ -1605,7 +1605,10 @@ export default function App() {
         rawSnapshotsRef.current.homeArticles = rawDocs;
         const cloudSettingsDoc = rawDocs.find((d) => d.id === APP_SETTINGS_DOC_ID);
         if (cloudSettingsDoc && typeof cloudSettingsDoc.data?.specs === 'string') {
-          applySyncedAppSettingsFromCloud(cloudSettingsDoc.data.specs);
+          applySyncedAppSettingsFromCloud(
+            cloudSettingsDoc.data.specs,
+            typeof cloudSettingsDoc.data?.notes === 'string' ? cloudSettingsDoc.data.notes : null
+          );
         } else if (!snap.metadata.fromCache && cloudSettingsSeededRef.current !== activeUid) {
           cloudSettingsSeededRef.current = activeUid;
           void saveSystemStateDoc(

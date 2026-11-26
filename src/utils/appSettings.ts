@@ -14,6 +14,7 @@ export interface AppSettings {
   compactDensity: boolean;
   defaultStartSection: DefaultStartSection;
   showInlineTooltips: boolean;
+  backendApiUrl: string;
 }
 
 export const APP_SETTINGS_STORAGE_KEY = 'myhome_app_settings_v2';
@@ -28,6 +29,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   compactDensity: true,
   defaultStartSection: 'remember_last',
   showInlineTooltips: true,
+  backendApiUrl: '',
 };
 
 const VALID_ACCENT_PALETTES: readonly AppAccentPalette[] = [
@@ -52,6 +54,20 @@ const VALID_START_SECTIONS: readonly DefaultStartSection[] = [
   'info',
   'impostazioni',
 ];
+
+export function sanitizeBackendApiUrl(raw?: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const withProto = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(withProto);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return '';
+    return parsed.origin.slice(0, 200);
+  } catch {
+    return '';
+  }
+}
 
 function sanitizeSettings(raw: unknown): AppSettings {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_APP_SETTINGS };
@@ -89,6 +105,7 @@ function sanitizeSettings(raw: unknown): AppSettings {
       typeof obj.showInlineTooltips === 'boolean'
         ? obj.showInlineTooltips
         : DEFAULT_APP_SETTINGS.showInlineTooltips,
+    backendApiUrl: sanitizeBackendApiUrl(obj.backendApiUrl),
   };
 }
 
@@ -100,7 +117,8 @@ function areSettingsEqual(a: AppSettings, b: AppSettings): boolean {
     a.sidebarAlwaysExpanded === b.sidebarAlwaysExpanded &&
     a.compactDensity === b.compactDensity &&
     a.defaultStartSection === b.defaultStartSection &&
-    a.showInlineTooltips === b.showInlineTooltips
+    a.showInlineTooltips === b.showInlineTooltips &&
+    a.backendApiUrl === b.backendApiUrl
   );
 }
 
@@ -176,11 +194,18 @@ export function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
   return currentSettings;
 }
 
-export function applySyncedAppSettingsFromCloud(rawSpecs?: string | null): boolean {
+export function applySyncedAppSettingsFromCloud(
+  rawSpecs?: string | null,
+  rawNotes?: string | null
+): boolean {
   if (!rawSpecs) return false;
   try {
-    const parsed = JSON.parse(rawSpecs);
-    const next = sanitizeSettings(parsed);
+    const parsed = JSON.parse(rawSpecs) as Record<string, unknown>;
+    const mergedRaw =
+      typeof rawNotes === 'string' && rawNotes.trim()
+        ? { ...parsed, backendApiUrl: rawNotes.trim() }
+        : parsed;
+    const next = sanitizeSettings(mergedRaw);
     if (areSettingsEqual(currentSettings, next)) {
       return false;
     }
@@ -197,6 +222,8 @@ export function buildAppSettingsFirestorePayload(
   settings: AppSettings,
   createdAt: unknown
 ): Record<string, unknown> {
+  const clean = sanitizeSettings(settings);
+  const { backendApiUrl, ...specsOnly } = clean;
   return {
     ownerId,
     name: 'Impostazioni App',
@@ -205,7 +232,8 @@ export function buildAppSettingsFirestorePayload(
     category: 'altro',
     room: SYSTEM_ROOM_APP_SETTINGS,
     familyWarranty: false,
-    specs: JSON.stringify(sanitizeSettings(settings)).slice(0, 240),
+    specs: JSON.stringify(specsOnly).slice(0, 240),
+    ...(backendApiUrl ? { notes: backendApiUrl.slice(0, 200) } : {}),
     createdAt,
   };
 }

@@ -8,6 +8,7 @@ import {
   Download,
   ExternalLink,
   FlaskConical,
+  Globe,
   HardDrive,
   Laptop,
   Loader2,
@@ -16,6 +17,7 @@ import {
   Palette,
   RefreshCw,
   RotateCcw,
+  Server,
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
@@ -50,8 +52,13 @@ import { BillRecord, HomeSystemConfig } from '../types/home';
 import {
   AppAccentPalette,
   DefaultStartSection,
+  sanitizeBackendApiUrl,
   useAppSettings,
 } from '../utils/appSettings';
+import {
+  isStaticHostingOrigin,
+  resetBackendAvailabilityCache,
+} from '../utils/apiBase';
 
 const ACCENT_PALETTE_OPTIONS: {
   id: AppAccentPalette;
@@ -171,6 +178,13 @@ export function SettingsView({
   const [storageStats, setStorageStats] = useState(() => measureLocalStorageBytes());
   const [dailyUsage, setDailyUsage] = useState<DailyFirestoreUsageEntry[]>([]);
   const [confirmClearUsageHistory, setConfirmClearUsageHistory] = useState(false);
+  const [backendUrlInput, setBackendUrlInput] = useState(() => settings.backendApiUrl || '');
+  const [testingBackend, setTestingBackend] = useState(false);
+  const isStaticHost = useMemo(() => isStaticHostingOrigin(), []);
+
+  useEffect(() => {
+    setBackendUrlInput(settings.backendApiUrl || '');
+  }, [settings.backendApiUrl]);
 
   useEffect(() => {
     return subscribeFirestoreWriteStats(setWriteStats);
@@ -1277,6 +1291,131 @@ export function SettingsView({
           </div>
         </section>
       </div>
+
+      {/* 5. Backend Server URL for GitHub Pages / Mobile Safari & Chrome */}
+      <section className={cardCls}>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2">
+            <Server className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+              Server Backend Ricerche (GitHub Pages / iPhone Safari / Chrome)
+            </h2>
+          </div>
+          <span
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+              !isStaticHost || settings.backendApiUrl
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30'
+                : 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/15 dark:text-sky-300 dark:border-sky-500/30'
+            }`}
+          >
+            <Globe className="w-3 h-3" />
+            {!isStaticHost
+              ? 'Server locale / cloud attivo su questo dominio'
+              : settings.backendApiUrl
+                ? 'Backend remoto configurato'
+                : 'Modalità browser (Icecat attivo)'}
+          </span>
+        </div>
+
+        <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed mb-3">
+          I cataloghi ufficiali compatibili (Electrolux, AEG, Zanussi, Bosch, ecc. via Open Icecat) funzionano{' '}
+          <span className="font-semibold text-slate-800 dark:text-slate-200">
+            già direttamente dal browser
+          </span>{' '}
+          anche su GitHub Pages, iPhone Safari e Chrome senza alcun server. Per importare anche siti con blocco CORS (Amazon, MediaWorld, Leroy Merlin, IKEA) da GitHub Pages o cellulare, collega qui l&apos;URL HTTPS del tuo server Node (`server.ts`): verrà sincronizzato automaticamente su tutti i tuoi dispositivi.
+        </p>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="url"
+            value={backendUrlInput}
+            onChange={(e) => setBackendUrlInput(e.target.value)}
+            placeholder="https://tuo-server-myhome.onrender.com (opzionale)"
+            className="flex-1 min-w-[220px] px-3 py-1.5 text-xs bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-sky-500"
+          />
+          <button
+            type="button"
+            disabled={testingBackend}
+            onClick={async () => {
+              const cleaned = sanitizeBackendApiUrl(backendUrlInput);
+              if (backendUrlInput.trim() && !cleaned) {
+                setFeedback({
+                  tone: 'warn',
+                  text: 'Inserisci un URL HTTPS/HTTP valido (es. https://mio-server.onrender.com).',
+                });
+                return;
+              }
+              if (!cleaned) {
+                updateSettings({ backendApiUrl: '' });
+                resetBackendAvailabilityCache();
+                setFeedback({
+                  tone: 'info',
+                  text: 'URL server backend rimosso: su GitHub Pages resta attiva la ricerca diretta browser (Icecat/Wikipedia).',
+                });
+                return;
+              }
+              setTestingBackend(true);
+              try {
+                const resp = await fetch(`${cleaned}/api/health`, {
+                  method: 'GET',
+                  mode: 'cors',
+                  signal: AbortSignal.timeout(7_000),
+                });
+                const ct = (resp.headers.get('content-type') || '').toLowerCase();
+                if (!resp.ok || !ct.includes('application/json')) {
+                  throw new Error(`Risposta non valida (HTTP ${resp.status})`);
+                }
+                const data = (await resp.json()) as { ok?: boolean };
+                if (!data.ok) throw new Error('Healthcheck negativo');
+                updateSettings({ backendApiUrl: cleaned });
+                resetBackendAvailabilityCache();
+                setBackendUrlInput(cleaned);
+                setFeedback({
+                  tone: 'ok',
+                  text: `Backend connesso e salvato (${cleaned}): ora le ricerche complete funzionano anche su GitHub Pages, Chrome e iPhone Safari.`,
+                });
+              } catch (err) {
+                updateSettings({ backendApiUrl: cleaned });
+                resetBackendAvailabilityCache();
+                setFeedback({
+                  tone: 'warn',
+                  text: `URL salvato (${cleaned}), ma il test di connessione non ha risposto (${
+                    err instanceof Error ? err.message : 'errore rete/CORS'
+                  }). Verifica che il server sia acceso e pubblico.`,
+                });
+              } finally {
+                setTestingBackend(false);
+              }
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg transition-colors disabled:opacity-50"
+          >
+            {testingBackend ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <CheckCircle2 className="w-3.5 h-3.5" />
+            )}
+            <span>{backendUrlInput.trim() ? 'Testa e salva URL' : 'Ripristina predefinito'}</span>
+          </button>
+          {settings.backendApiUrl && (
+            <button
+              type="button"
+              onClick={() => {
+                setBackendUrlInput('');
+                updateSettings({ backendApiUrl: '' });
+                resetBackendAvailabilityCache();
+                setFeedback({
+                  tone: 'info',
+                  text: 'URL backend remoto scollegato.',
+                });
+              }}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:text-rose-600 dark:text-slate-300 dark:hover:text-rose-400 border border-slate-300 dark:border-slate-700 rounded-lg transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>Rimuovi</span>
+            </button>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

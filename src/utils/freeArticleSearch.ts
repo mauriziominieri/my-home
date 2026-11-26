@@ -1,4 +1,5 @@
 import { HomeArticleCategory } from '../types/home';
+import { resolveApiUrl } from './apiBase';
 import {
   buildManufacturerManualSearchUrl,
   OnlineArticleSearchResult,
@@ -201,8 +202,10 @@ function getCommonsFiles(fileNames: string[]): Promise<CommonsPage[]> {
 }
 
 async function tryServerLiveSearch(query: string): Promise<FreeArticleSearchResponse | null> {
+  const searchApiUrl = resolveApiUrl('/api/articles/search');
+  if (!searchApiUrl) return null;
   try {
-    const res = await fetch('/api/articles/search', {
+    const res = await fetch(searchApiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ query }),

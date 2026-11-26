@@ -389,6 +389,25 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '12mb' }));
 
+  app.use('/api', (req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+    res.setHeader(
+      'Access-Control-Expose-Headers',
+      'X-Document-Filename, Content-Disposition'
+    );
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
+
+  app.get('/api/health', (_req, res) => {
+    res.json({ ok: true, service: 'my-home', timestamp: Date.now() });
+  });
+
   app.post('/api/articles/search', async (req, res) => {
     const rawQuery = typeof req.body?.query === 'string' ? req.body.query.trim() : '';
     if (!rawQuery || rawQuery.length > 140) {
@@ -2565,6 +2584,112 @@ async function startServer() {
     title: string;
     url: string;
     kind: 'manuale' | 'scheda' | 'bim_3d' | 'certificato';
+    isOlderVersion?: boolean;
+    updatedDate?: string;
+  }
+
+  function parseDocVersionDateServer(
+    updatedRaw?: string,
+    title?: string,
+    url?: string
+  ): { ts: number; formattedDate: string } {
+    if (updatedRaw) {
+      const isoMatch = updatedRaw.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+      if (isoMatch) {
+        const y = Number(isoMatch[1]);
+        const m = Number(isoMatch[2]);
+        const d = Number(isoMatch[3]);
+        const parsed = Date.parse(updatedRaw.replace(' ', 'T'));
+        const ts = Number.isFinite(parsed) ? parsed : Date.UTC(y, m - 1, d);
+        return {
+          ts,
+          formattedDate: `${isoMatch[3]}/${isoMatch[2]}/${isoMatch[1]}`,
+        };
+      }
+      const dmyMatch = updatedRaw.match(/\b(\d{2})\/(\d{2})\/(\d{4})\b/);
+      if (dmyMatch) {
+        return {
+          ts: Date.UTC(Number(dmyMatch[3]), Number(dmyMatch[2]) - 1, Number(dmyMatch[1])),
+          formattedDate: `${dmyMatch[1]}/${dmyMatch[2]}/${dmyMatch[3]}`,
+        };
+      }
+    }
+    if (title) {
+      const titleDate = title.match(/\((\d{2})\/(\d{2})\/(\d{4})\)/);
+      if (titleDate) {
+        return {
+          ts: Date.UTC(Number(titleDate[3]), Number(titleDate[2]) - 1, Number(titleDate[1])),
+          formattedDate: `${titleDate[1]}/${titleDate[2]}/${titleDate[3]}`,
+        };
+      }
+    }
+    if (url) {
+      const mmoUnix = url.match(/mmo_\d+_(\d{10})_/i);
+      if (mmoUnix?.[1]) {
+        const sec = Number(mmoUnix[1]);
+        if (Number.isFinite(sec) && sec > 1_000_000_000) {
+          const dt = new Date(sec * 1000);
+          const dd = String(dt.getUTCDate()).padStart(2, '0');
+          const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+          const yyyy = dt.getUTCFullYear();
+          return { ts: sec * 1000, formattedDate: `${dd}/${mm}/${yyyy}` };
+        }
+      }
+    }
+    return { ts: 0, formattedDate: '' };
+  }
+
+  function normalizeDocBaseTitleServer(title: string): string {
+    return title
+      .replace(/\s*\(\d{2}\/\d{2}\/\d{4}\)\s*/g, ' ')
+      .replace(/\s*\(\d{4}-\d{2}-\d{2}\)\s*/g, ' ')
+      .replace(/\s*\(\d+\)\s*$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function markOlderDocumentVersionsServer(
+    docs: InspectedDocumentDto[]
+  ): InspectedDocumentDto[] {
+    if (docs.length <= 1) return docs;
+    const annotated = docs.map((doc) => {
+      const baseKey = normalizeDocBaseTitleServer(doc.title);
+      const parsed = parseDocVersionDateServer(doc.updatedDate, doc.title, doc.url);
+      return { doc, baseKey, ts: parsed.ts, formattedDate: parsed.formattedDate };
+    });
+
+    const maxTsByBase = new Map<string, number>();
+    const distinctTsByBase = new Map<string, Set<number>>();
+    for (const item of annotated) {
+      if (!item.baseKey || item.ts <= 0) continue;
+      const prevMax = maxTsByBase.get(item.baseKey) ?? 0;
+      if (item.ts > prevMax) maxTsByBase.set(item.baseKey, item.ts);
+      let set = distinctTsByBase.get(item.baseKey);
+      if (!set) {
+        set = new Set<number>();
+        distinctTsByBase.set(item.baseKey, set);
+      }
+      set.add(item.ts);
+    }
+
+    const marked = annotated.map(({ doc, baseKey, ts, formattedDate }) => {
+      const maxTs = maxTsByBase.get(baseKey) ?? 0;
+      const distinctDates = distinctTsByBase.get(baseKey)?.size ?? 0;
+      const isOlder =
+        Boolean(doc.isOlderVersion) ||
+        (distinctDates >= 2 && ts > 0 && maxTs > 0 && ts < maxTs);
+      return {
+        ...doc,
+        ...(formattedDate && !doc.updatedDate ? { updatedDate: formattedDate } : {}),
+        isOlderVersion: isOlder,
+      };
+    });
+
+    return [
+      ...marked.filter((d) => !d.isOlderVersion),
+      ...marked.filter((d) => Boolean(d.isOlderVersion)),
+    ];
   }
 
   function inferDocumentKind(text: string, url: string): InspectedDocumentDto['kind'] {
@@ -3381,7 +3506,7 @@ async function startServer() {
 
       const icDocs: InspectedDocumentDto[] = [];
       const seenDocUrls = new Set<string>();
-      const pushDoc = (docTitle: string, docUrl?: string) => {
+      const pushDoc = (docTitle: string, docUrl?: string, updatedDate?: string) => {
         const cleanU = (docUrl || '').trim();
         if (!cleanU || !/^https?:\/\/.+/i.test(cleanU)) return;
         let parsedU: URL;
@@ -3402,6 +3527,7 @@ async function startServer() {
           title: cleanTitle || 'Documento prodotto',
           url: cleanU.slice(0, 1000),
           kind: inferDocumentKind(cleanTitle, cleanU),
+          ...(updatedDate ? { updatedDate } : {}),
         });
       };
 
@@ -3419,17 +3545,14 @@ async function startServer() {
       }
 
       const usedDocTitles = new Map<string, number>();
-      const formatIcecatUpdatedDate = (raw?: string): string => {
-        const match = (raw || '').match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
-        return match ? `${match[3]}/${match[2]}/${match[1]}` : '';
-      };
       const pushUniqueIcecatDoc = (rawTitle: string, docUrl?: string, updatedRaw?: string) => {
         const baseClean = decodeHtmlEntities(stripHtmlTags(rawTitle || 'Documento prodotto'))
           .replace(/\s+/g, ' ')
           .trim();
         const baseKey = baseClean.toLowerCase();
         const hasDupBase = (baseTitleCounts.get(baseKey) || 0) > 1;
-        const dateSuffix = hasDupBase ? formatIcecatUpdatedDate(updatedRaw) : '';
+        const parsedDate = parseDocVersionDateServer(updatedRaw, undefined, docUrl);
+        const dateSuffix = hasDupBase ? parsedDate.formattedDate : '';
         let candidateTitle = dateSuffix ? `${baseClean} (${dateSuffix})` : baseClean;
         const candKey = candidateTitle.toLowerCase();
         const seenCount = (usedDocTitles.get(candKey) || 0) + 1;
@@ -3437,7 +3560,7 @@ async function startServer() {
         if (seenCount > 1) {
           candidateTitle = `${candidateTitle} (${seenCount})`;
         }
-        pushDoc(candidateTitle, docUrl);
+        pushDoc(candidateTitle, docUrl, parsedDate.formattedDate || undefined);
       };
 
       for (const m of pdfMedia) {
@@ -3450,6 +3573,8 @@ async function startServer() {
         pushUniqueIcecatDoc('Scheda prodotto / Volantino', gi.Description.LeafletPDFURL);
       }
 
+      const versionedIcDocs = markOlderDocumentVersionsServer(icDocs);
+
       return {
         title: icTitle,
         brand: icBrand,
@@ -3457,7 +3582,7 @@ async function startServer() {
         color: icColor,
         imageUrl: icImage,
         specs: icSpecs,
-        documents: icDocs.length > 0 ? icDocs.slice(0, 8) : undefined,
+        documents: versionedIcDocs.length > 0 ? versionedIcDocs.slice(0, 12) : undefined,
       };
     } catch {
       return null;
@@ -4503,7 +4628,10 @@ async function startServer() {
       model: model || undefined,
       specs: specs || undefined,
       notes: notes || undefined,
-      documents: documents.length > 0 ? documents.slice(0, 8) : undefined,
+      documents:
+        documents.length > 0
+          ? markOlderDocumentVersionsServer(documents).slice(0, 12)
+          : undefined,
       extractedFrom,
       blockedBySite,
       aiKeyMissing: blockedBySite && extractedFrom !== 'page-meta' && !getGeminiClient() ? true : undefined,
