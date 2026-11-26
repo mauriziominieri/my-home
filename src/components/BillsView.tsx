@@ -747,7 +747,7 @@ export function BillsView({
             Bollette, TARI &amp; Fotovoltaico GSE
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Archivio completo su Firebase: bollette auto da Gmail (Luce, TARI) e caricamento manuale semplice (Acqua, GSE Scambio sul Posto).
+            Archivio completo su Firebase: ricerca INBOX Gmail per Luce, Acqua e TARI (tasto &quot;Sincronizza Gmail&quot;), caricamento manuale PDF e registro bonifici GSE.
           </p>
         </div>
 
@@ -866,46 +866,75 @@ export function BillsView({
         ]}
       />
 
-      {/* Riepilogo Email Controllate & Frequenza */}
+      {/* Riepilogo Email Controllate & Strategia Ricerca */}
       <details className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-xs shadow-xs dark:shadow-none">
         <summary className="cursor-pointer font-semibold text-slate-800 dark:text-slate-200 flex flex-wrap items-center justify-between gap-2 select-none">
           <span className="inline-flex items-center gap-2">
             <Mail className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
-            <span>Email controllate in automatico &amp; frequenza sync</span>
+            <span>Strategia di ricerca email Gmail &amp; sincronizzazione</span>
           </span>
           <span className="px-2 py-0.5 text-[10px] font-mono bg-sky-500/10 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/25 dark:border-sky-500/30 rounded">
-            Ogni ~10 min (GitHub Actions + Sync Gmail · Solo INBOX)
+            Apps Script 24/7 (consumi) + Sync Gmail (bollette PDF) · Solo INBOX
           </span>
         </summary>
         <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-800/80 space-y-2.5 text-[11px] text-slate-600 dark:text-slate-300">
           <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-            Il controllo avviene automaticamente <strong className="text-slate-900 dark:text-slate-200">ogni 10 minuti</strong> via GitHub Actions (tempo effettivo coda ~10–30 min, 24/7 sulla sola <strong className="text-slate-900 dark:text-slate-200">INBOX</strong>) e dal browser ogni 10 minuti o con il tasto <strong className="text-slate-900 dark:text-slate-200">&quot;Sincronizza Gmail&quot;</strong>. Le email delle bollette vengono <strong className="text-emerald-700 dark:text-emerald-300">solo analizzate e archiviate senza mai spostarle nel Cestino</strong>; eventuali file non PDF o allegati di altro formato vengono ignorati senza errori.
+            I consumi e-distribuzione vengono sincronizzati 24/7 su{' '}
+            <a
+              href="https://script.google.com/u/1/home/projects/1Xv8LKzCxqu2n05njAGj9iMZLEETUD-uyUkaSkzThum6FmOStyTFiq5kh/edit"
+              target="_blank"
+              rel="noreferrer"
+              className="font-semibold text-sky-700 dark:text-sky-300 underline hover:opacity-80"
+            >
+              Google Apps Script
+            </a>
+            ; cliccando <strong className="text-slate-900 dark:text-slate-200">&quot;Sincronizza Gmail&quot;</strong> in alto l&apos;app controlla la sola <strong className="text-slate-900 dark:text-slate-200">INBOX</strong> (mai Spam o Cestino) ed estrae le bollette PDF di Luce, Acqua e TARI (puoi comunque sempre usare anche &quot;Importa bolletta&quot;). Le email delle bollette vengono <strong className="text-emerald-700 dark:text-emerald-300">solo lette e lasciate sempre nella tua INBOX</strong>.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-0.5">
               <div className="font-semibold text-sky-700 dark:text-sky-300">Luce — Edison Energia</div>
-              <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">fatturazione@edisonenergia.it</div>
-              <div className="text-slate-500 dark:text-slate-400">Oggetto: &quot;Fattura Edison Energia&quot; · Resta in INBOX</div>
+              <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">
+                from:fatturazione@edisonenergia.it · subject:&quot;Fattura Edison Energia&quot;
+              </div>
+              <div className="text-slate-500 dark:text-slate-400">
+                PDF con parole chiave &quot;edison&quot;, &quot;energia elettrica&quot; o &quot;kwh&quot; · Resta in INBOX
+              </div>
             </div>
             <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-0.5">
               <div className="font-semibold text-emerald-700 dark:text-emerald-300">Luce — Octopus Energy</div>
-              <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">octopusenergy.it</div>
-              <div className="text-slate-500 dark:text-slate-400">Oggetto: &quot;Octopus Energy&quot; · Sync Gmail browser · Resta in INBOX</div>
+              <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">
+                from:octopusenergy.it · subject:&quot;Octopus Energy&quot;
+              </div>
+              <div className="text-slate-500 dark:text-slate-400">
+                PDF bolletta con &quot;octopus&quot; o &quot;kwh&quot; (contratti esclusi) · Resta in INBOX
+              </div>
             </div>
             <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-0.5">
               <div className="font-semibold text-cyan-700 dark:text-cyan-300">Acqua — AcegasApsAmga</div>
-              <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">acegasapsamga.it</div>
-              <div className="text-slate-500 dark:text-slate-400">Oggetto/testo: &quot;servizio idrico / acquedotto&quot; · Resta in INBOX</div>
+              <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">
+                from:acegasapsamga.it (non TARI)
+              </div>
+              <div className="text-slate-500 dark:text-slate-400">
+                PDF con &quot;servizio idrico&quot;, &quot;acquedotto&quot;, &quot;fognatura&quot;, &quot;depurazione&quot; o &quot;acegas&quot; senza kWh · Resta in INBOX
+              </div>
             </div>
             <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-0.5">
               <div className="font-semibold text-indigo-700 dark:text-indigo-300">TARI — AcegasApsAmga</div>
-              <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">tassa_rifiuti@acegasapsamga.it</div>
-              <div className="text-slate-500 dark:text-slate-400">Oggetto: &quot;Avviso di pagamento TARI&quot; · Resta in INBOX</div>
+              <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">
+                from:tassa_rifiuti@acegasapsamga.it · subject:&quot;Avviso di pagamento TARI&quot;
+              </div>
+              <div className="text-slate-500 dark:text-slate-400">
+                Oppure from:acegasapsamga.it + PDF con &quot;tassa rifiuti&quot; / &quot;TARI&quot; · Resta in INBOX
+              </div>
             </div>
             <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-0.5 sm:col-span-2 lg:col-span-2">
-              <div className="font-semibold text-slate-800 dark:text-slate-200">Consumi Elettrici — e-distribuzione (CSV / ZIP)</div>
-              <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">notifichemailped@enel.com · oggetto &quot;Dettaglio curve di carico&quot;</div>
-              <div className="text-slate-500 dark:text-slate-400">Unico tipo di email spostato nel Cestino dopo importazione riuscita su Firestore</div>
+              <div className="font-semibold text-slate-800 dark:text-slate-200">Consumi Elettrici — e-distribuzione (CSV / ZIP, Apps Script 24/7)</div>
+              <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">
+                from:notifichemailped@enel.com · from:e-distribuzione.it/.com · subject:&quot;curve di carico&quot;
+              </div>
+              <div className="text-slate-500 dark:text-slate-400">
+                Unico tipo di email spostato nel Cestino dopo il salvataggio delle letture su Firestore
+              </div>
             </div>
           </div>
         </div>
@@ -934,9 +963,9 @@ export function BillsView({
                 <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-cyan-500/10 dark:bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/25 dark:border-cyan-500/30 rounded-md">
                   Servizio Idrico · Padova
                 </span>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 rounded-md">
-                  <PenLine className="w-3 h-3 text-sky-600 dark:text-sky-400" />
-                  Caricamento manuale → Firebase
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 dark:border-emerald-500/30 rounded-md">
+                  <Mail className="w-3 h-3" />
+                  Gmail INBOX + PDF manuale
                 </span>
                 <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
                   Contratto <span className="text-cyan-700 dark:text-cyan-300">3040787553</span> · Cliente{' '}
@@ -955,11 +984,22 @@ export function BillsView({
                 </button>
               )}
             </div>
-            <div>
+            <div className="space-y-1.5">
               <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                 AcegasApsAmga — Servizio Acqua (Quadrimestrale)
               </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                <strong className="text-slate-800 dark:text-slate-200">Strategia ricerca Gmail:</strong> cliccando <em>Sincronizza Gmail</em> la scansione cerca nella sola INBOX le email dal dominio{' '}
+                <span className="font-mono text-cyan-700 dark:text-cyan-300">acegasapsamga.it</span>{' '}
+                (escludendo quelle TARI) con PDF allegato contenente{' '}
+                <span className="font-mono text-slate-800 dark:text-slate-200">&quot;servizio idrico&quot;</span>,{' '}
+                <span className="font-mono text-slate-800 dark:text-slate-200">&quot;acquedotto&quot;</span>,{' '}
+                <span className="font-mono text-slate-800 dark:text-slate-200">&quot;fognatura&quot;</span>,{' '}
+                <span className="font-mono text-slate-800 dark:text-slate-200">&quot;depurazione&quot;</span> oppure{' '}
+                <span className="font-mono text-slate-800 dark:text-slate-200">&quot;acegas&quot;</span> senza <span className="font-mono">kwh</span>.{' '}
+                <strong className="text-emerald-700 dark:text-emerald-300">L&apos;email resta sempre in INBOX</strong> e il PDF viene salvato su Firebase (oppure usa &quot;Importa PDF bolletta acqua&quot;).
+              </p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 Uso domestico residente (2 componenti) · Contatore{' '}
                 <span className="font-mono text-slate-700 dark:text-slate-300">365230000000152556</span> · Addebito
                 diretto ING · Prossima bolletta prevista:{' '}
@@ -1185,7 +1225,7 @@ export function BillsView({
                 </span>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 dark:border-emerald-500/30 rounded-md">
                   <Mail className="w-3 h-3" />
-                  Auto da Gmail + Manuale
+                  Gmail INBOX + PDF manuale
                 </span>
               </div>
 
@@ -1205,10 +1245,13 @@ export function BillsView({
               AcegasApsAmga / TARI — Avvisi di Pagamento
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-              <strong className="text-slate-800 dark:text-slate-200">Strategia automatica Gmail:</strong> ogni 10 minuti lo script GitHub Actions cerca nella sola INBOX Gmail le email da{' '}
-              <span className="font-mono text-indigo-700 dark:text-indigo-300">tassa_rifiuti@acegasapsamga.it</span>{' '}
-              con oggetto contenente{' '}
-              <span className="font-mono text-slate-800 dark:text-slate-200">&quot;Avviso di pagamento TARI&quot;</span>, analizza i PDF validi ignorando qualsiasi altro tipo di file allegato, salva su Firebase Firestore evitando riscritture duplicate e <strong className="text-emerald-700 dark:text-emerald-300">lascia sempre l&apos;email nella tua INBOX</strong> (mai spostata nel Cestino).
+              <strong className="text-slate-800 dark:text-slate-200">Strategia ricerca Gmail:</strong> con <em>Sincronizza Gmail</em> la scansione cerca nella sola INBOX le email da{' '}
+              <span className="font-mono text-indigo-700 dark:text-indigo-300">tassa_rifiuti@acegasapsamga.it</span> o{' '}
+              <span className="font-mono text-indigo-700 dark:text-indigo-300">acegasapsamga.it</span>{' '}
+              con oggetto/testo contenente{' '}
+              <span className="font-mono text-slate-800 dark:text-slate-200">&quot;Avviso di pagamento TARI&quot;</span>,{' '}
+              <span className="font-mono text-slate-800 dark:text-slate-200">&quot;tassa rifiuti&quot;</span> o{' '}
+              <span className="font-mono text-slate-800 dark:text-slate-200">&quot;tassa sui rifiuti&quot;</span>, estrae i PDF validi ignorando allegati diversi, evita duplicati su Firebase e <strong className="text-emerald-700 dark:text-emerald-300">lascia sempre l&apos;email nella tua INBOX</strong>.
             </p>
           </div>
 
@@ -1650,13 +1693,15 @@ export function BillsView({
         <div className="space-y-5">
           {/* Banner Strategia Caricamento Luce */}
           <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs shadow-xs dark:shadow-none">
-            <div className="flex flex-wrap items-center gap-2 text-slate-700 dark:text-slate-300">
+            <div className="flex flex-wrap items-center gap-2 text-slate-700 dark:text-slate-300 leading-relaxed">
               <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 dark:border-emerald-500/30 rounded-md">
                 <Mail className="w-3 h-3" />
-                Sync automatico Gmail
+                Strategia ricerca Gmail INBOX
               </span>
               <span>
-                Controllo automatico ogni ~10 min su <span className="font-mono text-sky-700 dark:text-sky-300">fatturazione@edisonenergia.it</span> e <span className="font-mono text-emerald-700 dark:text-emerald-300">octopusenergy.it</span> (solo INBOX, qualsiasi file extra gestito senza errori, le bollette non vengono mai spostate nel Cestino).
+                Con <em>Sincronizza Gmail</em> la scansione cerca nella sola INBOX email da{' '}
+                <span className="font-mono text-sky-700 dark:text-sky-300">fatturazione@edisonenergia.it</span> (oggetto &quot;Fattura Edison Energia&quot;) e{' '}
+                <span className="font-mono text-emerald-700 dark:text-emerald-300">octopusenergy.it</span> (oggetto &quot;Octopus Energy&quot;), analizzando PDF con <span className="font-mono">edison / octopus / enel / energia elettrica / kwh</span> (contratti esclusi; le email restano sempre in INBOX). I consumi giornalieri e-distribuzione girano 24/7 su Apps Script.
               </span>
             </div>
 
@@ -1821,8 +1866,8 @@ export function BillsView({
                     <div className="flex items-center gap-1.5">
                       <Bell className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                       <span>
-                        Monitor automatico ogni <strong className="text-slate-900 dark:text-slate-100">10 min</strong> (Solo Luce ·{' '}
-                        <strong className="text-slate-900 dark:text-slate-100">{marketMonitor.competitors.length}</strong> siti tracciati) vs tua{' '}
+                        Confronto tariffe mercato (Solo Luce ·{' '}
+                        <strong className="text-slate-900 dark:text-slate-100">{marketMonitor.competitors.length}</strong> fornitori di riferimento) vs tua{' '}
                         <span className="font-mono text-emerald-700 dark:text-emerald-300">
                           {marketMonitor.myLockedRate.toFixed(4).replace('.', ',')} €/kWh
                         </span>

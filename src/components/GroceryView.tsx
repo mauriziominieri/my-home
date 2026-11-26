@@ -719,7 +719,7 @@ export function GroceryView({
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 rounded-lg"
+              className="px-4 py-2 font-semibold text-white bg-emerald-600 hover:bg-emerald-700 dark:text-slate-950 dark:bg-emerald-400 dark:hover:bg-emerald-300 rounded-lg"
             >
               {saving ? 'Salvataggio...' : editingId ? 'Salva modifiche' : 'Salva prodotto'}
             </button>

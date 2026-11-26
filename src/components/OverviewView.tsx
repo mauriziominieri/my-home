@@ -68,7 +68,7 @@ export function OverviewView({
                 onClick={() => onSelectYear(yr)}
                 className={`px-2.5 py-1 text-xs font-mono font-medium rounded-md transition-colors ${
                   selectedYear === yr
-                    ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                    ? 'bg-brand-600 text-white dark:bg-brand-400 dark:text-slate-950'
                     : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
                 }`}
               >
@@ -124,7 +124,7 @@ export function OverviewView({
             <span className="text-xs text-slate-500 dark:text-slate-400">mandata</span>
           </div>
           <div className="mt-2 text-xs text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-            {isHeating && <Flame className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />}
+            {isHeating && <Flame className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />}
             {isCooling && <Snowflake className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />}
             <span>
               {MODE_LABELS[config.aristonMode]} · {config.aristonProfile} · ACS {config.dhwTargetTemp}°C

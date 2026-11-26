@@ -3,34 +3,41 @@ import { setFirestoreWritesDisabled } from '../firebase';
 import { NavSection } from '../types/home';
 
 export type AppThemeMode = 'dark' | 'light';
-export type GmailSyncIntervalMinutes = 5 | 10 | 15 | 30 | 60;
+export type AppAccentPalette = 'sky' | 'amber' | 'emerald' | 'teal' | 'indigo';
 export type DefaultStartSection = NavSection | 'remember_last';
 
 export interface AppSettings {
   theme: AppThemeMode;
+  accentPalette: AppAccentPalette;
   firestoreWritesDisabled: boolean;
-  autoGmailSyncEnabled: boolean;
-  autoGmailSyncIntervalMinutes: GmailSyncIntervalMinutes;
   sidebarAlwaysExpanded: boolean;
   compactDensity: boolean;
   defaultStartSection: DefaultStartSection;
   showInlineTooltips: boolean;
 }
 
-export const APP_SETTINGS_STORAGE_KEY = 'myhome_app_settings_v1';
+export const APP_SETTINGS_STORAGE_KEY = 'myhome_app_settings_v2';
+export const APP_SETTINGS_DOC_ID = 'app_settings_state';
+export const SYSTEM_ROOM_APP_SETTINGS = '__app_settings__';
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   theme: 'dark',
-  firestoreWritesDisabled: false,
-  autoGmailSyncEnabled: true,
-  autoGmailSyncIntervalMinutes: 10,
+  accentPalette: 'sky',
+  firestoreWritesDisabled: true,
   sidebarAlwaysExpanded: false,
-  compactDensity: false,
+  compactDensity: true,
   defaultStartSection: 'remember_last',
   showInlineTooltips: true,
 };
 
-const VALID_INTERVALS: readonly GmailSyncIntervalMinutes[] = [5, 10, 15, 30, 60];
+const VALID_ACCENT_PALETTES: readonly AppAccentPalette[] = [
+  'sky',
+  'amber',
+  'emerald',
+  'teal',
+  'indigo',
+];
+
 const VALID_START_SECTIONS: readonly DefaultStartSection[] = [
   'remember_last',
   'panoramica',
@@ -50,12 +57,11 @@ function sanitizeSettings(raw: unknown): AppSettings {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_APP_SETTINGS };
   const obj = raw as Partial<AppSettings>;
   const theme: AppThemeMode = obj.theme === 'light' ? 'light' : 'dark';
-  const intervalRaw = Number(obj.autoGmailSyncIntervalMinutes);
-  const autoGmailSyncIntervalMinutes: GmailSyncIntervalMinutes = VALID_INTERVALS.includes(
-    intervalRaw as GmailSyncIntervalMinutes
+  const accentPalette: AppAccentPalette = VALID_ACCENT_PALETTES.includes(
+    obj.accentPalette as AppAccentPalette
   )
-    ? (intervalRaw as GmailSyncIntervalMinutes)
-    : DEFAULT_APP_SETTINGS.autoGmailSyncIntervalMinutes;
+    ? (obj.accentPalette as AppAccentPalette)
+    : DEFAULT_APP_SETTINGS.accentPalette;
 
   const defaultStartSection: DefaultStartSection = VALID_START_SECTIONS.includes(
     obj.defaultStartSection as DefaultStartSection
@@ -65,20 +71,37 @@ function sanitizeSettings(raw: unknown): AppSettings {
 
   return {
     theme,
-    firestoreWritesDisabled: Boolean(obj.firestoreWritesDisabled),
-    autoGmailSyncEnabled:
-      typeof obj.autoGmailSyncEnabled === 'boolean'
-        ? obj.autoGmailSyncEnabled
-        : DEFAULT_APP_SETTINGS.autoGmailSyncEnabled,
-    autoGmailSyncIntervalMinutes,
-    sidebarAlwaysExpanded: Boolean(obj.sidebarAlwaysExpanded),
-    compactDensity: Boolean(obj.compactDensity),
+    accentPalette,
+    firestoreWritesDisabled:
+      typeof obj.firestoreWritesDisabled === 'boolean'
+        ? obj.firestoreWritesDisabled
+        : DEFAULT_APP_SETTINGS.firestoreWritesDisabled,
+    sidebarAlwaysExpanded:
+      typeof obj.sidebarAlwaysExpanded === 'boolean'
+        ? obj.sidebarAlwaysExpanded
+        : DEFAULT_APP_SETTINGS.sidebarAlwaysExpanded,
+    compactDensity:
+      typeof obj.compactDensity === 'boolean'
+        ? obj.compactDensity
+        : DEFAULT_APP_SETTINGS.compactDensity,
     defaultStartSection,
     showInlineTooltips:
       typeof obj.showInlineTooltips === 'boolean'
         ? obj.showInlineTooltips
         : DEFAULT_APP_SETTINGS.showInlineTooltips,
   };
+}
+
+function areSettingsEqual(a: AppSettings, b: AppSettings): boolean {
+  return (
+    a.theme === b.theme &&
+    a.accentPalette === b.accentPalette &&
+    a.firestoreWritesDisabled === b.firestoreWritesDisabled &&
+    a.sidebarAlwaysExpanded === b.sidebarAlwaysExpanded &&
+    a.compactDensity === b.compactDensity &&
+    a.defaultStartSection === b.defaultStartSection &&
+    a.showInlineTooltips === b.showInlineTooltips
+  );
 }
 
 export function loadAppSettings(): AppSettings {
@@ -94,8 +117,18 @@ export function loadAppSettings(): AppSettings {
 
 let currentSettings: AppSettings = loadAppSettings();
 const listeners = new Set<(settings: AppSettings) => void>();
+let cloudSettingsSaver: ((settings: AppSettings) => void) | null = null;
 
-export function applyThemeToDocument(theme: AppThemeMode): void {
+export function registerCloudSettingsSaver(
+  saver: ((settings: AppSettings) => void) | null
+): void {
+  cloudSettingsSaver = saver;
+}
+
+export function applyThemeToDocument(
+  theme: AppThemeMode,
+  accentPalette: AppAccentPalette = currentSettings.accentPalette
+): void {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
   if (theme === 'dark') {
@@ -105,11 +138,25 @@ export function applyThemeToDocument(theme: AppThemeMode): void {
     root.classList.remove('dark');
     root.style.colorScheme = 'light';
   }
+  root.setAttribute('data-accent', accentPalette);
+}
+
+function persistLocalAndApplySideEffects(next: AppSettings): void {
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // ignore localStorage quota errors
+    }
+  }
+  applyThemeToDocument(next.theme, next.accentPalette);
+  setFirestoreWritesDisabled(next.firestoreWritesDisabled);
+  listeners.forEach((listener) => listener(next));
 }
 
 export function initAppSettings(): AppSettings {
   currentSettings = loadAppSettings();
-  applyThemeToDocument(currentSettings.theme);
+  applyThemeToDocument(currentSettings.theme, currentSettings.accentPalette);
   setFirestoreWritesDisabled(currentSettings.firestoreWritesDisabled);
   return currentSettings;
 }
@@ -119,18 +166,45 @@ export function getAppSettings(): AppSettings {
 }
 
 export function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
-  currentSettings = sanitizeSettings({ ...currentSettings, ...patch });
-  if (typeof window !== 'undefined') {
-    try {
-      window.localStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify(currentSettings));
-    } catch {
-      // ignore localStorage quota errors
-    }
-  }
-  applyThemeToDocument(currentSettings.theme);
-  setFirestoreWritesDisabled(currentSettings.firestoreWritesDisabled);
-  listeners.forEach((listener) => listener(currentSettings));
+  const next = sanitizeSettings({ ...currentSettings, ...patch });
+  currentSettings = next;
+  persistLocalAndApplySideEffects(next);
+  cloudSettingsSaver?.(next);
   return currentSettings;
+}
+
+export function applySyncedAppSettingsFromCloud(rawSpecs?: string | null): boolean {
+  if (!rawSpecs) return false;
+  try {
+    const parsed = JSON.parse(rawSpecs);
+    const next = sanitizeSettings(parsed);
+    if (areSettingsEqual(currentSettings, next)) {
+      return false;
+    }
+    currentSettings = next;
+    persistLocalAndApplySideEffects(next);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function buildAppSettingsFirestorePayload(
+  ownerId: string,
+  settings: AppSettings,
+  createdAt: unknown
+): Record<string, unknown> {
+  return {
+    ownerId,
+    name: 'Impostazioni App',
+    brand: 'my-home',
+    model: 'app_settings_v2',
+    category: 'altro',
+    room: SYSTEM_ROOM_APP_SETTINGS,
+    familyWarranty: false,
+    specs: JSON.stringify(sanitizeSettings(settings)).slice(0, 240),
+    createdAt,
+  };
 }
 
 export function resetAppSettings(): AppSettings {

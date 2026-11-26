@@ -54,16 +54,20 @@ import {
   FirestoreWriteStats,
   flushSimulatedFirestoreOps,
   getGmailAccessToken,
+  getRegisteredBaseDocData,
+  getSimulatedBatchPlan,
   GMAIL_OAUTH_PROJECT_ID,
   guardedDeleteDoc as deleteDoc,
   guardedSetDoc as setDoc,
   guardedWriteBatch as writeBatch,
   handleFirestoreError,
+  hasRegisteredBaseDoc,
   isFirestoreQuotaExceededActive,
   isFirestoreWritesDisabled,
   mergeSimulatedOpsIntoRawDocs,
   notifyFirestoreQuotaExceeded,
   OperationType,
+  saveSystemStateDoc,
   setSimulatedOpDetailHint,
   setSimulatedOpTitleHint,
   signInPrimaryOwner,
@@ -442,7 +446,13 @@ import {
   saveVaultFile,
   SYSTEM_ROOM_DOCUMENTS,
   triggerBlobDownload,
+  VAULT_UPDATED_EVENT,
 } from './utils/documentVault';
+import {
+  derivePlantParamsFromBills,
+  extractPdfTextFromBytes,
+  extractPodCodeFromText,
+} from './utils/billImporter';
 import {
   addDaysIso,
   articleToClimateAutopilot,
@@ -468,7 +478,15 @@ import {
   ResearchRoomId,
   sanitizeColorImagesMap,
 } from './utils/researchHelpers';
-import { getAppSettings, useAppSettings } from './utils/appSettings';
+import {
+  APP_SETTINGS_DOC_ID,
+  applySyncedAppSettingsFromCloud,
+  buildAppSettingsFirestorePayload,
+  getAppSettings,
+  registerCloudSettingsSaver,
+  SYSTEM_ROOM_APP_SETTINGS,
+  useAppSettings,
+} from './utils/appSettings';
 import { OverviewView } from './components/OverviewView';
 import { DomoticsView } from './components/DomoticsView';
 import { EnergyDatabaseView } from './components/EnergyDatabaseView';
@@ -678,26 +696,27 @@ function mapRawHomeConfig(docs: RawDocEntry[], ownerUid: string): HomeSystemConf
 }
 
 function mapRawClimateLogs(docs: RawDocEntry[], ownerUid: string): ClimateSession[] {
-  return docs
-    .filter((d) => Boolean(d.data?.date))
-    .map((d) => {
-      const data = d.data;
-      return {
-        id: d.id,
-        ownerId: String(data.ownerId || ownerUid),
-        date: String(data.date || ''),
-        mode: (data.mode as ClimateMode) || 'riscaldamento',
-        startTime: String(data.startTime || '09:00'),
-        endTime: String(data.endTime || '20:00'),
-        timeSlots: Array.isArray(data.timeSlots)
-          ? data.timeSlots.map((s) => String(s))
-          : undefined,
-        vmcMax: typeof data.vmcMax === 'boolean' ? data.vmcMax : undefined,
-        targetTemp: typeof data.targetTemp === 'number' ? data.targetTemp : 21,
-        rooms: Array.isArray(data.rooms) ? (data.rooms as RoomId[]) : [],
-        notes: data.notes ? String(data.notes) : undefined,
-      };
+  const byId = new Map<string, ClimateSession>();
+  for (const d of docs) {
+    if (!d.data?.date) continue;
+    const data = d.data;
+    byId.set(d.id, {
+      id: d.id,
+      ownerId: String(data.ownerId || ownerUid),
+      date: String(data.date || ''),
+      mode: (data.mode as ClimateMode) || 'riscaldamento',
+      startTime: String(data.startTime || '09:00'),
+      endTime: String(data.endTime || '20:00'),
+      timeSlots: Array.isArray(data.timeSlots)
+        ? data.timeSlots.map((s) => String(s))
+        : undefined,
+      vmcMax: typeof data.vmcMax === 'boolean' ? data.vmcMax : undefined,
+      targetTemp: typeof data.targetTemp === 'number' ? data.targetTemp : 21,
+      rooms: Array.isArray(data.rooms) ? (data.rooms as RoomId[]) : [],
+      notes: data.notes ? String(data.notes) : undefined,
     });
+  }
+  return Array.from(byId.values());
 }
 
 function mapRawElectricityBills(docs: RawDocEntry[]): BillRecord[] {
@@ -784,7 +803,12 @@ function mapRawGsePayments(docs: RawDocEntry[]): GsePaymentRecord[] {
 
 function mapRawHomeArticles(docs: RawDocEntry[]): HomeArticleRecord[] {
   return docs
-    .filter((d) => d.id !== 'grocery_seed_v1_done' && Boolean(d.data?.name))
+    .filter(
+      (d) =>
+        d.id !== 'grocery_seed_v1_done' &&
+        d.id !== APP_SETTINGS_DOC_ID &&
+        Boolean(d.data?.name)
+    )
     .map((d) => {
       const data = d.data;
       return {
@@ -898,6 +922,11 @@ export default function App() {
     lastResult: null,
   });
   const [showSimulatedQueuePanel, setShowSimulatedQueuePanel] = useState(false);
+  const [pendingDbActionModal, setPendingDbActionModal] = useState<'reenable' | 'flush' | null>(null);
+  const simulatedBatchPlan = useMemo(
+    () => getSimulatedBatchPlan(simulatedOps),
+    [simulatedOps]
+  );
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -989,8 +1018,6 @@ export default function App() {
   const carPolicySeededRef = useRef(false);
   const skippedTrashIdsRef = useRef<Set<string>>(new Set());
   const gmailSyncInFlightRef = useRef(false);
-  const lastGmailCheckAtRef = useRef<number | null>(null);
-  const lastGmailAttemptAtRef = useRef<number | null>(null);
   const autopilotSyncInFlightRef = useRef(false);
   const lastAutopilotSyncKeyRef = useRef<string | null>(null);
   const rawSnapshotsRef = useRef<{
@@ -1021,7 +1048,6 @@ export default function App() {
   const [todayIso, setTodayIso] = useState<string>(() => getLocalTodayIso());
   const [gmailToken, setGmailToken] = useState<string | null>(() => getGmailAccessToken());
   const [gmailSyncing, setGmailSyncing] = useState(false);
-  const [lastGmailCheckAt, setLastGmailCheckAt] = useState<number | null>(null);
   const [gmailNotice, setGmailNotice] = useState<{
     tone: 'ok' | 'info' | 'warn';
     text: string;
@@ -1052,9 +1078,6 @@ export default function App() {
         // Non svuotiamo homeArticles: la spesa è pubblica e viene
         // ricaricata dal listener pubblico (publicOwnerUid) anche senza login.
         setGmailToken(null);
-        lastGmailCheckAtRef.current = null;
-        lastGmailAttemptAtRef.current = null;
-        setLastGmailCheckAt(null);
         setPendingTrashMessages([]);
       }
       setAuthReady(true);
@@ -1065,6 +1088,94 @@ export default function App() {
 
   const activeUid = user?.uid ?? null;
   const canEdit = Boolean(user);
+
+  const cloudSettingsSeededRef = useRef<string | null>(null);
+  const [vaultRevision, setVaultRevision] = useState(0);
+  const [detectedBillPod, setDetectedBillPod] = useState<{
+    invoiceNumber: string;
+    podCode: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onVaultUpdated = () => setVaultRevision((n) => n + 1);
+    window.addEventListener(VAULT_UPDATED_EVENT, onVaultUpdated);
+    return () => window.removeEventListener(VAULT_UPDATED_EVENT, onVaultUpdated);
+  }, []);
+
+  useEffect(() => {
+    if (!activeUid) {
+      registerCloudSettingsSaver(null);
+      cloudSettingsSeededRef.current = null;
+      return;
+    }
+    const settingsPath = `users/${activeUid}/homeArticles/${APP_SETTINGS_DOC_ID}`;
+    registerCloudSettingsSaver((nextSettings) => {
+      void saveSystemStateDoc(
+        settingsPath,
+        buildAppSettingsFirestorePayload(activeUid, nextSettings, serverTimestamp())
+      ).catch((err) => {
+        console.warn('Errore sincronizzazione impostazioni app su Firestore:', err);
+      });
+    });
+    return () => {
+      registerCloudSettingsSaver(null);
+    };
+  }, [activeUid]);
+
+  const autoPlantParams = useMemo(
+    () => derivePlantParamsFromBills(electricityBills),
+    [electricityBills]
+  );
+
+  useEffect(() => {
+    const latestBill = autoPlantParams.latestBill;
+    if (!latestBill) {
+      setDetectedBillPod(null);
+      return;
+    }
+    const fileKey =
+      latestBill.pdfFileKey || getElectricityBillFileKey(latestBill.invoiceNumber);
+    if (!fileKey) {
+      setDetectedBillPod(null);
+      return;
+    }
+    let cancelled = false;
+    void getVaultFile(fileKey, activeUid || undefined)
+      .then(async (stored) => {
+        if (cancelled || !stored) return null;
+        const buf = await stored.blob.arrayBuffer();
+        const text = await extractPdfTextFromBytes(new Uint8Array(buf), 3);
+        return extractPodCodeFromText(text);
+      })
+      .then((pod) => {
+        if (cancelled) return;
+        setDetectedBillPod(
+          pod ? { invoiceNumber: latestBill.invoiceNumber, podCode: pod } : null
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setDetectedBillPod(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [autoPlantParams.latestBill, activeUid, vaultRevision]);
+
+  const effectiveHomeConfig = useMemo<HomeSystemConfig>(() => {
+    const autoTariff = autoPlantParams.tariffEurPerKwh;
+    const autoPod =
+      detectedBillPod &&
+      autoPlantParams.latestBill &&
+      detectedBillPod.invoiceNumber === autoPlantParams.latestBill.invoiceNumber
+        ? detectedBillPod.podCode
+        : null;
+    return {
+      ...homeConfig,
+      tariffEurPerKwh: autoTariff ?? homeConfig.tariffEurPerKwh,
+      podCode: autoPod ?? homeConfig.podCode,
+    };
+  }, [homeConfig, autoPlantParams, detectedBillPod]);
 
   useEffect(() => {
     if (!authReady || activeUid) return;
@@ -1492,6 +1603,16 @@ export default function App() {
       (snap) => {
         const rawDocs: RawDocEntry[] = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
         rawSnapshotsRef.current.homeArticles = rawDocs;
+        const cloudSettingsDoc = rawDocs.find((d) => d.id === APP_SETTINGS_DOC_ID);
+        if (cloudSettingsDoc && typeof cloudSettingsDoc.data?.specs === 'string') {
+          applySyncedAppSettingsFromCloud(cloudSettingsDoc.data.specs);
+        } else if (!snap.metadata.fromCache && cloudSettingsSeededRef.current !== activeUid) {
+          cloudSettingsSeededRef.current = activeUid;
+          void saveSystemStateDoc(
+            `${articlesPath}/${APP_SETTINGS_DOC_ID}`,
+            buildAppSettingsFirestorePayload(activeUid, getAppSettings(), serverTimestamp())
+          ).catch(() => {});
+        }
         const baseList = mapRawHomeArticles(rawDocs);
         const mergedDocs = mergeSimulatedOpsIntoRawDocs(articlesPath, rawDocs);
         setHomeArticles(mapRawHomeArticles(mergedDocs));
@@ -2102,7 +2223,7 @@ export default function App() {
         for (const item of chunk) {
           const docId = `day_${item.date.replace(/-/g, '')}`;
           const estimatedCostEur =
-            Math.round(item.totalKwh * homeConfig.tariffEurPerKwh * 100) / 100;
+            Math.round(item.totalKwh * effectiveHomeConfig.tariffEurPerKwh * 100) / 100;
           const payload: Record<string, unknown> = {
             ownerId: user.uid,
             date: item.date,
@@ -2137,7 +2258,7 @@ export default function App() {
               totalKwh: item.totalKwh,
               peakKw: item.peakKw,
               estimatedCostEur:
-                Math.round(item.totalKwh * homeConfig.tariffEurPerKwh * 100) / 100,
+                Math.round(item.totalKwh * effectiveHomeConfig.tariffEurPerKwh * 100) / 100,
               source: 'e-distribuzione-csv',
               notes: item.notes ? item.notes.slice(0, 240) : undefined,
             });
@@ -2236,12 +2357,11 @@ export default function App() {
   }, [tariBills]);
 
   const runGmailSyncWithToken = useCallback(
-    async (currentUser: User, token: string, isAuto = false) => {
+    async (currentUser: User, token: string) => {
       if (gmailSyncInFlightRef.current) return;
       gmailSyncInFlightRef.current = true;
-      lastGmailAttemptAtRef.current = Date.now();
       setGmailSyncing(true);
-      if (!isAuto) setGmailNotice(null);
+      setGmailNotice(null);
 
       try {
         const existingReadingDates = new Set(
@@ -2276,9 +2396,6 @@ export default function App() {
           existingWaterInvoices,
           existingTariNotices,
         });
-        const checkedAt = Date.now();
-        lastGmailCheckAtRef.current = checkedAt;
-        setLastGmailCheckAt(checkedAt);
 
         if (
           scan.readings.length === 0 &&
@@ -2287,15 +2404,13 @@ export default function App() {
           scan.tariBills.length === 0 &&
           scan.pdfAttachments.length === 0
         ) {
-          if (!isAuto) {
-            setGmailNotice({
-              tone: 'info',
-              text:
-                scan.ignoredReadingsCount > 0 && maxExistingDate
-                  ? `INBOX Gmail controllata: nessun nuovo consumo dopo il ${maxExistingDate} (ignorate ${scan.ignoredReadingsCount} giornate già presenti su Firestore, 0 scritture DB).`
-                  : 'INBOX Gmail controllata: nessuna nuova email di consumi o bollette da importare.',
-            });
-          }
+          setGmailNotice({
+            tone: 'info',
+            text:
+              scan.ignoredReadingsCount > 0 && maxExistingDate
+                ? `INBOX Gmail controllata: nessun nuovo consumo dopo il ${maxExistingDate} (ignorate ${scan.ignoredReadingsCount} giornate già presenti su Firestore, 0 scritture DB).`
+                : 'INBOX Gmail controllata: nessuna nuova email di consumi o bollette da importare.',
+          });
           return;
         }
 
@@ -2349,7 +2464,7 @@ export default function App() {
             for (const item of chunk) {
               const docId = `day_${item.date.replace(/-/g, '')}`;
               const estimatedCostEur =
-                Math.round(item.totalKwh * homeConfig.tariffEurPerKwh * 100) / 100;
+                Math.round(item.totalKwh * effectiveHomeConfig.tariffEurPerKwh * 100) / 100;
               const payload: Record<string, unknown> = {
                 ownerId: currentUser.uid,
                 date: item.date.slice(0, 20),
@@ -2487,7 +2602,7 @@ export default function App() {
                   totalKwh: item.totalKwh,
                   peakKw: item.peakKw,
                   estimatedCostEur:
-                    Math.round(item.totalKwh * homeConfig.tariffEurPerKwh * 100) / 100,
+                    Math.round(item.totalKwh * effectiveHomeConfig.tariffEurPerKwh * 100) / 100,
                   source: 'e-distribuzione-api',
                   notes: item.notes ? item.notes.slice(0, 240) : undefined,
                 });
@@ -2496,33 +2611,44 @@ export default function App() {
             });
           }
           if (scan.electricityBills.length > 0) {
-            setElectricityBills((prev) => [
-              ...prev,
-              ...scan.electricityBills.map((b) => ({
-                ...b,
-                pdfFileKey: getElectricityBillFileKey(b.invoiceNumber),
-              })),
-            ]);
+            setElectricityBills((prev) => {
+              const map = new Map(prev.map((b) => [b.invoiceNumber, b]));
+              for (const b of scan.electricityBills) {
+                map.set(b.invoiceNumber, {
+                  ...b,
+                  pdfFileKey: getElectricityBillFileKey(b.invoiceNumber),
+                });
+              }
+              return Array.from(map.values());
+            });
           }
           if (scan.waterBills.length > 0) {
-            setWaterBills((prev) => [
-              ...prev,
-              ...scan.waterBills.map((w) => ({
-                ...w,
-                id: `acegas_${w.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '') || Date.now()}`,
-                pdfFileKey: getWaterBillFileKey(w.invoiceNumber),
-              })),
-            ]);
+            setWaterBills((prev) => {
+              const map = new Map(prev.map((w) => [w.id, w]));
+              for (const w of scan.waterBills) {
+                const wId = `acegas_${w.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '') || Date.now()}`;
+                map.set(wId, {
+                  ...w,
+                  id: wId,
+                  pdfFileKey: getWaterBillFileKey(w.invoiceNumber),
+                });
+              }
+              return Array.from(map.values());
+            });
           }
           if (scan.tariBills.length > 0) {
-            setTariBills((prev) => [
-              ...prev,
-              ...scan.tariBills.map((t) => ({
-                ...t,
-                id: `tari_${t.noticeNumber.replace(/[^a-zA-Z0-9_-]/g, '') || Date.now()}`,
-                pdfFileKey: getTariBillFileKey(t.noticeNumber),
-              })),
-            ]);
+            setTariBills((prev) => {
+              const map = new Map(prev.map((t) => [t.id, t]));
+              for (const t of scan.tariBills) {
+                const tId = `tari_${t.noticeNumber.replace(/[^a-zA-Z0-9_-]/g, '') || Date.now()}`;
+                map.set(tId, {
+                  ...t,
+                  id: tId,
+                  pdfFileKey: getTariBillFileKey(t.noticeNumber),
+                });
+              }
+              return Array.from(map.values());
+            });
           }
           setGmailNotice({
             tone: 'info',
@@ -2545,12 +2671,9 @@ export default function App() {
         if (err instanceof GmailAuthExpiredError) {
           clearGmailAccessToken();
           setGmailToken(null);
-          lastGmailCheckAtRef.current = null;
-          lastGmailAttemptAtRef.current = null;
-          setLastGmailCheckAt(null);
           setGmailNotice({
             tone: 'warn',
-            text: 'Sessione Gmail scaduta: clicca "Collega Gmail" per ricollegare la casella e riattivare il controllo automatico.',
+            text: 'Sessione Gmail scaduta: clicca "Sincronizza Gmail" per ricollegare la casella.',
           });
         } else {
           setGmailNotice({
@@ -2566,7 +2689,7 @@ export default function App() {
         setGmailSyncing(false);
       }
     },
-    [homeConfig.tariffEurPerKwh]
+    [effectiveHomeConfig.tariffEurPerKwh]
   );
 
   async function handleManualGmailSync() {
@@ -2600,7 +2723,7 @@ export default function App() {
       return;
     }
 
-    await runGmailSyncWithToken(activeUser, token, false);
+    await runGmailSyncWithToken(activeUser, token);
   }
 
   async function handleConfirmTrashMessages() {
@@ -2624,9 +2747,6 @@ export default function App() {
       if (err instanceof GmailAuthExpiredError) {
         clearGmailAccessToken();
         setGmailToken(null);
-        lastGmailCheckAtRef.current = null;
-        lastGmailAttemptAtRef.current = null;
-        setLastGmailCheckAt(null);
       }
       setGmailNotice({
         tone: 'warn',
@@ -2646,59 +2766,6 @@ export default function App() {
     }
     setPendingTrashMessages([]);
   }
-
-  const runGmailSyncWithTokenRef = useRef(runGmailSyncWithToken);
-  useEffect(() => {
-    runGmailSyncWithTokenRef.current = runGmailSyncWithToken;
-  }, [runGmailSyncWithToken]);
-
-  // Periodic wall-clock Gmail INBOX scan while user & Gmail token are active,
-  // with immediate catch-up when returning to the tab, focusing the window, or coming online.
-  useEffect(() => {
-    if (!user || !gmailToken || !appSettings.autoGmailSyncEnabled || readingsLoading) return;
-    const intervalMs = appSettings.autoGmailSyncIntervalMinutes * 60 * 1000;
-
-    const maybeSyncIfDue = () => {
-      if (gmailSyncInFlightRef.current) return;
-      const now = Date.now();
-      const lastSuccess = lastGmailCheckAtRef.current;
-      const lastAttempt = lastGmailAttemptAtRef.current;
-      const retryCooldownMs = Math.min(intervalMs, 2 * 60 * 1000);
-      if (lastAttempt !== null && now - lastAttempt < retryCooldownMs) return;
-      if (lastSuccess === null || now - lastSuccess >= intervalMs) {
-        void runGmailSyncWithTokenRef.current(user, gmailToken, true);
-      }
-    };
-
-    maybeSyncIfDue();
-
-    const heartbeatId = window.setInterval(maybeSyncIfDue, 20_000);
-    const handleVisibilityOrFocus = () => {
-      if (document.visibilityState === 'visible') {
-        maybeSyncIfDue();
-      }
-    };
-    const handleOnline = () => {
-      maybeSyncIfDue();
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
-    window.addEventListener('focus', handleVisibilityOrFocus);
-    window.addEventListener('online', handleOnline);
-
-    return () => {
-      window.clearInterval(heartbeatId);
-      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
-      window.removeEventListener('focus', handleVisibilityOrFocus);
-      window.removeEventListener('online', handleOnline);
-    };
-  }, [
-    user,
-    gmailToken,
-    readingsLoading,
-    appSettings.autoGmailSyncEnabled,
-    appSettings.autoGmailSyncIntervalMinutes,
-  ]);
 
   async function handleAddClimateLog(
     session: Omit<ClimateSession, 'id' | 'ownerId'>
@@ -2723,8 +2790,15 @@ export default function App() {
     if (session.notes) {
       payload.notes = session.notes.slice(0, 240);
     }
+    const vmcDocId = `vmc_${session.date.replace(/-/g, '')}`;
+    const vmcDocPath = `users/${user.uid}/vmcDays/${vmcDocId}`;
+    const currentVmcEntry = vmcDays.find((v) => v.date === session.date);
+    const currentVmcEnabled = currentVmcEntry ? Boolean(currentVmcEntry.enabled) : false;
+    const desiredVmc = Boolean(session.vmcMax);
+    const shouldWriteVmc =
+      typeof session.vmcMax === 'boolean' && desiredVmc !== currentVmcEnabled;
+
     try {
-      const batch = writeBatch(db);
       setSimulatedOpDetailHint(`${basePath}/${docId}`, {
         title: `${session.mode} · ${session.date}`,
         actionLabel: 'Nuova sessione',
@@ -2735,33 +2809,40 @@ export default function App() {
           `Target: ${session.targetTemp}°C`,
         ],
       });
-      batch.set(doc(db, basePath, docId), payload);
-      if (typeof session.vmcMax === 'boolean') {
-        const vmcDocId = `vmc_${session.date.replace(/-/g, '')}`;
-        batch.set(doc(db, `users/${user.uid}/vmcDays`, vmcDocId), {
+
+      if (shouldWriteVmc) {
+        const batch = writeBatch(db);
+        batch.set(doc(db, basePath, docId), payload);
+        batch.set(doc(db, vmcDocPath), {
           ownerId: user.uid,
           date: session.date,
-          enabled: Boolean(session.vmcMax),
+          enabled: desiredVmc,
           createdAt: serverTimestamp(),
         });
+        await batch.commit();
+      } else {
+        await setDoc(doc(db, basePath, docId), payload);
       }
-      await batch.commit();
+
       if (isFirestoreWritesDisabled()) {
-        setClimateLogs((prev) => [
-          ...prev,
-          {
-            id: docId,
-            ownerId: user.uid,
-            ...session,
-          },
-        ]);
-        if (typeof session.vmcMax === 'boolean') {
-          const vmcDocId = `vmc_${session.date.replace(/-/g, '')}`;
+        setClimateLogs((prev) =>
+          prev.some((l) => l.id === docId)
+            ? prev
+            : [
+                ...prev,
+                {
+                  id: docId,
+                  ownerId: user.uid,
+                  ...session,
+                },
+              ]
+        );
+        if (shouldWriteVmc) {
           setVmcDays((prev) => {
             const filtered = prev.filter((v) => v.date !== session.date);
             return [
               ...filtered,
-              { id: vmcDocId, ownerId: user.uid, date: session.date, enabled: Boolean(session.vmcMax) },
+              { id: vmcDocId, ownerId: user.uid, date: session.date, enabled: desiredVmc },
             ];
           });
         }
@@ -2813,36 +2894,46 @@ export default function App() {
         climateDetails.push(`VMC Max: ${session.vmcMax ? 'Attiva' : 'Spenta'}`);
       }
     }
+    const vmcDocId = `vmc_${session.date.replace(/-/g, '')}`;
+    const vmcDocPath = `users/${user.uid}/vmcDays/${vmcDocId}`;
+    const currentVmcEntry = vmcDays.find((v) => v.date === session.date);
+    const currentVmcEnabled = currentVmcEntry ? Boolean(currentVmcEntry.enabled) : false;
+    const desiredVmc = Boolean(session.vmcMax);
+    const shouldWriteVmc =
+      typeof session.vmcMax === 'boolean' && desiredVmc !== currentVmcEnabled;
+
     try {
-      const batch = writeBatch(db);
       setSimulatedOpDetailHint(path, {
         title: `${session.mode} · ${session.date}`,
         actionLabel: 'Modifica',
         changedFields: climateFields.length > 0 ? climateFields : undefined,
         changedDetails: climateDetails.length > 0 ? climateDetails : undefined,
       });
-      batch.set(doc(db, path), payload, { merge: true });
-      if (typeof session.vmcMax === 'boolean') {
-        const vmcDocId = `vmc_${session.date.replace(/-/g, '')}`;
-        batch.set(doc(db, `users/${user.uid}/vmcDays`, vmcDocId), {
+
+      if (shouldWriteVmc) {
+        const batch = writeBatch(db);
+        batch.set(doc(db, path), payload, { merge: true });
+        batch.set(doc(db, vmcDocPath), {
           ownerId: user.uid,
           date: session.date,
-          enabled: Boolean(session.vmcMax),
+          enabled: desiredVmc,
           createdAt: serverTimestamp(),
         });
+        await batch.commit();
+      } else {
+        await setDoc(doc(db, path), payload, { merge: true });
       }
-      await batch.commit();
+
       if (isFirestoreWritesDisabled()) {
         setClimateLogs((prev) =>
           prev.map((log) => (log.id === id ? { ...log, ...session } : log))
         );
-        if (typeof session.vmcMax === 'boolean') {
-          const vmcDocId = `vmc_${session.date.replace(/-/g, '')}`;
+        if (shouldWriteVmc) {
           setVmcDays((prev) => {
             const filtered = prev.filter((v) => v.date !== session.date);
             return [
               ...filtered,
-              { id: vmcDocId, ownerId: user.uid, date: session.date, enabled: Boolean(session.vmcMax) },
+              { id: vmcDocId, ownerId: user.uid, date: session.date, enabled: desiredVmc },
             ];
           });
         }
@@ -2859,10 +2950,67 @@ export default function App() {
     if (existingLog) {
       setSimulatedOpTitleHint(path, `${existingLog.mode} · ${existingLog.date}`);
     }
+
+    const vmcDocId = existingLog ? `vmc_${existingLog.date.replace(/-/g, '')}` : '';
+    const vmcPath = existingLog ? `users/${user.uid}/vmcDays/${vmcDocId}` : '';
+    const otherLogsOnDate = existingLog
+      ? climateLogs.filter((l) => l.id !== id && l.date === existingLog.date)
+      : [];
+    const currentVmcEntry = existingLog
+      ? vmcDays.find((v) => v.date === existingLog.date)
+      : undefined;
+    const baseHadVmc = vmcPath ? hasRegisteredBaseDoc(vmcPath) : false;
+    const baseVmcData = baseHadVmc && vmcPath ? getRegisteredBaseDocData(vmcPath) : undefined;
+    const baseVmcEnabled = Boolean(baseVmcData?.enabled);
+
+    const otherHasVmc = otherLogsOnDate.some((l) => Boolean(l.vmcMax));
+    const shouldDeleteLocalVmc = Boolean(
+      isFirestoreWritesDisabled() &&
+        existingLog &&
+        !otherHasVmc &&
+        currentVmcEntry &&
+        !baseHadVmc &&
+        Boolean(existingLog.vmcMax)
+    );
+    const shouldRestoreBaseVmc = Boolean(
+      isFirestoreWritesDisabled() &&
+        existingLog &&
+        !otherHasVmc &&
+        currentVmcEntry &&
+        baseHadVmc &&
+        Boolean(currentVmcEntry.enabled) !== baseVmcEnabled
+    );
+
     try {
-      await deleteDoc(doc(db, path));
+      if (shouldDeleteLocalVmc || shouldRestoreBaseVmc) {
+        const batch = writeBatch(db);
+        batch.delete(doc(db, path));
+        if (shouldDeleteLocalVmc) {
+          batch.delete(doc(db, vmcPath));
+        } else if (shouldRestoreBaseVmc) {
+          batch.set(doc(db, vmcPath), {
+            ownerId: user.uid,
+            date: existingLog!.date,
+            enabled: baseVmcEnabled,
+            createdAt: serverTimestamp(),
+          });
+        }
+        await batch.commit();
+      } else {
+        await deleteDoc(doc(db, path));
+      }
+
       if (isFirestoreWritesDisabled()) {
         setClimateLogs((prev) => prev.filter((l) => l.id !== id));
+        if (shouldDeleteLocalVmc && existingLog) {
+          setVmcDays((prev) => prev.filter((v) => v.date !== existingLog.date));
+        } else if (shouldRestoreBaseVmc && existingLog) {
+          setVmcDays((prev) =>
+            prev.map((v) =>
+              v.date === existingLog.date ? { ...v, enabled: baseVmcEnabled } : v
+            )
+          );
+        }
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
@@ -3029,33 +3177,33 @@ export default function App() {
       });
       await setDoc(doc(db, basePath, docId), payload);
       if (isFirestoreWritesDisabled()) {
-        setProductResearches((prev) => [
-          {
-            id: docId,
-            ownerId: user.uid,
-            url: urlTrim,
-            title: String(payload.title),
-            store: String(payload.store),
-            category: item.category,
-            status: payload.status as ProductResearchStatus,
-            room: normalizedRoom,
-            priceEur: typeof payload.priceEur === 'number' ? payload.priceEur : undefined,
-            paidPriceEur:
-              typeof payload.paidPriceEur === 'number' ? payload.paidPriceEur : undefined,
-            imageUrl: typeof payload.imageUrl === 'string' ? payload.imageUrl : undefined,
-            brand: typeof payload.brand === 'string' ? payload.brand : undefined,
-            color: typeof payload.color === 'string' ? payload.color : undefined,
-            availableColors: cleanColors.length > 0 ? cleanColors : undefined,
-            colorImages: cleanColorImages || undefined,
-            size: typeof payload.size === 'string' ? payload.size : undefined,
-            availableSizes: cleanSizes.length > 0 ? cleanSizes : undefined,
-            model: typeof payload.model === 'string' ? payload.model : undefined,
-            specs: typeof payload.specs === 'string' ? payload.specs : undefined,
-            notes: typeof payload.notes === 'string' ? payload.notes : undefined,
-            createdAtMs: Date.now(),
-          },
-          ...prev,
-        ]);
+        const newResearch: ProductResearchRecord = {
+          id: docId,
+          ownerId: user.uid,
+          url: urlTrim,
+          title: String(payload.title),
+          store: String(payload.store),
+          category: item.category,
+          status: payload.status as ProductResearchStatus,
+          room: normalizedRoom,
+          priceEur: typeof payload.priceEur === 'number' ? payload.priceEur : undefined,
+          paidPriceEur:
+            typeof payload.paidPriceEur === 'number' ? payload.paidPriceEur : undefined,
+          imageUrl: typeof payload.imageUrl === 'string' ? payload.imageUrl : undefined,
+          brand: typeof payload.brand === 'string' ? payload.brand : undefined,
+          color: typeof payload.color === 'string' ? payload.color : undefined,
+          availableColors: cleanColors.length > 0 ? cleanColors : undefined,
+          colorImages: cleanColorImages || undefined,
+          size: typeof payload.size === 'string' ? payload.size : undefined,
+          availableSizes: cleanSizes.length > 0 ? cleanSizes : undefined,
+          model: typeof payload.model === 'string' ? payload.model : undefined,
+          specs: typeof payload.specs === 'string' ? payload.specs : undefined,
+          notes: typeof payload.notes === 'string' ? payload.notes : undefined,
+          createdAtMs: Date.now(),
+        };
+        setProductResearches((prev) =>
+          prev.some((r) => r.id === docId) ? prev : [newResearch, ...prev]
+        );
       } else {
         writeExtendedRoomOverride(docId, urlTrim, 'clear');
       }
@@ -3518,7 +3666,11 @@ export default function App() {
     try {
       await setDoc(doc(db, basePath, docId), payload);
       if (isFirestoreWritesDisabled()) {
-        setElectricityBills((prev) => [...prev, { ...bill, pdfFileKey }]);
+        setElectricityBills((prev) =>
+          prev.some((b) => b.invoiceNumber === bill.invoiceNumber)
+            ? prev
+            : [...prev, { ...bill, pdfFileKey }]
+        );
       }
     } catch (error) {
       await deleteVaultFiles([pdfFileKey], user.uid);
@@ -3996,15 +4148,19 @@ export default function App() {
       });
       await setDoc(doc(db, basePath, docId), payload);
       if (isFirestoreWritesDisabled()) {
-        setHomeArticles((prev) => [
-          ...prev,
-          {
-            ...article,
-            id: docId,
-            manualFileKey: uploadedManual?.key ?? article.manualFileKey,
-            manualFileName: uploadedManual?.fileName ?? article.manualFileName,
-          },
-        ]);
+        setHomeArticles((prev) =>
+          prev.some((a) => a.id === docId)
+            ? prev
+            : [
+                ...prev,
+                {
+                  ...article,
+                  id: docId,
+                  manualFileKey: uploadedManual?.key ?? article.manualFileKey,
+                  manualFileName: uploadedManual?.fileName ?? article.manualFileName,
+                },
+              ]
+        );
       }
       return docId;
     } catch (error) {
@@ -4104,13 +4260,17 @@ export default function App() {
     try {
       await setDoc(doc(db, basePath, docId), payload);
       if (isFirestoreWritesDisabled()) {
-        setHomeArticles((prev) => [
-          ...prev,
-          {
-            ...articlePayload,
-            id: docId,
-          },
-        ]);
+        setHomeArticles((prev) =>
+          prev.some((a) => a.id === docId)
+            ? prev
+            : [
+                ...prev,
+                {
+                  ...articlePayload,
+                  id: docId,
+                },
+              ]
+        );
       }
     } catch (error) {
       await deleteVaultFiles([attachmentKey], user.uid);
@@ -4236,7 +4396,8 @@ export default function App() {
           a.room !== SYSTEM_ROOM_GROCERY_META &&
           a.room !== SYSTEM_ROOM_DOCUMENTS &&
           a.room !== SYSTEM_ROOM_CLIMATE_AUTO &&
-          a.room !== SYSTEM_ROOM_MIGRATION_META
+          a.room !== SYSTEM_ROOM_MIGRATION_META &&
+          a.room !== SYSTEM_ROOM_APP_SETTINGS
       ),
     [homeArticles]
   );
@@ -4832,7 +4993,7 @@ export default function App() {
     const payload = {
       exportedAt: new Date().toISOString(),
       projectId: FIREBASE_PROJECT_ID,
-      homeConfig,
+      homeConfig: effectiveHomeConfig,
       settings: appSettings,
       readings,
       climateLogs,
@@ -4885,7 +5046,7 @@ export default function App() {
             onClick={() => navigateToSection('panoramica')}
             className="inline-flex items-center gap-3 text-slate-900 dark:text-slate-100 font-bold tracking-tight text-base whitespace-nowrap"
           >
-            <Home className="w-5 h-5 text-sky-600 dark:text-sky-400 shrink-0" />
+            <Home className="w-5 h-5 text-brand-600 dark:text-brand-400 shrink-0" />
             <span
               className={`transition-opacity duration-150 ${
                 sidebarPinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
@@ -4908,7 +5069,7 @@ export default function App() {
                 onClick={() => navigateToSection(item.id)}
                 className={`w-full flex items-center gap-3 px-2.5 py-2.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap overflow-hidden ${
                   active
-                    ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950 shadow-xs'
+                    ? 'bg-brand-600 text-white dark:bg-brand-400 dark:text-slate-950 shadow-xs'
                     : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
                 }`}
               >
@@ -4955,7 +5116,7 @@ export default function App() {
               type="button"
               onClick={handleSignIn}
               title="Accedi con Google per modificare"
-              className="w-full flex items-center justify-center gap-2 py-2 px-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap overflow-hidden"
+              className="w-full flex items-center justify-center gap-2 py-2 px-2 text-xs font-medium text-white bg-brand-600 hover:bg-brand-700 dark:text-slate-950 dark:bg-brand-400 dark:hover:bg-brand-300 rounded-lg transition-colors whitespace-nowrap overflow-hidden"
             >
               <span className={`${sidebarPinned ? 'hidden' : 'group-hover:hidden'} font-bold`}>
                 G
@@ -5000,7 +5161,7 @@ export default function App() {
                     }}
                     className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg ${
                       active
-                        ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                        ? 'bg-brand-600 text-white dark:bg-brand-400 dark:text-slate-950'
                         : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
                     }`}
                   >
@@ -5043,7 +5204,7 @@ export default function App() {
 
           <div className="flex items-center gap-2.5 shrink-0">
             <div className="hidden md:block text-xs font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">
-              POD <span className="text-sky-600 dark:text-sky-400">{homeConfig.podCode}</span> · 6 kW
+              POD <span className="text-brand-600 dark:text-brand-400">{effectiveHomeConfig.podCode}</span> · 6 kW
             </div>
 
             {(appSettings.firestoreWritesDisabled || simulatedOps.length > 0) && (
@@ -5062,8 +5223,8 @@ export default function App() {
                 }
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-lg border transition-colors whitespace-nowrap ${
                   showSimulatedQueuePanel && simulatedOps.length > 0
-                    ? 'bg-indigo-600 text-white border-indigo-600 dark:bg-indigo-500 dark:text-slate-950 dark:border-indigo-400 shadow-xs'
-                    : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 dark:bg-indigo-500/15 dark:text-indigo-200 dark:border-indigo-500/35 dark:hover:bg-indigo-500/25'
+                    ? 'bg-amber-500 text-slate-950 border-amber-500 dark:bg-amber-400 dark:text-slate-950 dark:border-amber-300 shadow-xs'
+                    : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-200 dark:border-amber-500/35 dark:hover:bg-amber-500/25'
                 }`}
               >
                 <FlaskConical className="w-3.5 h-3.5 shrink-0" />
@@ -5096,9 +5257,9 @@ export default function App() {
               className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100/80 hover:bg-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
             >
               {appSettings.theme === 'dark' ? (
-                <Sun className="w-3.5 h-3.5 text-sky-400" />
+                <Sun className="w-3.5 h-3.5 text-brand-400" />
               ) : (
-                <Moon className="w-3.5 h-3.5 text-sky-600" />
+                <Moon className="w-3.5 h-3.5 text-brand-600" />
               )}
             </button>
 
@@ -5107,57 +5268,17 @@ export default function App() {
                 type="button"
                 onClick={handleManualGmailSync}
                 disabled={gmailSyncing}
-                title={
-                  gmailToken
-                    ? appSettings.autoGmailSyncEnabled
-                      ? `Controlla ora la INBOX di Gmail (auto ogni ${appSettings.autoGmailSyncIntervalMinutes} min${
-                          lastGmailCheckAt
-                            ? ` · ultimo ${new Date(lastGmailCheckAt).toLocaleTimeString('it-IT', {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}`
-                            : ''
-                        })`
-                      : 'Controlla ora la INBOX di Gmail'
-                    : appSettings.autoGmailSyncEnabled
-                      ? `Gmail non collegato in questa sessione: clicca per attivare il controllo automatico ogni ${appSettings.autoGmailSyncIntervalMinutes} min`
-                      : 'Collega e sincronizza ora la INBOX di Gmail'
-                }
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap disabled:opacity-60 border ${
-                  !gmailToken && appSettings.autoGmailSyncEnabled
-                    ? 'text-amber-900 dark:text-amber-100 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 border-amber-300 dark:border-amber-500/40'
-                    : 'text-slate-800 dark:text-slate-100 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border-slate-300 dark:border-slate-700'
-                }`}
+                title="Sincronizza ora la INBOX di Gmail (bollette PDF e consumi; il controllo 24/7 gira già su Apps Script)"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap disabled:opacity-60 border text-slate-800 dark:text-slate-100 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border-slate-300 dark:border-slate-700"
               >
                 {gmailSyncing ? (
-                  <RefreshCw className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 animate-spin" />
+                  <RefreshCw className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400 animate-spin" />
                 ) : (
-                  <Mail
-                    className={`w-3.5 h-3.5 ${
-                      !gmailToken && appSettings.autoGmailSyncEnabled
-                        ? 'text-amber-600 dark:text-amber-400'
-                        : 'text-sky-600 dark:text-sky-400'
-                    }`}
-                  />
+                  <Mail className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400" />
                 )}
-                <span>
-                  {gmailSyncing
-                    ? 'Controllo Gmail...'
-                    : gmailToken
-                      ? 'Sincronizza Gmail'
-                      : 'Collega Gmail'}
-                </span>
-                {!gmailSyncing && (
-                  <span
-                    className={`w-2 h-2 rounded-full ${
-                      gmailToken
-                        ? 'bg-emerald-500'
-                        : appSettings.autoGmailSyncEnabled
-                          ? 'bg-amber-500'
-                          : 'bg-slate-400'
-                    }`}
-                    aria-hidden="true"
-                  />
+                <span>{gmailSyncing ? 'Controllo Gmail...' : 'Sincronizza Gmail'}</span>
+                {!gmailSyncing && gmailToken && (
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" aria-hidden="true" />
                 )}
               </button>
             ) : (
@@ -5201,9 +5322,9 @@ export default function App() {
           firestoreQuotaExceeded) && (
           <div className="sticky top-14 z-30 shadow-xs">
             {appSettings.firestoreWritesDisabled && (
-              <div className="px-4 sm:px-6 py-1.5 sm:py-2 bg-indigo-50/95 border-b border-indigo-200 text-xs text-indigo-900 dark:bg-indigo-950/90 backdrop-blur-md dark:border-indigo-500/35 dark:text-indigo-100 flex flex-wrap items-center justify-between gap-2">
+              <div className="px-4 sm:px-6 py-1.5 sm:py-2 bg-amber-50/95 border-b border-amber-300 text-xs text-amber-950 dark:bg-amber-950/85 backdrop-blur-md dark:border-amber-500/40 dark:text-amber-100 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
-                  <FlaskConical className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-300 shrink-0" />
+                  <FlaskConical className="w-3.5 h-3.5 text-amber-700 dark:text-amber-300 shrink-0" />
                   <span className="truncate sm:whitespace-normal">
                     <strong>Modalità Test Browser attiva:</strong>{' '}
                     <span className="hidden md:inline">
@@ -5224,7 +5345,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => setShowSimulatedQueuePanel((prev) => !prev)}
-                      className="px-2.5 py-1 text-[11px] font-semibold rounded-md border border-indigo-300 dark:border-indigo-400/50 bg-white/85 hover:bg-white text-indigo-800 dark:bg-indigo-900/60 dark:hover:bg-indigo-900 dark:text-indigo-100 transition-colors"
+                      className="px-2.5 py-1 text-[11px] font-semibold rounded-md border border-amber-300 dark:border-amber-400/50 bg-white/85 hover:bg-white text-amber-900 dark:bg-amber-900/50 dark:hover:bg-amber-900/80 dark:text-amber-100 transition-colors"
                     >
                       {showSimulatedQueuePanel
                         ? 'Nascondi operazioni'
@@ -5234,8 +5355,8 @@ export default function App() {
                   <button
                     type="button"
                     disabled={flushState.flushing}
-                    onClick={() => updateAppSettings({ firestoreWritesDisabled: false })}
-                    className="px-2.5 py-1 text-[11px] font-semibold rounded-md bg-indigo-600 hover:bg-indigo-700 text-white dark:bg-indigo-500 dark:hover:bg-indigo-400 dark:text-slate-950 transition-colors disabled:opacity-60"
+                    onClick={() => setPendingDbActionModal('reenable')}
+                    className="px-2.5 py-1 text-[11px] font-semibold rounded-md bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-400 dark:hover:bg-emerald-300 dark:text-slate-950 transition-colors disabled:opacity-60"
                   >
                     {simulatedOps.length > 0
                       ? `Riattiva DB e salva (${simulatedOps.length})`
@@ -5245,7 +5366,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => navigateToSection('impostazioni')}
-                      className="hidden sm:inline-block px-2 py-1 text-[11px] font-medium underline text-indigo-700 dark:text-indigo-300 hover:opacity-80"
+                      className="hidden sm:inline-block px-2 py-1 text-[11px] font-medium underline text-amber-800 dark:text-amber-200 hover:opacity-80"
                     >
                       Impostazioni
                     </button>
@@ -5279,7 +5400,7 @@ export default function App() {
                   <button
                     type="button"
                     disabled={flushState.flushing || !canEdit}
-                    onClick={() => void flushSimulatedFirestoreOps()}
+                    onClick={() => setPendingDbActionModal('flush')}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-500 dark:hover:bg-sky-400 dark:text-slate-950 transition-colors disabled:opacity-50"
                   >
                     <CloudUpload className="w-3 h-3" />
@@ -5399,10 +5520,14 @@ export default function App() {
                   )}
                   <span>
                     {flushState.flushing
-                      ? 'Sincronizzazione su Firestore delle operazioni simulate in locale in corso...'
+                      ? 'Sincronizzazione in blocco su Firestore delle operazioni simulate in locale in corso...'
                       : flushState.lastResult?.failed
                         ? `Sincronizzate ${flushState.lastResult.flushed} su ${flushState.lastResult.total} operazioni su Firestore. ${flushState.lastResult.errorMessage || ''}`
-                        : `Sincronizzazione completata: ${flushState.lastResult?.flushed || 0} ${(flushState.lastResult?.flushed || 0) === 1 ? 'operazione simulata salvata' : 'operazioni simulate salvate'} su Firestore.`}
+                        : `Sincronizzazione completata: ${flushState.lastResult?.flushed || 0} ${(flushState.lastResult?.flushed || 0) === 1 ? 'operazione salvata' : 'operazioni salvate'} su Firestore${
+                            flushState.lastResult?.batchCommits
+                              ? ` (${flushState.lastResult.docWrites || 0} scritture in ${flushState.lastResult.batchCommits} ${flushState.lastResult.batchCommits === 1 ? 'unico blocco batch' : 'blocchi batch'})`
+                              : ''
+                          }.`}
                   </span>
                 </div>
                 {!flushState.flushing && flushState.lastResult && (
@@ -5620,7 +5745,7 @@ export default function App() {
         >
           {activeNav === 'panoramica' && (
             <OverviewView
-              config={homeConfig}
+              config={effectiveHomeConfig}
               readings={readings}
               selectedYear={selectedYear}
               onSelectYear={setSelectedYear}
@@ -5636,7 +5761,7 @@ export default function App() {
               climateLogs={effectiveClimateLogs}
               vmcDaysMap={vmcDaysMap}
               climateAutopilot={climateAutopilot}
-              homeConfig={homeConfig}
+              homeConfig={effectiveHomeConfig}
               selectedYear={selectedYear}
               onSelectYear={setSelectedYear}
               availableYears={AVAILABLE_YEARS}
@@ -5657,7 +5782,7 @@ export default function App() {
 
           {activeNav === 'domotica' && (
             <DomoticsView
-              config={homeConfig}
+              config={effectiveHomeConfig}
               readings={readings}
               climateLogs={effectiveClimateLogs}
               vmcDaysMap={vmcDaysMap}
@@ -5856,15 +5981,25 @@ export default function App() {
 
           {activeNav === 'impostazioni' && (
             <SettingsView
-              homeConfig={homeConfig}
+              homeConfig={effectiveHomeConfig}
+              autoPlantMeta={{
+                latestBill: autoPlantParams.latestBill,
+                podFromPdf: Boolean(
+                  detectedBillPod &&
+                    autoPlantParams.latestBill &&
+                    detectedBillPod.invoiceNumber === autoPlantParams.latestBill.invoiceNumber
+                ),
+                tariffFromBill: autoPlantParams.tariffEurPerKwh !== null,
+                variableRateEurPerKwh: autoPlantParams.variableRateEurPerKwh,
+              }}
               readOnly={!canEdit}
               userEmail={user?.email || null}
               isGmailConnected={Boolean(gmailToken)}
               gmailSyncing={gmailSyncing}
-              lastGmailCheckAt={lastGmailCheckAt}
               onConnectOrSyncGmail={handleManualGmailSync}
-              onUpdateConfig={handleUpdateConfig}
               onExportBackup={handleExportFullBackup}
+              onRequestEnableFirestoreWrites={() => setPendingDbActionModal('reenable')}
+              onRequestFlushFirestoreOps={() => setPendingDbActionModal('flush')}
               countsSummary={{
                 readings: readings.length,
                 climateLogs: climateLogs.length,
@@ -5882,6 +6017,153 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {pendingDbActionModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs"
+          onClick={() => {
+            if (!flushState.flushing) setPendingDbActionModal(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="db-confirm-modal-title"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden"
+          >
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                  <CloudUpload className="w-4 h-4" />
+                </div>
+                <h3
+                  id="db-confirm-modal-title"
+                  className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate"
+                >
+                  {pendingDbActionModal === 'reenable'
+                    ? 'Conferma riattivazione scritture DB'
+                    : 'Conferma salvataggio in blocco su Firestore'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                disabled={flushState.flushing}
+                onClick={() => setPendingDbActionModal(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-3 text-xs text-slate-700 dark:text-slate-300">
+              {simulatedOps.length > 0 ? (
+                <>
+                  <p className="leading-relaxed">
+                    {pendingDbActionModal === 'reenable'
+                      ? 'Riattivando le scritture su Firestore, tutte le operazioni simulate in coda verranno salvate automaticamente in '
+                      : 'Tutte le operazioni simulate in coda verranno inviate su Firestore in '}
+                    <strong className="text-slate-900 dark:text-slate-100">
+                      {simulatedBatchPlan.batchCommitsCount <= 1
+                        ? 'un unico blocco batch'
+                        : `${simulatedBatchPlan.batchCommitsCount} blocchi batch`}
+                    </strong>
+                    {simulatedBatchPlan.docWritesCount > 0 && (
+                      <>
+                        {' '}
+                        ({simulatedBatchPlan.docWritesCount}{' '}
+                        {simulatedBatchPlan.docWritesCount === 1
+                          ? 'scrittura documento ottimizzata'
+                          : 'scritture documento ottimizzate'}
+                        {simulatedBatchPlan.vaultUploadOps.length +
+                          simulatedBatchPlan.vaultDeleteOps.length >
+                        0
+                          ? ` + ${
+                              simulatedBatchPlan.vaultUploadOps.length +
+                              simulatedBatchPlan.vaultDeleteOps.length
+                            } allegati Vault`
+                          : ''}
+                        ).
+                      </>
+                    )}
+                  </p>
+
+                  {!canEdit && (
+                    <div className="px-3 py-2 rounded-lg border border-amber-200 dark:border-amber-500/35 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 text-[11px] font-medium">
+                      Devi accedere con il tuo account Google proprietario per poter scrivere le operazioni in coda su Firestore.
+                    </div>
+                  )}
+
+                  <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1">
+                    {simulatedOps.map((op) => (
+                      <div
+                        key={op.id}
+                        className="px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-[11px]"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 dark:bg-sky-500/15 dark:text-sky-300 text-[10px] font-semibold shrink-0">
+                            {op.actionLabel}
+                          </span>
+                          <span className="text-slate-500 dark:text-slate-400 shrink-0">
+                            {op.section}
+                          </span>
+                          <span className="font-semibold text-slate-900 dark:text-slate-100 truncate">
+                            {op.targetTitle}
+                          </span>
+                        </div>
+                        <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 shrink-0">
+                          {op.writeCount} op
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="leading-relaxed">
+                  Nessuna operazione simulata in coda. Confermi di voler riattivare le scritture dirette su Firestore? D’ora in poi ogni modifica verrà salvata subito sul database cloud.
+                </p>
+              )}
+            </div>
+
+            <div className="px-5 py-3.5 bg-slate-50 dark:bg-slate-950/60 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={flushState.flushing}
+                onClick={() => setPendingDbActionModal(null)}
+                className="px-3.5 py-1.5 text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                disabled={
+                  flushState.flushing ||
+                  (simulatedOps.length > 0 && !canEdit)
+                }
+                onClick={() => {
+                  const action = pendingDbActionModal;
+                  setPendingDbActionModal(null);
+                  if (action === 'reenable') {
+                    updateAppSettings({ firestoreWritesDisabled: false });
+                  } else if (action === 'flush') {
+                    void flushSimulatedFirestoreOps();
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-400 dark:hover:bg-emerald-300 dark:text-slate-950 transition-colors disabled:opacity-50"
+              >
+                <CloudUpload className="w-3.5 h-3.5" />
+                <span>
+                  {simulatedOps.length > 0
+                    ? pendingDbActionModal === 'reenable'
+                      ? `Conferma e salva tutto (${simulatedOps.length})`
+                      : `Invia tutto in blocco (${simulatedOps.length})`
+                    : 'Conferma e riattiva DB'}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -74,7 +74,7 @@ const CATEGORY_STYLE: Record<
 > = {
   'Mutuo & Casa': {
     icon: Building2,
-    badge: 'bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30',
+    badge: 'bg-amber-50 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-500/30',
   },
   'Internet & Wi-Fi': {
     icon: Wifi,
@@ -86,7 +86,7 @@ const CATEGORY_STYLE: Record<
   },
   Assicurazioni: {
     icon: Shield,
-    badge: 'bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30',
+    badge: 'bg-teal-50 dark:bg-teal-500/15 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-500/30',
   },
   'Fiscale & Identità': {
     icon: FileCheck2,
@@ -432,7 +432,7 @@ export function DocumentsView({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <FolderOpen className="w-5 h-5 text-sky-600 dark:text-sky-400" />
+            <FolderOpen className="w-5 h-5 text-brand-600 dark:text-brand-400" />
             Archivio Documenti Casa &amp; Contratti
           </h1>
           <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
@@ -444,7 +444,7 @@ export function DocumentsView({
           <button
             type="button"
             onClick={() => openNewForm()}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 rounded-lg transition-colors"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-brand-600 hover:bg-brand-700 dark:text-slate-950 dark:bg-brand-400 dark:hover:bg-brand-300 rounded-lg transition-colors"
           >
             <Plus className="w-4 h-4" />
             Aggiungi Documento
@@ -490,7 +490,7 @@ export function DocumentsView({
           <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
             In Evidenza
           </div>
-          <div className="text-xl font-bold font-mono text-indigo-600 dark:text-indigo-300 mt-0.5">
+          <div className="text-xl font-bold font-mono text-amber-600 dark:text-amber-400 mt-0.5">
             {pinnedDocsCount}
           </div>
         </div>
@@ -547,7 +547,7 @@ export function DocumentsView({
             onClick={() => setActiveTab('all')}
             className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
               activeTab === 'all'
-                ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-500 dark:text-slate-950 dark:border-sky-400'
+                ? 'bg-brand-600 text-white border-brand-600 dark:bg-brand-400 dark:text-slate-950 dark:border-brand-400'
                 : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
             }`}
           >
@@ -563,7 +563,7 @@ export function DocumentsView({
                 onClick={() => setActiveTab(cat)}
                 className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
                   activeTab === cat
-                    ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-500 dark:text-slate-950 dark:border-sky-400'
+                    ? 'bg-brand-600 text-white border-brand-600 dark:bg-brand-400 dark:text-slate-950 dark:border-brand-400'
                     : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
@@ -577,8 +577,8 @@ export function DocumentsView({
             onClick={() => setActiveTab('bollette')}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
               activeTab === 'bollette'
-                ? 'bg-indigo-600 text-white border-indigo-600 dark:bg-indigo-500 dark:text-white dark:border-indigo-400'
-                : 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30 hover:bg-indigo-100 dark:hover:bg-indigo-500/20'
+                ? 'bg-amber-500 text-slate-950 border-amber-500 dark:bg-amber-400 dark:text-slate-950 dark:border-amber-400'
+                : 'bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-500/30 hover:bg-amber-100 dark:hover:bg-amber-500/20'
             }`}
           >
             <Receipt className="w-3.5 h-3.5" />
@@ -786,7 +786,7 @@ export function DocumentsView({
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 rounded-lg"
+              className="px-4 py-2 font-semibold text-white bg-emerald-600 hover:bg-emerald-700 dark:text-slate-950 dark:bg-emerald-400 dark:hover:bg-emerald-300 rounded-lg"
             >
               {saving ? 'Salvataggio...' : editingDoc ? 'Salva modifiche' : 'Salva documento'}
             </button>
@@ -859,7 +859,7 @@ export function DocumentsView({
                                   ? 'bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-500/30'
                                   : b.kind === 'acqua'
                                     ? 'bg-cyan-50 dark:bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-500/30'
-                                    : 'bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30'
+                                    : 'bg-amber-50 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30'
                               }`}
                             >
                               {b.kind === 'luce' ? (
@@ -978,7 +978,7 @@ export function DocumentsView({
                 <button
                   type="button"
                   onClick={() => openNewForm(DOCUMENT_STARTER_TEMPLATES[0])}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-500 dark:hover:bg-sky-400 rounded-lg"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-brand-600 hover:bg-brand-700 dark:text-slate-950 dark:bg-brand-400 dark:hover:bg-brand-300 rounded-lg"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Inserisci primo documento
@@ -1016,9 +1016,9 @@ export function DocumentsView({
                             {doc.pinned && (
                               <span
                                 title="In evidenza"
-                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-semibold bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30 rounded"
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-semibold bg-amber-50 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30 rounded"
                               >
-                                <Star className="w-2.5 h-2.5 fill-indigo-600 dark:fill-indigo-300" />
+                                <Star className="w-2.5 h-2.5 fill-amber-500 text-amber-500 dark:fill-amber-300 dark:text-amber-300" />
                                 Top
                               </span>
                             )}
@@ -1067,7 +1067,7 @@ export function DocumentsView({
                             {doc.expiryDate && (
                               <div className="flex justify-between gap-2">
                                 <span className="text-slate-500">Scadenza:</span>
-                                <span className="font-mono text-indigo-700 dark:text-indigo-300">{doc.expiryDate}</span>
+                                <span className="font-mono text-amber-700 dark:text-amber-300">{doc.expiryDate}</span>
                               </div>
                             )}
                           </div>

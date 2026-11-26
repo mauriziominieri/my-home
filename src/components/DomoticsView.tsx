@@ -276,7 +276,7 @@ export function DomoticsView({
 
   async function handleSaveSession(e: React.FormEvent) {
     e.preventDefault();
-    if (selectedRooms.length === 0 || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    if (submittingLog || selectedRooms.length === 0 || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
     const cleanedSlots = normalizeTimeSlots(timeSlots);
     if (cleanedSlots.length === 0) return;
     const tempNum = Number.parseFloat(targetTemp.replace(',', '.'));
@@ -429,7 +429,7 @@ export function DomoticsView({
               onClick={() => setMode('riscaldamento')}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                 mode === 'riscaldamento'
-                  ? 'bg-orange-600 text-white dark:bg-orange-500/25 dark:text-orange-200 dark:border dark:border-orange-400/50'
+                  ? 'bg-amber-500 text-slate-950 dark:bg-amber-400 dark:text-slate-950 font-semibold'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
               }`}
             >
@@ -619,7 +619,7 @@ export function DomoticsView({
                     className={`px-3 py-2 text-xs font-medium rounded-lg border transition-colors ${
                       active
                         ? mode === 'riscaldamento'
-                          ? 'bg-orange-50 dark:bg-orange-500/20 border-orange-300 dark:border-orange-500/50 text-orange-800 dark:text-orange-200'
+                          ? 'bg-amber-50 dark:bg-amber-500/20 border-amber-400 text-amber-900 dark:text-amber-200'
                           : 'bg-sky-50 dark:bg-sky-500/20 border-sky-300 dark:border-sky-500/50 text-sky-800 dark:text-sky-200'
                         : 'bg-slate-50 dark:bg-slate-950 border-slate-300 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                     }`}
@@ -643,7 +643,7 @@ export function DomoticsView({
             <button
               type="submit"
               disabled={submittingLog || selectedRooms.length === 0}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg transition-colors whitespace-nowrap disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white dark:text-slate-950 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:hover:bg-emerald-300 rounded-lg transition-colors whitespace-nowrap disabled:opacity-50"
             >
               <Plus className="w-3.5 h-3.5" />
               {submittingLog ? 'Salvataggio...' : 'Salva accensione'}
@@ -745,7 +745,7 @@ export function DomoticsView({
                                   onClick={() => setEditMode('riscaldamento')}
                                   className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md transition-colors ${
                                     editMode === 'riscaldamento'
-                                      ? 'bg-orange-600 text-white dark:bg-orange-500/25 dark:text-orange-200'
+                                      ? 'bg-amber-500 text-slate-950 dark:bg-amber-400 dark:text-slate-950 font-semibold'
                                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                                   }`}
                                 >
@@ -808,7 +808,7 @@ export function DomoticsView({
                                   type="button"
                                   disabled={savingEdit || editRooms.length === 0}
                                   onClick={() => void saveEditRow(log.id)}
-                                  className="px-3 py-1 text-xs font-semibold text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300 disabled:opacity-50 rounded-lg transition-colors"
+                                  className="px-3 py-1 text-xs font-semibold text-white dark:text-slate-950 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:hover:bg-emerald-300 disabled:opacity-50 rounded-lg transition-colors"
                                 >
                                   {savingEdit ? 'Salvo...' : 'Salva'}
                                 </button>
@@ -896,7 +896,9 @@ export function DomoticsView({
                                     onClick={() => toggleEditRoom(room.id)}
                                     className={`px-2 py-0.5 text-xs rounded border transition-colors ${
                                       active
-                                        ? 'bg-sky-100 dark:bg-sky-500/20 border-sky-400 text-sky-800 dark:text-sky-200 font-medium'
+                                        ? editMode === 'riscaldamento'
+                                          ? 'bg-amber-50 dark:bg-amber-500/20 border-amber-400 text-amber-900 dark:text-amber-200 font-medium'
+                                          : 'bg-sky-100 dark:bg-sky-500/20 border-sky-400 text-sky-800 dark:text-sky-200 font-medium'
                                         : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                                     }`}
                                   >
@@ -917,7 +919,7 @@ export function DomoticsView({
                       </td>
                       <td className="py-2.5 px-3 whitespace-nowrap">
                         {log.mode === 'riscaldamento' ? (
-                          <span className="inline-flex items-center gap-1 text-orange-600 dark:text-amber-400 font-medium">
+                          <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 font-medium">
                             <Flame className="w-3.5 h-3.5" />
                             Riscaldamento
                           </span>
@@ -1022,7 +1024,7 @@ export function DomoticsView({
               {config.aristonMode === 'raffrescamento' ? (
                 <Snowflake className="w-5 h-5 text-sky-600 dark:text-sky-400" />
               ) : (
-                <Flame className="w-5 h-5 text-orange-500 dark:text-amber-400" />
+                <Flame className="w-5 h-5 text-amber-500 dark:text-amber-400" />
               )}
             </div>
           </div>
@@ -1048,7 +1050,7 @@ export function DomoticsView({
                   }}
                   className={`px-3 py-2 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
                     config.aristonMode === m.value
-                      ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                      ? 'bg-brand-600 text-white dark:bg-brand-400 dark:text-slate-950'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                   }`}
                 >
@@ -1099,7 +1101,7 @@ export function DomoticsView({
               onChange={(e) =>
                 applyChange({ floorFlowTemp: Number(e.target.value) })
               }
-              className="w-full accent-sky-600 dark:accent-sky-400 cursor-pointer"
+              className="w-full accent-brand-600 dark:accent-brand-400 cursor-pointer"
             />
           </div>
 
@@ -1121,7 +1123,7 @@ export function DomoticsView({
               onChange={(e) =>
                 applyChange({ dhwTargetTemp: Number(e.target.value) })
               }
-              className="w-full accent-sky-600 dark:accent-sky-400 cursor-pointer"
+              className="w-full accent-brand-600 dark:accent-brand-400 cursor-pointer"
             />
           </div>
         </section>

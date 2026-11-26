@@ -1624,7 +1624,7 @@ export function CarView({
             <button
               type="submit"
               disabled={savingProfile}
-              className="px-4 py-2 font-semibold text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-lg"
+              className="px-4 py-2 font-semibold text-white dark:text-slate-950 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:hover:bg-emerald-300 rounded-lg"
             >
               {savingProfile ? 'Salvataggio...' : 'Salva dati Panda'}
             </button>

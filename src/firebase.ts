@@ -214,8 +214,27 @@ export interface SimulatedFlushResult {
   total: number;
   flushed: number;
   failed: number;
+  docWrites?: number;
+  batchCommits?: number;
   errorMessage?: string;
   at: number;
+}
+
+export interface SimulatedBatchWriteOp {
+  op: 'set' | 'update' | 'delete';
+  path: string;
+  data?: Record<string, unknown>;
+  merge?: boolean;
+}
+
+export interface SimulatedBatchPlan {
+  queuedCount: number;
+  docSourceOps: SimulatedFirestoreOp[];
+  docBatchChunks: SimulatedBatchWriteOp[][];
+  docWritesCount: number;
+  batchCommitsCount: number;
+  vaultUploadOps: SimulatedFirestoreOp[];
+  vaultDeleteOps: SimulatedFirestoreOp[];
 }
 
 export interface SimulatedFlushState {
@@ -508,11 +527,13 @@ function describePathSectionAndTitle(
     const section =
       room === '__spesa__' || docId.startsWith('spesa_')
         ? 'Spesa'
-        : room === '__documenti__' || docId.startsWith('doc_') || docId.startsWith('resdoc_') || docId.startsWith('artdoc_')
-          ? 'Documenti'
-          : room === '__macchina__' || docId.startsWith('car_')
-            ? 'Macchina'
-            : 'Articoli';
+        : room === '__app_settings__' || docId === 'app_settings_state'
+          ? 'Impostazioni'
+          : room === '__documenti__' || docId.startsWith('doc_') || docId.startsWith('resdoc_') || docId.startsWith('artdoc_')
+            ? 'Documenti'
+            : room === '__macchina__' || docId.startsWith('car_')
+              ? 'Macchina'
+              : 'Articoli';
     const title = String(data?.name || hintedTitle || docId);
     return { section, targetTitle: title };
   }
@@ -584,6 +605,16 @@ function lookupRegisteredBaseDoc(path: string): {
   const colMap = registeredBaseCollections.get(colPath);
   if (!colMap) return { known: false, baseDoc: undefined };
   return { known: true, baseDoc: colMap.get(docId) };
+}
+
+export function hasRegisteredBaseDoc(path: string): boolean {
+  const res = lookupRegisteredBaseDoc(path);
+  return Boolean(res.known && res.baseDoc);
+}
+
+export function getRegisteredBaseDocData(path: string): Record<string, unknown> | undefined {
+  const res = lookupRegisteredBaseDoc(path);
+  return res.known && res.baseDoc ? { ...res.baseDoc } : undefined;
 }
 
 function normalizeFirestoreValueForCompare(val: unknown): unknown {
@@ -743,6 +774,151 @@ function mergeDetailsForCompactedOp(
   return collected.length > 0 ? collected : undefined;
 }
 
+function finalizeUpdatedBatchOp(
+  origBatch: SimulatedFirestoreOp,
+  nextSubOps: SimulatedBatchSubOp[]
+): SimulatedFirestoreOp | null {
+  if (nextSubOps.length === 0) return null;
+  if (nextSubOps.length === 1) {
+    const sole = nextSubOps[0];
+    const desc = describePathSectionAndTitle(sole.path, sole.data);
+    if (sole.op === 'delete') {
+      return {
+        id: origBatch.id,
+        kind: 'delete',
+        createdAt: origBatch.createdAt,
+        section: desc.section,
+        actionLabel: 'Eliminazione',
+        targetTitle: desc.targetTitle,
+        writeCount: 1,
+        path: sole.path,
+      };
+    }
+    if (sole.op === 'set') {
+      const keepPrevLabels = origBatch.batchOps?.length === 1;
+      return {
+        id: origBatch.id,
+        kind: 'set',
+        createdAt: origBatch.createdAt,
+        section: desc.section,
+        actionLabel: keepPrevLabels
+          ? origBatch.actionLabel
+          : sole.options?.merge
+            ? 'Modifica'
+            : 'Salvataggio',
+        targetTitle: desc.targetTitle,
+        writeCount: 1,
+        path: sole.path,
+        data: sole.data,
+        options: sole.options,
+        changedFields: keepPrevLabels ? origBatch.changedFields : undefined,
+        changedDetails: keepPrevLabels ? origBatch.changedDetails : undefined,
+      };
+    }
+    return {
+      ...origBatch,
+      section: desc.section,
+      targetTitle: desc.targetTitle,
+      writeCount: 1,
+      batchOps: nextSubOps,
+    };
+  }
+
+  const first = nextSubOps[0];
+  const desc = describePathSectionAndTitle(first.path, first.data);
+  return {
+    ...origBatch,
+    section: desc.section,
+    targetTitle: `${desc.targetTitle} (+${nextSubOps.length - 1})`,
+    writeCount: nextSubOps.length,
+    batchOps: nextSubOps,
+  };
+}
+
+function isVaultKeyPresentInRegisteredBase(fileKey: string): boolean {
+  for (const [colPath, docsMap] of registeredBaseCollections.entries()) {
+    if (
+      colPath.endsWith('/homeArticles') ||
+      colPath.endsWith('/electricityBills') ||
+      colPath.endsWith('/waterBills') ||
+      colPath.endsWith('/tariBills')
+    ) {
+      for (const docData of docsMap.values()) {
+        if (
+          docData.attachmentKey === fileKey ||
+          docData.manualFileKey === fileKey ||
+          docData.pdfFileKey === fileKey
+        ) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function compactVaultOps(ops: SimulatedFirestoreOp[]): SimulatedFirestoreOp[] {
+  const uploadedIndicesByKey = new Map<string, number[]>();
+  const uploadIndicesToDrop = new Set<number>();
+  const deletedKeysToDropByOpIndex = new Map<number, Set<string>>();
+
+  for (let i = 0; i < ops.length; i += 1) {
+    const op = ops[i];
+    if (op.kind === 'vault_upload' && op.vaultUpload?.fileKey) {
+      const k = op.vaultUpload.fileKey;
+      const list = uploadedIndicesByKey.get(k) || [];
+      list.push(i);
+      uploadedIndicesByKey.set(k, list);
+    } else if (op.kind === 'vault_delete' && op.vaultDelete?.keys?.length) {
+      for (const k of op.vaultDelete.keys) {
+        const prevUploads = uploadedIndicesByKey.get(k);
+        if (prevUploads && prevUploads.length > 0) {
+          for (const idx of prevUploads) {
+            uploadIndicesToDrop.add(idx);
+          }
+          uploadedIndicesByKey.delete(k);
+          if (!isVaultKeyPresentInRegisteredBase(k)) {
+            let dropSet = deletedKeysToDropByOpIndex.get(i);
+            if (!dropSet) {
+              dropSet = new Set<string>();
+              deletedKeysToDropByOpIndex.set(i, dropSet);
+            }
+            dropSet.add(k);
+          }
+        }
+      }
+    }
+  }
+
+  if (uploadIndicesToDrop.size === 0 && deletedKeysToDropByOpIndex.size === 0) {
+    return ops;
+  }
+
+  const next: SimulatedFirestoreOp[] = [];
+  for (let i = 0; i < ops.length; i += 1) {
+    if (uploadIndicesToDrop.has(i)) continue;
+    const op = ops[i];
+    const keysToDrop = deletedKeysToDropByOpIndex.get(i);
+    if (op.kind === 'vault_delete' && op.vaultDelete && keysToDrop && keysToDrop.size > 0) {
+      const remainingKeys = op.vaultDelete.keys.filter((k) => !keysToDrop.has(k));
+      if (remainingKeys.length === 0) continue;
+      next.push({
+        ...op,
+        targetTitle:
+          remainingKeys.length === 1 ? remainingKeys[0] : `${remainingKeys.length} allegati`,
+        writeCount: remainingKeys.length * 2,
+        vaultDelete: {
+          ...op.vaultDelete,
+          keys: remainingKeys,
+        },
+      });
+      continue;
+    }
+    next.push(op);
+  }
+  return next;
+}
+
 function compactSinglePathOps(
   ops: SimulatedFirestoreOp[],
   targetPath: string
@@ -750,19 +926,20 @@ function compactSinglePathOps(
   const cleanTarget = targetPath.replace(/^\/+|\/+$/g, '');
   if (!cleanTarget) return ops;
 
-  // Do not reorder across a multi-doc batch op that also touches targetPath.
-  const hasConflictingBatch = ops.some(
-    (op) =>
-      op.kind === 'batch' &&
-      op.batchOps?.some((sub) => sub.path.replace(/^\/+|\/+$/g, '') === cleanTarget)
-  );
-  if (hasConflictingBatch) return ops;
-
   const { known, baseDoc } = lookupRegisteredBaseDoc(cleanTarget);
   if (!known) return ops;
 
-  const indices: number[] = [];
-  const opsForPath: SimulatedFirestoreOp[] = [];
+  type PathOccurrence =
+    | { kind: 'standalone'; opIndex: number; op: SimulatedFirestoreOp }
+    | {
+        kind: 'batchSub';
+        opIndex: number;
+        subIndex: number;
+        parentOp: SimulatedFirestoreOp;
+        subOp: SimulatedBatchSubOp;
+      };
+
+  const occurrences: PathOccurrence[] = [];
   for (let i = 0; i < ops.length; i += 1) {
     const op = ops[i];
     if (
@@ -770,68 +947,121 @@ function compactSinglePathOps(
       op.path &&
       op.path.replace(/^\/+|\/+$/g, '') === cleanTarget
     ) {
-      indices.push(i);
-      opsForPath.push(op);
+      occurrences.push({ kind: 'standalone', opIndex: i, op });
+    } else if (op.kind === 'batch' && op.batchOps?.length) {
+      for (let j = 0; j < op.batchOps.length; j += 1) {
+        const sub = op.batchOps[j];
+        if (sub.path.replace(/^\/+|\/+$/g, '') === cleanTarget) {
+          occurrences.push({
+            kind: 'batchSub',
+            opIndex: i,
+            subIndex: j,
+            parentOp: op,
+            subOp: sub,
+          });
+        }
+      }
     }
   }
-  if (opsForPath.length === 0) return ops;
+  if (occurrences.length === 0) return ops;
 
   let state: Record<string, unknown> | undefined = baseDoc ? { ...baseDoc } : undefined;
   let currentSerializedPatch: Record<string, unknown> = {};
   let isFullOverwrite = false;
   let wasDeleted = false;
+  let hasUpdateSubOp = false;
 
-  for (const op of opsForPath) {
-    if (op.kind === 'delete') {
+  for (const occ of occurrences) {
+    const ts = occ.kind === 'standalone' ? occ.op.createdAt : occ.parentOp.createdAt;
+    const opKind = occ.kind === 'standalone' ? occ.op.kind : occ.subOp.op;
+    const patch = (occ.kind === 'standalone' ? occ.op.data : occ.subOp.data) || {};
+    const mergeOpt =
+      occ.kind === 'standalone' ? Boolean(occ.op.options?.merge) : Boolean(occ.subOp.options?.merge);
+
+    if (opKind === 'delete') {
       wasDeleted = true;
       isFullOverwrite = false;
+      hasUpdateSubOp = false;
       currentSerializedPatch = {};
       state = undefined;
-    } else if (op.kind === 'set') {
+    } else if (opKind === 'set') {
       wasDeleted = false;
-      const patch = op.data || {};
-      if (!op.options?.merge) {
+      if (!mergeOpt) {
         isFullOverwrite = true;
+        hasUpdateSubOp = false;
         currentSerializedPatch = { ...patch };
-        state = applySerializedPatchToRawDoc(undefined, patch, false, op.createdAt);
+        state = applySerializedPatchToRawDoc(undefined, patch, false, ts);
       } else {
         currentSerializedPatch = { ...currentSerializedPatch, ...patch };
-        state = applySerializedPatchToRawDoc(state, patch, true, op.createdAt);
+        state = applySerializedPatchToRawDoc(state, patch, true, ts);
       }
+    } else if (opKind === 'update') {
+      wasDeleted = false;
+      hasUpdateSubOp = true;
+      currentSerializedPatch = { ...currentSerializedPatch, ...patch };
+      state = applySerializedPatchToRawDoc(state, patch, true, ts);
     }
   }
 
-  const firstOp = opsForPath[0];
-  const lastOp = opsForPath[opsForPath.length - 1];
-  let replacement: SimulatedFirestoreOp | null = null;
+  const hasBatchOccurrence = occurrences.some((occ) => occ.kind === 'batchSub');
+  const firstOcc = occurrences[0];
+  const lastOcc = occurrences[occurrences.length - 1];
+  const firstStandalone =
+    firstOcc.kind === 'standalone' ? firstOcc.op : firstOcc.parentOp;
+  const lastStandalone =
+    lastOcc.kind === 'standalone' ? lastOcc.op : lastOcc.parentOp;
+  const standaloneOnlyOps = occurrences
+    .filter((o): o is Extract<PathOccurrence, { kind: 'standalone' }> => o.kind === 'standalone')
+    .map((o) => o.op);
+
+  let netZero = false;
+  let compactedStandalone: SimulatedFirestoreOp | null = null;
+  let compactedBatchSub: SimulatedBatchSubOp | null = null;
 
   if (wasDeleted) {
     if (!baseDoc) {
       // Created locally and deleted locally before flushing: net zero DB ops.
-      replacement = null;
+      netZero = true;
     } else {
-      replacement = {
-        ...lastOp,
+      if (occurrences.length === 1 && !hasBatchOccurrence) return ops;
+      compactedStandalone = {
+        ...lastStandalone,
         kind: 'delete',
         writeCount: 1,
+        path: cleanTarget,
       };
+      compactedBatchSub = { op: 'delete', path: cleanTarget };
     }
   } else if (!baseDoc) {
-    if (opsForPath.length === 1) {
+    if (occurrences.length === 1) {
       return ops;
     }
-    const desc = describePathSectionAndTitle(lastOp.path || cleanTarget, currentSerializedPatch);
-    replacement = {
-      ...firstOp,
-      createdAt: lastOp.createdAt,
-      targetTitle: lastOp.targetTitle || desc.targetTitle,
+    const desc = describePathSectionAndTitle(cleanTarget, currentSerializedPatch);
+    const mergeFlag = isFullOverwrite && !hasUpdateSubOp ? undefined : { merge: true };
+    compactedStandalone = {
+      ...firstStandalone,
+      kind: 'set',
+      createdAt: lastStandalone.createdAt,
+      path: cleanTarget,
+      section: firstStandalone.section || desc.section,
+      targetTitle:
+        (lastOcc.kind === 'standalone' ? lastOcc.op.targetTitle : undefined) || desc.targetTitle,
       writeCount: 1,
       data: currentSerializedPatch,
-      options: isFullOverwrite ? undefined : { merge: true },
-      changedFields: firstOp.changedFields?.includes('__new__')
+      options: mergeFlag,
+      changedFields: firstStandalone.changedFields?.includes('__new__')
         ? ['__new__']
-        : firstOp.changedFields,
-      changedDetails: mergeDetailsForCompactedOp(opsForPath, [], true),
+        : firstStandalone.changedFields,
+      changedDetails:
+        standaloneOnlyOps.length > 0
+          ? mergeDetailsForCompactedOp(standaloneOnlyOps, [], true)
+          : firstStandalone.changedDetails,
+    };
+    compactedBatchSub = {
+      op: hasUpdateSubOp && !isFullOverwrite ? 'update' : 'set',
+      path: cleanTarget,
+      data: currentSerializedPatch,
+      options: mergeFlag,
     };
   } else {
     const finalState = state || {};
@@ -858,10 +1088,12 @@ function compactSinglePathOps(
 
     if (netChangedNonMetaKeys.length === 0) {
       // Every real field returned to its exact original Firestore value: net zero DB ops.
-      replacement = null;
+      netZero = true;
+    } else if (occurrences.length === 1) {
+      return ops;
     } else {
       let compactData: Record<string, unknown>;
-      let compactMerge = !isFullOverwrite;
+      const compactMerge = !isFullOverwrite;
 
       if (!isFullOverwrite) {
         compactData = {};
@@ -886,50 +1118,107 @@ function compactSinglePathOps(
         compactData = currentSerializedPatch;
       }
 
-      const desc = describePathSectionAndTitle(lastOp.path || cleanTarget, compactData);
-      replacement = {
-        ...lastOp,
+      const desc = describePathSectionAndTitle(cleanTarget, compactData);
+      compactedStandalone = {
+        ...lastStandalone,
         kind: 'set',
-        section: lastOp.section || desc.section,
+        path: cleanTarget,
+        section: desc.section,
         actionLabel:
-          firstOp.actionLabel === 'Nuovo prodotto' ? 'Nuovo prodotto' : lastOp.actionLabel,
-        targetTitle: lastOp.targetTitle || desc.targetTitle,
+          firstStandalone.actionLabel === 'Nuovo prodotto'
+            ? 'Nuovo prodotto'
+            : lastOcc.kind === 'standalone'
+              ? lastOcc.op.actionLabel
+              : 'Modifica',
+        targetTitle: desc.targetTitle,
         writeCount: 1,
         data: compactData,
         options: compactMerge ? { merge: true } : undefined,
         changedFields: netChangedNonMetaKeys,
-        changedDetails: mergeDetailsForCompactedOp(opsForPath, netChangedNonMetaKeys, false),
+        changedDetails:
+          standaloneOnlyOps.length > 0
+            ? mergeDetailsForCompactedOp(standaloneOnlyOps, netChangedNonMetaKeys, false)
+            : undefined,
+      };
+      compactedBatchSub = {
+        op: hasUpdateSubOp && !isFullOverwrite ? 'update' : 'set',
+        path: cleanTarget,
+        data: compactData,
+        options: compactMerge ? { merge: true } : undefined,
       };
     }
   }
 
-  const lastIndex = indices[indices.length - 1];
-  const indexSet = new Set(indices);
+  // Rebuild ops list: remove cleanTarget from all earlier occurrences,
+  // and either remove from last occurrence too (if netZero) or replace at last occurrence.
   const compacted: SimulatedFirestoreOp[] = [];
+  const lastOpIndex = lastOcc.opIndex;
+  const lastSubIndex = lastOcc.kind === 'batchSub' ? lastOcc.subIndex : -1;
+
   for (let i = 0; i < ops.length; i += 1) {
-    if (!indexSet.has(i)) {
-      compacted.push(ops[i]);
-    } else if (i === lastIndex && replacement) {
-      compacted.push(replacement);
+    const op = ops[i];
+    if (
+      (op.kind === 'set' || op.kind === 'delete') &&
+      op.path &&
+      op.path.replace(/^\/+|\/+$/g, '') === cleanTarget
+    ) {
+      if (!netZero && i === lastOpIndex && compactedStandalone) {
+        compacted.push(compactedStandalone);
+      }
+      continue;
     }
+
+    if (
+      op.kind === 'batch' &&
+      op.batchOps?.some((sub) => sub.path.replace(/^\/+|\/+$/g, '') === cleanTarget)
+    ) {
+      const nextSubOps: SimulatedBatchSubOp[] = [];
+      for (let j = 0; j < op.batchOps.length; j += 1) {
+        const sub = op.batchOps[j];
+        if (sub.path.replace(/^\/+|\/+$/g, '') !== cleanTarget) {
+          nextSubOps.push(sub);
+          continue;
+        }
+        if (!netZero && i === lastOpIndex && j === lastSubIndex && compactedBatchSub) {
+          nextSubOps.push(compactedBatchSub);
+        }
+      }
+      const finalized = finalizeUpdatedBatchOp(op, nextSubOps);
+      if (finalized) {
+        compacted.push(finalized);
+      }
+      continue;
+    }
+
+    compacted.push(op);
   }
+
   return compacted;
 }
 
 function compactSimulatedOpsList(
   ops: SimulatedFirestoreOp[],
-  targetPath?: string
+  targetPaths?: string | string[]
 ): SimulatedFirestoreOp[] {
-  if (targetPath) {
-    return compactSinglePathOps(ops, targetPath);
+  let next = compactVaultOps(ops);
+  if (targetPaths) {
+    const paths = Array.isArray(targetPaths) ? targetPaths : [targetPaths];
+    for (const p of paths) {
+      next = compactSinglePathOps(next, p);
+    }
+    return next;
   }
+
   const uniquePaths = new Set<string>();
-  for (const op of ops) {
+  for (const op of next) {
     if ((op.kind === 'set' || op.kind === 'delete') && op.path) {
       uniquePaths.add(op.path);
+    } else if (op.kind === 'batch' && op.batchOps) {
+      for (const sub of op.batchOps) {
+        if (sub.path) uniquePaths.add(sub.path);
+      }
     }
   }
-  let next = ops;
   for (const path of uniquePaths) {
     next = compactSinglePathOps(next, path);
   }
@@ -938,10 +1227,18 @@ function compactSimulatedOpsList(
 
 function enqueueSimulatedOp(op: SimulatedFirestoreOp): void {
   const appended = [...simulatedFirestoreOps, op];
-  simulatedFirestoreOps =
-    (op.kind === 'set' || op.kind === 'delete') && op.path
-      ? compactSimulatedOpsList(appended, op.path)
-      : appended;
+  if ((op.kind === 'set' || op.kind === 'delete') && op.path) {
+    simulatedFirestoreOps = compactSimulatedOpsList(appended, op.path);
+  } else if (op.kind === 'batch' && op.batchOps?.length) {
+    simulatedFirestoreOps = compactSimulatedOpsList(
+      appended,
+      Array.from(new Set(op.batchOps.map((s) => s.path).filter(Boolean)))
+    );
+  } else if (op.kind === 'vault_delete') {
+    simulatedFirestoreOps = compactVaultOps(appended);
+  } else {
+    simulatedFirestoreOps = appended;
+  }
   persistAndEmitSimulatedOps();
 }
 
@@ -1079,22 +1376,234 @@ export function mergeSimulatedOpsIntoRawDocs(
   return Array.from(map.entries()).map(([id, data]) => ({ id, data }));
 }
 
+const MAX_FIRESTORE_BATCH_OPS = 450;
+
+function stripDeleteFieldSentinels(
+  record: Record<string, unknown>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(record)) {
+    if (
+      v &&
+      typeof v === 'object' &&
+      !Array.isArray(v) &&
+      (v as { __fsSentinel?: unknown }).__fsSentinel === 'deleteField'
+    ) {
+      continue;
+    }
+    out[k] = v;
+  }
+  return out;
+}
+
+function isDeleteFieldSentinel(val: unknown): boolean {
+  return Boolean(
+    val &&
+      typeof val === 'object' &&
+      !Array.isArray(val) &&
+      (val as { __fsSentinel?: unknown }).__fsSentinel === 'deleteField'
+  );
+}
+
+export function getSimulatedBatchPlan(
+  ops: SimulatedFirestoreOp[] = simulatedFirestoreOps
+): SimulatedBatchPlan {
+  const compacted = compactSimulatedOpsList(ops);
+  const docSourceOps: SimulatedFirestoreOp[] = [];
+  const vaultUploadOps: SimulatedFirestoreOp[] = [];
+  const vaultDeleteOps: SimulatedFirestoreOp[] = [];
+
+  const foldedByPath = new Map<string, SimulatedBatchWriteOp>();
+  const overflowSequentialOps: SimulatedBatchWriteOp[] = [];
+
+  const applyAtomicDocOp = (
+    rawPath: string,
+    opKind: 'set' | 'update' | 'delete',
+    rawData?: Record<string, unknown>,
+    mergeOpt = false
+  ) => {
+    const cleanPath = rawPath.replace(/^\/+|\/+$/g, '');
+    if (!cleanPath) return;
+
+    const prev = foldedByPath.get(cleanPath);
+    if (opKind === 'delete') {
+      foldedByPath.set(cleanPath, { op: 'delete', path: cleanPath });
+      return;
+    }
+
+    const incomingData = rawData ? { ...rawData } : {};
+
+    if (opKind === 'set' && !mergeOpt) {
+      foldedByPath.set(cleanPath, {
+        op: 'set',
+        path: cleanPath,
+        data: stripDeleteFieldSentinels(incomingData),
+        merge: false,
+      });
+      return;
+    }
+
+    if (opKind === 'set' && mergeOpt) {
+      if (!prev) {
+        foldedByPath.set(cleanPath, {
+          op: 'set',
+          path: cleanPath,
+          data: incomingData,
+          merge: true,
+        });
+        return;
+      }
+      if (prev.op === 'delete') {
+        foldedByPath.set(cleanPath, {
+          op: 'set',
+          path: cleanPath,
+          data: stripDeleteFieldSentinels(incomingData),
+          merge: false,
+        });
+        return;
+      }
+      if (prev.op === 'set') {
+        const mergedData: Record<string, unknown> = { ...(prev.data || {}) };
+        for (const [k, v] of Object.entries(incomingData)) {
+          if (!prev.merge && isDeleteFieldSentinel(v)) {
+            delete mergedData[k];
+          } else {
+            mergedData[k] = v;
+          }
+        }
+        foldedByPath.set(cleanPath, {
+          op: 'set',
+          path: cleanPath,
+          data: mergedData,
+          merge: prev.merge,
+        });
+        return;
+      }
+      // prev.op === 'update'
+      const hasDots = Object.keys(incomingData).some((k) => k.includes('.'));
+      if (!hasDots) {
+        foldedByPath.set(cleanPath, {
+          op: 'update',
+          path: cleanPath,
+          data: { ...(prev.data || {}), ...incomingData },
+        });
+      } else {
+        overflowSequentialOps.push({
+          op: 'set',
+          path: cleanPath,
+          data: incomingData,
+          merge: true,
+        });
+      }
+      return;
+    }
+
+    // opKind === 'update'
+    if (!prev) {
+      foldedByPath.set(cleanPath, {
+        op: 'update',
+        path: cleanPath,
+        data: incomingData,
+      });
+      return;
+    }
+    const hasDots = Object.keys(incomingData).some((k) => k.includes('.'));
+    if (prev.op === 'update') {
+      foldedByPath.set(cleanPath, {
+        op: 'update',
+        path: cleanPath,
+        data: { ...(prev.data || {}), ...incomingData },
+      });
+      return;
+    }
+    if (prev.op === 'set' && !hasDots) {
+      const mergedData: Record<string, unknown> = { ...(prev.data || {}) };
+      for (const [k, v] of Object.entries(incomingData)) {
+        if (!prev.merge && isDeleteFieldSentinel(v)) {
+          delete mergedData[k];
+        } else {
+          mergedData[k] = v;
+        }
+      }
+      foldedByPath.set(cleanPath, {
+        op: 'set',
+        path: cleanPath,
+        data: mergedData,
+        merge: prev.merge,
+      });
+      return;
+    }
+    overflowSequentialOps.push({
+      op: 'update',
+      path: cleanPath,
+      data: incomingData,
+    });
+  };
+
+  for (const op of compacted) {
+    if (op.kind === 'set' && op.path) {
+      docSourceOps.push(op);
+      applyAtomicDocOp(op.path, 'set', op.data, Boolean(op.options?.merge));
+    } else if (op.kind === 'delete' && op.path) {
+      docSourceOps.push(op);
+      applyAtomicDocOp(op.path, 'delete');
+    } else if (op.kind === 'batch' && op.batchOps && op.batchOps.length > 0) {
+      docSourceOps.push(op);
+      for (const sub of op.batchOps) {
+        applyAtomicDocOp(
+          sub.path,
+          sub.op,
+          sub.data,
+          sub.op === 'set' ? Boolean(sub.options?.merge) : false
+        );
+      }
+    } else if (op.kind === 'vault_upload' && op.vaultUpload) {
+      vaultUploadOps.push(op);
+    } else if (op.kind === 'vault_delete' && op.vaultDelete) {
+      vaultDeleteOps.push(op);
+    }
+  }
+
+  const docBatchChunks: SimulatedBatchWriteOp[][] = [];
+  const foldedList = Array.from(foldedByPath.values());
+  for (let i = 0; i < foldedList.length; i += MAX_FIRESTORE_BATCH_OPS) {
+    docBatchChunks.push(foldedList.slice(i, i + MAX_FIRESTORE_BATCH_OPS));
+  }
+  for (let i = 0; i < overflowSequentialOps.length; i += MAX_FIRESTORE_BATCH_OPS) {
+    docBatchChunks.push(overflowSequentialOps.slice(i, i + MAX_FIRESTORE_BATCH_OPS));
+  }
+
+  const docWritesCount = docBatchChunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  return {
+    queuedCount: compacted.length,
+    docSourceOps,
+    docBatchChunks,
+    docWritesCount,
+    batchCommitsCount: docBatchChunks.length,
+    vaultUploadOps,
+    vaultDeleteOps,
+  };
+}
+
 export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult> {
   if (activeFlushPromise) return activeFlushPromise;
 
   const compactedBeforeFlush = compactSimulatedOpsList(simulatedFirestoreOps);
-  if (compactedBeforeFlush.length !== simulatedFirestoreOps.length || compactedBeforeFlush.some((c, idx) => c !== simulatedFirestoreOps[idx])) {
+  if (
+    compactedBeforeFlush.length !== simulatedFirestoreOps.length ||
+    compactedBeforeFlush.some((c, idx) => c !== simulatedFirestoreOps[idx])
+  ) {
     simulatedFirestoreOps = compactedBeforeFlush;
     persistAndEmitSimulatedOps();
   }
 
   const snapshot = [...simulatedFirestoreOps];
   if (snapshot.length === 0) {
-    return { total: 0, flushed: 0, failed: 0, at: Date.now() };
+    return { total: 0, flushed: 0, failed: 0, docWrites: 0, batchCommits: 0, at: Date.now() };
   }
 
   if (firestoreWriteStats.writesDisabled) {
-    return { total: snapshot.length, flushed: 0, failed: 0, at: Date.now() };
+    return { total: snapshot.length, flushed: 0, failed: 0, docWrites: 0, batchCommits: 0, at: Date.now() };
   }
 
   if (!auth.currentUser) {
@@ -1102,6 +1611,8 @@ export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult
       total: snapshot.length,
       flushed: 0,
       failed: snapshot.length,
+      docWrites: 0,
+      batchCommits: 0,
       errorMessage:
         'Accedi con il tuo account Google per inviare a Firestore le operazioni simulate in locale.',
       at: Date.now(),
@@ -1115,48 +1626,19 @@ export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult
     simulatedFlushState = { flushing: true, lastResult: null };
     emitSimulatedFlushState();
 
+    const plan = getSimulatedBatchPlan(snapshot);
     let flushed = 0;
     let failed = 0;
+    let docWrites = 0;
+    let batchCommits = 0;
     let errorMessage: string | undefined;
 
-    for (const op of snapshot) {
+    // 1. Replay queued binary vault uploads first (chunked internally for 10MB payload limits)
+    for (const op of plan.vaultUploadOps) {
+      if (!op.vaultUpload) continue;
       try {
-        if (op.kind === 'set' && op.path) {
-          const payload = deserializeFirestoreRecord(op.data);
-          const ref = doc(db, op.path);
-          if (op.options) {
-            await raceWithFirestoreQuotaAbort(rawSetDoc(ref, payload, op.options));
-          } else {
-            await raceWithFirestoreQuotaAbort(rawSetDoc(ref, payload));
-          }
-          recordFirestoreWritesExecuted(1, `Sync: ${op.targetTitle}`);
-        } else if (op.kind === 'delete' && op.path) {
-          await raceWithFirestoreQuotaAbort(rawDeleteDoc(doc(db, op.path)));
-          recordFirestoreWritesExecuted(1, `Sync eliminazione: ${op.targetTitle}`);
-        } else if (op.kind === 'batch' && op.batchOps && op.batchOps.length > 0) {
-          const batch = rawWriteBatch(db);
-          for (const sub of op.batchOps) {
-            const ref = doc(db, sub.path);
-            if (sub.op === 'delete') {
-              batch.delete(ref);
-            } else if (sub.op === 'update') {
-              batch.update(ref, deserializeFirestoreRecord(sub.data));
-            } else if (sub.options) {
-              batch.set(ref, deserializeFirestoreRecord(sub.data), sub.options);
-            } else {
-              batch.set(ref, deserializeFirestoreRecord(sub.data));
-            }
-          }
-          await raceWithFirestoreQuotaAbort(batch.commit());
-          recordFirestoreWritesExecuted(op.writeCount, `Sync batch (${op.writeCount} op)`);
-        } else if (op.kind === 'vault_upload' && op.vaultUpload) {
-          const { replayVaultUploadToFirestore } = await import('./utils/documentVault');
-          await replayVaultUploadToFirestore(op.vaultUpload);
-        } else if (op.kind === 'vault_delete' && op.vaultDelete) {
-          const { replayVaultDeleteToFirestore } = await import('./utils/documentVault');
-          await replayVaultDeleteToFirestore(op.vaultDelete);
-        }
-
+        const { replayVaultUploadToFirestore } = await import('./utils/documentVault');
+        await replayVaultUploadToFirestore(op.vaultUpload);
         flushed += 1;
         simulatedFirestoreOps = simulatedFirestoreOps.filter((item) => item.id !== op.id);
         persistAndEmitSimulatedOps();
@@ -1165,7 +1647,72 @@ export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult
         errorMessage =
           err instanceof Error
             ? err.message
-            : 'Errore durante la sincronizzazione su Firestore.';
+            : 'Errore durante il caricamento degli allegati su Firestore.';
+      }
+    }
+
+    // 2. Execute ALL queued Firestore document writes/deletes in a single unified WriteBatch block
+    //    (chunked at 450 ops only if the queue exceeds a single Firestore WriteBatch limit)
+    if (plan.docBatchChunks.length > 0) {
+      let allDocChunksCommitted = true;
+      for (const chunk of plan.docBatchChunks) {
+        try {
+          const batch = rawWriteBatch(db);
+          for (const item of chunk) {
+            const ref = doc(db, item.path);
+            if (item.op === 'delete') {
+              batch.delete(ref);
+            } else if (item.op === 'update') {
+              batch.update(ref, deserializeFirestoreRecord(item.data));
+            } else if (item.merge) {
+              batch.set(ref, deserializeFirestoreRecord(item.data), { merge: true });
+            } else {
+              batch.set(ref, deserializeFirestoreRecord(item.data));
+            }
+          }
+          await raceWithFirestoreQuotaAbort(batch.commit());
+          batchCommits += 1;
+          docWrites += chunk.length;
+        } catch (err) {
+          allDocChunksCommitted = false;
+          failed += plan.docSourceOps.length;
+          errorMessage =
+            err instanceof Error
+              ? err.message
+              : 'Errore durante la sincronizzazione in blocco su Firestore.';
+          break;
+        }
+      }
+
+      if (allDocChunksCommitted) {
+        const flushedIds = new Set(plan.docSourceOps.map((op) => op.id));
+        flushed += plan.docSourceOps.length;
+        simulatedFirestoreOps = simulatedFirestoreOps.filter((item) => !flushedIds.has(item.id));
+        persistAndEmitSimulatedOps();
+        if (docWrites > 0) {
+          recordFirestoreWritesExecuted(
+            docWrites,
+            `Sync blocco batch (${plan.docSourceOps.length} op → ${docWrites} scritture in ${batchCommits} batch)`
+          );
+        }
+      }
+    }
+
+    // 3. Replay queued vault deletions
+    for (const op of plan.vaultDeleteOps) {
+      if (!op.vaultDelete) continue;
+      try {
+        const { replayVaultDeleteToFirestore } = await import('./utils/documentVault');
+        await replayVaultDeleteToFirestore(op.vaultDelete);
+        flushed += 1;
+        simulatedFirestoreOps = simulatedFirestoreOps.filter((item) => item.id !== op.id);
+        persistAndEmitSimulatedOps();
+      } catch (err) {
+        failed += 1;
+        errorMessage =
+          err instanceof Error
+            ? err.message
+            : 'Errore durante la rimozione degli allegati su Firestore.';
       }
     }
 
@@ -1173,6 +1720,8 @@ export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult
       total: snapshot.length,
       flushed,
       failed,
+      docWrites,
+      batchCommits,
       errorMessage,
       at: Date.now(),
     };
@@ -1192,14 +1741,16 @@ export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult
 }
 
 function readInitialWritesDisabled(): boolean {
-  if (typeof window === 'undefined') return false;
+  if (typeof window === 'undefined') return true;
   try {
-    const raw = window.localStorage.getItem('myhome_app_settings_v1');
-    if (!raw) return false;
+    const raw = window.localStorage.getItem('myhome_app_settings_v2');
+    if (!raw) return true;
     const parsed = JSON.parse(raw) as { firestoreWritesDisabled?: unknown };
-    return Boolean(parsed?.firestoreWritesDisabled);
+    return typeof parsed?.firestoreWritesDisabled === 'boolean'
+      ? parsed.firestoreWritesDisabled
+      : true;
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -1326,6 +1877,13 @@ export const guardedSetDoc: typeof rawSetDoc = (async (...args: unknown[]) => {
   );
   recordFirestoreWritesExecuted(1, 'setDoc');
 }) as typeof rawSetDoc;
+
+export async function saveSystemStateDoc(
+  path: string,
+  data: Record<string, unknown>
+): Promise<void> {
+  await raceWithFirestoreQuotaAbort(rawSetDoc(doc(db, path), data));
+}
 
 export const guardedDeleteDoc: typeof rawDeleteDoc = (async (...args: unknown[]) => {
   const docRef = args[0] as DocumentReference | undefined;

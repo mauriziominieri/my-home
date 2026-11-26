@@ -7548,7 +7548,7 @@ export function ResearchesView({
                 type="button"
                 disabled={savingEdit}
                 onClick={() => void confirmSaveEdit()}
-                className="px-3.5 py-2 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-400 dark:hover:bg-sky-300 disabled:opacity-50 rounded-lg transition-colors"
+                className="px-3.5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 dark:text-slate-950 dark:bg-emerald-400 dark:hover:bg-emerald-300 disabled:opacity-50 rounded-lg transition-colors"
               >
                 {savingEdit
                   ? 'Salvataggio...'

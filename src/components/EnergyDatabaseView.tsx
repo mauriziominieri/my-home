@@ -383,7 +383,7 @@ export function EnergyDatabaseView({
 
   async function handleSaveInlineClimate(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedDayIso || inlineRooms.length === 0) return;
+    if (inlineSaving || !selectedDayIso || inlineRooms.length === 0) return;
     const cleanedSlots = normalizeTimeSlots(inlineTimeSlots);
     if (cleanedSlots.length === 0) return;
     const first = cleanedSlots[0];
@@ -1446,9 +1446,9 @@ export function EnergyDatabaseView({
                   .join(', ')}
               </span>
             )}
-            <span className="inline-flex items-center gap-1.5 text-orange-700 dark:text-amber-300 font-medium">
-              <span className="relative w-3 h-3 rounded-xs bg-slate-100 dark:bg-slate-800 border-2 border-orange-500 dark:border-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.4)]">
-                <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-orange-500 dark:bg-amber-400" />
+            <span className="inline-flex items-center gap-1.5 text-amber-700 dark:text-amber-300 font-medium">
+              <span className="relative w-3 h-3 rounded-xs bg-slate-100 dark:bg-slate-800 border-2 border-amber-500 dark:border-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.4)]">
+                <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-amber-500 dark:bg-amber-400" />
               </span>
               Riscaldamento ON
             </span>
@@ -2282,7 +2282,7 @@ export function EnergyDatabaseView({
                           onClick={() => setInlineMode('riscaldamento')}
                           className={`inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
                             inlineMode === 'riscaldamento'
-                              ? 'bg-orange-600 text-white dark:bg-orange-500/25 dark:text-orange-200'
+                              ? 'bg-amber-500 text-slate-950 dark:bg-amber-400 dark:text-slate-950 font-semibold'
                               : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                           }`}
                         >
@@ -2460,7 +2460,9 @@ export function EnergyDatabaseView({
                             onClick={() => toggleInlineRoom(room.id)}
                             className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
                               active
-                                ? 'bg-sky-500/15 dark:bg-sky-500/20 border-sky-500 dark:border-sky-400 text-sky-700 dark:text-sky-200 font-medium'
+                                ? inlineMode === 'riscaldamento'
+                                  ? 'bg-amber-500/15 dark:bg-amber-500/20 border-amber-500 dark:border-amber-400 text-amber-800 dark:text-amber-200 font-medium'
+                                  : 'bg-sky-500/15 dark:bg-sky-500/20 border-sky-500 dark:border-sky-400 text-sky-700 dark:text-sky-200 font-medium'
                                 : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                             }`}
                           >
@@ -2499,7 +2501,7 @@ export function EnergyDatabaseView({
                       <button
                         type="submit"
                         disabled={inlineSaving || inlineRooms.length === 0}
-                        className="px-3.5 py-1.5 text-xs font-semibold text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300 disabled:opacity-50 rounded-lg transition-colors"
+                        className="px-3.5 py-1.5 text-xs font-semibold text-white dark:text-slate-950 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:hover:bg-emerald-300 disabled:opacity-50 rounded-lg transition-colors"
                       >
                         {inlineSaving
                           ? 'Salvataggio...'
@@ -2535,7 +2537,7 @@ export function EnergyDatabaseView({
                           >
                             <div className="flex flex-wrap items-center gap-2.5">
                               {log.mode === 'riscaldamento' ? (
-                                <span className="inline-flex items-center gap-1 font-medium text-orange-700 dark:text-amber-400">
+                                <span className="inline-flex items-center gap-1 font-medium text-amber-700 dark:text-amber-400">
                                   <Flame className="w-3.5 h-3.5" />
                                   Riscaldamento
                                 </span>

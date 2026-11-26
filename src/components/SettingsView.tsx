@@ -2,18 +2,20 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   CheckCircle2,
   Clock,
+  Cloud,
   CloudUpload,
   Database,
   Download,
+  ExternalLink,
   FlaskConical,
   HardDrive,
   Laptop,
   Loader2,
   Mail,
   Moon,
+  Palette,
   RefreshCw,
   RotateCcw,
-  Save,
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
@@ -39,23 +41,45 @@ import {
   subscribeSimulatedFirestoreOps,
   subscribeSimulatedFlushState,
 } from '../firebase';
-import { HomeSystemConfig } from '../types/home';
+import { BillRecord, HomeSystemConfig } from '../types/home';
 import {
+  AppAccentPalette,
   DefaultStartSection,
-  GmailSyncIntervalMinutes,
   useAppSettings,
 } from '../utils/appSettings';
 
+const ACCENT_PALETTE_OPTIONS: {
+  id: AppAccentPalette;
+  label: string;
+  hint: string;
+  swatchHex: string;
+}[] = [
+  { id: 'sky', label: 'Blu Cielo', hint: 'Predefinita', swatchHex: '#0ea5e9' },
+  { id: 'amber', label: 'Giallo Ambra', hint: 'Calda & classica', swatchHex: '#f59e0b' },
+  { id: 'emerald', label: 'Verde Smeraldo', hint: 'Naturale', swatchHex: '#10b981' },
+  { id: 'teal', label: 'Ottanio', hint: 'Riposante', swatchHex: '#14b8a6' },
+  { id: 'indigo', label: 'Indaco', hint: 'Moderna', swatchHex: '#6366f1' },
+];
+
+const APPS_SCRIPT_PROJECT_URL =
+  'https://script.google.com/u/1/home/projects/1Xv8LKzCxqu2n05njAGj9iMZLEETUD-uyUkaSkzThum6FmOStyTFiq5kh/edit';
+
 interface SettingsViewProps {
   homeConfig: HomeSystemConfig;
+  autoPlantMeta: {
+    latestBill: BillRecord | null;
+    podFromPdf: boolean;
+    tariffFromBill: boolean;
+    variableRateEurPerKwh: number | null;
+  };
   readOnly: boolean;
   userEmail: string | null;
   isGmailConnected: boolean;
   gmailSyncing: boolean;
-  lastGmailCheckAt?: number | null;
   onConnectOrSyncGmail: () => void;
-  onUpdateConfig: (patch: Partial<HomeSystemConfig>) => Promise<void>;
   onExportBackup: () => void;
+  onRequestEnableFirestoreWrites?: () => void;
+  onRequestFlushFirestoreOps?: () => void;
   countsSummary: {
     readings: number;
     climateLogs: number;
@@ -85,14 +109,6 @@ const START_SECTION_OPTIONS: { value: DefaultStartSection; label: string }[] = [
   { value: 'info', label: 'Info Utili' },
 ];
 
-const INTERVAL_OPTIONS: { value: GmailSyncIntervalMinutes; label: string }[] = [
-  { value: 5, label: 'Ogni 5 minuti' },
-  { value: 10, label: 'Ogni 10 minuti (predefinito)' },
-  { value: 15, label: 'Ogni 15 minuti' },
-  { value: 30, label: 'Ogni 30 minuti' },
-  { value: 60, label: 'Ogni 60 minuti' },
-];
-
 function measureLocalStorageBytes(): { totalBytes: number; keyCount: number; researchKeys: number } {
   if (typeof window === 'undefined') return { totalBytes: 0, keyCount: 0, researchKeys: 0 };
   try {
@@ -119,14 +135,15 @@ function measureLocalStorageBytes(): { totalBytes: number; keyCount: number; res
 
 export function SettingsView({
   homeConfig,
+  autoPlantMeta,
   readOnly,
   userEmail,
   isGmailConnected,
   gmailSyncing,
-  lastGmailCheckAt = null,
   onConnectOrSyncGmail,
-  onUpdateConfig,
   onExportBackup,
+  onRequestEnableFirestoreWrites,
+  onRequestFlushFirestoreOps,
   countsSummary,
 }: SettingsViewProps) {
   const { settings, updateSettings, resetSettings } = useAppSettings();
@@ -143,18 +160,10 @@ export function SettingsView({
     flushing: false,
     lastResult: null,
   });
-  const [podDraft, setPodDraft] = useState(homeConfig.podCode);
-  const [tariffDraft, setTariffDraft] = useState(String(homeConfig.tariffEurPerKwh));
-  const [savingConfig, setSavingConfig] = useState(false);
   const [feedback, setFeedback] = useState<{ tone: 'ok' | 'info' | 'warn'; text: string } | null>(
     null
   );
   const [storageStats, setStorageStats] = useState(() => measureLocalStorageBytes());
-
-  useEffect(() => {
-    setPodDraft(homeConfig.podCode);
-    setTariffDraft(String(homeConfig.tariffEurPerKwh));
-  }, [homeConfig.podCode, homeConfig.tariffEurPerKwh]);
 
   useEffect(() => {
     return subscribeFirestoreWriteStats(setWriteStats);
@@ -185,49 +194,6 @@ export function SettingsView({
     }
     return `${(storageStats.totalBytes / (1024 * 1024)).toFixed(2).replace('.', ',')} MB`;
   }, [storageStats.totalBytes]);
-
-  async function handleSaveEnergyConfig(e: React.FormEvent) {
-    e.preventDefault();
-    const parsedTariff = Number(tariffDraft.replace(',', '.'));
-    if (!Number.isFinite(parsedTariff) || parsedTariff <= 0 || parsedTariff > 5) {
-      setFeedback({
-        tone: 'warn',
-        text: 'Inserisci una tariffa €/kWh valida (es. 0,31).',
-      });
-      return;
-    }
-    const cleanPod = podDraft.trim().toUpperCase();
-    if (cleanPod.length < 8) {
-      setFeedback({
-        tone: 'warn',
-        text: 'Inserisci un codice POD valido.',
-      });
-      return;
-    }
-    setSavingConfig(true);
-    try {
-      await onUpdateConfig({
-        podCode: cleanPod,
-        tariffEurPerKwh: Math.round(parsedTariff * 10000) / 10000,
-      });
-      setFeedback({
-        tone: 'ok',
-        text: settings.firestoreWritesDisabled
-          ? 'Parametri impianto aggiornati in locale (Modalità Test attiva: 0 scritture Firestore).'
-          : 'Parametri impianto salvati su Firestore.',
-      });
-    } catch (err) {
-      setFeedback({
-        tone: 'warn',
-        text:
-          err instanceof Error
-            ? err.message
-            : 'Errore durante il salvataggio dei parametri impianto.',
-      });
-    } finally {
-      setSavingConfig(false);
-    }
-  }
 
   function handleClearResearchCaches() {
     if (typeof window === 'undefined') return;
@@ -267,7 +233,7 @@ export function SettingsView({
     setStorageStats(measureLocalStorageBytes());
     setFeedback({
       tone: 'ok',
-      text: 'Impostazioni ripristinate ai valori predefiniti (Dark Mode attiva, scritture Firestore abilitate).',
+      text: 'Impostazioni ripristinate ai valori predefiniti (Dark Mode, Modalità Test e Densità compatta attive) e sincronizzate sul cloud.',
     });
   }
 
@@ -275,10 +241,8 @@ export function SettingsView({
     'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs transition-colors';
   const subSurfaceCls =
     'bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-lg';
-  const inputCls =
-    'w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500';
   const selectCls =
-    'w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500';
+    'w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500';
 
   return (
     <div className="space-y-5">
@@ -286,11 +250,11 @@ export function SettingsView({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 flex items-center gap-2.5">
-            <SlidersHorizontal className="w-5 h-5 text-sky-600 dark:text-sky-400" />
+            <SlidersHorizontal className="w-5 h-5 text-brand-600 dark:text-brand-400" />
             <span>Impostazioni Sistema & Aspetto</span>
           </h1>
           <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-            Gestisci tema visivo, protezione quota Firebase per test nel browser, sincronizzazione Gmail, backup e preferenze interfaccia.
+            Le preferenze dell’app vengono salvate automaticamente su Firebase per ritrovarle identiche su ogni dispositivo. Gestisci Modalità Test, aspetto, sincronizzazione Gmail e backup.
           </p>
         </div>
 
@@ -348,7 +312,7 @@ export function SettingsView({
       <section
         className={`rounded-xl p-5 border transition-colors ${
           settings.firestoreWritesDisabled
-            ? 'bg-indigo-50/80 border-indigo-300 dark:bg-indigo-950/35 dark:border-indigo-500/45'
+            ? 'bg-amber-50/80 border-amber-300 dark:bg-amber-950/25 dark:border-amber-500/40'
             : cardCls
         }`}
       >
@@ -358,8 +322,8 @@ export function SettingsView({
               <div
                 className={`w-8 h-8 rounded-lg flex items-center justify-center ${
                   settings.firestoreWritesDisabled
-                    ? 'bg-indigo-600 text-white dark:bg-indigo-500 dark:text-slate-950'
-                    : 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300'
+                    ? 'bg-amber-500 text-slate-950 dark:bg-amber-400 dark:text-slate-950'
+                    : 'bg-brand-100 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300'
                 }`}
               >
                 <FlaskConical className="w-4 h-4" />
@@ -370,7 +334,7 @@ export function SettingsView({
               <span
                 className={`inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold rounded-md ${
                   settings.firestoreWritesDisabled
-                    ? 'bg-indigo-600 text-white dark:bg-indigo-400 dark:text-slate-950'
+                    ? 'bg-amber-500 text-slate-950 dark:bg-amber-400 dark:text-slate-950'
                     : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300'
                 }`}
               >
@@ -389,7 +353,7 @@ export function SettingsView({
             </div>
 
             <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              Attiva questa opzione quando vuoi fare test nel browser (aggiungere articoli, cambiare varianti su Ricerche, provare la domotica o caricare allegati) senza consumare la quota giornaliera gratuita di Firebase Firestore. Tutte le operazioni simulate restano salvate e visibili in locale e vengono inserite automaticamente su Firestore quando riattivi le scritture.
+              Attiva questa opzione quando vuoi fare test nel browser (aggiungere articoli, cambiare varianti su Ricerche, provare la domotica o caricare allegati) senza consumare la quota giornaliera gratuita di Firebase Firestore. Tutte le operazioni simulate restano salvate e visibili in locale e, dopo tua conferma, vengono inviate a Firestore in un unico blocco batch quando riattivi le scritture.
             </p>
           </div>
 
@@ -401,6 +365,12 @@ export function SettingsView({
               disabled={flushState.flushing}
               onClick={() => {
                 const next = !settings.firestoreWritesDisabled;
+                if (!next) {
+                  if (onRequestEnableFirestoreWrites) {
+                    onRequestEnableFirestoreWrites();
+                    return;
+                  }
+                }
                 const pendingBefore = simulatedOps.length;
                 updateSettings({ firestoreWritesDisabled: next });
                 setFeedback({
@@ -408,21 +378,21 @@ export function SettingsView({
                   text: next
                     ? 'Modalità Test attivata: ogni modifica verrà simulata e salvata in coda in locale con 0 scritture su Firestore.'
                     : pendingBefore > 0
-                      ? `Modalità Test disattivata: invio di ${pendingBefore} operazioni simulate su Firestore in corso...`
+                      ? `Modalità Test disattivata: invio in blocco di ${pendingBefore} operazioni simulate su Firestore in corso...`
                       : 'Modalità Test disattivata: le modifiche tornano a essere salvate regolarmente su Firestore.',
                 });
               }}
               className={`inline-flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-60 ${
                 settings.firestoreWritesDisabled
-                  ? 'bg-indigo-600 hover:bg-indigo-700 text-white dark:bg-indigo-400 dark:hover:bg-indigo-300 dark:text-slate-950'
-                  : 'bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-500 dark:hover:bg-sky-400 dark:text-slate-950'
+                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-400 dark:hover:bg-emerald-300 dark:text-slate-950'
+                  : 'bg-amber-500 hover:bg-amber-600 text-slate-950 dark:bg-amber-400 dark:hover:bg-amber-300 dark:text-slate-950'
               }`}
             >
               <span
                 className={`w-8 h-4.5 rounded-full p-0.5 flex items-center transition-colors ${
                   settings.firestoreWritesDisabled
                     ? 'bg-white/30 dark:bg-slate-950/30 justify-end'
-                    : 'bg-white/25 dark:bg-slate-950/25 justify-start'
+                    : 'bg-white/40 dark:bg-slate-950/25 justify-start'
                 }`}
               >
                 <span className="w-3.5 h-3.5 rounded-full bg-white shadow-xs" />
@@ -442,7 +412,7 @@ export function SettingsView({
             <div className="text-[11px] text-slate-500 dark:text-slate-400">
               In coda locale / risparmiate
             </div>
-            <div className="text-lg font-bold tabular-nums text-indigo-700 dark:text-indigo-300 mt-0.5">
+            <div className="text-lg font-bold tabular-nums text-amber-700 dark:text-amber-300 mt-0.5">
               {simulatedOps.length} <span className="text-xs font-normal text-slate-500 dark:text-slate-400">in coda · {writeStats.writesSavedCount} sess.</span>
             </div>
           </div>
@@ -497,10 +467,14 @@ export function SettingsView({
               )}
               <span>
                 {flushState.flushing
-                  ? 'Sincronizzazione delle operazioni simulate su Firestore in corso...'
+                  ? 'Sincronizzazione in blocco su Firestore in corso...'
                   : flushState.lastResult?.failed
                     ? `${flushState.lastResult.flushed} su ${flushState.lastResult.total} operazioni salvate su Firestore. ${flushState.lastResult.errorMessage || ''}`
-                    : `Sincronizzazione completata: ${flushState.lastResult?.flushed || 0} ${(flushState.lastResult?.flushed || 0) === 1 ? 'operazione salvata' : 'operazioni salvate'} su Firestore.`}
+                    : `Sincronizzazione completata: ${flushState.lastResult?.flushed || 0} ${(flushState.lastResult?.flushed || 0) === 1 ? 'operazione salvata' : 'operazioni salvate'} su Firestore${
+                        flushState.lastResult?.batchCommits
+                          ? ` (${flushState.lastResult.docWrites || 0} scritture in ${flushState.lastResult.batchCommits} ${flushState.lastResult.batchCommits === 1 ? 'unico blocco batch' : 'blocchi batch'})`
+                          : ''
+                      }.`}
               </span>
             </div>
             {!flushState.flushing && flushState.lastResult && (
@@ -520,7 +494,7 @@ export function SettingsView({
           <div className="mt-4 pt-4 border-t border-slate-200/80 dark:border-slate-800/80 space-y-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-xs font-semibold text-slate-900 dark:text-slate-100">
-                <Clock className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                <Clock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
                 <span>
                   Operazioni simulate salvate in locale ({simulatedOps.length})
                 </span>
@@ -532,8 +506,14 @@ export function SettingsView({
                     <button
                       type="button"
                       disabled={flushState.flushing || readOnly}
-                      onClick={() => void flushSimulatedFirestoreOps()}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-500 dark:hover:bg-sky-400 dark:text-slate-950 transition-colors disabled:opacity-50"
+                      onClick={() => {
+                        if (onRequestFlushFirestoreOps) {
+                          onRequestFlushFirestoreOps();
+                        } else {
+                          void flushSimulatedFirestoreOps();
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-400 dark:hover:bg-emerald-300 dark:text-slate-950 transition-colors disabled:opacity-50"
                     >
                       <CloudUpload className="w-3 h-3" />
                       <span>Invia su Firestore ({simulatedOps.length})</span>
@@ -629,19 +609,19 @@ export function SettingsView({
         <section className={cardCls}>
           <div className="flex items-center gap-2 mb-4">
             {settings.theme === 'dark' ? (
-              <Moon className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+              <Moon className="w-4 h-4 text-brand-600 dark:text-brand-400" />
             ) : (
-              <Sun className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+              <Sun className="w-4 h-4 text-brand-600 dark:text-brand-400" />
             )}
             <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-              Tema Visivo & Interfaccia
+              Tema Visivo, Colori &amp; Interfaccia
             </h2>
           </div>
 
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
-                Modalità colore
+                Modalità sfondo
               </label>
               <div className="grid grid-cols-2 gap-3">
                 <button
@@ -649,23 +629,23 @@ export function SettingsView({
                   onClick={() => updateSettings({ theme: 'dark' })}
                   className={`p-3 rounded-xl border text-left transition-all ${
                     settings.theme === 'dark'
-                      ? 'border-sky-500 bg-sky-50 dark:bg-sky-500/12 ring-2 ring-sky-500/30'
+                      ? 'border-brand-500 bg-brand-50 dark:bg-brand-500/12 ring-2 ring-brand-500/30'
                       : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-slate-100">
-                      <Moon className="w-3.5 h-3.5 text-sky-500" />
+                      <Moon className="w-3.5 h-3.5 text-brand-500" />
                       Dark Mode
                     </span>
                     {settings.theme === 'dark' && (
-                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950">
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-brand-600 text-white dark:bg-brand-400 dark:text-slate-950">
                         Attiva
                       </span>
                     )}
                   </div>
                   <div className="h-8 rounded-md bg-slate-950 border border-slate-800 p-1.5 flex items-center gap-1.5">
-                    <span className="w-2.5 h-full rounded-xs bg-sky-500" />
+                    <span className="w-2.5 h-full rounded-xs bg-brand-400" />
                     <span className="flex-1 h-2 rounded-xs bg-slate-800" />
                     <span className="w-6 h-2 rounded-xs bg-emerald-500/70" />
                   </div>
@@ -679,23 +659,23 @@ export function SettingsView({
                   onClick={() => updateSettings({ theme: 'light' })}
                   className={`p-3 rounded-xl border text-left transition-all ${
                     settings.theme === 'light'
-                      ? 'border-sky-600 bg-sky-50 dark:bg-sky-500/12 ring-2 ring-sky-500/30'
+                      ? 'border-brand-600 bg-brand-50 dark:bg-brand-500/12 ring-2 ring-brand-500/30'
                       : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-slate-100">
-                      <Sun className="w-3.5 h-3.5 text-sky-600" />
+                      <Sun className="w-3.5 h-3.5 text-brand-600" />
                       Light Mode
                     </span>
                     {settings.theme === 'light' && (
-                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-600 text-white">
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-brand-600 text-white dark:bg-brand-400 dark:text-slate-950">
                         Attiva
                       </span>
                     )}
                   </div>
                   <div className="h-8 rounded-md bg-slate-100 border border-slate-300 p-1.5 flex items-center gap-1.5">
-                    <span className="w-2.5 h-full rounded-xs bg-sky-600" />
+                    <span className="w-2.5 h-full rounded-xs bg-brand-600" />
                     <span className="flex-1 h-2 rounded-xs bg-white border border-slate-200" />
                     <span className="w-6 h-2 rounded-xs bg-emerald-600/80" />
                   </div>
@@ -703,6 +683,73 @@ export function SettingsView({
                     Chiara · Alta leggibilità diurna
                   </div>
                 </button>
+              </div>
+            </div>
+
+            {/* Accent Color Picker + Semantic Pattern Guide */}
+            <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  <Palette className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400" />
+                  <span>Colore principale dell&apos;app</span>
+                </label>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Menu laterale, pulsanti guida e filtri attivi
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                {ACCENT_PALETTE_OPTIONS.map((opt) => {
+                  const selected = settings.accentPalette === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => updateSettings({ accentPalette: opt.id })}
+                      className={`px-2.5 py-2 rounded-lg border text-left transition-all flex items-center gap-2 ${
+                        selected
+                          ? 'border-brand-500 bg-brand-50 dark:bg-brand-500/15 ring-2 ring-brand-500/25'
+                          : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/60 hover:border-slate-300 dark:hover:border-slate-700'
+                      }`}
+                    >
+                      <span
+                        className="w-3.5 h-3.5 rounded-full shrink-0 border border-black/15 dark:border-white/20"
+                        style={{ backgroundColor: opt.swatchHex }}
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-[11px] font-semibold text-slate-900 dark:text-slate-100 truncate">
+                          {opt.label}
+                        </span>
+                        <span className="block text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                          {selected ? 'Selezionato' : opt.hint}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className={`${subSurfaceCls} p-2.5 space-y-1.5`}>
+                <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                  Schema colori semantico coerente (fisso in tutta l&apos;app)
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 text-[11px] text-slate-600 dark:text-slate-400">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-xs bg-emerald-500 shrink-0" />
+                    <span><strong className="text-emerald-700 dark:text-emerald-300">Verde:</strong> Salva, Conferma, Pagato</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-xs bg-rose-500 shrink-0" />
+                    <span><strong className="text-rose-700 dark:text-rose-300">Rosso:</strong> Elimina, Spegni ora</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-xs bg-amber-400 shrink-0" />
+                    <span><strong className="text-amber-700 dark:text-amber-300">Giallo Ambra:</strong> Riscaldamento, Evidenza, Test</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-xs bg-sky-500 shrink-0" />
+                    <span><strong className="text-sky-700 dark:text-sky-300">Azzurro:</strong> Raffrescamento, Acqua</span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -720,7 +767,7 @@ export function SettingsView({
                   type="checkbox"
                   checked={settings.sidebarAlwaysExpanded}
                   onChange={(e) => updateSettings({ sidebarAlwaysExpanded: e.target.checked })}
-                  className="w-4 h-4 accent-sky-600 rounded"
+                  className="w-4 h-4 accent-brand-600 rounded"
                 />
               </label>
 
@@ -737,7 +784,7 @@ export function SettingsView({
                   type="checkbox"
                   checked={settings.compactDensity}
                   onChange={(e) => updateSettings({ compactDensity: e.target.checked })}
-                  className="w-4 h-4 accent-sky-600 rounded"
+                  className="w-4 h-4 accent-brand-600 rounded"
                 />
               </label>
 
@@ -754,7 +801,7 @@ export function SettingsView({
                   type="checkbox"
                   checked={settings.showInlineTooltips}
                   onChange={(e) => updateSettings({ showInlineTooltips: e.target.checked })}
-                  className="w-4 h-4 accent-sky-600 rounded"
+                  className="w-4 h-4 accent-brand-600 rounded"
                 />
               </label>
             </div>
@@ -789,108 +836,44 @@ export function SettingsView({
         {/* 3. Gmail Sync & Electric Plant */}
         <div className="space-y-5">
           <section className={cardCls}>
-            <div className="flex items-center justify-between gap-2 mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
               <div className="flex items-center gap-2">
                 <Mail className="w-4 h-4 text-sky-600 dark:text-sky-400" />
                 <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
                   Sincronizzazione Gmail INBOX
                 </h2>
               </div>
-              <span
-                className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${
-                  isGmailConnected
-                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300'
-                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-                }`}
-              >
-                {isGmailConnected ? 'Sessione Gmail attiva' : 'Non collegata in questa sessione'}
+              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">
+                Apps Script 24/7
               </span>
             </div>
 
             <div className="space-y-3.5">
-              {!isGmailConnected && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-[11px] text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-                  Il controllo automatico parte solo mentre la scheda è aperta e Gmail è collegato in questa sessione (il token Google dura ~1 ora e non sopravvive al riavvio pagina).
-                </div>
-              )}
-
-              {isGmailConnected && settings.autoGmailSyncEnabled && (
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-[11px] text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200 flex flex-wrap items-center justify-between gap-2">
-                  <span>
-                    Ultimo controllo:{' '}
-                    <strong>
-                      {lastGmailCheckAt
-                        ? new Date(lastGmailCheckAt).toLocaleTimeString('it-IT', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })
-                        : 'In attesa...'}
-                    </strong>
-                  </span>
-                  {lastGmailCheckAt && (
-                    <span>
-                      Prossimo:{' '}
-                      <strong>
-                        {new Date(
-                          lastGmailCheckAt + settings.autoGmailSyncIntervalMinutes * 60 * 1000
-                        ).toLocaleTimeString('it-IT', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </strong>
-                    </span>
-                  )}
-                </div>
-              )}
-
-              <label className="flex items-center justify-between gap-3 cursor-pointer">
-                <div>
-                  <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                    Controllo automatico in background
+              <div className="rounded-xl border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50/70 dark:bg-emerald-950/20 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-xs font-bold text-emerald-950 dark:text-emerald-200">
+                    <Cloud className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <span>Controllo automatico 24/7 su Google Apps Script</span>
                   </div>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Quando Gmail è collegato, controlla la INBOX a intervalli regolari (recupera subito al risveglio della scheda).
-                  </div>
+                  <p className="text-[11px] leading-relaxed text-emerald-900/85 dark:text-emerald-100/80">
+                    La INBOX viene controllata in cloud sui server Google anche a PC e browser spenti, salvando i dati direttamente su Firestore.
+                  </p>
                 </div>
-                <input
-                  type="checkbox"
-                  checked={settings.autoGmailSyncEnabled}
-                  onChange={(e) => updateSettings({ autoGmailSyncEnabled: e.target.checked })}
-                  className="w-4 h-4 accent-sky-600 rounded"
-                />
-              </label>
 
-              <div>
-                <label
-                  htmlFor="settings-gmail-interval"
-                  className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5"
+                <a
+                  href={APPS_SCRIPT_PROJECT_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-500 dark:hover:bg-emerald-400 dark:text-slate-950 transition-colors whitespace-nowrap shrink-0"
                 >
-                  Frequenza controllo automatico
-                </label>
-                <select
-                  id="settings-gmail-interval"
-                  value={settings.autoGmailSyncIntervalMinutes}
-                  disabled={!settings.autoGmailSyncEnabled}
-                  onChange={(e) =>
-                    updateSettings({
-                      autoGmailSyncIntervalMinutes: Number(
-                        e.target.value
-                      ) as GmailSyncIntervalMinutes,
-                    })
-                  }
-                  className={`${selectCls} disabled:opacity-50`}
-                >
-                  {INTERVAL_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
+                  <span>Apri progetto Apps Script</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
               </div>
 
-              <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                  I giorni già salvati fino all’ultima data su Firestore vengono ignorati (0 blocchi Gmail anche ogni 10 min).
+              <div className={`${subSurfaceCls} p-3 flex flex-wrap items-center justify-between gap-2`}>
+                <span className="text-[11px] text-slate-600 dark:text-slate-400">
+                  Sincronizzazione manuale istantanea dal browser (utile per importare subito anche PDF bollette):
                 </span>
                 <button
                   type="button"
@@ -899,74 +882,78 @@ export function SettingsView({
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-500 dark:hover:bg-sky-400 dark:text-slate-950 transition-colors disabled:opacity-50"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${gmailSyncing ? 'animate-spin' : ''}`} />
-                  <span>{isGmailConnected ? 'Controlla INBOX ora' : 'Collega Gmail'}</span>
+                  <span>{isGmailConnected ? 'Controlla INBOX ora' : 'Sincronizza Gmail'}</span>
                 </button>
               </div>
             </div>
           </section>
 
           <section className={cardCls}>
-            <div className="flex items-center gap-2 mb-4">
-              <Zap className="w-4 h-4 text-sky-600 dark:text-sky-400" />
-              <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                Parametri Contatore & Tariffa
-              </h2>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+                <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  Contatore POD &amp; Tariffa (Automatici dalle Bollette)
+                </h2>
+              </div>
+              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-sky-100 text-sky-800 dark:bg-sky-500/15 dark:text-sky-300">
+                Rilevamento automatico
+              </span>
             </div>
 
-            <form onSubmit={handleSaveEnergyConfig} className="space-y-3">
+            <div className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label
-                    htmlFor="settings-pod-code"
-                    className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1"
-                  >
-                    Codice POD contatore
-                  </label>
-                  <input
-                    id="settings-pod-code"
-                    type="text"
-                    value={podDraft}
-                    disabled={readOnly}
-                    onChange={(e) => setPodDraft(e.target.value)}
-                    placeholder="IT001E..."
-                    className={`${inputCls} font-mono`}
-                  />
+                <div className={`${subSurfaceCls} p-3 space-y-1`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                      Codice POD contatore
+                    </span>
+                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                      {autoPlantMeta.podFromPdf ? 'Da PDF bolletta' : 'Archivio impianto'}
+                    </span>
+                  </div>
+                  <div className="text-sm font-bold font-mono text-slate-900 dark:text-slate-100">
+                    {homeConfig.podCode}
+                  </div>
                 </div>
-                <div>
-                  <label
-                    htmlFor="settings-tariff"
-                    className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1"
-                  >
-                    Tariffa stima consumi (€/kWh)
-                  </label>
-                  <input
-                    id="settings-tariff"
-                    type="number"
-                    step="0.0001"
-                    min="0.01"
-                    max="5"
-                    value={tariffDraft}
-                    disabled={readOnly}
-                    onChange={(e) => setTariffDraft(e.target.value)}
-                    className={`${inputCls} font-mono`}
-                  />
+
+                <div className={`${subSurfaceCls} p-3 space-y-1`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                      Tariffa effettiva stima consumi
+                    </span>
+                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                      {autoPlantMeta.tariffFromBill ? 'Da ultima bolletta' : 'Predefinita'}
+                    </span>
+                  </div>
+                  <div className="text-sm font-bold font-mono text-slate-900 dark:text-slate-100">
+                    {homeConfig.tariffEurPerKwh.toFixed(3).replace('.', ',')} €/kWh
+                  </div>
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-2 pt-1">
-                <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Usata per calcolare la stima costi nelle nuove letture importate.
-                </span>
-                <button
-                  type="submit"
-                  disabled={readOnly || savingConfig}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-500 dark:hover:bg-sky-400 dark:text-slate-950 transition-colors disabled:opacity-50"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  <span>{savingConfig ? 'Salvataggio...' : 'Salva parametri'}</span>
-                </button>
+              <div className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                {autoPlantMeta.latestBill ? (
+                  <>
+                    Valori ricavati automaticamente dall&apos;ultima bolletta Luce:{' '}
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">
+                      {autoPlantMeta.latestBill.supplier} · {autoPlantMeta.latestBill.period} (n° {autoPlantMeta.latestBill.invoiceNumber})
+                    </span>
+                    {autoPlantMeta.variableRateEurPerKwh !== null && (
+                      <>
+                        {' '}· Quota energia variabile:{' '}
+                        <span className="font-mono text-slate-800 dark:text-slate-200">
+                          {autoPlantMeta.variableRateEurPerKwh.toFixed(3).replace('.', ',')} €/kWh
+                        </span>
+                      </>
+                    )}
+                    . Si aggiornano da soli a ogni nuova bolletta importata.
+                  </>
+                ) : (
+                  'Nessuna bolletta Luce importata: POD e tariffa si aggiorneranno automaticamente non appena importerai la prima bolletta Luce (da Gmail o PDF).'
+                )}
               </div>
-            </form>
+            </div>
           </section>
         </div>
       </div>

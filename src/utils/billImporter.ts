@@ -164,6 +164,73 @@ export async function extractPdfTextFromBytes(
   return pageTexts.join('\n');
 }
 
+export function extractPodCodeFromText(text: string): string | null {
+  if (!text) return null;
+  const normalized = text.replace(/\s+/g, ' ').toUpperCase();
+  const labeled = normalized.match(/\bPOD\b[^A-Z0-9]{0,20}(IT\d{3}E[A-Z0-9]{6,12})\b/);
+  if (labeled?.[1]) return labeled[1];
+  const generic = normalized.match(/\b(IT00[12]E[A-Z0-9]{6,12})\b/);
+  return generic?.[1] || null;
+}
+
+function parseItDateSortable(raw: string): number {
+  const m = raw.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return 0;
+  return Number(`${m[3]}${m[2]}${m[1]}`);
+}
+
+export interface DerivedPlantParamsFromBills {
+  latestBill: BillRecord | null;
+  tariffEurPerKwh: number | null;
+  variableRateEurPerKwh: number | null;
+}
+
+export function derivePlantParamsFromBills(
+  bills: BillRecord[]
+): DerivedPlantParamsFromBills {
+  const realBills = bills.filter((b) => {
+    const invLower = (b.invoiceNumber || '').toLowerCase();
+    const offerLower = (b.offerName || '').toLowerCase();
+    if (invLower.includes('contratto') || offerLower.includes('contratto')) {
+      return false;
+    }
+    return b.kwh > 0 || b.electricityOnly > 0 || b.variableCostPerKwh > 0;
+  });
+
+  if (realBills.length === 0) {
+    return { latestBill: null, tariffEurPerKwh: null, variableRateEurPerKwh: null };
+  }
+
+  const sorted = [...realBills].sort((a, b) => {
+    const keyCmp = (b.sortKey || '').localeCompare(a.sortKey || '');
+    if (keyCmp !== 0) return keyCmp;
+    return parseItDateSortable(b.issueDate) - parseItDateSortable(a.issueDate);
+  });
+
+  const latest = sorted[0];
+  let tariffEurPerKwh: number | null = null;
+  if (latest.kwh > 0 && latest.electricityOnly > 0) {
+    const effective = Math.round((latest.electricityOnly / latest.kwh) * 1000) / 1000;
+    if (effective >= 0.05 && effective <= 2.5) {
+      tariffEurPerKwh = effective;
+    }
+  }
+  if (tariffEurPerKwh === null && latest.variableCostPerKwh > 0 && latest.variableCostPerKwh <= 2.5) {
+    tariffEurPerKwh = Math.round(latest.variableCostPerKwh * 1000) / 1000;
+  }
+
+  const variableRateEurPerKwh =
+    latest.variableCostPerKwh > 0
+      ? Math.round(latest.variableCostPerKwh * 1000) / 1000
+      : null;
+
+  return {
+    latestBill: latest,
+    tariffEurPerKwh,
+    variableRateEurPerKwh,
+  };
+}
+
 export function parseEdisonPdfText(text: string): BillRecord | null {
   if (!text.trim()) return null;
 
