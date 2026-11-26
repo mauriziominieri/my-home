@@ -21,6 +21,7 @@ import {
   PackagePlus,
   Paperclip,
   Pencil,
+  Pin,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -763,6 +764,7 @@ function clientFallbackInspectUrl(validUrl: string): {
   model?: string;
   specs?: string;
   blockedBySite?: boolean;
+  fallbackReason?: 'static_hosting' | 'backend_unreachable' | 'backend_timeout';
 } {
   const parsed = new URL(validUrl);
   const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
@@ -795,7 +797,20 @@ function clientFallbackInspectUrl(validUrl: string): {
   let brand: string | undefined;
 
   const asinMatch = parsed.pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?]|$)/i);
-  let model = asinMatch?.[1]?.toUpperCase();
+  const getQueryParamCI = (names: string[]): string | undefined => {
+    for (const [k, v] of parsed.searchParams.entries()) {
+      if (names.includes(k.toLowerCase())) {
+        const clean = v.trim();
+        if (clean) return clean.slice(0, 60);
+      }
+    }
+    return undefined;
+  };
+  const queryPnc = getQueryParamCI(['pnc', 'productnumber', 'product_number', 'productcode', 'product_code']);
+  const queryModel = getQueryParamCI(['model', 'modello', 'sku', 'mpn', 'prodid', 'productid', 'product_id', 'code', 'codice', 'artnr', 'partnumber', 'part_number']);
+  const queryMachineNo = getQueryParamCI(['machineno', 'machine_no', 'serial', 'serialno', 'sn', 'matricola']);
+  const queryElc = getQueryParamCI(['elc']);
+  let model = asinMatch?.[1]?.toUpperCase() || queryPnc?.toUpperCase() || queryModel?.toUpperCase();
 
   const segments = parsed.pathname
     .split('/')
@@ -809,7 +824,7 @@ function clientFallbackInspectUrl(validUrl: string): {
     .filter(
       (s) =>
         s.length >= 3 &&
-        !/^(dp|gp|product|products|p|it|it-it|fr|en|de|es|shop|catalog|prodotto|prodotti|item)$/i.test(
+        !/^(dp|gp|product|products|p|it|it-it|fr|en|de|es|shop|catalog|prodotto|prodotti|item|support|supporto|assistenza|go|redirect|manuals|manual|manuali|qr|search|find|ricerca|lookup|view|detail|details)$/i.test(
           s
         ) &&
         !/^b0[a-z0-9]{8}$/i.test(s) &&
@@ -853,11 +868,19 @@ function clientFallbackInspectUrl(validUrl: string): {
     return tok.charAt(0).toUpperCase() + tok.slice(1);
   });
 
-  const title = (formatted.join(' ') || `Prodotto ${store}`).slice(0, 160);
+  const fallbackTitle = queryPnc
+    ? `Prodotto ${store} PNC ${queryPnc.toUpperCase()}`
+    : model && !asinMatch
+      ? `Prodotto ${store} ${model}`
+      : `Prodotto ${store}`;
+  const title = (formatted.join(' ') || fallbackTitle).slice(0, 160);
 
   const slugLower = slug.toLowerCase();
   const specsLines: string[] = [];
-  if (model && !asinMatch) specsLines.push(`Codice articolo: ${model}`);
+  if (queryPnc) specsLines.push(`Codice PNC: ${queryPnc.toUpperCase()}`);
+  else if (model && !asinMatch) specsLines.push(`Codice articolo: ${model}`);
+  if (queryMachineNo) specsLines.push(`Matricola / Machine No.: ${queryMachineNo}`);
+  if (queryElc) specsLines.push(`ELC: ${queryElc.toUpperCase()}`);
   const matM = slugLower.match(
     /\bin-(cemento|legno-massello|legno|metallo|ceramica|porcellana|vetro|ottone|marmo|ferro|acciaio|lino|velluto|cotone|resina|terracotta|rattan|bambu|bambù)\b/
   );
@@ -870,7 +893,7 @@ function clientFallbackInspectUrl(validUrl: string): {
 
   const low = `${title} ${brand || ''} ${validUrl}`.toLowerCase();
   let category: ProductResearchCategory = 'altro';
-  if (/(forno|frigo|frigorifero|lavatrice|asciugatrice|lavastoviglie|induzione|microonde|aspirapolvere|dyson|cappa)/.test(low)) {
+  if (/(forno|frigo|frigorifero|lavatrice|asciugatrice|lavastoviglie|induzione|microonde|aspirapolvere|dyson|cappa|electrolux|\baeg\b|whirlpool|miele|hotpoint|indesit|beko|smeg|candy|haier|\bpnc\b)/.test(low)) {
     category = 'elettrodomestici';
   } else if (/(tv|monitor|laptop|macbook|pc|ipad|tablet|iphone|custodia|magsafe|cuffie|router|ssd|tastiera|mouse)/.test(low)) {
     category = 'elettronica';
@@ -1436,29 +1459,55 @@ export function ResearchesView({
     return subscribeSimulatedFirestoreOps(setSimulatedOps);
   }, []);
 
+  const [pinnedToastTexts, setPinnedToastTexts] = useState<{
+    feedback: string | null;
+    linkNotice: string | null;
+    linkError: string | null;
+  }>({
+    feedback: null,
+    linkNotice: null,
+    linkError: null,
+  });
+
+  const isFeedbackPinned = Boolean(feedback && pinnedToastTexts.feedback === feedback);
+  const isLinkNoticePinned = Boolean(linkNotice && pinnedToastTexts.linkNotice === linkNotice);
+  const isLinkErrorPinned = Boolean(linkError && pinnedToastTexts.linkError === linkError);
+
   useEffect(() => {
-    if (!feedback) return;
+    if (!feedback) {
+      setPinnedToastTexts((prev) => (prev.feedback ? { ...prev, feedback: null } : prev));
+      return;
+    }
+    if (isFeedbackPinned) return;
     const timer = window.setTimeout(() => {
       setFeedback(null);
-    }, 4500);
+    }, 6000);
     return () => window.clearTimeout(timer);
-  }, [feedback]);
+  }, [feedback, isFeedbackPinned]);
 
   useEffect(() => {
-    if (!linkNotice) return;
+    if (!linkNotice) {
+      setPinnedToastTexts((prev) => (prev.linkNotice ? { ...prev, linkNotice: null } : prev));
+      return;
+    }
+    if (isLinkNoticePinned) return;
     const timer = window.setTimeout(() => {
       setLinkNotice(null);
-    }, 6500);
-    return () => window.clearTimeout(timer);
-  }, [linkNotice]);
-
-  useEffect(() => {
-    if (!linkError) return;
-    const timer = window.setTimeout(() => {
-      setLinkError(null);
     }, 8000);
     return () => window.clearTimeout(timer);
-  }, [linkError]);
+  }, [linkNotice, isLinkNoticePinned]);
+
+  useEffect(() => {
+    if (!linkError) {
+      setPinnedToastTexts((prev) => (prev.linkError ? { ...prev, linkError: null } : prev));
+      return;
+    }
+    if (isLinkErrorPinned) return;
+    const timer = window.setTimeout(() => {
+      setLinkError(null);
+    }, 9500);
+    return () => window.clearTimeout(timer);
+  }, [linkError, isLinkErrorPinned]);
 
   const localQueueChangesById = useMemo(() => {
     const map: Record<
@@ -1733,25 +1782,37 @@ export function ResearchesView({
     documents?: InspectedDocumentLink[];
     extractedFrom?: 'page-meta' | 'url-slug';
     blockedBySite?: boolean;
+    aiKeyMissing?: boolean;
+    fallbackReason?: 'static_hosting' | 'backend_unreachable' | 'backend_timeout';
   }> {
     if (isBackendApiUnavailable()) {
-      return clientFallbackInspectUrl(validUrl);
+      return { ...clientFallbackInspectUrl(validUrl), fallbackReason: 'static_hosting' };
     }
+    let fallbackReason: 'static_hosting' | 'backend_unreachable' | 'backend_timeout' =
+      'backend_unreachable';
     try {
       const resp = await fetchWithTimeout(
         '/api/researches/inspect',
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
           body: JSON.stringify({ url: validUrl, refresh }),
         },
         29_000
       );
       if (resp.status === 405 || resp.status === 404) {
-        backendApiUnavailable = true;
-        return clientFallbackInspectUrl(validUrl);
+        if (window.location.hostname.endsWith('.github.io') || import.meta.env.BASE_URL !== '/') {
+          backendApiUnavailable = true;
+          fallbackReason = 'static_hosting';
+        }
+        return { ...clientFallbackInspectUrl(validUrl), fallbackReason };
       }
-      if (resp.ok) {
+      const respCt = (resp.headers.get('content-type') || '').toLowerCase();
+      if (resp.ok && respCt.includes('application/json')) {
         const data = (await resp.json()) as {
           url?: string;
           title?: string;
@@ -1773,6 +1834,7 @@ export function ResearchesView({
           documents?: Array<{ title?: string; url?: string; kind?: string }>;
           extractedFrom?: 'page-meta' | 'url-slug';
           blockedBySite?: boolean;
+          aiKeyMissing?: boolean;
         };
         const validCat = CATEGORY_OPTIONS.some((c) => c.value === data.category)
           ? (data.category as ProductResearchCategory)
@@ -1851,22 +1913,22 @@ export function ResearchesView({
             documents: cleanDocs.length > 0 ? cleanDocs : undefined,
             extractedFrom: data.extractedFrom,
             blockedBySite: Boolean(data.blockedBySite),
+            aiKeyMissing: Boolean(data.aiKeyMissing),
           };
         }
       }
     } catch (err) {
-      if (
-        refresh &&
-        err instanceof DOMException &&
-        err.name === 'AbortError'
-      ) {
-        throw new Error(
-          'Il sito ha impiegato troppo tempo a rispondere. Riprova tra qualche istante.'
-        );
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        if (refresh) {
+          throw new Error(
+            'Il sito ha impiegato troppo tempo a rispondere. Riprova tra qualche istante.'
+          );
+        }
+        fallbackReason = 'backend_timeout';
       }
       // Fallback to client URL slug parsing below
     }
-    return clientFallbackInspectUrl(validUrl);
+    return { ...clientFallbackInspectUrl(validUrl), fallbackReason };
   }
 
   async function autoAttachInspectedDocuments(
@@ -1885,7 +1947,10 @@ export function ResearchesView({
     const existingFileNameSet = new Set(
       existingDocs.map((d) => (d.fileName || '').trim().toLowerCase()).filter(Boolean)
     );
-    const existingTitleList = existingDocs
+    // Title-based deduplication only applies to legacy saved docs that have no cloudUrl stored;
+    // docs with distinct URLs/filenames (e.g. multiple revisions of a manual or datasheet) must all be preserved.
+    const legacyNoUrlTitleList = existingDocs
+      .filter((d) => !(d.cloudUrl || '').trim())
       .map((d) => d.title.trim().toLowerCase())
       .filter(Boolean);
 
@@ -1910,7 +1975,7 @@ export function ResearchesView({
     let downloaded = 0;
     let linked = 0;
 
-    for (const docItem of docs.slice(0, 6)) {
+    for (const docItem of docs.slice(0, 8)) {
       const normUrl = docItem.url.split('#')[0].toLowerCase();
       if (existingUrlSet.has(normUrl)) continue;
       const urlFileName = extractUniqueUrlFileName(docItem.url);
@@ -1925,13 +1990,13 @@ export function ResearchesView({
         : cleanDocTitle.slice(0, 80);
       const cleanDocTitleLow = cleanDocTitle.toLowerCase();
       const fullTitleLow = fullTitle.toLowerCase();
-      const alreadyHasSameTitle = existingTitleList.some(
+      const alreadyHasLegacySameTitle = legacyNoUrlTitleList.some(
         (existingTitle) =>
           existingTitle === fullTitleLow ||
           existingTitle === cleanDocTitleLow ||
           existingTitle.startsWith(`${cleanDocTitleLow} · `)
       );
-      if (alreadyHasSameTitle) {
+      if (alreadyHasLegacySameTitle) {
         continue;
       }
 
@@ -1943,6 +2008,17 @@ export function ResearchesView({
         if (blob.size <= 0 || blob.size > MAX_CLOUD_FILE_BYTES) return 'failed';
         const ctLow = contentTypeHeader.toLowerCase();
         if (ctLow.includes('text/html') || ctLow.includes('application/json')) return 'failed';
+        const isOpaqueDocFileName = (candidate: string): boolean => {
+          const base = candidate.replace(/\.[a-z0-9]{2,5}$/i, '').trim();
+          if (!base || base.length < 3) return true;
+          if (/^(?:mmo|doc|file|attachment|download|asset)[_-]?\d[\d_-]*$/i.test(base)) return true;
+          if (/^[a-f0-9-]{12,}$/i.test(base)) return true;
+          if (/^[a-z]{0,4}[_-]?\d{5,}(?:[_-][a-z0-9]+)*$/i.test(base)) return true;
+          if (/^\d[\d_-]*$/.test(base)) return true;
+          const letters = (base.match(/[a-zA-Z]/g) || []).length;
+          const digits = (base.match(/\d/g) || []).length;
+          return digits > letters && digits >= 6;
+        };
         let fileName = '';
         if (rawHeaderName) {
           try {
@@ -1955,29 +2031,48 @@ export function ResearchesView({
           const urlSeg = extractUniqueUrlFileName(docItem.url);
           if (urlSeg) fileName = urlSeg;
         }
-        if (!fileName) {
-          const slug = cleanDocTitle.replace(/[^a-zA-Z0-9_-]+/g, '_') || 'documento';
-          fileName = `${slug}.${ctLow.includes('zip') ? 'zip' : 'pdf'}`;
+        const extMatch = fileName.match(/(\.[a-z0-9]{2,5})$/i);
+        const resolvedExt = extMatch?.[1]
+          ? extMatch[1].toLowerCase()
+          : ctLow.includes('zip')
+            ? '.zip'
+            : '.pdf';
+        if (!fileName || isOpaqueDocFileName(fileName)) {
+          const readableBase = cleanDocTitle
+            .replace(/\//g, '-')
+            .replace(/["\r\n\\:?*<>|]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 72);
+          fileName = `${readableBase || 'documento'}${resolvedExt}`;
         }
         if (existingFileNameSet.has(fileName.toLowerCase())) {
-          existingUrlSet.add(normUrl);
-          return 'duplicate';
+          const baseNoExt = fileName.replace(/\.[a-z0-9]{2,5}$/i, '');
+          let suffix = 2;
+          while (existingFileNameSet.has(`${baseNoExt} (${suffix})${resolvedExt}`.toLowerCase())) {
+            suffix += 1;
+          }
+          fileName = `${baseNoExt} (${suffix})${resolvedExt}`;
         }
         const file = new File([blob], fileName, {
           type: blob.type || ctLow || 'application/pdf',
         });
-        await onUploadResearchDocument(
-          researchId,
-          docType,
-          fullTitle,
-          provider,
-          file
-        );
-        downloaded += 1;
-        existingFileNameSet.add(fileName.toLowerCase());
-        existingUrlSet.add(normUrl);
-        existingTitleList.push(fullTitleLow);
-        return 'uploaded';
+        try {
+          await onUploadResearchDocument(
+            researchId,
+            docType,
+            fullTitle,
+            provider,
+            file,
+            docItem.url
+          );
+          downloaded += 1;
+          existingFileNameSet.add(fileName.toLowerCase());
+          existingUrlSet.add(normUrl);
+          return 'uploaded';
+        } catch {
+          return 'failed';
+        }
       };
 
       let uploadOutcome: 'uploaded' | 'duplicate' | 'failed' = 'failed';
@@ -1993,7 +2088,9 @@ export function ResearchesView({
             18_000
           );
           if (resp.status === 405 || resp.status === 404) {
-            backendApiUnavailable = true;
+            if (window.location.hostname.endsWith('.github.io') || import.meta.env.BASE_URL !== '/') {
+              backendApiUnavailable = true;
+            }
           } else {
             const ct = String(resp.headers.get('content-type') || '').toLowerCase();
             if (resp.ok && !ct.includes('application/json')) {
@@ -2052,7 +2149,6 @@ export function ResearchesView({
           );
           linked += 1;
           existingUrlSet.add(normUrl);
-          existingTitleList.push(fullTitleLow);
         } catch {
           // Ignore individual link-save errors
         }
@@ -2077,12 +2173,13 @@ export function ResearchesView({
     const existingFileNameSet = new Set(
       existingDocs.map((d) => (d.fileName || '').trim().toLowerCase()).filter(Boolean)
     );
-    const existingTitleList = existingDocs
+    const legacyNoUrlTitleList = existingDocs
+      .filter((d) => !(d.cloudUrl || '').trim())
       .map((d) => d.title.trim().toLowerCase())
       .filter(Boolean);
     const cleanProd = productTitle.trim().slice(0, 28);
 
-    for (const docItem of docs.slice(0, 6)) {
+    for (const docItem of docs.slice(0, 8)) {
       const normUrl = docItem.url.split('#')[0].toLowerCase();
       if (existingUrlSet.has(normUrl)) continue;
       let urlFileName = '';
@@ -2107,13 +2204,13 @@ export function ResearchesView({
         : cleanDocTitle.slice(0, 80);
       const cleanDocTitleLow = cleanDocTitle.toLowerCase();
       const fullTitleLow = fullTitle.toLowerCase();
-      const alreadyHasSameTitle = existingTitleList.some(
+      const alreadyHasLegacySameTitle = legacyNoUrlTitleList.some(
         (existingTitle) =>
           existingTitle === fullTitleLow ||
           existingTitle === cleanDocTitleLow ||
           existingTitle.startsWith(`${cleanDocTitleLow} · `)
       );
-      if (!alreadyHasSameTitle) return true;
+      if (!alreadyHasLegacySameTitle) return true;
     }
     return false;
   }
@@ -2215,9 +2312,14 @@ export function ResearchesView({
 
       setPendingDraftItems((prev) => [draftRecord, ...prev]);
       if (inspected.documents?.length) {
+        const cappedDocs = inspected.documents.slice(0, 8);
         setPendingDraftFoundDocs((prev) => ({
           ...prev,
-          [draftId]: inspected.documents!,
+          [draftId]: cappedDocs,
+        }));
+        setOpenAttachmentsIds((prev) => ({
+          ...prev,
+          [draftId]: true,
         }));
       }
       if (inspected.sizePrices) {
@@ -2241,16 +2343,32 @@ export function ResearchesView({
           : '',
       ].filter(Boolean);
 
-      if (
+      if (inspected.fallbackReason === 'static_hosting') {
+        setLinkNotice(
+          `Bozza "${inspected.title}" creata dal solo link (versione statica GitHub Pages): su questo hosting il browser non può leggere ${inspected.store} per blocco CORS/assenza backend. Apri l'app su AI Studio / server locale per importazione automatica completa.`
+        );
+      } else if (inspected.fallbackReason === 'backend_timeout') {
+        setLinkNotice(
+          `Bozza "${inspected.title}" creata dal solo link perché ${inspected.store} o il server ha impiegato troppo tempo a rispondere: riprova tra qualche istante con "Aggiorna dal sito".`
+        );
+      } else if (inspected.fallbackReason === 'backend_unreachable') {
+        setLinkNotice(
+          `Bozza "${inspected.title}" creata dal solo link perché il server di analisi (/api/researches/inspect) non ha risposto con dati JSON validi (sessione Chrome da ricaricare o server non attivo): ricarica la pagina o usa "Aggiorna dal sito".`
+        );
+      } else if (
         inspected.blockedBySite &&
         inspected.extractedFrom !== 'page-meta' &&
         !inspected.documents?.length &&
-        !inspected.specs
+        !inspected.imageUrl
       ) {
         setLinkNotice(
           `Bozza "${inspected.title}" inserita in pagina da ${inspected.store} (${
             writesDisabled ? 'non ancora salvata nella coda locale' : 'non ancora salvata su Firestore'
-          }). Il sito blocca la lettura automatica: completa eventuali dettagli e clicca "Salva modifiche" sulla scheda.`
+          }). ${inspected.store} blocca l'accesso automatico (anti-bot)${
+            inspected.aiKeyMissing
+              ? ' e la ricerca online AI non è attiva su questo server (GEMINI_API_KEY non configurata)'
+              : ''
+          }: completa foto, nome modello o documenti e clicca "Salva modifiche" sulla scheda.`
         );
       } else {
         setFeedback(
@@ -2342,9 +2460,19 @@ export function ResearchesView({
       setDraftAttachments([]);
       setDraftFoundDocuments(inspected.documents || []);
       setDraftOpen(true);
-      if (inspected.blockedBySite && inspected.extractedFrom !== 'page-meta' && !inspected.specs) {
+      if (inspected.fallbackReason === 'static_hosting') {
         setLinkNotice(
-          `${inspected.store} usa una protezione anti-bot: titolo, negozio e codice articolo dal link sono già precompilati; completa prezzo/foto o dettagli manualmente.`
+          `Versione statica GitHub Pages senza backend: da ${inspected.store} è stato estratto solo il codice dal link. Usa l'app su AI Studio / server locale per importazione automatica di titolo, foto e prezzo.`
+        );
+      } else if (inspected.fallbackReason) {
+        setLinkNotice(
+          `Il server di analisi non ha risposto correttamente: precompilati solo i dati ricavati dall'URL. Ricarica la pagina o completa i campi manualmente.`
+        );
+      } else if (inspected.blockedBySite && inspected.extractedFrom !== 'page-meta' && !inspected.imageUrl && !inspected.documents?.length) {
+        setLinkNotice(
+          `${inspected.store} usa una protezione anti-bot${
+            inspected.aiKeyMissing ? ' e la ricerca online AI non è attiva (GEMINI_API_KEY assente)' : ''
+          }: titolo, negozio e codice dal link sono già precompilati; completa prezzo/foto o dettagli manualmente.`
         );
       }
     } finally {
@@ -2901,27 +3029,43 @@ export function ResearchesView({
         const effectiveDraft = getEffectiveItem(item);
         const proposedDraftPayload = resolvePreservedFields(effectiveDraft);
         const draftChanged = hasResearchPayloadChanges(effectiveDraft, proposedDraftPayload);
-        if (draftChanged) {
-          setPendingDraftItems((prev) =>
-            prev.map((d) =>
-              d.id === item.id
-                ? {
-                    ...d,
-                    ...proposedDraftPayload,
-                    sizePrices: mergedSizePrices ?? d.sizePrices,
-                  }
-                : d
-            )
-          );
-          handleDiscardPendingCardEdit(item.id);
-          if (inspected.documents?.length) {
+        const currentQueuedDocs = pendingDraftFoundDocs[item.id] || [];
+        const incomingDocs = (inspected.documents || []).slice(0, 8);
+        const docsChanged =
+          incomingDocs.length > 0 &&
+          (incomingDocs.length !== currentQueuedDocs.length ||
+            incomingDocs.some((d, idx) => d.url !== currentQueuedDocs[idx]?.url));
+        if (draftChanged || docsChanged) {
+          if (draftChanged) {
+            setPendingDraftItems((prev) =>
+              prev.map((d) =>
+                d.id === item.id
+                  ? {
+                      ...d,
+                      ...proposedDraftPayload,
+                      sizePrices: mergedSizePrices ?? d.sizePrices,
+                    }
+                  : d
+              )
+            );
+            handleDiscardPendingCardEdit(item.id);
+          }
+          if (docsChanged) {
             setPendingDraftFoundDocs((prev) => ({
               ...prev,
-              [item.id]: inspected.documents!,
+              [item.id]: incomingDocs,
+            }));
+            setOpenAttachmentsIds((prev) => ({
+              ...prev,
+              [item.id]: true,
             }));
           }
           setFeedback(
-            `Bozza "${proposedDraftPayload.title}" aggiornata dal sito (selezioni mantenute, ancora non salvata su Firestore).`
+            docsChanged && !draftChanged
+              ? `Trovati ${incomingDocs.length} ${
+                  incomingDocs.length === 1 ? 'documento' : 'documenti'
+                } per la bozza "${proposedDraftPayload.title}" (pronti al salvataggio).`
+              : `Bozza "${proposedDraftPayload.title}" aggiornata dal sito (selezioni mantenute, ancora non salvata su Firestore).`
           );
         } else {
           setLinkNotice(
@@ -3052,12 +3196,14 @@ export function ResearchesView({
         inspected.blockedBySite &&
         inspected.extractedFrom !== 'page-meta' &&
         totalDocs === 0 &&
-        !inspected.specs
+        !inspected.imageUrl
       ) {
         setLinkNotice(
           `Scheda "${nextTitle || item.title}" aggiornata dai dati del link, ma ${
             inspected.store || item.store
-          } blocca l'accesso automatico (anti-bot): eventuali foto, prezzi o documenti vanno inseriti manualmente.`
+          } blocca l'accesso automatico (anti-bot)${
+            inspected.aiKeyMissing ? ' e la ricerca online AI non è attiva su questo server' : ''
+          }: eventuali foto, prezzi o documenti vanno inseriti manualmente.`
         );
       } else {
         const docSummaryParts = [
@@ -3338,6 +3484,12 @@ export function ResearchesView({
   function handleDiscardLocalDraft(draftId: string) {
     setPendingDraftItems((prev) => prev.filter((d) => d.id !== draftId));
     setPendingDraftFoundDocs((prev) => {
+      if (!prev[draftId]) return prev;
+      const next = { ...prev };
+      delete next[draftId];
+      return next;
+    });
+    setOpenAttachmentsIds((prev) => {
       if (!prev[draftId]) return prev;
       const next = { ...prev };
       delete next[draftId];
@@ -5584,6 +5736,10 @@ export function ResearchesView({
             const isEditing = editingId === item.id;
             const imageBroken = Boolean(effectiveItem.imageUrl) && brokenImages[item.id] === effectiveItem.imageUrl;
             const itemDocs = isLocalDraft ? [] : getDocumentsForResearch(researchDocuments, item.id);
+            const queuedDraftDocs = isLocalDraft
+              ? (pendingDraftFoundDocs[item.id] || []).slice(0, 8)
+              : [];
+            const totalAttachmentCount = itemDocs.length + queuedDraftDocs.length;
             const specEntries = parseSpecLines(item.specs);
             const filteredSpecEntries = specEntries.filter((entry) => {
               const lowL = entry.label?.toLowerCase();
@@ -6335,22 +6491,32 @@ export function ResearchesView({
                           [item.id]: !isAttachOpen,
                         }))
                       }
-                      title={`Allegati (${itemDocs.length})`}
+                      title={
+                        queuedDraftDocs.length > 0
+                          ? `Allegati (${totalAttachmentCount} rilevati, pronti al salvataggio)`
+                          : `Allegati (${totalAttachmentCount})`
+                      }
                       className={`inline-flex items-center gap-1 px-1.5 py-1 sm:px-2 sm:py-1.5 text-[11px] rounded-lg border transition-colors whitespace-nowrap ${
-                        itemDocs.length > 0
+                        totalAttachmentCount > 0
                           ? isAttachOpen
                             ? 'font-semibold text-emerald-900 bg-emerald-100 border-emerald-400 dark:text-emerald-100 dark:bg-emerald-500/30 dark:border-emerald-400/80 shadow-sm shadow-emerald-500/20'
                             : 'font-semibold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 border-emerald-300 dark:text-emerald-200 dark:hover:text-emerald-100 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30 dark:border-emerald-400/60'
                           : 'font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 dark:text-slate-400 dark:hover:text-slate-200 dark:bg-slate-800/70 dark:hover:bg-slate-800 border-transparent'
-                      } ${isAttachChanged ? 'ring-2 ring-amber-400/80' : ''}`}
+                      } ${
+                        isAttachChanged
+                          ? 'ring-2 ring-amber-400/80'
+                          : queuedDraftDocs.length > 0
+                            ? 'ring-1 ring-sky-400/75'
+                            : ''
+                      }`}
                     >
                       <Paperclip
                         className={`w-3 h-3 ${
-                          itemDocs.length > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
+                          totalAttachmentCount > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
                         }`}
                       />
-                      <span className="sm:hidden tabular-nums">{itemDocs.length}</span>
-                      <span className="hidden sm:inline">Allegati ({itemDocs.length})</span>
+                      <span className="sm:hidden tabular-nums">{totalAttachmentCount}</span>
+                      <span className="hidden sm:inline">Allegati ({totalAttachmentCount})</span>
                     </button>
                   )}
                   {inListFooter && !readOnly && (
@@ -7002,7 +7168,7 @@ export function ResearchesView({
                   {(!isList || isAttachOpen) && (
                   <div className="mt-auto space-y-2">
                     {/* In Grid mode show attachments header row; in List mode show drawer only when expanded/populated */}
-                    {(!isList && (itemDocs.length > 0 || !readOnly || isAttachOpen)) ||
+                    {(!isList && (totalAttachmentCount > 0 || !readOnly || isAttachOpen)) ||
                     (isList && isAttachOpen) ? (
                       <div className="border-t border-slate-200 dark:border-slate-800/70 pt-2 space-y-2">
                         {!isList && (
@@ -7016,29 +7182,35 @@ export function ResearchesView({
                                 }))
                               }
                               className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] transition-colors ${
-                                itemDocs.length > 0
+                                totalAttachmentCount > 0
                                   ? isAttachOpen
                                     ? 'font-semibold text-emerald-900 bg-emerald-100 border-emerald-400 dark:text-emerald-100 dark:bg-emerald-500/30 dark:border-emerald-400/80'
                                     : 'font-semibold text-emerald-800 hover:text-emerald-950 bg-emerald-50 hover:bg-emerald-100 border-emerald-300 dark:text-emerald-200 dark:hover:text-emerald-100 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30 dark:border-emerald-400/60'
                                   : 'font-medium text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 border-transparent hover:bg-slate-100 dark:hover:bg-slate-800/70'
-                              } ${isAttachChanged ? 'ring-2 ring-amber-400/80' : ''}`}
+                              } ${
+                                isAttachChanged
+                                  ? 'ring-2 ring-amber-400/80'
+                                  : queuedDraftDocs.length > 0
+                                    ? 'ring-1 ring-sky-400/75'
+                                    : ''
+                              }`}
                             >
                               <Paperclip
                                 className={`w-3.5 h-3.5 ${
-                                  itemDocs.length > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
+                                  totalAttachmentCount > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
                                 }`}
                               />
-                              <span>Allegati ({itemDocs.length})</span>
+                              <span>Allegati ({totalAttachmentCount})</span>
                               {isAttachOpen ? (
                                 <ChevronUp
                                   className={`w-3 h-3 ${
-                                    itemDocs.length > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
+                                    totalAttachmentCount > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
                                   }`}
                                 />
                               ) : (
                                 <ChevronDown
                                   className={`w-3 h-3 ${
-                                    itemDocs.length > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
+                                    totalAttachmentCount > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'
                                   }`}
                                 />
                               )}
@@ -7175,6 +7347,83 @@ export function ResearchesView({
                           </div>
                         )}
 
+                        {isAttachOpen && queuedDraftDocs.length > 0 && (
+                          <div className="space-y-1.5">
+                            <div className="text-[10px] text-emerald-700 dark:text-emerald-300 font-medium px-0.5">
+                              Documenti rilevati dal sito: verranno scaricati e salvati (anche in Documenti) cliccando &quot;Salva modifiche&quot;.
+                            </div>
+                            <div className={isList ? 'grid grid-cols-1 md:grid-cols-2 gap-1.5' : 'space-y-1.5'}>
+                              {queuedDraftDocs.map((docLink) => {
+                                const mappedDocType: ArticleAttachmentType =
+                                  docLink.kind === 'certificato' ? 'garanzia_extra_family' : 'manuale';
+                                const docMeta = getAttachmentTypeMeta(mappedDocType);
+                                return (
+                                  <div
+                                    key={docLink.url}
+                                    className="flex items-center justify-between gap-2 bg-emerald-50/70 dark:bg-emerald-950/25 border border-emerald-200 dark:border-emerald-500/35 rounded-md px-2 py-1.5 text-[11px]"
+                                  >
+                                    <div className="min-w-0 flex items-center gap-1.5">
+                                      <FileText className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-300 shrink-0" />
+                                      <div className="min-w-0">
+                                        <a
+                                          href={docLink.url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="block text-slate-800 hover:text-sky-600 dark:text-slate-200 dark:hover:text-sky-300 font-medium truncate transition-colors"
+                                          title={`Anteprima link originale: ${docLink.title}`}
+                                        >
+                                          {docLink.title}
+                                        </a>
+                                        <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
+                                          <span className={`px-1.5 py-0.5 rounded border ${docMeta.badgeClass}`}>
+                                            {docMeta.label}
+                                          </span>
+                                          <span className="px-1.5 py-0.5 rounded bg-sky-100/80 text-sky-700 dark:bg-sky-500/20 dark:text-sky-200 font-medium">
+                                            In coda al salvataggio
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <a
+                                        href={docLink.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        title="Apri anteprima originale in nuova scheda"
+                                        className="p-1 text-sky-600 hover:bg-emerald-100/80 dark:text-sky-300 dark:hover:bg-slate-800 rounded transition-colors"
+                                      >
+                                        <ExternalLink className="w-3.5 h-3.5" />
+                                      </a>
+                                      {!readOnly && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setPendingDraftFoundDocs((prev) => {
+                                              const curr = prev[item.id] || [];
+                                              const nextList = curr.filter((d) => d.url !== docLink.url);
+                                              if (nextList.length === 0) {
+                                                const copy = { ...prev };
+                                                delete copy[item.id];
+                                                return copy;
+                                              }
+                                              return { ...prev, [item.id]: nextList };
+                                            })
+                                          }
+                                          title="Non allegare questo documento"
+                                          aria-label={`Rimuovi documento in coda ${docLink.title}`}
+                                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-emerald-100/80 dark:text-slate-500 dark:hover:text-rose-400 dark:hover:bg-slate-800 rounded transition-colors"
+                                        >
+                                          <X className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
                         {isAttachOpen && itemDocs.length > 0 && (
                           <div className={isList ? 'grid grid-cols-1 md:grid-cols-2 gap-1.5' : 'space-y-1.5'}>
                             {itemDocs.map((docItem) => {
@@ -7188,6 +7437,22 @@ export function ResearchesView({
                                 const openTabHref = isLinkOnlyDoc
                                   ? docItem.cloudUrl
                                   : vaultDocUrls[docItem.id];
+                                const cardDocDisplayTitle = (() => {
+                                  const rawTitle = (docItem.title || '').trim();
+                                  const prodLow = effectiveItem.title.trim().toLowerCase();
+                                  const sepIdx = rawTitle.lastIndexOf(' · ');
+                                  if (sepIdx > 0 && prodLow) {
+                                    const left = rawTitle.slice(0, sepIdx).trim();
+                                    const right = rawTitle.slice(sepIdx + 3).trim().toLowerCase();
+                                    if (right && prodLow.startsWith(right)) {
+                                      return left;
+                                    }
+                                    if (left && prodLow.startsWith(left.toLowerCase())) {
+                                      return docItem.fileName || rawTitle.slice(sepIdx + 3).trim() || rawTitle;
+                                    }
+                                  }
+                                  return rawTitle || docItem.fileName || 'Allegato';
+                                })();
                                 return (
                                   <div
                                     key={docItem.id}
@@ -7208,9 +7473,9 @@ export function ResearchesView({
                                             target="_blank"
                                             rel="noreferrer"
                                             className="block text-slate-800 hover:text-sky-600 dark:text-slate-200 dark:hover:text-sky-300 font-medium truncate transition-colors"
-                                            title={`Apri in nuova scheda: ${docItem.fileName || docItem.title}`}
+                                            title={`Apri in nuova scheda: ${docItem.title || docItem.fileName}`}
                                           >
-                                            {docItem.fileName || docItem.title}
+                                            {cardDocDisplayTitle}
                                           </a>
                                         ) : (
                                           <button
@@ -7218,9 +7483,9 @@ export function ResearchesView({
                                             disabled={openingDocId === docItem.id}
                                             onClick={() => void handleOpenDocInNewTab(docItem)}
                                             className="block w-full text-left text-slate-800 hover:text-sky-600 dark:text-slate-200 dark:hover:text-sky-300 font-medium truncate transition-colors disabled:opacity-50"
-                                            title={`Apri in nuova scheda: ${docItem.fileName || docItem.title}`}
+                                            title={`Apri in nuova scheda: ${docItem.title || docItem.fileName}`}
                                           >
-                                            {docItem.fileName || docItem.title}
+                                            {cardDocDisplayTitle}
                                           </button>
                                         )}
                                         <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
@@ -7232,7 +7497,7 @@ export function ResearchesView({
                                                 (savingEdit && pendingEditSave?.item.id === item.id)
                                               }
                                               title="Modifica tipo allegato"
-                                              aria-label={`Modifica tipo per ${docItem.fileName || docItem.title}`}
+                                              aria-label={`Modifica tipo per ${cardDocDisplayTitle}`}
                                               onChange={(e) =>
                                                 handleQuickDocTypeChange(
                                                   item,
@@ -7374,8 +7639,20 @@ export function ResearchesView({
                       <span className="w-1.5 h-1.5 rounded-full bg-sky-500 dark:bg-sky-400 animate-pulse shrink-0" />
                       {isLocalDraft
                         ? writesDisabled
-                          ? 'Bozza in pagina · Non ancora salvata in coda locale'
-                          : 'Bozza in pagina · Non ancora salvata su Firestore'
+                          ? `Bozza in pagina${
+                              queuedDraftDocs.length > 0
+                                ? ` · ${queuedDraftDocs.length} ${
+                                    queuedDraftDocs.length === 1 ? 'allegato pronto' : 'allegati pronti'
+                                  }`
+                                : ''
+                            } · Non ancora salvata in coda locale`
+                          : `Bozza in pagina${
+                              queuedDraftDocs.length > 0
+                                ? ` · ${queuedDraftDocs.length} ${
+                                    queuedDraftDocs.length === 1 ? 'allegato pronto' : 'allegati pronti'
+                                  }`
+                                : ''
+                            } · Non ancora salvata su Firestore`
                         : 'Modifiche non salvate'}
                     </span>
                     <div className="flex items-center gap-1.5 ml-auto">
@@ -7605,7 +7882,7 @@ export function ResearchesView({
                 <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
                   {writesDisabled ? 'Modalità Test attiva: vuoi rimuovere in locale ' : 'Vuoi davvero rimuovere '}
                   <span className="font-semibold text-slate-900 dark:text-slate-100 break-words">
-                    {pendingDeleteDoc.doc.fileName || pendingDeleteDoc.doc.title}
+                    {pendingDeleteDoc.doc.title || pendingDeleteDoc.doc.fileName}
                   </span>{' '}
                   da{' '}
                   <span className="font-semibold text-slate-900 dark:text-slate-100">
@@ -7750,6 +8027,20 @@ export function ResearchesView({
                     </>
                   )}
                 </p>
+                {pendingEditSave.isNewDraft &&
+                  (pendingDraftFoundDocs[pendingEditSave.item.id]?.length || 0) > 0 && (() => {
+                    const queuedCount = Math.min(
+                      pendingDraftFoundDocs[pendingEditSave.item.id].length,
+                      8
+                    );
+                    return (
+                      <p className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium pt-1">
+                        {queuedCount === 1
+                          ? 'Verrà inoltre allegato 1 documento rilevato dal sito (disponibile anche nella pagina Documenti).'
+                          : `Verranno inoltre allegati ${queuedCount} documenti rilevati dal sito (disponibili anche nella pagina Documenti).`}
+                      </p>
+                    );
+                  })()}
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
@@ -7786,17 +8077,59 @@ export function ResearchesView({
           {feedback && (
             <div
               role="status"
-              className="pointer-events-auto bg-emerald-50/95 dark:bg-emerald-950/95 backdrop-blur-md border border-emerald-300 dark:border-emerald-500/50 text-emerald-900 dark:text-emerald-100 rounded-xl px-3.5 py-2.5 text-xs shadow-xl flex items-start justify-between gap-2.5"
+              onClick={() => {
+                if (!isFeedbackPinned) {
+                  setPinnedToastTexts((prev) => ({ ...prev, feedback }));
+                }
+              }}
+              title={
+                isFeedbackPinned
+                  ? 'Notifica fissata: chiudila manualmente con la X'
+                  : 'Clicca per fissare questa notifica e leggerla con calma'
+              }
+              className={`pointer-events-auto bg-emerald-50/95 dark:bg-emerald-950/95 backdrop-blur-md border border-emerald-300 dark:border-emerald-500/50 text-emerald-900 dark:text-emerald-100 rounded-xl px-3.5 py-2.5 text-xs shadow-xl flex items-start justify-between gap-2.5 transition-shadow ${
+                isFeedbackPinned
+                  ? 'ring-2 ring-emerald-400/80 dark:ring-emerald-400/70 select-text'
+                  : 'cursor-pointer hover:ring-1 hover:ring-emerald-400/70'
+              }`}
             >
-              <div className="flex items-start gap-2 min-w-0">
+              <div className="flex items-start gap-2 min-w-0 flex-1">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-                <span className="leading-relaxed break-words">{feedback}</span>
+                <div className="min-w-0 space-y-1">
+                  <span className="block leading-relaxed break-words">{feedback}</span>
+                  <div className="flex items-center gap-1.5 text-[10px]">
+                    {isFeedbackPinned ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPinnedToastTexts((prev) => ({ ...prev, feedback: null }));
+                        }}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-200/70 dark:bg-emerald-500/25 text-emerald-900 dark:text-emerald-200 font-semibold hover:opacity-80"
+                        title="Sblocca chiusura automatica"
+                      >
+                        <Pin className="w-2.5 h-2.5" />
+                        <span>Fissato</span>
+                      </button>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-emerald-700/80 dark:text-emerald-300/80">
+                        <Pin className="w-2.5 h-2.5" />
+                        <span>Clicca per fissare</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
               <button
                 type="button"
-                onClick={() => setFeedback(null)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPinnedToastTexts((prev) => ({ ...prev, feedback: null }));
+                  setFeedback(null);
+                }}
                 className="text-emerald-700 hover:text-emerald-950 dark:text-emerald-300/80 dark:hover:text-emerald-100 p-0.5 shrink-0"
                 aria-label="Chiudi notifica"
+                title="Chiudi"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -7806,17 +8139,59 @@ export function ResearchesView({
           {linkNotice && (
             <div
               role="status"
-              className="pointer-events-auto bg-sky-50/95 dark:bg-sky-950/95 backdrop-blur-md border border-sky-300 dark:border-sky-500/50 text-sky-900 dark:text-sky-100 rounded-xl px-3.5 py-2.5 text-xs shadow-xl flex items-start justify-between gap-2.5"
+              onClick={() => {
+                if (!isLinkNoticePinned) {
+                  setPinnedToastTexts((prev) => ({ ...prev, linkNotice }));
+                }
+              }}
+              title={
+                isLinkNoticePinned
+                  ? 'Avviso fissato: chiudilo manualmente con la X'
+                  : 'Clicca per fissare questo avviso e leggerlo con calma'
+              }
+              className={`pointer-events-auto bg-sky-50/95 dark:bg-sky-950/95 backdrop-blur-md border border-sky-300 dark:border-sky-500/50 text-sky-900 dark:text-sky-100 rounded-xl px-3.5 py-2.5 text-xs shadow-xl flex items-start justify-between gap-2.5 transition-shadow ${
+                isLinkNoticePinned
+                  ? 'ring-2 ring-sky-400/80 dark:ring-sky-400/70 select-text'
+                  : 'cursor-pointer hover:ring-1 hover:ring-sky-400/70'
+              }`}
             >
-              <div className="flex items-start gap-2 min-w-0">
+              <div className="flex items-start gap-2 min-w-0 flex-1">
                 <AlertTriangle className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0 mt-0.5" />
-                <span className="leading-relaxed break-words">{linkNotice}</span>
+                <div className="min-w-0 space-y-1">
+                  <span className="block leading-relaxed break-words">{linkNotice}</span>
+                  <div className="flex items-center gap-1.5 text-[10px]">
+                    {isLinkNoticePinned ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPinnedToastTexts((prev) => ({ ...prev, linkNotice: null }));
+                        }}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-200/70 dark:bg-sky-500/25 text-sky-900 dark:text-sky-200 font-semibold hover:opacity-80"
+                        title="Sblocca chiusura automatica"
+                      >
+                        <Pin className="w-2.5 h-2.5" />
+                        <span>Fissato</span>
+                      </button>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-sky-700/80 dark:text-sky-300/80">
+                        <Pin className="w-2.5 h-2.5" />
+                        <span>Clicca per fissare</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
               <button
                 type="button"
-                onClick={() => setLinkNotice(null)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPinnedToastTexts((prev) => ({ ...prev, linkNotice: null }));
+                  setLinkNotice(null);
+                }}
                 className="text-sky-600 hover:text-sky-900 dark:text-sky-300/80 dark:hover:text-sky-100 p-0.5 shrink-0"
                 aria-label="Chiudi avviso"
+                title="Chiudi"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -7826,17 +8201,59 @@ export function ResearchesView({
           {linkError && (
             <div
               role="alert"
-              className="pointer-events-auto bg-rose-50/95 dark:bg-rose-950/95 backdrop-blur-md border border-rose-300 dark:border-rose-500/50 text-rose-900 dark:text-rose-100 rounded-xl px-3.5 py-2.5 text-xs shadow-xl flex items-start justify-between gap-2.5"
+              onClick={() => {
+                if (!isLinkErrorPinned) {
+                  setPinnedToastTexts((prev) => ({ ...prev, linkError }));
+                }
+              }}
+              title={
+                isLinkErrorPinned
+                  ? 'Errore fissato: chiudilo manualmente con la X'
+                  : 'Clicca per fissare questo errore e leggerlo con calma'
+              }
+              className={`pointer-events-auto bg-rose-50/95 dark:bg-rose-950/95 backdrop-blur-md border border-rose-300 dark:border-rose-500/50 text-rose-900 dark:text-rose-100 rounded-xl px-3.5 py-2.5 text-xs shadow-xl flex items-start justify-between gap-2.5 transition-shadow ${
+                isLinkErrorPinned
+                  ? 'ring-2 ring-rose-400/80 dark:ring-rose-400/70 select-text'
+                  : 'cursor-pointer hover:ring-1 hover:ring-rose-400/70'
+              }`}
             >
-              <div className="flex items-start gap-2 min-w-0">
+              <div className="flex items-start gap-2 min-w-0 flex-1">
                 <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
-                <span className="leading-relaxed break-words">{linkError}</span>
+                <div className="min-w-0 space-y-1">
+                  <span className="block leading-relaxed break-words">{linkError}</span>
+                  <div className="flex items-center gap-1.5 text-[10px]">
+                    {isLinkErrorPinned ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPinnedToastTexts((prev) => ({ ...prev, linkError: null }));
+                        }}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-200/70 dark:bg-rose-500/25 text-rose-900 dark:text-rose-200 font-semibold hover:opacity-80"
+                        title="Sblocca chiusura automatica"
+                      >
+                        <Pin className="w-2.5 h-2.5" />
+                        <span>Fissato</span>
+                      </button>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-rose-700/80 dark:text-rose-300/80">
+                        <Pin className="w-2.5 h-2.5" />
+                        <span>Clicca per fissare</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
               <button
                 type="button"
-                onClick={() => setLinkError(null)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPinnedToastTexts((prev) => ({ ...prev, linkError: null }));
+                  setLinkError(null);
+                }}
                 className="text-rose-700 hover:text-rose-950 dark:text-rose-300/80 dark:hover:text-rose-100 p-0.5 shrink-0"
                 aria-label="Chiudi errore"
+                title="Chiudi"
               >
                 <X className="w-3.5 h-3.5" />
               </button>

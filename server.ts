@@ -925,6 +925,8 @@ async function startServer() {
     const ignored = new Set([
       'dp', 'gp', 'product', 'products', 'p', 'it', 'it-it', 'fr', 'en', 'de', 'es',
       'shop', 'catalog', 'prodotto', 'prodotti', 'scheda', 'item', 'items', 'buy', 'ref',
+      'support', 'supporto', 'assistenza', 'go', 'redirect', 'manuals', 'manual', 'manuali',
+      'qr', 'search', 'find', 'ricerca', 'lookup', 'view', 'detail', 'details',
     ]);
     const candidates = segments.filter((seg) => {
       const lower = seg.toLowerCase();
@@ -935,21 +937,41 @@ async function startServer() {
       return true;
     });
     const best = candidates.sort((a, b) => b.length - a.length)[0];
-    if (!best) return { title: `Prodotto ${store}`.slice(0, 160) };
 
-    let slug = best.replace(/\.(html?|php|aspx?)$/i, '').trim();
-    let extractedModel: string | undefined;
+    const getQueryParamCI = (names: string[]): string | undefined => {
+      for (const [k, v] of parsedUrl.searchParams.entries()) {
+        if (names.includes(k.toLowerCase())) {
+          const clean = v.trim();
+          if (clean) return clean.slice(0, 60);
+        }
+      }
+      return undefined;
+    };
 
-    // Extract trailing multi-segment numeric catalog IDs (e.g., Nardi _211_300) or single SKU/article number
-    const multiNumMatch = slug.match(/^(.+?)[-_](\d{2,6}(?:[-_]\d{2,6})+)$/);
-    if (multiNumMatch && multiNumMatch[1].length >= 4) {
-      slug = multiNumMatch[1];
-      extractedModel = multiNumMatch[2];
-    } else {
-      const skuMatch = slug.match(/^(.+?)[-_](?:id[-_]?|p[-_]?)?(s?\d{5,10})$/i);
-      if (skuMatch && skuMatch[1].length >= 4) {
-        slug = skuMatch[1];
-        extractedModel = skuMatch[2].toUpperCase();
+    const queryPnc = getQueryParamCI(['pnc', 'productnumber', 'product_number', 'productcode', 'product_code']);
+    const queryModel = getQueryParamCI(['model', 'modello', 'sku', 'mpn', 'prodid', 'productid', 'product_id', 'code', 'codice', 'artnr', 'partnumber', 'part_number']);
+    const queryMachineNo = getQueryParamCI(['machineno', 'machine_no', 'serial', 'serialno', 'sn', 'matricola']);
+    const queryElc = getQueryParamCI(['elc']);
+
+    if (!best && !queryPnc && !queryModel) {
+      return { title: `Prodotto ${store}`.slice(0, 160) };
+    }
+
+    let slug = best ? best.replace(/\.(html?|php|aspx?)$/i, '').trim() : '';
+    let extractedModel: string | undefined = queryPnc?.toUpperCase() || queryModel?.toUpperCase();
+
+    if (slug) {
+      // Extract trailing multi-segment numeric catalog IDs (e.g., Nardi _211_300) or single SKU/article number
+      const multiNumMatch = slug.match(/^(.+?)[-_](\d{2,6}(?:[-_]\d{2,6})+)$/);
+      if (multiNumMatch && multiNumMatch[1].length >= 4) {
+        slug = multiNumMatch[1];
+        if (!extractedModel) extractedModel = multiNumMatch[2];
+      } else {
+        const skuMatch = slug.match(/^(.+?)[-_](?:id[-_]?|p[-_]?)?(s?\d{5,10})$/i);
+        if (skuMatch && skuMatch[1].length >= 4) {
+          slug = skuMatch[1];
+          if (!extractedModel) extractedModel = skuMatch[2].toUpperCase();
+        }
       }
     }
 
@@ -986,13 +1008,26 @@ async function startServer() {
       return tok.charAt(0).toUpperCase() + tok.slice(1);
     });
 
-    const title = (formattedWords.join(' ') || `Prodotto ${store}`).slice(0, 160);
+    const fallbackTitle = queryPnc
+      ? `Prodotto ${store} PNC ${queryPnc.toUpperCase()}`
+      : extractedModel
+        ? `Prodotto ${store} ${extractedModel}`
+        : `Prodotto ${store}`;
+    const title = (formattedWords.join(' ') || fallbackTitle).slice(0, 160);
 
-    // Extract useful specs & explicit color from slug
+    // Extract useful specs & explicit color from slug/query
     const slugLower = slug.toLowerCase();
     const specsLines: string[] = [];
-    if (extractedModel) {
+    if (queryPnc) {
+      specsLines.push(`Codice PNC: ${queryPnc.toUpperCase()}`);
+    } else if (extractedModel) {
       specsLines.push(`Codice articolo: ${extractedModel}`);
+    }
+    if (queryMachineNo) {
+      specsLines.push(`Matricola / Machine No.: ${queryMachineNo}`);
+    }
+    if (queryElc) {
+      specsLines.push(`ELC: ${queryElc.toUpperCase()}`);
     }
 
     const materialMatch = slugLower.match(
@@ -1071,7 +1106,7 @@ async function startServer() {
 
   function inferResearchCategory(text: string): string {
     const t = text.toLowerCase();
-    if (/(forno|frigo|frigorifero|lavatrice|asciugatrice|lavastoviglie|microonde|induzione|cappa|aspirapolvere|dyson|caffe|folletto|bimby)/.test(t)) {
+    if (/(forno|frigo|frigorifero|lavatrice|asciugatrice|lavastoviglie|microonde|induzione|cappa|aspirapolvere|dyson|caffe|folletto|bimby|electrolux|\baeg\b|whirlpool|miele|hotpoint|indesit|beko|smeg|candy|haier|\bpnc\b)/.test(t)) {
       return 'elettrodomestici';
     }
     if (/(tv|televis|monitor|laptop|macbook|pc|ipad|tablet|iphone|smartphone|cellulare|sbloccato|ricondizionato|cuffie|airpods|router|modem|ssd|mouse|tastiera|soundbar|console|ps5|custodia|magsafe|5g|apple)/.test(t)) {
@@ -2534,11 +2569,13 @@ async function startServer() {
 
   function inferDocumentKind(text: string, url: string): InspectedDocumentDto['kind'] {
     const hay = `${text} ${url}`.toLowerCase();
-    if (/(bim|3d|cad|dwg|dxf|rfa|ifc|step|stp|obj|modello\s*3d)/.test(hay)) return 'bim_3d';
-    if (/(certificat|garanzia|etichetta|energy|energetic|conformit|ce\b)/.test(hay)) {
+    if (/(?:\bbim\b|\b3d\b|\bcad\b|\bdwg\b|\bdxf\b|\brfa\b|\bifc\b|\bstep\b|\bstp\b|\.obj\b|\bobj\b|modello\s*3d)/.test(hay)) {
+      return 'bim_3d';
+    }
+    if (/(certificat|garanzia|etichetta|energy|energetic|conformit|\bce\b)/.test(hay)) {
       return 'certificato';
     }
-    if (/(scheda\s*(?:prodotto|tecnica)|datasheet|data\s*sheet|brochure)/.test(hay)) {
+    if (/(scheda\s*(?:prodotto|tecnica)|datasheet|data\s*sheet|brochure|volantino|product\s*fiche|\bfiche\b)/.test(hay)) {
       return 'scheda';
     }
     return 'manuale';
@@ -3092,6 +3129,341 @@ async function startServer() {
     return undefined;
   }
 
+  async function lookupIcecatProduct(params: {
+    brand?: string;
+    store?: string;
+    model?: string;
+    title?: string;
+    specs?: string;
+    url?: string;
+    timeoutMs?: number;
+  }): Promise<{
+    title?: string;
+    brand?: string;
+    model?: string;
+    color?: string;
+    imageUrl?: string;
+    specs?: string;
+    documents?: InspectedDocumentDto[];
+  } | null> {
+    const cleanText = `${params.title || ''} ${params.specs || ''} ${params.url || ''}`;
+    const eanMatch = cleanText.match(/\b(\d{13})\b/);
+    const ean = eanMatch?.[1];
+
+    const brandCandidates: string[] = [];
+    const pushBrand = (b?: string) => {
+      const t = (b || '').trim();
+      if (t && !brandCandidates.some((x) => x.toLowerCase() === t.toLowerCase())) {
+        brandCandidates.push(t);
+      }
+    };
+    const baseBrand = (params.brand || '').trim() || (params.store || '').trim();
+    if (/electrolux/i.test(baseBrand) || /electrolux\./i.test(params.url || '')) {
+      pushBrand('AEG');
+      pushBrand('Electrolux');
+      pushBrand('Zanussi');
+    } else if (/\baeg\b/i.test(baseBrand)) {
+      pushBrand('AEG');
+      pushBrand('Electrolux');
+    } else if (/bosch/i.test(baseBrand)) {
+      pushBrand('Bosch');
+      pushBrand('Siemens');
+    } else if (/whirlpool|hotpoint|indesit/i.test(baseBrand)) {
+      pushBrand(baseBrand);
+      pushBrand('Whirlpool');
+      pushBrand('Hotpoint');
+    } else if (
+      baseBrand &&
+      !/^(amazon|ebay|mediaworld|unieuro|euronics|google)$/i.test(baseBrand)
+    ) {
+      pushBrand(baseBrand);
+    }
+
+    const codeCandidates: string[] = [];
+    const pushCode = (c?: string) => {
+      const t = (c || '').trim();
+      if (t && t.length >= 4 && !/^B0[A-Z0-9]{8}$/i.test(t) && !codeCandidates.includes(t)) {
+        codeCandidates.push(t);
+      }
+    };
+    if (params.model) {
+      const rawModel = params.model.trim();
+      if (/^\d{9}$/.test(rawModel)) {
+        pushCode(`${rawModel.slice(0, 3)} ${rawModel.slice(3, 6)} ${rawModel.slice(6, 9)}`);
+      }
+      pushCode(rawModel);
+    }
+    const titleCodeMatch = (params.title || '').match(/\b([A-Z]{2,}[0-9][A-Z0-9-]{2,})\b/);
+    if (titleCodeMatch?.[1]) {
+      pushCode(titleCodeMatch[1]);
+    }
+
+    const lookupUrls: string[] = [];
+    if (ean) {
+      lookupUrls.push(
+        `https://live.icecat.biz/api/?UserName=openIcecat-live&Language=it&GTIN=${encodeURIComponent(ean)}`
+      );
+    }
+    for (const b of brandCandidates.slice(0, 3)) {
+      for (const c of codeCandidates.slice(0, 2)) {
+        if (lookupUrls.length >= 6) break;
+        lookupUrls.push(
+          `https://live.icecat.biz/api/?UserName=openIcecat-live&Language=it&Brand=${encodeURIComponent(b)}&ProductCode=${encodeURIComponent(c)}`
+        );
+      }
+    }
+
+    if (lookupUrls.length === 0) return null;
+
+    const timeoutMs = Math.max(2000, Math.min(5000, params.timeoutMs ?? 4500));
+
+    type IcecatApiResponse = {
+      msg?: string;
+      data?: {
+        GeneralInfo?: {
+          Title?: string;
+          Brand?: string;
+          ProductName?: string;
+          BrandPartCode?: string;
+          GTIN?: string[];
+          Description?: {
+            ManualPDFURL?: string;
+            LeafletPDFURL?: string;
+          };
+          BulletPoints?: {
+            Values?: string[];
+          };
+        };
+        Image?: {
+          HighPic?: string;
+          Pic500x500?: string;
+        };
+        Gallery?: Array<{ Pic?: string; Pic500x500?: string }>;
+        Multimedia?: Array<{
+          Description?: string;
+          URL?: string;
+          ContentType?: string;
+          Updated?: string;
+        }>;
+        FeaturesGroups?: Array<{
+          FeatureGroup?: { Name?: { Value?: string } };
+          Features?: Array<{
+            Feature?: { Name?: { Value?: string } };
+            PresentationValue?: string;
+          }>;
+        }>;
+      };
+    };
+
+    try {
+      const results = await Promise.allSettled(
+        lookupUrls.map(async (u) => {
+          const resp = await fetch(u, {
+            method: 'GET',
+            signal: AbortSignal.timeout(timeoutMs),
+            headers: {
+              Accept: 'application/json',
+              'User-Agent': 'MyHomeProductInspector/1.0',
+            },
+          });
+          if (!resp.ok) return null;
+          const json = (await resp.json()) as IcecatApiResponse;
+          if (json?.msg === 'OK' && json.data?.GeneralInfo?.Title) {
+            return json.data;
+          }
+          return null;
+        })
+      );
+
+      const hit = results.find(
+        (r): r is PromiseFulfilledResult<NonNullable<IcecatApiResponse['data']>> =>
+          r.status === 'fulfilled' && Boolean(r.value)
+      )?.value;
+      if (!hit || !hit.GeneralInfo) return null;
+
+      const gi = hit.GeneralInfo;
+      const icTitle = (gi.Title || '').replace(/\s+/g, ' ').trim().slice(0, 160) || undefined;
+      const icBrand = (gi.Brand || '').trim().slice(0, 60) || undefined;
+      const prodCodeToken = (gi.ProductName || '').trim().split(/\s+/)[0];
+      const partCode = (gi.BrandPartCode || '').trim();
+      const icModel =
+        prodCodeToken && /^[A-Z0-9-]{4,}$/i.test(prodCodeToken) && partCode && prodCodeToken !== partCode
+          ? `${prodCodeToken} (${partCode})`.slice(0, 80)
+          : (partCode || prodCodeToken || '').slice(0, 80) || undefined;
+
+      const rawImg =
+        hit.Image?.HighPic ||
+        hit.Image?.Pic500x500 ||
+        hit.Gallery?.[0]?.Pic ||
+        hit.Gallery?.[0]?.Pic500x500;
+      const icImage = rawImg && /^https?:\/\/.+/.test(rawImg) ? rawImg.slice(0, 1000) : undefined;
+
+      const orderedSpecs: string[] = [];
+      const seenSpecLabels = new Set<string>();
+      const pushSpec = (label: string, value: string) => {
+        const cleanL = decodeHtmlEntities(stripHtmlTags(label)).replace(/\s+/g, ' ').trim();
+        const cleanV = decodeHtmlEntities(stripHtmlTags(value)).replace(/\s+/g, ' ').trim();
+        if (!cleanL || !cleanV) return;
+        const key = cleanL.toLowerCase();
+        if (seenSpecLabels.has(key)) return;
+        seenSpecLabels.add(key);
+        orderedSpecs.push(`${cleanL}: ${cleanV}`);
+      };
+
+      // Keep URL-extracted metadata (e.g. Codice PNC, Matricola, ELC) at top
+      if (params.specs) {
+        for (const line of params.specs.split('\n')) {
+          const idx = line.indexOf(':');
+          if (idx > 0) {
+            pushSpec(line.slice(0, idx), line.slice(idx + 1));
+          }
+        }
+      }
+      if (partCode && !seenSpecLabels.has('codice pnc') && !seenSpecLabels.has('codice articolo')) {
+        pushSpec('Codice prodotto', partCode);
+      }
+      if (Array.isArray(gi.GTIN) && gi.GTIN[0]) {
+        pushSpec('Codice EAN', gi.GTIN[0]);
+      }
+
+      let icColor: string | undefined;
+      const groupPriority = (groupName: string): number => {
+        const g = groupName.toLowerCase();
+        if (/dimensioni|peso/.test(g)) return 0;
+        if (/energetic|potenza|alimentazione/.test(g)) return 1;
+        if (/prestazion/.test(g)) return 2;
+        if (/caratteristiche/.test(g)) return 3;
+        if (/design/.test(g)) return 4;
+        if (/ergonomia|tecnici/.test(g)) return 5;
+        return 6;
+      };
+
+      const sortedGroups = [...(hit.FeaturesGroups || [])].sort(
+        (a, b) =>
+          groupPriority(a.FeatureGroup?.Name?.Value || '') -
+          groupPriority(b.FeatureGroup?.Name?.Value || '')
+      );
+
+      for (const fg of sortedGroups) {
+        for (const f of fg.Features || []) {
+          const fname = (f.Feature?.Name?.Value || '').trim();
+          const fval = (f.PresentationValue || '').trim();
+          if (!icColor && /^colore del prodotto$/i.test(fname) && fval) {
+            icColor = fval.slice(0, 60);
+          }
+        }
+      }
+
+      for (const fg of sortedGroups) {
+        const groupName = (fg.FeatureGroup?.Name?.Value || '').toLowerCase();
+        if (/imballaggio|logistici/.test(groupName)) continue;
+        for (const f of fg.Features || []) {
+          const fname = f.Feature?.Name?.Value || '';
+          const fval = f.PresentationValue || '';
+          if (!fname || !fval) continue;
+          if (/^(scala di efficienza|indice di efficienza|efficacia del risciacquo|certificazione|certificati|consumi \(modalità|partenza ritardata)/i.test(fname.trim())) {
+            continue;
+          }
+          pushSpec(fname, fval);
+          if (orderedSpecs.length >= 28) break;
+        }
+        if (orderedSpecs.length >= 28) break;
+      }
+
+      const rawBullets = (gi.BulletPoints?.Values || [])
+        .map((b) => decodeHtmlEntities(stripHtmlTags(b)).replace(/\s*\[\d+\]/g, '').replace(/\s+/g, ' ').trim())
+        .filter((b) => b.length >= 12);
+
+      const icSpecs =
+        orderedSpecs.length > 0 || rawBullets.length > 0
+          ? buildBoundedSpecsText(orderedSpecs, rawBullets, 1850)
+          : undefined;
+
+      const icDocs: InspectedDocumentDto[] = [];
+      const seenDocUrls = new Set<string>();
+      const pushDoc = (docTitle: string, docUrl?: string) => {
+        const cleanU = (docUrl || '').trim();
+        if (!cleanU || !/^https?:\/\/.+/i.test(cleanU)) return;
+        let parsedU: URL;
+        try {
+          parsedU = new URL(cleanU);
+        } catch {
+          return;
+        }
+        if (isPrivateOrLocalHostname(parsedU.hostname)) return;
+        const norm = cleanU.split('#')[0].toLowerCase();
+        if (seenDocUrls.has(norm)) return;
+        seenDocUrls.add(norm);
+        const cleanTitle = decodeHtmlEntities(stripHtmlTags(docTitle || 'Documento prodotto'))
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 80);
+        icDocs.push({
+          title: cleanTitle || 'Documento prodotto',
+          url: cleanU.slice(0, 1000),
+          kind: inferDocumentKind(cleanTitle, cleanU),
+        });
+      };
+
+      const pdfMedia = (hit.Multimedia || []).filter((m) => {
+        const ct = (m.ContentType || '').toLowerCase();
+        return ct === 'application/pdf' || /\.pdf(?:[?#]|$)/i.test(m.URL || '');
+      });
+      const baseTitleCounts = new Map<string, number>();
+      for (const m of pdfMedia) {
+        const key = decodeHtmlEntities(stripHtmlTags(m.Description || 'Documento PDF'))
+          .replace(/\s+/g, ' ')
+          .trim()
+          .toLowerCase();
+        baseTitleCounts.set(key, (baseTitleCounts.get(key) || 0) + 1);
+      }
+
+      const usedDocTitles = new Map<string, number>();
+      const formatIcecatUpdatedDate = (raw?: string): string => {
+        const match = (raw || '').match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+        return match ? `${match[3]}/${match[2]}/${match[1]}` : '';
+      };
+      const pushUniqueIcecatDoc = (rawTitle: string, docUrl?: string, updatedRaw?: string) => {
+        const baseClean = decodeHtmlEntities(stripHtmlTags(rawTitle || 'Documento prodotto'))
+          .replace(/\s+/g, ' ')
+          .trim();
+        const baseKey = baseClean.toLowerCase();
+        const hasDupBase = (baseTitleCounts.get(baseKey) || 0) > 1;
+        const dateSuffix = hasDupBase ? formatIcecatUpdatedDate(updatedRaw) : '';
+        let candidateTitle = dateSuffix ? `${baseClean} (${dateSuffix})` : baseClean;
+        const candKey = candidateTitle.toLowerCase();
+        const seenCount = (usedDocTitles.get(candKey) || 0) + 1;
+        usedDocTitles.set(candKey, seenCount);
+        if (seenCount > 1) {
+          candidateTitle = `${candidateTitle} (${seenCount})`;
+        }
+        pushDoc(candidateTitle, docUrl);
+      };
+
+      for (const m of pdfMedia) {
+        pushUniqueIcecatDoc(m.Description || 'Documento PDF', m.URL, m.Updated);
+      }
+      if (gi.Description?.ManualPDFURL) {
+        pushUniqueIcecatDoc("Manuale dell'utente", gi.Description.ManualPDFURL);
+      }
+      if (gi.Description?.LeafletPDFURL) {
+        pushUniqueIcecatDoc('Scheda prodotto / Volantino', gi.Description.LeafletPDFURL);
+      }
+
+      return {
+        title: icTitle,
+        brand: icBrand,
+        model: icModel,
+        color: icColor,
+        imageUrl: icImage,
+        specs: icSpecs,
+        documents: icDocs.length > 0 ? icDocs.slice(0, 8) : undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   app.post('/api/researches/inspect', async (req, res) => {
     const rawInput = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
     if (!rawInput || rawInput.length > 1000) {
@@ -3339,7 +3711,7 @@ async function startServer() {
     const fetchPageHtml = async (
       targetUrl: string,
       userAgentOverride?: string,
-      maxTimeoutMs = 8500
+      maxTimeoutMs = 6000
     ): Promise<{ html: string; blocked: boolean }> => {
       const budget = remainingBudgetMs();
       if (budget < 1200) {
@@ -3377,7 +3749,7 @@ async function startServer() {
               reqHeaders,
               true,
               4,
-              Date.now() + Math.min(stepTimeoutMs, remainingBudgetMs())
+              Date.now() + Math.min(4500, remainingBudgetMs())
             );
             const parsed = parseNodeHttpResult(nodeRes);
             if (parsed.html) return parsed;
@@ -3387,21 +3759,35 @@ async function startServer() {
         }
         return { html: '', blocked };
       } catch (err) {
-        if (isTlsChainError(err) && remainingBudgetMs() >= 1800) {
+        const errName = (err as { name?: string })?.name || '';
+        const errMsg = (err as { message?: string })?.message || '';
+        const errCode =
+          (err as { cause?: { code?: string }; code?: string })?.cause?.code ||
+          (err as { code?: string })?.code ||
+          '';
+        const isTimeout = errName === 'TimeoutError' || /timeout|aborted/i.test(errMsg);
+        const shouldTryNodeHttp1 =
+          !isTimeout &&
+          (isTlsChainError(err) ||
+            /HTTP2|ECONNRESET|EPROTO|UND_ERR|fetch failed/i.test(`${errCode} ${errMsg}`));
+        if (shouldTryNodeHttp1 && remainingBudgetMs() >= 1800) {
           try {
             const fallbackRes = await fetchViaNodeHttp(
               targetUrl,
               reqHeaders,
-              false,
+              !isTlsChainError(err),
               4,
-              Date.now() + Math.min(stepTimeoutMs, remainingBudgetMs())
+              Date.now() + Math.min(4500, remainingBudgetMs())
             );
-            return parseNodeHttpResult(fallbackRes);
+            const parsed = parseNodeHttpResult(fallbackRes);
+            if (parsed.html || parsed.blocked) return parsed;
+            return { html: '', blocked: true };
           } catch {
-            return { html: '', blocked: false };
+            return { html: '', blocked: true };
           }
         }
-        throw err;
+        // Timeouts / HTTP2 resets / connection drops from WAF tarpits indicate site-level blocking
+        return { html: '', blocked: true };
       }
     };
 
@@ -3829,7 +4215,58 @@ async function startServer() {
 
     let aiSuggestedRoom: ResearchRoomIdServer | undefined;
 
-    const specsLookSparse = !specs || (!specs.includes('\n') && specs.length < 130);
+    let specsLookSparse = !specs || (!specs.includes('\n') && specs.length < 130);
+
+    // Public Open Icecat catalog lookup when site is blocked or specs/image/docs are missing
+    if (
+      (blockedBySite ||
+        extractedFrom !== 'page-meta' ||
+        !imageUrl ||
+        specsLookSparse ||
+        documents.length === 0) &&
+      remainingBudgetMs() >= 2500
+    ) {
+      const icecatHit = await lookupIcecatProduct({
+        brand,
+        store,
+        model,
+        title: title || urlDetails.title,
+        specs: specs || urlDetails.specs,
+        url: finalUrl,
+        timeoutMs: Math.min(4500, remainingBudgetMs()),
+      });
+      if (icecatHit) {
+        if ((!title || extractedFrom !== 'page-meta') && icecatHit.title) {
+          title = icecatHit.title;
+          extractedFrom = 'page-meta';
+          blockedBySite = false;
+        }
+        if (icecatHit.brand && (!brand || /^electrolux$/i.test(brand))) {
+          brand = icecatHit.brand;
+        }
+        if (icecatHit.model && (!model || /^\d+$/.test(model.trim()))) {
+          model = icecatHit.model;
+        }
+        if (!color && icecatHit.color) {
+          color = icecatHit.color;
+        }
+        if (!imageUrl && icecatHit.imageUrl) {
+          imageUrl = icecatHit.imageUrl;
+        }
+        if (icecatHit.specs && (specsLookSparse || !specs)) {
+          specs = icecatHit.specs;
+          if (title) {
+            extractedFrom = 'page-meta';
+            blockedBySite = false;
+          }
+        }
+        if (documents.length === 0 && icecatHit.documents?.length) {
+          documents = icecatHit.documents;
+        }
+        specsLookSparse = !specs || (!specs.includes('\n') && specs.length < 130);
+      }
+    }
+
     // Online grounding fallback via Gemini when page blocked / JS-rendered / sparse specs / missing docs
     if (
       (blockedBySite ||
@@ -3856,7 +4293,11 @@ async function startServer() {
             `Cerca informazioni reali, dettagli tecnici completi e documenti scaricabili ufficiali sul prodotto:`,
             `URL: ${finalUrl}`,
             amazonAsin ? `ASIN Amazon: ${amazonAsin}` : '',
+            model ? `Codice modello / PNC: ${model}` : '',
             cleanQueryTitle ? `Prodotto: ${cleanQueryBrand} ${cleanQueryTitle}`.trim() : '',
+            model
+              ? `Nota: se l'URL è un link QR/supporto con codice PNC o modello (es. ${model}), cerca il codice esatto "${model}" su Google insieme a ${cleanQueryBrand} / AEG per identificare il marchio commerciale reale, il nome modello completo, immagine prodotto, specifiche tecniche e manuali PDF ufficiali.`
+              : '',
             'Usa Google Search (e URL Context se accessibile) e restituisci SOLO un oggetto JSON valido con i campi reali trovati nelle fonti ufficiali/rivenditori (ometti o lascia stringa vuota/null ciò che non trovi):',
             '- title: nome completo del prodotto in italiano (max 160 caratteri)',
             '- brand: marca ufficiale (max 60 caratteri)',
@@ -3867,7 +4308,7 @@ async function startServer() {
             '- sizePrices: oggetto JSON mappa taglia -> prezzo in EUR se presenti prezzi diversi per taglia',
             '- model: codice modello o ASIN (max 80 caratteri)',
             '- priceEur: numero prezzo attuale in EUR se chiaramente presente (altrimenti null)',
-            '- specs: stringa multilinea (max 1750 caratteri) separando con a capo:\\n  1) prima le specifiche tecniche strutturate nel formato "Etichetta: Valore" (es. Struttura: ..., Materiale: ..., Altezza schienale: 90 cm, Altezza seduta: 49 cm, Larghezza: 292,5 cm, Profondità: 78/152,5 cm, Peso prodotto: 60,3/67,3 kg, Imballo: ...)\\n  2) poi eventuali informazioni descrittive/punti chiave iniziando ogni riga con "• "',
+            '- specs: stringa multilinea (max 1750 caratteri) separando con a capo:\\n  1) prima le specifiche tecniche strutturate nel formato "Etichetta: Valore" includendo tutti i dati reperibili (es. Codice PNC: ..., Dimensioni (AxLxP): ..., Altezza: ..., Larghezza: ..., Profondità: ..., Peso prodotto: ..., Tensione: ..., Frequenza: ..., Potenza: ..., Lunghezza cavo: ..., Capacità: ..., Velocità centrifuga: ..., Classe energetica: ..., Rumorosità: ..., Materiale: ...)\\n  2) poi eventuali informazioni descrittive/punti chiave iniziando ogni riga con "• "',
             '- documents: array JSON (max 6 elementi) dei soli file ufficiali scaricabili trovati sul sito del produttore per questo prodotto (es. Scheda prodotto, Istruzioni di montaggio, Manutenzione prodotto, Manuale d\'uso, File 3D - BIM), ciascuno come {"title":"Scheda prodotto","url":"https://...pdf","kind":"scheda"|"manuale"|"bim_3d"|"certificato"}. Inserisci SOLO URL reali diretti trovati nelle fonti.',
             '- imageUrl: URL pubblico diretto dell\'immagine principale del prodotto se trovato nella fonte (altrimenti null)',
             '- room: ID stanza della casa solo se è evidente e univoca ("cucina", "salone", "bagno1", "bagno2", "stanza_matrimoniale", "stanza_maurizio", "stanza_roberta", "terrazza_ovest", "terrazza_est"), altrimenti null',
@@ -4065,6 +4506,7 @@ async function startServer() {
       documents: documents.length > 0 ? documents.slice(0, 8) : undefined,
       extractedFrom,
       blockedBySite,
+      aiKeyMissing: blockedBySite && extractedFrom !== 'page-meta' && !getGeminiClient() ? true : undefined,
     };
 
     if (extractedFrom === 'page-meta') {
@@ -4301,7 +4743,27 @@ async function startServer() {
         return;
       }
 
+      const isOpaqueFileName = (candidate: string): boolean => {
+        const base = candidate.replace(/\.[a-z0-9]{2,5}$/i, '').trim();
+        if (!base || base.length < 3) return true;
+        if (/^(?:mmo|doc|file|attachment|download|asset)[_-]?\d[\d_-]*$/i.test(base)) return true;
+        if (/^[a-f0-9-]{12,}$/i.test(base)) return true;
+        if (/^[a-z]{0,4}[_-]?\d{5,}(?:[_-][a-z0-9]+)*$/i.test(base)) return true;
+        if (/^\d[\d_-]*$/.test(base)) return true;
+        const letters = (base.match(/[a-zA-Z]/g) || []).length;
+        const digits = (base.match(/\d/g) || []).length;
+        return digits > letters && digits >= 6;
+      };
+      const buildReadableBaseFromTitle = (rawTitle: string): string =>
+        rawTitle
+          .replace(/\//g, '-')
+          .replace(/["\r\n\\:?*<>|]+/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 72);
+
       let fileName = '';
+      let rawExt = '';
       const dispMatch = result.contentDisposition.match(
         /filename\*?=(?:UTF-8''|["']?)([^"';\r\n]+)["']?/i
       );
@@ -4314,13 +4776,26 @@ async function startServer() {
       }
       if (!fileName) {
         const seg = decodeURIComponent(parsedDocUrl.pathname.split('/').pop() || '').trim();
-        fileName = seg || `${fallbackTitle.replace(/[^a-zA-Z0-9_-]+/g, '_') || 'documento'}`;
+        fileName = seg;
       }
-      if (!/\.[a-z0-9]{2,5}$/i.test(fileName)) {
-        if (cleanContentType === 'application/pdf') fileName += '.pdf';
-        else if (cleanContentType.includes('zip')) fileName += '.zip';
+      const extMatch = fileName.match(/(\.[a-z0-9]{2,5})$/i);
+      if (extMatch?.[1]) {
+        rawExt = extMatch[1].toLowerCase();
+      } else if (cleanContentType === 'application/pdf') {
+        rawExt = '.pdf';
+      } else if (cleanContentType.includes('zip')) {
+        rawExt = '.zip';
       }
-      fileName = fileName.replace(/["\r\n\\/:*?<>|]+/g, '_').slice(0, 120);
+
+      const readableTitleBase = fallbackTitle ? buildReadableBaseFromTitle(fallbackTitle) : '';
+      if ((!fileName || isOpaqueFileName(fileName)) && readableTitleBase.length >= 3) {
+        fileName = `${readableTitleBase}${rawExt || '.pdf'}`;
+      } else if (!fileName) {
+        fileName = `documento${rawExt || '.pdf'}`;
+      } else if (!/\.[a-z0-9]{2,5}$/i.test(fileName) && rawExt) {
+        fileName += rawExt;
+      }
+      fileName = fileName.replace(/["\r\n\\/:*?<>|]+/g, '-').slice(0, 120);
 
       res.setHeader('Content-Type', cleanContentType);
       res.setHeader('X-Document-Filename', encodeURIComponent(fileName));
