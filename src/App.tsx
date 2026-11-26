@@ -989,6 +989,8 @@ export default function App() {
   const carPolicySeededRef = useRef(false);
   const skippedTrashIdsRef = useRef<Set<string>>(new Set());
   const gmailSyncInFlightRef = useRef(false);
+  const lastGmailCheckAtRef = useRef<number | null>(null);
+  const lastGmailAttemptAtRef = useRef<number | null>(null);
   const autopilotSyncInFlightRef = useRef(false);
   const lastAutopilotSyncKeyRef = useRef<string | null>(null);
   const rawSnapshotsRef = useRef<{
@@ -1019,6 +1021,7 @@ export default function App() {
   const [todayIso, setTodayIso] = useState<string>(() => getLocalTodayIso());
   const [gmailToken, setGmailToken] = useState<string | null>(() => getGmailAccessToken());
   const [gmailSyncing, setGmailSyncing] = useState(false);
+  const [lastGmailCheckAt, setLastGmailCheckAt] = useState<number | null>(null);
   const [gmailNotice, setGmailNotice] = useState<{
     tone: 'ok' | 'info' | 'warn';
     text: string;
@@ -1049,6 +1052,9 @@ export default function App() {
         // Non svuotiamo homeArticles: la spesa è pubblica e viene
         // ricaricata dal listener pubblico (publicOwnerUid) anche senza login.
         setGmailToken(null);
+        lastGmailCheckAtRef.current = null;
+        lastGmailAttemptAtRef.current = null;
+        setLastGmailCheckAt(null);
         setPendingTrashMessages([]);
       }
       setAuthReady(true);
@@ -2233,6 +2239,7 @@ export default function App() {
     async (currentUser: User, token: string, isAuto = false) => {
       if (gmailSyncInFlightRef.current) return;
       gmailSyncInFlightRef.current = true;
+      lastGmailAttemptAtRef.current = Date.now();
       setGmailSyncing(true);
       if (!isAuto) setGmailNotice(null);
 
@@ -2269,6 +2276,9 @@ export default function App() {
           existingWaterInvoices,
           existingTariNotices,
         });
+        const checkedAt = Date.now();
+        lastGmailCheckAtRef.current = checkedAt;
+        setLastGmailCheckAt(checkedAt);
 
         if (
           scan.readings.length === 0 &&
@@ -2535,9 +2545,12 @@ export default function App() {
         if (err instanceof GmailAuthExpiredError) {
           clearGmailAccessToken();
           setGmailToken(null);
+          lastGmailCheckAtRef.current = null;
+          lastGmailAttemptAtRef.current = null;
+          setLastGmailCheckAt(null);
           setGmailNotice({
             tone: 'warn',
-            text: 'Sessione Gmail scaduta: clicca "Sincronizza Gmail" per ricollegare la casella.',
+            text: 'Sessione Gmail scaduta: clicca "Collega Gmail" per ricollegare la casella e riattivare il controllo automatico.',
           });
         } else {
           setGmailNotice({
@@ -2611,6 +2624,9 @@ export default function App() {
       if (err instanceof GmailAuthExpiredError) {
         clearGmailAccessToken();
         setGmailToken(null);
+        lastGmailCheckAtRef.current = null;
+        lastGmailAttemptAtRef.current = null;
+        setLastGmailCheckAt(null);
       }
       setGmailNotice({
         tone: 'warn',
@@ -2631,20 +2647,57 @@ export default function App() {
     setPendingTrashMessages([]);
   }
 
-  // Periodic automatic Gmail INBOX scan while user & Gmail token are active
+  const runGmailSyncWithTokenRef = useRef(runGmailSyncWithToken);
   useEffect(() => {
-    if (!user || !gmailToken || !appSettings.autoGmailSyncEnabled) return;
+    runGmailSyncWithTokenRef.current = runGmailSyncWithToken;
+  }, [runGmailSyncWithToken]);
+
+  // Periodic wall-clock Gmail INBOX scan while user & Gmail token are active,
+  // with immediate catch-up when returning to the tab, focusing the window, or coming online.
+  useEffect(() => {
+    if (!user || !gmailToken || !appSettings.autoGmailSyncEnabled || readingsLoading) return;
     const intervalMs = appSettings.autoGmailSyncIntervalMinutes * 60 * 1000;
-    const intervalId = window.setInterval(() => {
-      void runGmailSyncWithToken(user, gmailToken, true);
-    }, intervalMs);
-    return () => window.clearInterval(intervalId);
+
+    const maybeSyncIfDue = () => {
+      if (gmailSyncInFlightRef.current) return;
+      const now = Date.now();
+      const lastSuccess = lastGmailCheckAtRef.current;
+      const lastAttempt = lastGmailAttemptAtRef.current;
+      const retryCooldownMs = Math.min(intervalMs, 2 * 60 * 1000);
+      if (lastAttempt !== null && now - lastAttempt < retryCooldownMs) return;
+      if (lastSuccess === null || now - lastSuccess >= intervalMs) {
+        void runGmailSyncWithTokenRef.current(user, gmailToken, true);
+      }
+    };
+
+    maybeSyncIfDue();
+
+    const heartbeatId = window.setInterval(maybeSyncIfDue, 20_000);
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        maybeSyncIfDue();
+      }
+    };
+    const handleOnline = () => {
+      maybeSyncIfDue();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      window.clearInterval(heartbeatId);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      window.removeEventListener('online', handleOnline);
+    };
   }, [
     user,
     gmailToken,
+    readingsLoading,
     appSettings.autoGmailSyncEnabled,
     appSettings.autoGmailSyncIntervalMinutes,
-    runGmailSyncWithToken,
   ]);
 
   async function handleAddClimateLog(
@@ -5057,16 +5110,35 @@ export default function App() {
                 title={
                   gmailToken
                     ? appSettings.autoGmailSyncEnabled
-                      ? `Controlla ora la INBOX di Gmail (auto ogni ${appSettings.autoGmailSyncIntervalMinutes} min)`
+                      ? `Controlla ora la INBOX di Gmail (auto ogni ${appSettings.autoGmailSyncIntervalMinutes} min${
+                          lastGmailCheckAt
+                            ? ` · ultimo ${new Date(lastGmailCheckAt).toLocaleTimeString('it-IT', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}`
+                            : ''
+                        })`
                       : 'Controlla ora la INBOX di Gmail'
-                    : 'Collega e sincronizza ora la INBOX di Gmail'
+                    : appSettings.autoGmailSyncEnabled
+                      ? `Gmail non collegato in questa sessione: clicca per attivare il controllo automatico ogni ${appSettings.autoGmailSyncIntervalMinutes} min`
+                      : 'Collega e sincronizza ora la INBOX di Gmail'
                 }
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-100 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60"
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap disabled:opacity-60 border ${
+                  !gmailToken && appSettings.autoGmailSyncEnabled
+                    ? 'text-amber-900 dark:text-amber-100 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 border-amber-300 dark:border-amber-500/40'
+                    : 'text-slate-800 dark:text-slate-100 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border-slate-300 dark:border-slate-700'
+                }`}
               >
                 {gmailSyncing ? (
                   <RefreshCw className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 animate-spin" />
                 ) : (
-                  <Mail className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                  <Mail
+                    className={`w-3.5 h-3.5 ${
+                      !gmailToken && appSettings.autoGmailSyncEnabled
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-sky-600 dark:text-sky-400'
+                    }`}
+                  />
                 )}
                 <span>
                   {gmailSyncing
@@ -5075,6 +5147,18 @@ export default function App() {
                       ? 'Sincronizza Gmail'
                       : 'Collega Gmail'}
                 </span>
+                {!gmailSyncing && (
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      gmailToken
+                        ? 'bg-emerald-500'
+                        : appSettings.autoGmailSyncEnabled
+                          ? 'bg-amber-500'
+                          : 'bg-slate-400'
+                    }`}
+                    aria-hidden="true"
+                  />
+                )}
               </button>
             ) : (
               <button
@@ -5777,6 +5861,7 @@ export default function App() {
               userEmail={user?.email || null}
               isGmailConnected={Boolean(gmailToken)}
               gmailSyncing={gmailSyncing}
+              lastGmailCheckAt={lastGmailCheckAt}
               onConnectOrSyncGmail={handleManualGmailSync}
               onUpdateConfig={handleUpdateConfig}
               onExportBackup={handleExportFullBackup}

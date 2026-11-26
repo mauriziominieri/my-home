@@ -172,7 +172,7 @@ export async function scanGmailInbox(
   };
 
   const query =
-    'in:inbox (from:notifichemailped@enel.com OR subject:"Dettaglio curve di carico" OR from:fatturazione@edisonenergia.it OR subject:"Fattura Edison Energia" OR from:octopusenergy.it OR subject:"Octopus Energy" OR from:tassa_rifiuti@acegasapsamga.it OR from:acegasapsamga.it OR subject:"Avviso di pagamento TARI")';
+    'in:inbox (from:notifichemailped@enel.com OR from:e-distribuzione.it OR from:e-distribuzione.com OR subject:"curve di carico" OR from:fatturazione@edisonenergia.it OR subject:"Fattura Edison Energia" OR from:octopusenergy.it OR subject:"Octopus Energy" OR from:tassa_rifiuti@acegasapsamga.it OR from:acegasapsamga.it OR subject:"Avviso di pagamento TARI")';
 
   const listUrl = `${GMAIL_API_BASE}/messages?labelIds=INBOX&maxResults=20&q=${encodeURIComponent(query)}`;
   const listResp = await gmailFetchJson<{ messages?: { id: string }[] }>(

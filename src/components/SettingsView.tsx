@@ -52,6 +52,7 @@ interface SettingsViewProps {
   userEmail: string | null;
   isGmailConnected: boolean;
   gmailSyncing: boolean;
+  lastGmailCheckAt?: number | null;
   onConnectOrSyncGmail: () => void;
   onUpdateConfig: (patch: Partial<HomeSystemConfig>) => Promise<void>;
   onExportBackup: () => void;
@@ -89,6 +90,7 @@ const INTERVAL_OPTIONS: { value: GmailSyncIntervalMinutes; label: string }[] = [
   { value: 10, label: 'Ogni 10 minuti (predefinito)' },
   { value: 15, label: 'Ogni 15 minuti' },
   { value: 30, label: 'Ogni 30 minuti' },
+  { value: 60, label: 'Ogni 60 minuti' },
 ];
 
 function measureLocalStorageBytes(): { totalBytes: number; keyCount: number; researchKeys: number } {
@@ -121,6 +123,7 @@ export function SettingsView({
   userEmail,
   isGmailConnected,
   gmailSyncing,
+  lastGmailCheckAt = null,
   onConnectOrSyncGmail,
   onUpdateConfig,
   onExportBackup,
@@ -805,13 +808,48 @@ export function SettingsView({
             </div>
 
             <div className="space-y-3.5">
+              {!isGmailConnected && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-[11px] text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                  Il controllo automatico parte solo mentre la scheda è aperta e Gmail è collegato in questa sessione (il token Google dura ~1 ora e non sopravvive al riavvio pagina).
+                </div>
+              )}
+
+              {isGmailConnected && settings.autoGmailSyncEnabled && (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-[11px] text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200 flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    Ultimo controllo:{' '}
+                    <strong>
+                      {lastGmailCheckAt
+                        ? new Date(lastGmailCheckAt).toLocaleTimeString('it-IT', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                        : 'In attesa...'}
+                    </strong>
+                  </span>
+                  {lastGmailCheckAt && (
+                    <span>
+                      Prossimo:{' '}
+                      <strong>
+                        {new Date(
+                          lastGmailCheckAt + settings.autoGmailSyncIntervalMinutes * 60 * 1000
+                        ).toLocaleTimeString('it-IT', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </strong>
+                    </span>
+                  )}
+                </div>
+              )}
+
               <label className="flex items-center justify-between gap-3 cursor-pointer">
                 <div>
                   <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">
                     Controllo automatico in background
                   </div>
                   <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Quando Gmail è collegato, controlla automaticamente la INBOX a intervalli regolari.
+                    Quando Gmail è collegato, controlla la INBOX a intervalli regolari (recupera subito al risveglio della scheda).
                   </div>
                 </div>
                 <input
@@ -852,7 +890,7 @@ export function SettingsView({
 
               <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                  I giorni già salvati fino all’ultima data su Firestore vengono ignorati automaticamente.
+                  I giorni già salvati fino all’ultima data su Firestore vengono ignorati (0 blocchi Gmail anche ogni 10 min).
                 </span>
                 <button
                   type="button"

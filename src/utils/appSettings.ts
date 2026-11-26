@@ -3,7 +3,7 @@ import { setFirestoreWritesDisabled } from '../firebase';
 import { NavSection } from '../types/home';
 
 export type AppThemeMode = 'dark' | 'light';
-export type GmailSyncIntervalMinutes = 5 | 10 | 15 | 30;
+export type GmailSyncIntervalMinutes = 5 | 10 | 15 | 30 | 60;
 export type DefaultStartSection = NavSection | 'remember_last';
 
 export interface AppSettings {
@@ -30,7 +30,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   showInlineTooltips: true,
 };
 
-const VALID_INTERVALS: readonly GmailSyncIntervalMinutes[] = [5, 10, 15, 30];
+const VALID_INTERVALS: readonly GmailSyncIntervalMinutes[] = [5, 10, 15, 30, 60];
 const VALID_START_SECTIONS: readonly DefaultStartSection[] = [
   'remember_last',
   'panoramica',

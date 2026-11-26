@@ -137,7 +137,8 @@ export function parseEDistribuzioneCsv(csvText: string): ParsedReadingInput[] {
   }
 
   const rows = lines.map((line) => line.split(delimiter));
-  const maxIsoDate = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const maxIsoDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
   // Detect MDY vs DMY across file
   let mdyVotes = 0;
