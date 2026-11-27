@@ -2488,7 +2488,7 @@ const DAILY_USAGE_STORAGE_KEY = 'myhome_firestore_daily_usage_v1';
 const TELEMETRY_IDB_NAME = 'myhome_firestore_telemetry_db';
 const TELEMETRY_IDB_STORE = 'telemetry_store';
 const TELEMETRY_IDB_KEY = 'daily_usage_history_v1';
-const MAX_DAILY_USAGE_DAYS = 30;
+const MAX_DAILY_USAGE_DAYS = 730;
 
 export interface DailyFirestoreUsageEntry {
   date: string; // YYYY-MM-DD in America/Los_Angeles (matches Firebase daily reset at 00:00 PT / ~09:00 IT)

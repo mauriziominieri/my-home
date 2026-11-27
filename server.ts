@@ -18,6 +18,8 @@ interface MonitoringServiceAccountCreds {
   dedicatedReadOnly: boolean;
 }
 
+type TelemetryPeriodMode = 'day' | 'month' | 'year';
+
 interface BrowserTelemetryRecord {
   browserId: string;
   browserLabel: string;
@@ -30,6 +32,7 @@ interface BrowserTelemetryRecord {
   savedInTestMode: number;
   quotaHit: boolean;
   updatedAt: number;
+  activeDays?: number;
 }
 
 interface FirestoreCloudQuotaPayload {
@@ -37,6 +40,9 @@ interface FirestoreCloudQuotaPayload {
   configured: boolean;
   source: 'cloud_monitoring' | 'multi_browser_sync';
   freeSparkFallbackReason?: 'missing_service_account' | 'billing_required';
+  periodMode?: TelemetryPeriodMode;
+  periodValue?: string;
+  activeDays?: number;
   ptDate?: string;
   windowStartIso?: string;
   windowEndIso?: string;
@@ -62,6 +68,7 @@ interface FirestoreCloudQuotaPayload {
     deleteOpsCount: number;
   };
   browsers?: BrowserTelemetryRecord[];
+  dailyRecords?: BrowserTelemetryRecord[];
   hasEnterpriseBillingMetrics?: boolean;
   diagnostics?: {
     totalSeriesCount: number;
@@ -126,19 +133,23 @@ function sanitizeTelemetryInt(val: unknown): number {
   return Math.min(10_000_000, Math.round(n));
 }
 
+interface TelemetryUpsertDayInput {
+  ptDate: string;
+  reads: unknown;
+  readUnits: unknown;
+  writes: unknown;
+  deletes: unknown;
+  writeUnits: unknown;
+  savedInTestMode: unknown;
+  quotaHit: unknown;
+}
+
 function upsertMultiBrowserTelemetry(
   uid: string,
-  input: {
-    ptDate: string;
+  input: TelemetryUpsertDayInput & {
     browserId: string;
     browserLabel: string;
-    reads: unknown;
-    readUnits: unknown;
-    writes: unknown;
-    deletes: unknown;
-    writeUnits: unknown;
-    savedInTestMode: unknown;
-    quotaHit: unknown;
+    extraEntries?: TelemetryUpsertDayInput[];
   }
 ): BrowserTelemetryRecord[] {
   loadTelemetryStoreOnce();
@@ -148,47 +159,116 @@ function upsertMultiBrowserTelemetry(
     telemetryByUserAndKey.set(uid, inner);
   }
 
-  // Prune entries older than 14 days
-  const cutoffMs = Date.now() - 14 * 24 * 60 * 60 * 1000;
+  // Prune entries older than 730 days (2 years)
+  const cutoffMs = Date.now() - 730 * 24 * 60 * 60 * 1000;
   for (const [k, rec] of inner.entries()) {
     if (rec.updatedAt < cutoffMs) {
       inner.delete(k);
     }
   }
 
-  const key = `${input.ptDate}:${input.browserId}`;
-  const prev = inner.get(key);
   const now = Date.now();
-  const next: BrowserTelemetryRecord = {
-    browserId: input.browserId,
-    browserLabel: input.browserLabel || prev?.browserLabel || 'Browser',
-    ptDate: input.ptDate,
-    reads: Math.max(prev?.reads || 0, sanitizeTelemetryInt(input.reads)),
-    readUnits: Math.max(prev?.readUnits || 0, sanitizeTelemetryInt(input.readUnits)),
-    writes: Math.max(prev?.writes || 0, sanitizeTelemetryInt(input.writes)),
-    deletes: Math.max(prev?.deletes || 0, sanitizeTelemetryInt(input.deletes)),
-    writeUnits: Math.max(prev?.writeUnits || 0, sanitizeTelemetryInt(input.writeUnits)),
-    savedInTestMode: Math.max(prev?.savedInTestMode || 0, sanitizeTelemetryInt(input.savedInTestMode)),
-    quotaHit: Boolean(prev?.quotaHit || input.quotaHit),
-    updatedAt: now,
-  };
-  inner.set(key, next);
+  const batch: TelemetryUpsertDayInput[] = [input];
+  if (Array.isArray(input.extraEntries)) {
+    for (const extra of input.extraEntries.slice(0, 730)) {
+      if (extra && typeof extra.ptDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(extra.ptDate)) {
+        batch.push(extra);
+      }
+    }
+  }
+
+  for (const item of batch) {
+    const key = `${item.ptDate}:${input.browserId}`;
+    const prev = inner.get(key);
+    const next: BrowserTelemetryRecord = {
+      browserId: input.browserId,
+      browserLabel: input.browserLabel || prev?.browserLabel || 'Browser',
+      ptDate: item.ptDate,
+      reads: Math.max(prev?.reads || 0, sanitizeTelemetryInt(item.reads)),
+      readUnits: Math.max(prev?.readUnits || 0, sanitizeTelemetryInt(item.readUnits)),
+      writes: Math.max(prev?.writes || 0, sanitizeTelemetryInt(item.writes)),
+      deletes: Math.max(prev?.deletes || 0, sanitizeTelemetryInt(item.deletes)),
+      writeUnits: Math.max(prev?.writeUnits || 0, sanitizeTelemetryInt(item.writeUnits)),
+      savedInTestMode: Math.max(prev?.savedInTestMode || 0, sanitizeTelemetryInt(item.savedInTestMode)),
+      quotaHit: Boolean(prev?.quotaHit || item.quotaHit),
+      updatedAt: item.ptDate === input.ptDate ? now : prev?.updatedAt || now,
+    };
+    inner.set(key, next);
+  }
   persistTelemetryStore();
 
   return getMultiBrowserTelemetryForDate(uid, input.ptDate);
 }
 
 function getMultiBrowserTelemetryForDate(uid: string, ptDate: string): BrowserTelemetryRecord[] {
+  return getMultiBrowserTelemetryForPeriod(uid, 'day', ptDate).browsers;
+}
+
+function doesServerDateMatchPeriod(
+  ptDate: string,
+  mode: TelemetryPeriodMode,
+  value: string
+): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ptDate)) return false;
+  if (mode === 'day') return ptDate === value;
+  if (mode === 'month') return /^\d{4}-\d{2}$/.test(value) && ptDate.startsWith(`${value}-`);
+  if (mode === 'year') return /^\d{4}$/.test(value) && ptDate.startsWith(`${value}-`);
+  return false;
+}
+
+function getMultiBrowserTelemetryForPeriod(
+  uid: string,
+  mode: TelemetryPeriodMode,
+  value: string
+): { browsers: BrowserTelemetryRecord[]; dailyRecords: BrowserTelemetryRecord[]; activeDays: number } {
   loadTelemetryStoreOnce();
-  const result: BrowserTelemetryRecord[] = [];
   const inner = telemetryByUserAndKey.get(uid);
-  if (!inner) return result;
+  if (!inner) return { browsers: [], dailyRecords: [], activeDays: 0 };
+
+  const dailyRecords: BrowserTelemetryRecord[] = [];
+  const activeDates = new Set<string>();
+  const byBrowser = new Map<string, BrowserTelemetryRecord & { dates: Set<string> }>();
+
   for (const rec of inner.values()) {
-    if (rec.ptDate === ptDate) {
-      result.push(rec);
+    if (!doesServerDateMatchPeriod(rec.ptDate, mode, value)) continue;
+    dailyRecords.push(rec);
+    activeDates.add(rec.ptDate);
+
+    const existing = byBrowser.get(rec.browserId);
+    if (!existing) {
+      byBrowser.set(rec.browserId, {
+        ...rec,
+        ptDate: value,
+        activeDays: 1,
+        dates: new Set([rec.ptDate]),
+      });
+    } else {
+      existing.dates.add(rec.ptDate);
+      existing.browserLabel =
+        rec.updatedAt >= existing.updatedAt && rec.browserLabel
+          ? rec.browserLabel
+          : existing.browserLabel || rec.browserLabel;
+      existing.reads += rec.reads;
+      existing.readUnits += rec.readUnits;
+      existing.writes += rec.writes;
+      existing.deletes += rec.deletes;
+      existing.writeUnits += rec.writeUnits;
+      existing.savedInTestMode += rec.savedInTestMode;
+      existing.quotaHit = existing.quotaHit || rec.quotaHit;
+      existing.updatedAt = Math.max(existing.updatedAt, rec.updatedAt);
+      existing.activeDays = existing.dates.size;
     }
   }
-  return result.sort((a, b) => b.readUnits + b.writeUnits - (a.readUnits + a.writeUnits));
+
+  const browsers = [...byBrowser.values()]
+    .map(({ dates: _d, ...rest }) => rest)
+    .sort((a, b) => b.readUnits + b.writeUnits - (a.readUnits + a.writeUnits));
+
+  return {
+    browsers,
+    dailyRecords,
+    activeDays: activeDates.size,
+  };
 }
 
 function buildFreeSparkQuotaPayload(
@@ -196,11 +276,17 @@ function buildFreeSparkQuotaPayload(
   projectId: string,
   databaseId: string,
   reason: 'missing_service_account' | 'billing_required',
-  usedDedicatedReadOnlyVar?: boolean
+  usedDedicatedReadOnlyVar?: boolean,
+  periodMode: TelemetryPeriodMode = 'day',
+  periodValue?: string
 ): FirestoreCloudQuotaPayload {
   const now = Date.now();
   const windowRange = getPtQuotaWindowRange(now);
-  const browsers = uid ? getMultiBrowserTelemetryForDate(uid, windowRange.ptDate) : [];
+  const resolvedValue = periodValue || windowRange.ptDate;
+  const agg = uid
+    ? getMultiBrowserTelemetryForPeriod(uid, periodMode, resolvedValue)
+    : { browsers: [], dailyRecords: [], activeDays: 0 };
+  const browsers = agg.browsers;
   const totalReadUnits = browsers.reduce((s, b) => s + b.readUnits, 0);
   const totalWriteUnits = browsers.reduce((s, b) => s + b.writeUnits, 0);
   const readOpsCount = browsers.reduce((s, b) => s + b.reads, 0);
@@ -212,6 +298,9 @@ function buildFreeSparkQuotaPayload(
     configured: true,
     source: 'multi_browser_sync',
     freeSparkFallbackReason: reason,
+    periodMode,
+    periodValue: resolvedValue,
+    activeDays: agg.activeDays,
     ptDate: windowRange.ptDate,
     windowStartIso: windowRange.startIso,
     windowEndIso: windowRange.endIso,
@@ -237,6 +326,7 @@ function buildFreeSparkQuotaPayload(
       deleteOpsCount,
     },
     browsers,
+    dailyRecords: agg.dailyRecords,
     hasEnterpriseBillingMetrics: false,
   };
 }
@@ -6604,6 +6694,22 @@ async function startServer() {
         ? body.browserLabel.replace(/[<>]/g, '').trim().slice(0, 60) || 'Browser'
         : 'Browser';
 
+    const rawEntries = Array.isArray(body.entries) ? body.entries : [];
+    const extraEntries: TelemetryUpsertDayInput[] = rawEntries
+      .slice(0, 730)
+      .filter((e): e is Record<string, unknown> => Boolean(e && typeof e === 'object'))
+      .map((e) => ({
+        ptDate: typeof e.ptDate === 'string' ? e.ptDate.trim() : typeof e.date === 'string' ? e.date.trim() : '',
+        reads: e.reads,
+        readUnits: e.readUnits,
+        writes: e.writes,
+        deletes: e.deletes,
+        writeUnits: e.writeUnits,
+        savedInTestMode: e.savedInTestMode,
+        quotaHit: e.quotaHit,
+      }))
+      .filter((e) => /^\d{4}-\d{2}-\d{2}$/.test(e.ptDate));
+
     const browsers = upsertMultiBrowserTelemetry(verified.uid, {
       ptDate,
       browserId: rawBrowserId,
@@ -6615,13 +6721,14 @@ async function startServer() {
       writeUnits: body.writeUnits,
       savedInTestMode: body.savedInTestMode,
       quotaHit: body.quotaHit,
+      extraEntries,
     });
 
     res.json({ ok: true, ptDate, browsers });
   });
 
   app.get('/api/firestore/quota', async (req, res) => {
-    const { projectId } = readAppletFirebaseConfig();
+    const { projectId, databaseId } = readAppletFirebaseConfig();
     let verified: { uid: string; email: string };
     try {
       verified = await verifyFirebaseIdToken(req.headers.authorization, projectId);
@@ -6638,15 +6745,47 @@ async function startServer() {
       return;
     }
 
+    const todayPt = getPtQuotaWindowRange().ptDate;
+    const rawPeriod = typeof req.query.period === 'string' ? req.query.period.trim() : 'day';
+    const periodMode: TelemetryPeriodMode =
+      rawPeriod === 'month' || rawPeriod === 'year' ? rawPeriod : 'day';
+    const rawValue = typeof req.query.value === 'string' ? req.query.value.trim() : '';
+    const periodValue =
+      periodMode === 'month'
+        ? /^\d{4}-\d{2}$/.test(rawValue)
+          ? rawValue
+          : todayPt.slice(0, 7)
+        : periodMode === 'year'
+          ? /^\d{4}$/.test(rawValue)
+            ? rawValue
+            : todayPt.slice(0, 4)
+          : /^\d{4}-\d{2}-\d{2}$/.test(rawValue)
+            ? rawValue
+            : todayPt;
+
+    if (periodMode !== 'day' || periodValue !== todayPt) {
+      res.json(
+        buildFreeSparkQuotaPayload(
+          verified.uid,
+          projectId,
+          databaseId,
+          'missing_service_account',
+          undefined,
+          periodMode,
+          periodValue
+        )
+      );
+      return;
+    }
+
     const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
     try {
       const result = await fetchFirestoreMonitoringQuota(forceRefresh, verified.uid);
       res.json(result);
     } catch (err) {
       console.error('Errore interrogazione quota Firestore:', err instanceof Error ? err.message : err);
-      const { projectId: cfgPid, databaseId } = readAppletFirebaseConfig();
       res.json(
-        buildFreeSparkQuotaPayload(verified.uid, cfgPid, databaseId, 'billing_required')
+        buildFreeSparkQuotaPayload(verified.uid, projectId, databaseId, 'billing_required')
       );
     }
   });

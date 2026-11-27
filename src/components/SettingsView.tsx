@@ -69,18 +69,57 @@ import {
 import {
   BrowserTelemetryDevice,
   checkRenderTelemetrySupport,
+  doesPtDateMatchPeriod,
   entryToBrowserTelemetryDevice,
   getBrowserDeviceInfo,
   invalidateRenderTelemetrySupportCache,
-  mergeBrowserTelemetryDevices,
-  parseBrowserTelemetryFromArticles,
+  mergeBrowserTelemetryForPeriod,
+  parseAllBrowserTelemetryFromArticles,
+  TelemetryPeriodMode,
 } from '../utils/telemetrySync';
+
+const ITALIAN_MONTH_NAMES = [
+  'Gennaio',
+  'Febbraio',
+  'Marzo',
+  'Aprile',
+  'Maggio',
+  'Giugno',
+  'Luglio',
+  'Agosto',
+  'Settembre',
+  'Ottobre',
+  'Novembre',
+  'Dicembre',
+];
+
+function formatTelemetryPeriodLabel(
+  mode: TelemetryPeriodMode,
+  value: string,
+  todayKey: string
+): string {
+  if (mode === 'day') {
+    const [y, m, d] = value.split('-');
+    const dateIt = y && m && d ? `${d}/${m}/${y}` : value;
+    return value === todayKey ? `oggi PT · ${dateIt}` : dateIt;
+  }
+  if (mode === 'month') {
+    const [y, m] = value.split('-');
+    const monthIdx = Number(m) - 1;
+    const monthName = ITALIAN_MONTH_NAMES[monthIdx] || m;
+    return y ? `${monthName} ${y}` : value;
+  }
+  return `Anno ${value}`;
+}
 
 interface CloudFirestoreQuotaPayload {
   ok: boolean;
   configured?: boolean;
   source?: 'cloud_monitoring' | 'multi_browser_sync';
   freeSparkFallbackReason?: 'missing_service_account' | 'billing_required';
+  periodMode?: TelemetryPeriodMode;
+  periodValue?: string;
+  activeDays?: number;
   ptDate?: string;
   windowStartIso?: string;
   windowEndIso?: string;
@@ -106,6 +145,7 @@ interface CloudFirestoreQuotaPayload {
     deleteOpsCount: number;
   };
   browsers?: BrowserTelemetryDevice[];
+  dailyRecords?: BrowserTelemetryDevice[];
   hasEnterpriseBillingMetrics?: boolean;
   diagnostics?: {
     totalSeriesCount: number;
@@ -252,6 +292,21 @@ export function SettingsView({
   const [cloudQuota, setCloudQuota] = useState<CloudFirestoreQuotaPayload | null>(null);
   const [loadingCloudQuota, setLoadingCloudQuota] = useState(false);
   const [cloudQuotaError, setCloudQuotaError] = useState<string | null>(null);
+  const initialPtDay = useMemo(() => getFirestoreQuotaDayIsoDate(), []);
+  const [telemetryPeriodMode, setTelemetryPeriodMode] = useState<TelemetryPeriodMode>('day');
+  const [selectedTelemetryDay, setSelectedTelemetryDay] = useState(initialPtDay);
+  const [selectedTelemetryMonth, setSelectedTelemetryMonth] = useState(() =>
+    initialPtDay.slice(0, 7)
+  );
+  const [selectedTelemetryYear, setSelectedTelemetryYear] = useState(() =>
+    initialPtDay.slice(0, 4)
+  );
+  const selectedPeriodValue =
+    telemetryPeriodMode === 'day'
+      ? selectedTelemetryDay
+      : telemetryPeriodMode === 'month'
+        ? selectedTelemetryMonth
+        : selectedTelemetryYear;
   const isStaticHost = useMemo(() => isStaticHostingOrigin(), []);
 
   useEffect(() => {
@@ -260,10 +315,16 @@ export function SettingsView({
 
   const currentDevice = useMemo(() => getBrowserDeviceInfo(), []);
 
-  async function fetchCloudMonitoringQuota(forceRefresh = false) {
-    const endpoint = resolveApiUrl(
-      `/api/firestore/quota${forceRefresh ? '?refresh=1' : ''}`
-    );
+  async function fetchCloudMonitoringQuota(
+    forceRefresh = false,
+    modeOverride: TelemetryPeriodMode = telemetryPeriodMode,
+    valueOverride: string = selectedPeriodValue
+  ) {
+    const query = new URLSearchParams();
+    if (forceRefresh) query.set('refresh', '1');
+    query.set('period', modeOverride);
+    query.set('value', valueOverride);
+    const endpoint = resolveApiUrl(`/api/firestore/quota?${query.toString()}`);
     if (!endpoint) {
       setCloudQuota(null);
       setCloudQuotaError('no_backend');
@@ -304,6 +365,7 @@ export function SettingsView({
             writeUnits: todayUsage.writeUnits,
             savedInTestMode: todayUsage.savedInTestMode,
             quotaHit: Boolean(todayUsage.quotaHit),
+            ...(dailyUsage.length > 0 ? { entries: dailyUsage } : {}),
           }),
           signal: AbortSignal.timeout(12_000),
         }).catch(() => null);
@@ -398,9 +460,9 @@ export function SettingsView({
   }
 
   useEffect(() => {
-    void fetchCloudMonitoringQuota(false);
+    void fetchCloudMonitoringQuota(false, telemetryPeriodMode, selectedPeriodValue);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userEmail, settings.backendApiUrl]);
+  }, [userEmail, settings.backendApiUrl, telemetryPeriodMode, selectedPeriodValue]);
 
   useEffect(() => {
     return subscribeFirestoreWriteStats(setWriteStats);
@@ -422,11 +484,11 @@ export function SettingsView({
     return subscribeSimulatedFlushState(setFlushState);
   }, []);
 
+  const todayPtDate = getFirestoreQuotaDayIsoDate();
   const todayUsage = useMemo(() => {
-    const todayKey = getFirestoreQuotaDayIsoDate();
     return (
-      dailyUsage.find((d) => d.date === todayKey) ?? {
-        date: todayKey,
+      dailyUsage.find((d) => d.date === todayPtDate) ?? {
+        date: todayPtDate,
         writes: 0,
         deletes: 0,
         reads: 0,
@@ -436,26 +498,122 @@ export function SettingsView({
         settingsWrites: 0,
       }
     );
-  }, [dailyUsage]);
-
+  }, [dailyUsage, todayPtDate]);
   const todayWriteOps = todayUsage.writes + todayUsage.deletes;
-  const writePct = Math.min(100, (todayUsage.writeUnits / DAILY_FREE_WRITES_LIMIT) * 100);
-  const writeRemaining = Math.max(0, DAILY_FREE_WRITES_LIMIT - todayUsage.writeUnits);
-  const readPct = Math.min(100, (todayUsage.readUnits / DAILY_FREE_READS_LIMIT) * 100);
-  const readRemaining = Math.max(0, DAILY_FREE_READS_LIMIT - todayUsage.readUnits);
+
+  const allFirestoreTelemetryRecords = useMemo(
+    () => parseAllBrowserTelemetryFromArticles(telemetryArticles),
+    [telemetryArticles]
+  );
+
+  const availableTelemetryYears = useMemo(() => {
+    const years = new Set<string>([todayPtDate.slice(0, 4)]);
+    const prevYear = Number(todayPtDate.slice(0, 4)) - 1;
+    if (Number.isFinite(prevYear) && prevYear >= 2020) years.add(String(prevYear));
+    for (const d of dailyUsage) {
+      if (/^\d{4}-/.test(d.date)) years.add(d.date.slice(0, 4));
+    }
+    for (const rec of allFirestoreTelemetryRecords) {
+      if (/^\d{4}-/.test(rec.ptDate)) years.add(rec.ptDate.slice(0, 4));
+    }
+    return [...years].sort((a, b) => b.localeCompare(a));
+  }, [dailyUsage, allFirestoreTelemetryRecords, todayPtDate]);
+
+  const filteredBrowserRows = useMemo(() => {
+    if (telemetryPeriodMode === 'day') return dailyUsage;
+    return dailyUsage.filter((row) =>
+      doesPtDateMatchPeriod(row.date, telemetryPeriodMode, selectedPeriodValue)
+    );
+  }, [dailyUsage, telemetryPeriodMode, selectedPeriodValue]);
+
+  const selectedBrowserSummary = useMemo(() => {
+    const matching = dailyUsage.filter((row) =>
+      doesPtDateMatchPeriod(row.date, telemetryPeriodMode, selectedPeriodValue)
+    );
+    return matching.reduce(
+      (acc, row) => ({
+        writes: acc.writes + row.writes,
+        deletes: acc.deletes + row.deletes,
+        reads: acc.reads + row.reads,
+        readUnits: acc.readUnits + row.readUnits,
+        writeUnits: acc.writeUnits + row.writeUnits,
+        savedInTestMode: acc.savedInTestMode + row.savedInTestMode,
+        settingsWrites: acc.settingsWrites + row.settingsWrites,
+        quotaHit: acc.quotaHit || Boolean(row.quotaHit),
+        quotaHitAt: Math.max(acc.quotaHitAt || 0, row.quotaHitAt || 0) || undefined,
+        activeDays: acc.activeDays + 1,
+      }),
+      {
+        writes: 0,
+        deletes: 0,
+        reads: 0,
+        readUnits: 0,
+        writeUnits: 0,
+        savedInTestMode: 0,
+        settingsWrites: 0,
+        quotaHit: false,
+        quotaHitAt: undefined as number | undefined,
+        activeDays: 0,
+      }
+    );
+  }, [dailyUsage, telemetryPeriodMode, selectedPeriodValue]);
+
+  const isDailyTelemetryMode = telemetryPeriodMode === 'day';
+  const isSelectedTodayPt = isDailyTelemetryMode && selectedPeriodValue === todayPtDate;
+  const selectedPeriodLabel = formatTelemetryPeriodLabel(
+    telemetryPeriodMode,
+    selectedPeriodValue,
+    todayPtDate
+  );
+
+  const browserWriteOps = selectedBrowserSummary.writes + selectedBrowserSummary.deletes;
+  const browserAvgReadUnits =
+    selectedBrowserSummary.activeDays > 0
+      ? Math.round(selectedBrowserSummary.readUnits / selectedBrowserSummary.activeDays)
+      : 0;
+  const browserAvgWriteUnits =
+    selectedBrowserSummary.activeDays > 0
+      ? Math.round(selectedBrowserSummary.writeUnits / selectedBrowserSummary.activeDays)
+      : 0;
+  const readPct = Math.min(
+    100,
+    ((isDailyTelemetryMode ? selectedBrowserSummary.readUnits : browserAvgReadUnits) /
+      DAILY_FREE_READS_LIMIT) *
+      100
+  );
+  const readRemaining = Math.max(0, DAILY_FREE_READS_LIMIT - selectedBrowserSummary.readUnits);
+  const writePct = Math.min(
+    100,
+    ((isDailyTelemetryMode ? selectedBrowserSummary.writeUnits : browserAvgWriteUnits) /
+      DAILY_FREE_WRITES_LIMIT) *
+      100
+  );
+  const writeRemaining = Math.max(0, DAILY_FREE_WRITES_LIMIT - selectedBrowserSummary.writeUnits);
+
   const mergedFreeBrowsers = useMemo(() => {
-    const localDevice = entryToBrowserTelemetryDevice(
-      todayUsage,
-      currentDevice.browserId,
-      currentDevice.browserLabel
+    const localDevices = dailyUsage.map((entry) =>
+      entryToBrowserTelemetryDevice(entry, currentDevice.browserId, currentDevice.browserLabel)
     );
-    const firestoreDevices = parseBrowserTelemetryFromArticles(telemetryArticles, todayUsage.date);
-    const renderDevices = Array.isArray(cloudQuota?.browsers) ? cloudQuota.browsers : [];
-    return mergeBrowserTelemetryDevices(
-      [firestoreDevices, renderDevices, [localDevice]],
-      todayUsage.date
+    const renderDevices =
+      Array.isArray(cloudQuota?.dailyRecords) && cloudQuota.dailyRecords.length > 0
+        ? cloudQuota.dailyRecords
+        : Array.isArray(cloudQuota?.browsers)
+          ? cloudQuota.browsers
+          : [];
+    return mergeBrowserTelemetryForPeriod(
+      [allFirestoreTelemetryRecords, renderDevices, localDevices],
+      telemetryPeriodMode,
+      selectedPeriodValue
     );
-  }, [todayUsage, currentDevice, telemetryArticles, cloudQuota?.browsers]);
+  }, [
+    dailyUsage,
+    currentDevice,
+    allFirestoreTelemetryRecords,
+    cloudQuota?.dailyRecords,
+    cloudQuota?.browsers,
+    telemetryPeriodMode,
+    selectedPeriodValue,
+  ]);
 
   const firebaseConsoleUsageUrl = `https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/firestore/databases/${FIRESTORE_DATABASE_ID}/usage`;
   const gcpMonitoringApiUrl = `https://console.cloud.google.com/apis/library/monitoring.googleapis.com?project=${encodeURIComponent(cloudQuota?.projectId || FIREBASE_PROJECT_ID)}`;
@@ -924,13 +1082,116 @@ export function SettingsView({
           </div>
         )}
 
+        {/* Period Selector: Giorno / Mese / Anno */}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/50 px-3 py-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+              Periodo visualizzato:
+            </span>
+            <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-0.5">
+              {(
+                [
+                  { id: 'day', label: 'Giorno' },
+                  { id: 'month', label: 'Mese' },
+                  { id: 'year', label: 'Anno' },
+                ] as const
+              ).map((tab) => {
+                const active = telemetryPeriodMode === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setTelemetryPeriodMode(tab.id)}
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors ${
+                      active
+                        ? 'bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950'
+                        : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {telemetryPeriodMode === 'day' && (
+              <>
+                <input
+                  type="date"
+                  value={selectedTelemetryDay}
+                  max={todayPtDate}
+                  onChange={(e) => {
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) {
+                      setSelectedTelemetryDay(e.target.value);
+                    }
+                  }}
+                  aria-label="Seleziona giorno PT"
+                  className="px-2.5 py-1 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"
+                />
+                {selectedTelemetryDay !== todayPtDate && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTelemetryDay(todayPtDate)}
+                    className="px-2 py-1 text-[11px] font-medium rounded-lg border border-sky-300 dark:border-sky-500/40 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/40"
+                  >
+                    Oggi PT
+                  </button>
+                )}
+              </>
+            )}
+
+            {telemetryPeriodMode === 'month' && (
+              <>
+                <input
+                  type="month"
+                  value={selectedTelemetryMonth}
+                  max={todayPtDate.slice(0, 7)}
+                  onChange={(e) => {
+                    if (/^\d{4}-\d{2}$/.test(e.target.value)) {
+                      setSelectedTelemetryMonth(e.target.value);
+                    }
+                  }}
+                  aria-label="Seleziona mese"
+                  className="px-2.5 py-1 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"
+                />
+                {selectedTelemetryMonth !== todayPtDate.slice(0, 7) && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTelemetryMonth(todayPtDate.slice(0, 7))}
+                    className="px-2 py-1 text-[11px] font-medium rounded-lg border border-sky-300 dark:border-sky-500/40 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/40"
+                  >
+                    Mese corrente
+                  </button>
+                )}
+              </>
+            )}
+
+            {telemetryPeriodMode === 'year' && (
+              <select
+                value={selectedTelemetryYear}
+                onChange={(e) => setSelectedTelemetryYear(e.target.value)}
+                aria-label="Seleziona anno"
+                className="px-2.5 py-1 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"
+              >
+                {availableTelemetryYears.map((yr) => (
+                  <option key={yr} value={yr}>
+                    {yr}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+
         {/* Global Quota: Cloud Monitoring (if enabled) OR 100% Free Multi-Browser Spark Sync */}
         <div className="mb-4 rounded-xl border border-sky-200 dark:border-sky-500/30 bg-sky-50/50 dark:bg-sky-950/20 p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <Globe className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
               <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                {cloudQuota?.source === 'cloud_monitoring'
+                {cloudQuota?.source === 'cloud_monitoring' && isSelectedTodayPt
                   ? 'Quota Reale Globale (Cloud Monitoring)'
                   : 'Quota Globale Multi-Browser (tutti i tuoi dispositivi)'}
               </span>
@@ -942,7 +1203,7 @@ export function SettingsView({
             <button
               type="button"
               disabled={loadingCloudQuota}
-              onClick={() => void fetchCloudMonitoringQuota(true)}
+              onClick={() => void fetchCloudMonitoringQuota(true, telemetryPeriodMode, selectedPeriodValue)}
               className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-lg border border-sky-300 dark:border-sky-500/40 bg-white dark:bg-slate-900 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/40 transition-colors disabled:opacity-60"
             >
               <RefreshCw className={`w-3 h-3 ${loadingCloudQuota ? 'animate-spin' : ''}`} />
@@ -951,6 +1212,7 @@ export function SettingsView({
           </div>
 
           {cloudQuota?.source === 'cloud_monitoring' &&
+          isSelectedTodayPt &&
           cloudQuota.ok === false &&
           !/requires billing|billing to be enabled|billing_required/i.test(
             `${cloudQuota.errorCode || ''} ${cloudQuota.message || ''}`
@@ -980,6 +1242,7 @@ export function SettingsView({
             </div>
           ) : (() => {
             const isCloudMonitoring =
+              isSelectedTodayPt &&
               cloudQuota?.source === 'cloud_monitoring' &&
               cloudQuota?.ok &&
               Boolean(cloudQuota.metrics && cloudQuota.limits);
@@ -989,25 +1252,39 @@ export function SettingsView({
             const freeWriteUnits = mergedFreeBrowsers.reduce((s, b) => s + b.writeUnits, 0);
             const freeWriteOps = mergedFreeBrowsers.reduce((s, b) => s + b.writes, 0);
             const freeDeleteOps = mergedFreeBrowsers.reduce((s, b) => s + b.deletes, 0);
+            const globalActiveDays = isDailyTelemetryMode
+              ? mergedFreeBrowsers.length > 0
+                ? 1
+                : 0
+              : Math.max(
+                  cloudQuota?.activeDays || 0,
+                  selectedBrowserSummary.activeDays,
+                  ...mergedFreeBrowsers.map((b) => b.activeDays || 0)
+                );
 
             const gRead = isCloudMonitoring ? cloudQuota!.metrics!.totalReadUnits : freeReadUnits;
             const gReadLimit = isCloudMonitoring
               ? cloudQuota!.limits!.readUnits
               : DAILY_FREE_READS_LIMIT;
-            const gReadPct = Math.min(100, (gRead / gReadLimit) * 100);
+            const gReadAvgDaily =
+              globalActiveDays > 0 ? Math.round(gRead / globalActiveDays) : 0;
+            const gReadPct = Math.min(
+              100,
+              ((isDailyTelemetryMode ? gRead : gReadAvgDaily) / gReadLimit) * 100
+            );
             const gReadRem = Math.max(0, gReadLimit - gRead);
 
             const gWrite = isCloudMonitoring ? cloudQuota!.metrics!.totalWriteUnits : freeWriteUnits;
             const gWriteLimit = isCloudMonitoring
               ? cloudQuota!.limits!.writeUnits
               : DAILY_FREE_WRITES_LIMIT;
-            const gWritePct = Math.min(100, (gWrite / gWriteLimit) * 100);
+            const gWriteAvgDaily =
+              globalActiveDays > 0 ? Math.round(gWrite / globalActiveDays) : 0;
+            const gWritePct = Math.min(
+              100,
+              ((isDailyTelemetryMode ? gWrite : gWriteAvgDaily) / gWriteLimit) * 100
+            );
             const gWriteRem = Math.max(0, gWriteLimit - gWrite);
-
-            const [ptY, ptM, ptD] = (
-              (isCloudMonitoring ? cloudQuota?.ptDate : todayUsage.date) || ''
-            ).split('-');
-            const ptLabel = ptY && ptM && ptD ? `${ptD}/${ptM}/${ptY}` : 'oggi PT';
 
             return (
               <div className="space-y-2.5">
@@ -1016,20 +1293,22 @@ export function SettingsView({
                     <div className="flex items-center justify-between gap-2 text-xs">
                       <span className="font-semibold text-slate-800 dark:text-slate-200">
                         {isCloudMonitoring
-                          ? `Letture totali progetto (${ptLabel})`
-                          : `Letture totali multi-browser (${ptLabel})`}
+                          ? `Letture totali progetto (${selectedPeriodLabel})`
+                          : `Letture totali multi-browser (${selectedPeriodLabel})`}
                       </span>
                       <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
-                        {gRead.toLocaleString('it-IT')} / {gReadLimit.toLocaleString('it-IT')} u.
+                        {isDailyTelemetryMode
+                          ? `${gRead.toLocaleString('it-IT')} / ${gReadLimit.toLocaleString('it-IT')} u.`
+                          : `${gRead.toLocaleString('it-IT')} unità`}
                       </span>
                     </div>
                     <div
                       className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
                       role="progressbar"
-                      aria-valuenow={gRead}
+                      aria-valuenow={isDailyTelemetryMode ? gRead : gReadAvgDaily}
                       aria-valuemin={0}
                       aria-valuemax={gReadLimit}
-                      aria-label="Quota letture globali giornaliere su Firestore"
+                      aria-label="Quota letture globali su Firestore"
                     >
                       <div
                         className={`h-full rounded-full transition-all duration-300 ${
@@ -1039,17 +1318,25 @@ export function SettingsView({
                               ? 'bg-amber-500'
                               : 'bg-emerald-500 dark:bg-emerald-400'
                         }`}
-                        style={{ width: `${gRead > 0 ? Math.max(1.5, gReadPct) : 0}%` }}
+                        style={{
+                          width: `${(isDailyTelemetryMode ? gRead : gReadAvgDaily) > 0 ? Math.max(1.5, gReadPct) : 0}%`,
+                        }}
                       />
                     </div>
                     <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums text-slate-700 dark:text-slate-300">
-                      <span>
-                        {gReadPct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
-                        <strong className="text-slate-900 dark:text-slate-100">
-                          {gReadRem.toLocaleString('it-IT')}
-                        </strong>{' '}
-                        u.
-                      </span>
+                      {isDailyTelemetryMode ? (
+                        <span>
+                          {gReadPct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
+                          <strong className="text-slate-900 dark:text-slate-100">
+                            {gReadRem.toLocaleString('it-IT')}
+                          </strong>{' '}
+                          u.
+                        </span>
+                      ) : (
+                        <span>
+                          Media: {gReadAvgDaily.toLocaleString('it-IT')} u./giorno ({gReadPct.toFixed(1).replace('.', ',')}% limite/gg) · {globalActiveDays} {globalActiveDays === 1 ? 'giorno' : 'giorni'}
+                        </span>
+                      )}
                     </div>
                     <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
                       {isCloudMonitoring
@@ -1064,20 +1351,22 @@ export function SettingsView({
                     <div className="flex items-center justify-between gap-2 text-xs">
                       <span className="font-semibold text-slate-800 dark:text-slate-200">
                         {isCloudMonitoring
-                          ? `Scritture totali progetto (${ptLabel})`
-                          : `Scritture totali multi-browser (${ptLabel})`}
+                          ? `Scritture totali progetto (${selectedPeriodLabel})`
+                          : `Scritture totali multi-browser (${selectedPeriodLabel})`}
                       </span>
                       <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
-                        {gWrite.toLocaleString('it-IT')} / {gWriteLimit.toLocaleString('it-IT')} u.
+                        {isDailyTelemetryMode
+                          ? `${gWrite.toLocaleString('it-IT')} / ${gWriteLimit.toLocaleString('it-IT')} u.`
+                          : `${gWrite.toLocaleString('it-IT')} unità`}
                       </span>
                     </div>
                     <div
                       className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
                       role="progressbar"
-                      aria-valuenow={gWrite}
+                      aria-valuenow={isDailyTelemetryMode ? gWrite : gWriteAvgDaily}
                       aria-valuemin={0}
                       aria-valuemax={gWriteLimit}
-                      aria-label="Quota scritture globali giornaliere su Firestore"
+                      aria-label="Quota scritture globali su Firestore"
                     >
                       <div
                         className={`h-full rounded-full transition-all duration-300 ${
@@ -1087,17 +1376,25 @@ export function SettingsView({
                               ? 'bg-amber-500'
                               : 'bg-indigo-500 dark:bg-indigo-400'
                         }`}
-                        style={{ width: `${gWrite > 0 ? Math.max(1.5, gWritePct) : 0}%` }}
+                        style={{
+                          width: `${(isDailyTelemetryMode ? gWrite : gWriteAvgDaily) > 0 ? Math.max(1.5, gWritePct) : 0}%`,
+                        }}
                       />
                     </div>
                     <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums text-slate-700 dark:text-slate-300">
-                      <span>
-                        {gWritePct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
-                        <strong className="text-slate-900 dark:text-slate-100">
-                          {gWriteRem.toLocaleString('it-IT')}
-                        </strong>{' '}
-                        u.
-                      </span>
+                      {isDailyTelemetryMode ? (
+                        <span>
+                          {gWritePct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
+                          <strong className="text-slate-900 dark:text-slate-100">
+                            {gWriteRem.toLocaleString('it-IT')}
+                          </strong>{' '}
+                          u.
+                        </span>
+                      ) : (
+                        <span>
+                          Media: {gWriteAvgDaily.toLocaleString('it-IT')} u./giorno ({gWritePct.toFixed(1).replace('.', ',')}% limite/gg) · {globalActiveDays} {globalActiveDays === 1 ? 'giorno' : 'giorni'}
+                        </span>
+                      )}
                     </div>
                     <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
                       Scritti:{' '}
@@ -1109,8 +1406,8 @@ export function SettingsView({
                       {(isCloudMonitoring
                         ? cloudQuota!.metrics!.deleteOpsCount
                         : freeDeleteOps
-                      ).toLocaleString('it-IT')}{' '}
-                      / {DAILY_FREE_WRITES_LIMIT.toLocaleString('it-IT')}
+                      ).toLocaleString('it-IT')}
+                      {isDailyTelemetryMode ? ` / ${DAILY_FREE_WRITES_LIMIT.toLocaleString('it-IT')}` : ''}
                     </div>
                   </div>
                 </div>
@@ -1118,7 +1415,7 @@ export function SettingsView({
                 {!isCloudMonitoring && mergedFreeBrowsers.length > 0 && (
                   <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 px-3 py-2 space-y-1">
                     <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                      Dettaglio per browser/dispositivo ({ptLabel})
+                      Dettaglio per browser/dispositivo ({selectedPeriodLabel})
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
                       {mergedFreeBrowsers.map((dev) => {
@@ -1166,128 +1463,177 @@ export function SettingsView({
           })()}
         </div>
 
-        {/* Today's Persistent Browser Telemetry Cards */}
+        {/* Single-Browser Telemetry Cards (Letture first, Scritture second) */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
           <div className={`${subSurfaceCls} p-3.5 space-y-2`}>
             <div className="flex items-center justify-between gap-2 text-xs">
               <span className="font-semibold text-slate-800 dark:text-slate-200">
-                Scritture da questo browser (oggi PT)
+                Letture da questo browser ({selectedPeriodLabel})
               </span>
               <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
-                {todayUsage.writeUnits.toLocaleString('it-IT')} / {DAILY_FREE_WRITES_LIMIT.toLocaleString('it-IT')} unità
+                {isDailyTelemetryMode
+                  ? `${selectedBrowserSummary.readUnits.toLocaleString('it-IT')} / ${DAILY_FREE_READS_LIMIT.toLocaleString('it-IT')} unità`
+                  : `${selectedBrowserSummary.readUnits.toLocaleString('it-IT')} unità`}
               </span>
             </div>
 
             <div
               className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
               role="progressbar"
-              aria-valuenow={todayUsage.writeUnits}
-              aria-valuemin={0}
-              aria-valuemax={DAILY_FREE_WRITES_LIMIT}
-              aria-label="Quota scritture giornaliere da questo browser"
-            >
-              <div
-                className={`h-full rounded-full transition-all duration-300 ${
-                  quotaExceeded || todayUsage.quotaHit || writePct >= 90
-                    ? 'bg-rose-500'
-                    : writePct >= 70
-                      ? 'bg-amber-500'
-                      : 'bg-indigo-500 dark:bg-indigo-400'
-                }`}
-                style={{ width: `${todayUsage.writeUnits > 0 ? Math.max(1.5, writePct) : 0}%` }}
-              />
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-              <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
-                {writePct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
-                <strong className="text-slate-900 dark:text-slate-100">
-                  {writeRemaining.toLocaleString('it-IT')}
-                </strong>{' '}
-                u. ({todayWriteOps.toLocaleString('it-IT')} op)
-              </span>
-              <span className="font-mono tabular-nums text-amber-700 dark:text-amber-300">
-                Risparmiate (Test Mode): {todayUsage.savedInTestMode.toLocaleString('it-IT')}
-              </span>
-            </div>
-            <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
-              Dettaglio: {todayUsage.writes} scr. · {todayUsage.deletes} elim. · {todayUsage.settingsWrites} imp.
-            </div>
-          </div>
-
-          <div className={`${subSurfaceCls} p-3.5 space-y-2`}>
-            <div className="flex items-center justify-between gap-2 text-xs">
-              <span className="font-semibold text-slate-800 dark:text-slate-200">
-                Letture da questo browser (oggi PT)
-              </span>
-              <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
-                {todayUsage.readUnits.toLocaleString('it-IT')} / {DAILY_FREE_READS_LIMIT.toLocaleString('it-IT')} unità
-              </span>
-            </div>
-
-            <div
-              className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
-              role="progressbar"
-              aria-valuenow={todayUsage.readUnits}
+              aria-valuenow={
+                isDailyTelemetryMode ? selectedBrowserSummary.readUnits : browserAvgReadUnits
+              }
               aria-valuemin={0}
               aria-valuemax={DAILY_FREE_READS_LIMIT}
-              aria-label="Quota letture giornaliere da questo browser"
+              aria-label="Quota letture da questo browser"
             >
               <div
                 className={`h-full rounded-full transition-all duration-300 ${
-                  quotaExceeded || todayUsage.quotaHit || readPct >= 90
+                  (isSelectedTodayPt && quotaExceeded) ||
+                  selectedBrowserSummary.quotaHit ||
+                  readPct >= 90
                     ? 'bg-rose-500'
                     : readPct >= 70
                       ? 'bg-amber-500'
                       : 'bg-sky-500 dark:bg-sky-400'
                 }`}
-                style={{ width: `${todayUsage.readUnits > 0 ? Math.max(1.5, readPct) : 0}%` }}
+                style={{
+                  width: `${(isDailyTelemetryMode ? selectedBrowserSummary.readUnits : browserAvgReadUnits) > 0 ? Math.max(1.5, readPct) : 0}%`,
+                }}
               />
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-              <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
-                {readPct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
-                <strong className="text-slate-900 dark:text-slate-100">
-                  {readRemaining.toLocaleString('it-IT')}
-                </strong>{' '}
-                u. ({todayUsage.reads.toLocaleString('it-IT')} doc)
-              </span>
+              {isDailyTelemetryMode ? (
+                <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                  {readPct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
+                  <strong className="text-slate-900 dark:text-slate-100">
+                    {readRemaining.toLocaleString('it-IT')}
+                  </strong>{' '}
+                  u. ({selectedBrowserSummary.reads.toLocaleString('it-IT')} doc)
+                </span>
+              ) : (
+                <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                  Media: {browserAvgReadUnits.toLocaleString('it-IT')} u./gg ({readPct.toFixed(1).replace('.', ',')}% limite/gg) · {selectedBrowserSummary.reads.toLocaleString('it-IT')} doc
+                </span>
+              )}
             </div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400">
-              Include sincronizzazione listener, query e chunk PDF Vault.
+              {isDailyTelemetryMode
+                ? 'Include sincronizzazione listener, query e chunk PDF Vault.'
+                : `${selectedBrowserSummary.activeDays} ${selectedBrowserSummary.activeDays === 1 ? 'giorno registrato' : 'giorni registrati'} su questo browser.`}
+            </div>
+          </div>
+
+          <div className={`${subSurfaceCls} p-3.5 space-y-2`}>
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">
+                Scritture da questo browser ({selectedPeriodLabel})
+              </span>
+              <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
+                {isDailyTelemetryMode
+                  ? `${selectedBrowserSummary.writeUnits.toLocaleString('it-IT')} / ${DAILY_FREE_WRITES_LIMIT.toLocaleString('it-IT')} unità`
+                  : `${selectedBrowserSummary.writeUnits.toLocaleString('it-IT')} unità`}
+              </span>
+            </div>
+
+            <div
+              className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
+              role="progressbar"
+              aria-valuenow={
+                isDailyTelemetryMode ? selectedBrowserSummary.writeUnits : browserAvgWriteUnits
+              }
+              aria-valuemin={0}
+              aria-valuemax={DAILY_FREE_WRITES_LIMIT}
+              aria-label="Quota scritture da questo browser"
+            >
+              <div
+                className={`h-full rounded-full transition-all duration-300 ${
+                  (isSelectedTodayPt && quotaExceeded) ||
+                  selectedBrowserSummary.quotaHit ||
+                  writePct >= 90
+                    ? 'bg-rose-500'
+                    : writePct >= 70
+                      ? 'bg-amber-500'
+                      : 'bg-indigo-500 dark:bg-indigo-400'
+                }`}
+                style={{
+                  width: `${(isDailyTelemetryMode ? selectedBrowserSummary.writeUnits : browserAvgWriteUnits) > 0 ? Math.max(1.5, writePct) : 0}%`,
+                }}
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+              {isDailyTelemetryMode ? (
+                <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                  {writePct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
+                  <strong className="text-slate-900 dark:text-slate-100">
+                    {writeRemaining.toLocaleString('it-IT')}
+                  </strong>{' '}
+                  u. ({browserWriteOps.toLocaleString('it-IT')} op)
+                </span>
+              ) : (
+                <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                  Media: {browserAvgWriteUnits.toLocaleString('it-IT')} u./gg ({writePct.toFixed(1).replace('.', ',')}% limite/gg) · {browserWriteOps.toLocaleString('it-IT')} op
+                </span>
+              )}
+              <span className="font-mono tabular-nums text-amber-700 dark:text-amber-300">
+                Risparmiate (Test Mode): {selectedBrowserSummary.savedInTestMode.toLocaleString('it-IT')}
+              </span>
+            </div>
+            <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+              Dettaglio: {selectedBrowserSummary.writes.toLocaleString('it-IT')} scr. · {selectedBrowserSummary.deletes.toLocaleString('it-IT')} elim. · {selectedBrowserSummary.settingsWrites.toLocaleString('it-IT')} imp.
             </div>
           </div>
         </div>
 
-        {/* 30-day PT Window History Table */}
-        {dailyUsage.length > 0 && (
+        {/* PT Window History Table (Letture before Scritture) */}
+        {filteredBrowserRows.length > 0 ? (
           <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800 max-h-56 overflow-y-auto">
             <table className="w-full text-xs text-left">
               <thead className="bg-slate-50 dark:bg-slate-950/80 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800 sticky top-0">
                 <tr>
                   <th className="px-3 py-2 font-medium">Finestra PT</th>
+                  <th className="px-3 py-2 font-medium text-right">Letture</th>
+                  <th className="px-3 py-2 font-medium text-right">Read Units</th>
                   <th className="px-3 py-2 font-medium text-right">Scritture</th>
                   <th className="px-3 py-2 font-medium text-right">Eliminazioni</th>
                   <th className="px-3 py-2 font-medium text-right">Write Units</th>
-                  <th className="px-3 py-2 font-medium text-right">Letture</th>
-                  <th className="px-3 py-2 font-medium text-right">Read Units</th>
                   <th className="px-3 py-2 font-medium text-right">Risparmiate</th>
                   <th className="px-3 py-2 font-medium text-right">Stato server</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800/70">
-                {dailyUsage.map((row) => {
+                {filteredBrowserRows.map((row) => {
                   const [y, m, d] = row.date.split('-');
+                  const isRowSelected =
+                    isDailyTelemetryMode && row.date === selectedTelemetryDay;
                   return (
-                    <tr key={row.date} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                    <tr
+                      key={row.date}
+                      onClick={() => {
+                        setTelemetryPeriodMode('day');
+                        setSelectedTelemetryDay(row.date);
+                      }}
+                      className={`cursor-pointer transition-colors ${
+                        isRowSelected
+                          ? 'bg-sky-50/70 dark:bg-sky-950/30'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'
+                      }`}
+                    >
                       <td className="px-3 py-1.5 font-mono text-slate-800 dark:text-slate-200 whitespace-nowrap">
                         {d}/{m}/{y}
-                        {row.date === todayUsage.date && (
+                        {row.date === todayPtDate && (
                           <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-sans font-semibold bg-sky-500/15 text-sky-700 dark:text-sky-300 rounded">
                             Attiva
                           </span>
                         )}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-sky-700 dark:text-sky-300">
+                        {row.reads.toLocaleString('it-IT')}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-sky-800 dark:text-sky-200">
+                        {row.readUnits.toLocaleString('it-IT')}
                       </td>
                       <td className="px-3 py-1.5 text-right font-mono tabular-nums text-slate-900 dark:text-slate-100">
                         {row.writes.toLocaleString('it-IT')}
@@ -1297,12 +1643,6 @@ export function SettingsView({
                       </td>
                       <td className="px-3 py-1.5 text-right font-mono tabular-nums text-indigo-700 dark:text-indigo-300">
                         {row.writeUnits.toLocaleString('it-IT')}
-                      </td>
-                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-sky-700 dark:text-sky-300">
-                        {row.reads.toLocaleString('it-IT')}
-                      </td>
-                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-sky-800 dark:text-sky-200">
-                        {row.readUnits.toLocaleString('it-IT')}
                       </td>
                       <td className="px-3 py-1.5 text-right font-mono tabular-nums text-amber-700 dark:text-amber-300">
                         {row.savedInTestMode.toLocaleString('it-IT')}
@@ -1323,6 +1663,10 @@ export function SettingsView({
                 })}
               </tbody>
             </table>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-slate-200 dark:border-slate-800 px-3.5 py-2.5 text-xs text-slate-500 dark:text-slate-400">
+            Nessuna operazione registrata localmente per il periodo <strong>{selectedPeriodLabel}</strong> (lo storico su questo browser viene conservato fino a 2 anni dal tracciamento).
           </div>
         )}
 

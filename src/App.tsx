@@ -1241,10 +1241,22 @@ export default function App() {
 
   const telemetrySyncStateRef = useRef<{
     lastRenderSignature: string;
+    hasSyncedHistoryToRender: boolean;
     lastCloudDate: string;
     lastCloudReadUnits: number;
     lastCloudWriteUnits: number;
     lastCloudSavedAt: number;
+    latestEntries: Array<{
+      date: string;
+      reads: number;
+      readUnits: number;
+      writes: number;
+      deletes: number;
+      writeUnits: number;
+      savedInTestMode: number;
+      settingsWrites: number;
+      quotaHit?: boolean;
+    }>;
     latestToday: {
       date: string;
       reads: number;
@@ -1257,10 +1269,12 @@ export default function App() {
     } | null;
   }>({
     lastRenderSignature: '',
+    hasSyncedHistoryToRender: false,
     lastCloudDate: '',
     lastCloudReadUnits: -1,
     lastCloudWriteUnits: -1,
     lastCloudSavedAt: 0,
+    latestEntries: [],
     latestToday: null,
   });
 
@@ -1284,11 +1298,17 @@ export default function App() {
       const healthEndpoint = resolveApiUrl('/api/health');
       if (!endpoint || !healthEndpoint || !auth.currentUser) return;
       const sig = `${entry.date}:${entry.readUnits}:${entry.writeUnits}:${entry.savedInTestMode}:${entry.reads}`;
-      if (sig === telemetrySyncStateRef.current.lastRenderSignature) return;
+      if (
+        sig === telemetrySyncStateRef.current.lastRenderSignature &&
+        telemetrySyncStateRef.current.hasSyncedHistoryToRender
+      ) {
+        return;
+      }
       try {
         const supported = await checkRenderTelemetrySupport(healthEndpoint);
         if (!supported) return;
         const idToken = await auth.currentUser.getIdToken();
+        const includeHistory = !telemetrySyncStateRef.current.hasSyncedHistoryToRender;
         const resp = await fetch(endpoint, {
           method: 'POST',
           headers: {
@@ -1306,11 +1326,17 @@ export default function App() {
             writeUnits: entry.writeUnits,
             savedInTestMode: entry.savedInTestMode,
             quotaHit: Boolean(entry.quotaHit),
+            ...(includeHistory && telemetrySyncStateRef.current.latestEntries.length > 0
+              ? { entries: telemetrySyncStateRef.current.latestEntries }
+              : {}),
           }),
           signal: AbortSignal.timeout(10_000),
         });
         if (resp.ok) {
           telemetrySyncStateRef.current.lastRenderSignature = sig;
+          if (includeHistory) {
+            telemetrySyncStateRef.current.hasSyncedHistoryToRender = true;
+          }
         }
       } catch {
         // silent background sync
@@ -1351,7 +1377,8 @@ export default function App() {
             ...entry,
             settingsWrites: 0,
           },
-          serverTimestamp()
+          serverTimestamp(),
+          st.latestEntries
         )
       ).catch(() => {
         // ignore quota/network errors
@@ -1360,6 +1387,7 @@ export default function App() {
 
     let renderTimer: number | null = null;
     const unsubscribe = subscribeDailyFirestoreUsage((entries) => {
+      telemetrySyncStateRef.current.latestEntries = entries;
       const currentPt = getFirestoreQuotaDayIsoDate();
       const todayEntry = entries.find((e) => e.date === currentPt);
       if (!todayEntry) return;
