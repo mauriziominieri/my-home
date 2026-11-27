@@ -18,10 +18,25 @@ interface MonitoringServiceAccountCreds {
   dedicatedReadOnly: boolean;
 }
 
+interface BrowserTelemetryRecord {
+  browserId: string;
+  browserLabel: string;
+  ptDate: string;
+  reads: number;
+  readUnits: number;
+  writes: number;
+  deletes: number;
+  writeUnits: number;
+  savedInTestMode: number;
+  quotaHit: boolean;
+  updatedAt: number;
+}
+
 interface FirestoreCloudQuotaPayload {
   ok: boolean;
   configured: boolean;
-  source: 'cloud_monitoring';
+  source: 'cloud_monitoring' | 'multi_browser_sync';
+  freeSparkFallbackReason?: 'missing_service_account' | 'billing_required';
   ptDate?: string;
   windowStartIso?: string;
   windowEndIso?: string;
@@ -46,6 +61,7 @@ interface FirestoreCloudQuotaPayload {
     writeOpsCount: number;
     deleteOpsCount: number;
   };
+  browsers?: BrowserTelemetryRecord[];
   hasEnterpriseBillingMetrics?: boolean;
   diagnostics?: {
     totalSeriesCount: number;
@@ -59,6 +75,170 @@ interface FirestoreCloudQuotaPayload {
   reason?: string;
   errorCode?: string;
   message?: string;
+}
+
+const TELEMETRY_TMP_PATH = '/tmp/myhome-firestore-telemetry-v1.json';
+const BILLING_REQUIRED_COOLDOWN_MS = 30 * 60 * 1000;
+let billingRequiredCooldownUntil = 0;
+let telemetryStoreLoaded = false;
+const telemetryByUserAndKey = new Map<string, Map<string, BrowserTelemetryRecord>>();
+
+function loadTelemetryStoreOnce(): void {
+  if (telemetryStoreLoaded) return;
+  telemetryStoreLoaded = true;
+  try {
+    if (!fs.existsSync(TELEMETRY_TMP_PATH)) return;
+    const raw = JSON.parse(fs.readFileSync(TELEMETRY_TMP_PATH, 'utf8')) as Record<
+      string,
+      Record<string, BrowserTelemetryRecord>
+    >;
+    if (!raw || typeof raw !== 'object') return;
+    for (const [uid, mapObj] of Object.entries(raw)) {
+      if (!mapObj || typeof mapObj !== 'object') continue;
+      const inner = new Map<string, BrowserTelemetryRecord>();
+      for (const [k, rec] of Object.entries(mapObj)) {
+        if (rec && typeof rec === 'object' && typeof rec.ptDate === 'string' && typeof rec.browserId === 'string') {
+          inner.set(k, rec);
+        }
+      }
+      telemetryByUserAndKey.set(uid, inner);
+    }
+  } catch {
+    // ignore corrupt temp cache
+  }
+}
+
+function persistTelemetryStore(): void {
+  try {
+    const out: Record<string, Record<string, BrowserTelemetryRecord>> = {};
+    for (const [uid, inner] of telemetryByUserAndKey.entries()) {
+      out[uid] = Object.fromEntries(inner.entries());
+    }
+    fs.writeFileSync(TELEMETRY_TMP_PATH, JSON.stringify(out), 'utf8');
+  } catch {
+    // ignore ephemeral disk errors
+  }
+}
+
+function sanitizeTelemetryInt(val: unknown): number {
+  const n = Number(val);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(10_000_000, Math.round(n));
+}
+
+function upsertMultiBrowserTelemetry(
+  uid: string,
+  input: {
+    ptDate: string;
+    browserId: string;
+    browserLabel: string;
+    reads: unknown;
+    readUnits: unknown;
+    writes: unknown;
+    deletes: unknown;
+    writeUnits: unknown;
+    savedInTestMode: unknown;
+    quotaHit: unknown;
+  }
+): BrowserTelemetryRecord[] {
+  loadTelemetryStoreOnce();
+  let inner = telemetryByUserAndKey.get(uid);
+  if (!inner) {
+    inner = new Map<string, BrowserTelemetryRecord>();
+    telemetryByUserAndKey.set(uid, inner);
+  }
+
+  // Prune entries older than 14 days
+  const cutoffMs = Date.now() - 14 * 24 * 60 * 60 * 1000;
+  for (const [k, rec] of inner.entries()) {
+    if (rec.updatedAt < cutoffMs) {
+      inner.delete(k);
+    }
+  }
+
+  const key = `${input.ptDate}:${input.browserId}`;
+  const prev = inner.get(key);
+  const now = Date.now();
+  const next: BrowserTelemetryRecord = {
+    browserId: input.browserId,
+    browserLabel: input.browserLabel || prev?.browserLabel || 'Browser',
+    ptDate: input.ptDate,
+    reads: Math.max(prev?.reads || 0, sanitizeTelemetryInt(input.reads)),
+    readUnits: Math.max(prev?.readUnits || 0, sanitizeTelemetryInt(input.readUnits)),
+    writes: Math.max(prev?.writes || 0, sanitizeTelemetryInt(input.writes)),
+    deletes: Math.max(prev?.deletes || 0, sanitizeTelemetryInt(input.deletes)),
+    writeUnits: Math.max(prev?.writeUnits || 0, sanitizeTelemetryInt(input.writeUnits)),
+    savedInTestMode: Math.max(prev?.savedInTestMode || 0, sanitizeTelemetryInt(input.savedInTestMode)),
+    quotaHit: Boolean(prev?.quotaHit || input.quotaHit),
+    updatedAt: now,
+  };
+  inner.set(key, next);
+  persistTelemetryStore();
+
+  return getMultiBrowserTelemetryForDate(uid, input.ptDate);
+}
+
+function getMultiBrowserTelemetryForDate(uid: string, ptDate: string): BrowserTelemetryRecord[] {
+  loadTelemetryStoreOnce();
+  const result: BrowserTelemetryRecord[] = [];
+  const inner = telemetryByUserAndKey.get(uid);
+  if (!inner) return result;
+  for (const rec of inner.values()) {
+    if (rec.ptDate === ptDate) {
+      result.push(rec);
+    }
+  }
+  return result.sort((a, b) => b.readUnits + b.writeUnits - (a.readUnits + a.writeUnits));
+}
+
+function buildFreeSparkQuotaPayload(
+  uid: string | null,
+  projectId: string,
+  databaseId: string,
+  reason: 'missing_service_account' | 'billing_required',
+  usedDedicatedReadOnlyVar?: boolean
+): FirestoreCloudQuotaPayload {
+  const now = Date.now();
+  const windowRange = getPtQuotaWindowRange(now);
+  const browsers = uid ? getMultiBrowserTelemetryForDate(uid, windowRange.ptDate) : [];
+  const totalReadUnits = browsers.reduce((s, b) => s + b.readUnits, 0);
+  const totalWriteUnits = browsers.reduce((s, b) => s + b.writeUnits, 0);
+  const readOpsCount = browsers.reduce((s, b) => s + b.reads, 0);
+  const writeOpsCount = browsers.reduce((s, b) => s + b.writes, 0);
+  const deleteOpsCount = browsers.reduce((s, b) => s + b.deletes, 0);
+
+  return {
+    ok: true,
+    configured: true,
+    source: 'multi_browser_sync',
+    freeSparkFallbackReason: reason,
+    ptDate: windowRange.ptDate,
+    windowStartIso: windowRange.startIso,
+    windowEndIso: windowRange.endIso,
+    resetIso: windowRange.resetIso,
+    projectId,
+    databaseId,
+    usedDedicatedReadOnlyVar,
+    fetchedAt: now,
+    cached: false,
+    limits: {
+      readUnits: 50_000,
+      writeUnits: 20_000,
+      deletes: 20_000,
+    },
+    metrics: {
+      billableReadUnits: totalReadUnits,
+      billableRealtimeReadUnits: 0,
+      totalReadUnits,
+      billableWriteUnits: totalWriteUnits,
+      totalWriteUnits,
+      readOpsCount,
+      writeOpsCount,
+      deleteOpsCount,
+    },
+    browsers,
+    hasEnterpriseBillingMetrics: false,
+  };
 }
 
 let cachedMonitoringQuota: { expiresAt: number; payload: FirestoreCloudQuotaPayload } | null = null;
@@ -577,25 +757,27 @@ async function listActiveFirestoreMetricDescriptors(
   }
 }
 
-async function fetchFirestoreMonitoringQuota(forceRefresh = false): Promise<FirestoreCloudQuotaPayload> {
+async function fetchFirestoreMonitoringQuota(
+  forceRefresh = false,
+  uid: string | null = null
+): Promise<FirestoreCloudQuotaPayload> {
   const { projectId: cfgProjectId, databaseId } = readAppletFirebaseConfig();
   const creds = loadMonitoringServiceAccount();
   if (!creds) {
-    return {
-      ok: true,
-      configured: false,
-      source: 'cloud_monitoring',
-      projectId: cfgProjectId,
-      databaseId,
-      fetchedAt: Date.now(),
-      reason: 'missing_service_account',
-      message:
-        'Aggiungi la variabile ambiente GCP_MONITORING_SERVICE_ACCOUNT su Render con il JSON di un Service Account in sola lettura (ruolo Visualizzatore monitoraggio / roles/monitoring.viewer).',
-    };
+    return buildFreeSparkQuotaPayload(uid, cfgProjectId, databaseId, 'missing_service_account');
   }
 
   const targetProjectId = cfgProjectId || creds.projectId;
   const now = Date.now();
+  if (now < billingRequiredCooldownUntil && !forceRefresh) {
+    return buildFreeSparkQuotaPayload(
+      uid,
+      targetProjectId,
+      databaseId,
+      'billing_required',
+      creds.dedicatedReadOnly
+    );
+  }
   if (!forceRefresh && cachedMonitoringQuota && cachedMonitoringQuota.expiresAt > now) {
     return {
       ...cachedMonitoringQuota.payload,
@@ -641,15 +823,34 @@ async function fetchFirestoreMonitoringQuota(forceRefresh = false): Promise<Fire
       item.r.status === 'rejected'
     );
 
+  const getErrText = (item: { r: PromiseRejectedResult }) => {
+    const errObj = item.r.reason as { message?: string; gcpStatus?: string; httpStatus?: number } | null;
+    return `${errObj?.gcpStatus || ''} ${errObj?.httpStatus || ''} ${errObj?.message || item.r.reason || ''}`;
+  };
+
+  const billingErr = rejectedItems.find((item) =>
+    /requires billing|billing to be enabled/i.test(getErrText(item))
+  );
   const permissionErr = rejectedItems.find((item) =>
     /PERMISSION_DENIED|disabled|not been used in project|SERVICE_DISABLED|403/i.test(
-      String(item.r.reason?.message || item.r.reason || '')
+      getErrText(item)
     )
   );
 
   if (rejectedItems.length === metricSpecs.length) {
+    if (billingErr) {
+      billingRequiredCooldownUntil = now + BILLING_REQUIRED_COOLDOWN_MS;
+      return buildFreeSparkQuotaPayload(
+        uid,
+        targetProjectId,
+        databaseId,
+        'billing_required',
+        creds.dedicatedReadOnly
+      );
+    }
+
     if (permissionErr) {
-      const rawMsg = String(permissionErr.r.reason?.message || '');
+      const rawMsg = getErrText(permissionErr);
       const isApiDisabled = /disabled|not been used in project|SERVICE_DISABLED/i.test(rawMsg);
       return {
         ok: false,
@@ -1173,14 +1374,16 @@ async function startServer() {
 
   app.use('/api', (req, res, next) => {
     const isAuthenticatedQuotaRoute =
-      req.path === '/firestore/quota' || req.path.startsWith('/firestore/quota/');
+      req.path === '/firestore/quota' ||
+      req.path.startsWith('/firestore/quota/') ||
+      req.path === '/firestore/telemetry';
     if (isAuthenticatedQuotaRoute) {
       const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
       const originAllowed = !origin || isAllowedAuthenticatedOrigin(origin, req);
       if (origin && originAllowed) {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Vary', 'Origin');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
       }
       if (req.method === 'OPTIONS') {
@@ -6362,10 +6565,11 @@ async function startServer() {
     }
   });
 
-  app.get('/api/firestore/quota', async (req, res) => {
+  app.post('/api/firestore/telemetry', async (req, res) => {
     const { projectId } = readAppletFirebaseConfig();
+    let verified: { uid: string; email: string };
     try {
-      await verifyFirebaseIdToken(req.headers.authorization, projectId);
+      verified = await verifyFirebaseIdToken(req.headers.authorization, projectId);
     } catch (authErr) {
       const code = authErr instanceof Error ? authErr.message : 'unauthorized';
       res.status(code === 'forbidden_email' ? 403 : 401).json({
@@ -6373,7 +6577,56 @@ async function startServer() {
         errorCode: code,
         message:
           code === 'forbidden_email'
-            ? 'Account non autorizzato a consultare le statistiche Cloud Monitoring.'
+            ? 'Account non autorizzato a sincronizzare la telemetria.'
+            : 'Accesso richiesto: effettua il login con Google.',
+      });
+      return;
+    }
+
+    const body = (req.body || {}) as Record<string, unknown>;
+    const rawPtDate = typeof body.ptDate === 'string' ? body.ptDate.trim() : '';
+    const ptDate = /^\d{4}-\d{2}-\d{2}$/.test(rawPtDate)
+      ? rawPtDate
+      : getPtQuotaWindowRange().ptDate;
+    const rawBrowserId = typeof body.browserId === 'string' ? body.browserId.trim() : '';
+    if (!/^[a-zA-Z0-9_-]{4,40}$/.test(rawBrowserId)) {
+      res.status(400).json({ ok: false, message: 'browserId non valido.' });
+      return;
+    }
+    const browserLabel =
+      typeof body.browserLabel === 'string'
+        ? body.browserLabel.replace(/[<>]/g, '').trim().slice(0, 60) || 'Browser'
+        : 'Browser';
+
+    const browsers = upsertMultiBrowserTelemetry(verified.uid, {
+      ptDate,
+      browserId: rawBrowserId,
+      browserLabel,
+      reads: body.reads,
+      readUnits: body.readUnits,
+      writes: body.writes,
+      deletes: body.deletes,
+      writeUnits: body.writeUnits,
+      savedInTestMode: body.savedInTestMode,
+      quotaHit: body.quotaHit,
+    });
+
+    res.json({ ok: true, ptDate, browsers });
+  });
+
+  app.get('/api/firestore/quota', async (req, res) => {
+    const { projectId } = readAppletFirebaseConfig();
+    let verified: { uid: string; email: string };
+    try {
+      verified = await verifyFirebaseIdToken(req.headers.authorization, projectId);
+    } catch (authErr) {
+      const code = authErr instanceof Error ? authErr.message : 'unauthorized';
+      res.status(code === 'forbidden_email' ? 403 : 401).json({
+        ok: false,
+        errorCode: code,
+        message:
+          code === 'forbidden_email'
+            ? 'Account non autorizzato a consultare le statistiche quota.'
             : 'Accesso richiesto: effettua il login con Google per consultare la quota reale.',
       });
       return;
@@ -6381,18 +6634,14 @@ async function startServer() {
 
     const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
     try {
-      const result = await fetchFirestoreMonitoringQuota(forceRefresh);
+      const result = await fetchFirestoreMonitoringQuota(forceRefresh, verified.uid);
       res.json(result);
     } catch (err) {
-      console.error('Errore interrogazione Cloud Monitoring Firestore:', err instanceof Error ? err.message : err);
-      res.status(502).json({
-        ok: false,
-        configured: true,
-        source: 'cloud_monitoring',
-        errorCode: 'monitoring_unreachable',
-        message:
-          'Impossibile interrogare Google Cloud Monitoring al momento. Riprova tra qualche istante.',
-      });
+      console.error('Errore interrogazione quota Firestore:', err instanceof Error ? err.message : err);
+      const { projectId: cfgPid, databaseId } = readAppletFirebaseConfig();
+      res.json(
+        buildFreeSparkQuotaPayload(verified.uid, cfgPid, databaseId, 'billing_required')
+      );
     }
   });
 

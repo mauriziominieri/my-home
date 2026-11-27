@@ -573,7 +573,10 @@ function describePathSectionAndTitle(
     const section =
       room === '__spesa__' || docId.startsWith('spesa_')
         ? 'Spesa'
-        : room === '__app_settings__' || docId === 'app_settings_state'
+        : room === '__app_settings__' ||
+            docId === 'app_settings_state' ||
+            room === '__telemetry__' ||
+            docId.startsWith('telemetry_')
           ? 'Impostazioni'
           : room === '__promemoria__' || docId.startsWith('rem_')
             ? 'Promemoria'

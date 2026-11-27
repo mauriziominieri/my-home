@@ -53,7 +53,7 @@ import {
   SimulatedOpsQueueList,
   SimulatedQueueContext,
 } from './SimulatedOpsQueueList';
-import { BillRecord, HomeSystemConfig } from '../types/home';
+import { BillRecord, HomeArticleRecord, HomeSystemConfig } from '../types/home';
 import {
   AppAccentPalette,
   DefaultStartSection,
@@ -66,11 +66,19 @@ import {
   resetBackendAvailabilityCache,
   resolveApiUrl,
 } from '../utils/apiBase';
+import {
+  BrowserTelemetryDevice,
+  entryToBrowserTelemetryDevice,
+  getBrowserDeviceInfo,
+  mergeBrowserTelemetryDevices,
+  parseBrowserTelemetryFromArticles,
+} from '../utils/telemetrySync';
 
 interface CloudFirestoreQuotaPayload {
   ok: boolean;
   configured?: boolean;
-  source?: 'cloud_monitoring';
+  source?: 'cloud_monitoring' | 'multi_browser_sync';
+  freeSparkFallbackReason?: 'missing_service_account' | 'billing_required';
   ptDate?: string;
   windowStartIso?: string;
   windowEndIso?: string;
@@ -95,6 +103,7 @@ interface CloudFirestoreQuotaPayload {
     writeOpsCount: number;
     deleteOpsCount: number;
   };
+  browsers?: BrowserTelemetryDevice[];
   hasEnterpriseBillingMetrics?: boolean;
   diagnostics?: {
     totalSeriesCount: number;
@@ -143,6 +152,7 @@ interface SettingsViewProps {
   onRequestEnableFirestoreWrites?: () => void;
   onRequestFlushFirestoreOps?: () => void;
   queueContext?: SimulatedQueueContext;
+  telemetryArticles?: HomeArticleRecord[];
   countsSummary: {
     readings: number;
     climateLogs: number;
@@ -212,6 +222,7 @@ export function SettingsView({
   onRequestEnableFirestoreWrites,
   onRequestFlushFirestoreOps,
   queueContext,
+  telemetryArticles = [],
   countsSummary,
 }: SettingsViewProps) {
   const { settings, updateSettings, resetSettings } = useAppSettings();
@@ -245,6 +256,8 @@ export function SettingsView({
     setBackendUrlInput(settings.backendApiUrl || '');
   }, [settings.backendApiUrl]);
 
+  const currentDevice = useMemo(() => getBrowserDeviceInfo(), []);
+
   async function fetchCloudMonitoringQuota(forceRefresh = false) {
     const endpoint = resolveApiUrl(
       `/api/firestore/quota${forceRefresh ? '?refresh=1' : ''}`
@@ -265,6 +278,30 @@ export function SettingsView({
     setCloudQuotaError(null);
     try {
       const idToken = await currentUser.getIdToken();
+      const telemetryEndpoint = resolveApiUrl('/api/firestore/telemetry');
+      if (telemetryEndpoint) {
+        await fetch(telemetryEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            ptDate: todayUsage.date,
+            browserId: currentDevice.browserId,
+            browserLabel: currentDevice.browserLabel,
+            reads: todayUsage.reads,
+            readUnits: todayUsage.readUnits,
+            writes: todayUsage.writes,
+            deletes: todayUsage.deletes,
+            writeUnits: todayUsage.writeUnits,
+            savedInTestMode: todayUsage.savedInTestMode,
+            quotaHit: Boolean(todayUsage.quotaHit),
+          }),
+          signal: AbortSignal.timeout(12_000),
+        }).catch(() => null);
+      }
+
       const resp = await fetch(endpoint, {
         method: 'GET',
         headers: {
@@ -311,15 +348,15 @@ export function SettingsView({
         setCloudQuotaError(
           healthOk
             ? 'Il server Render è acceso, ma ha bloccato la richiesta /api/firestore/quota (CORS preflight su Authorization). Su Render sta ancora girando la versione precedente di server.ts: esegui il push su GitHub e attendi il termine del deploy su Render.'
-            : 'Il backend Render non risponde (potrebbe essere in risveglio da stand-by ~30-50s, oppure l’URL in Server Backend Ricerche non è raggiungibile). Attendi qualche secondo e riprova.'
+            : 'Backend Render non raggiungibile al momento: uso il riepilogo sincronizzato locale/Firestore.'
         );
       } else if (err instanceof DOMException && err.name === 'TimeoutError') {
         setCloudQuotaError(
-          'Timeout attesa backend Render (avvio lento o stand-by): attendi 20-30 secondi e clicca Riprova.'
+          'Timeout attesa backend Render (avvio da stand-by): uso il riepilogo sincronizzato locale/Firestore.'
         );
       } else {
         setCloudQuotaError(
-          rawMsg || 'Impossibile contattare il backend Render per Cloud Monitoring.'
+          rawMsg || 'Impossibile contattare il backend Render.'
         );
       }
     } finally {
@@ -373,10 +410,23 @@ export function SettingsView({
   const writeRemaining = Math.max(0, DAILY_FREE_WRITES_LIMIT - todayUsage.writeUnits);
   const readPct = Math.min(100, (todayUsage.readUnits / DAILY_FREE_READS_LIMIT) * 100);
   const readRemaining = Math.max(0, DAILY_FREE_READS_LIMIT - todayUsage.readUnits);
+  const mergedFreeBrowsers = useMemo(() => {
+    const localDevice = entryToBrowserTelemetryDevice(
+      todayUsage,
+      currentDevice.browserId,
+      currentDevice.browserLabel
+    );
+    const firestoreDevices = parseBrowserTelemetryFromArticles(telemetryArticles, todayUsage.date);
+    const renderDevices = Array.isArray(cloudQuota?.browsers) ? cloudQuota.browsers : [];
+    return mergeBrowserTelemetryDevices(
+      [firestoreDevices, renderDevices, [localDevice]],
+      todayUsage.date
+    );
+  }, [todayUsage, currentDevice, telemetryArticles, cloudQuota?.browsers]);
+
   const firebaseConsoleUsageUrl = `https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/firestore/databases/${FIRESTORE_DATABASE_ID}/usage`;
-  const gcpServiceAccountsUrl = `https://console.cloud.google.com/iam-admin/serviceaccounts?project=${cloudQuota?.projectId || FIREBASE_PROJECT_ID}`;
-  const gcpMonitoringApiUrl = `https://console.cloud.google.com/apis/library/monitoring.googleapis.com?project=${cloudQuota?.projectId || FIREBASE_PROJECT_ID}`;
-  const gcpIamUrl = `https://console.cloud.google.com/iam-admin/iam?project=${cloudQuota?.projectId || FIREBASE_PROJECT_ID}`;
+  const gcpMonitoringApiUrl = `https://console.cloud.google.com/apis/library/monitoring.googleapis.com?project=${encodeURIComponent(cloudQuota?.projectId || FIREBASE_PROJECT_ID)}`;
+  const gcpIamUrl = `https://console.cloud.google.com/iam-admin/iam?project=${encodeURIComponent(cloudQuota?.projectId || FIREBASE_PROJECT_ID)}`;
 
   const totalRecords = useMemo(
     () =>
@@ -841,16 +891,18 @@ export function SettingsView({
           </div>
         )}
 
-        {/* Global Authoritative Quota via Backend Render + Google Cloud Monitoring */}
+        {/* Global Quota: Cloud Monitoring (if enabled) OR 100% Free Multi-Browser Spark Sync */}
         <div className="mb-4 rounded-xl border border-sky-200 dark:border-sky-500/30 bg-sky-50/50 dark:bg-sky-950/20 p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <Globe className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
               <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                Quota Reale Globale (tutti i browser, dispositivi e script)
+                {cloudQuota?.source === 'cloud_monitoring'
+                  ? 'Quota Reale Globale (Cloud Monitoring)'
+                  : 'Quota Globale Multi-Browser (tutti i tuoi dispositivi)'}
               </span>
               <span className="px-2 py-0.5 text-[10px] font-semibold rounded-md bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">
-                0 quota Firestore consumata
+                100% Gratis · Piano Spark
               </span>
             </div>
 
@@ -861,76 +913,11 @@ export function SettingsView({
               className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-lg border border-sky-300 dark:border-sky-500/40 bg-white dark:bg-slate-900 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/40 transition-colors disabled:opacity-60"
             >
               <RefreshCw className={`w-3 h-3 ${loadingCloudQuota ? 'animate-spin' : ''}`} />
-              <span>{loadingCloudQuota ? 'Aggiornamento...' : 'Aggiorna quota reale'}</span>
+              <span>{loadingCloudQuota ? 'Sincronizzazione...' : 'Aggiorna totale'}</span>
             </button>
           </div>
 
-          {loadingCloudQuota && !cloudQuota && !cloudQuotaError ? (
-            <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 py-1">
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-600 dark:text-sky-400" />
-              <span>Interrogazione Google Cloud Monitoring tramite backend Render in corso...</span>
-            </div>
-          ) : cloudQuotaError === 'no_backend' ? (
-            <div className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              Per leggere i contatori ufficiali globali da GitHub Pages, configura l&apos;URL del backend Render nella sezione{' '}
-              <strong className="text-slate-900 dark:text-slate-100">Server Backend Ricerche</strong> in fondo a questa pagina.
-            </div>
-          ) : cloudQuotaError === 'auth_required' ? (
-            <div className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              Effettua il login con il tuo account Google per interrogare in sicurezza la quota reale globale dal backend.
-            </div>
-          ) : cloudQuotaError ? (
-            <div className="rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50/80 dark:bg-amber-950/30 px-3 py-2.5 text-xs text-amber-900 dark:text-amber-200 flex flex-wrap items-center justify-between gap-2">
-              <span>{cloudQuotaError}</span>
-              <button
-                type="button"
-                onClick={() => void fetchCloudMonitoringQuota(true)}
-                className="font-semibold underline shrink-0"
-              >
-                Riprova
-              </button>
-            </div>
-          ) : cloudQuota && cloudQuota.configured === false ? (
-            <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-3 space-y-2 text-xs text-slate-700 dark:text-slate-300">
-              <div className="font-semibold text-slate-900 dark:text-slate-100">
-                Configura il Service Account in sola lettura su Render per sbloccare il totale globale
-              </div>
-              <ol className="list-decimal pl-4 space-y-1 text-[11px] leading-relaxed">
-                <li>
-                  In{' '}
-                  <a
-                    href={gcpServiceAccountsUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="underline font-medium text-sky-700 dark:text-sky-300"
-                  >
-                    Google Cloud IAM → Service Accounts
-                  </a>{' '}
-                  crea un Service Account con il solo ruolo{' '}
-                  <span className="font-mono text-[10px] px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
-                    roles/monitoring.viewer
-                  </span>{' '}
-                  (Visualizzatore monitoraggio), genera la chiave JSON e abilita la{' '}
-                  <a
-                    href={gcpMonitoringApiUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="underline font-medium text-sky-700 dark:text-sky-300"
-                  >
-                    Cloud Monitoring API
-                  </a>
-                  .
-                </li>
-                <li>
-                  Su Render → <strong>Environment</strong> aggiungi la variabile{' '}
-                  <span className="font-mono text-[10px] px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
-                    GCP_MONITORING_SERVICE_ACCOUNT
-                  </span>{' '}
-                  incollando quel JSON, salva e clicca <strong>Aggiorna quota reale</strong>.
-                </li>
-              </ol>
-            </div>
-          ) : cloudQuota && cloudQuota.ok === false ? (
+          {cloudQuota?.source === 'cloud_monitoring' && cloudQuota.ok === false ? (
             <div className="rounded-lg border border-rose-300 dark:border-rose-500/40 bg-rose-50/80 dark:bg-rose-950/30 px-3 py-2.5 text-xs text-rose-900 dark:text-rose-200 flex flex-wrap items-center justify-between gap-2">
               <span>{cloudQuota.message || 'Errore nella lettura di Google Cloud Monitoring.'}</span>
               {cloudQuota.errorCode === 'api_disabled' && (
@@ -954,158 +941,192 @@ export function SettingsView({
                 </a>
               )}
             </div>
-          ) : cloudQuota?.ok && cloudQuota.metrics && cloudQuota.limits ? (
-            (() => {
-              const gRead = cloudQuota.metrics.totalReadUnits;
-              const gReadLimit = cloudQuota.limits.readUnits;
-              const gReadPct = Math.min(100, (gRead / gReadLimit) * 100);
-              const gReadRem = Math.max(0, gReadLimit - gRead);
+          ) : (() => {
+            const isCloudMonitoring =
+              cloudQuota?.source === 'cloud_monitoring' &&
+              cloudQuota?.ok &&
+              Boolean(cloudQuota.metrics && cloudQuota.limits);
 
-              const gWrite = cloudQuota.metrics.totalWriteUnits;
-              const gWriteLimit = cloudQuota.limits.writeUnits;
-              const gWritePct = Math.min(100, (gWrite / gWriteLimit) * 100);
-              const gWriteRem = Math.max(0, gWriteLimit - gWrite);
+            const freeReadUnits = mergedFreeBrowsers.reduce((s, b) => s + b.readUnits, 0);
+            const freeReadOps = mergedFreeBrowsers.reduce((s, b) => s + b.reads, 0);
+            const freeWriteUnits = mergedFreeBrowsers.reduce((s, b) => s + b.writeUnits, 0);
+            const freeWriteOps = mergedFreeBrowsers.reduce((s, b) => s + b.writes, 0);
+            const freeDeleteOps = mergedFreeBrowsers.reduce((s, b) => s + b.deletes, 0);
 
-              const [ptY, ptM, ptD] = (cloudQuota.ptDate || '').split('-');
-              const ptLabel = ptY && ptM && ptD ? `${ptD}/${ptM}/${ptY}` : 'oggi PT';
+            const gRead = isCloudMonitoring ? cloudQuota!.metrics!.totalReadUnits : freeReadUnits;
+            const gReadLimit = isCloudMonitoring
+              ? cloudQuota!.limits!.readUnits
+              : DAILY_FREE_READS_LIMIT;
+            const gReadPct = Math.min(100, (gRead / gReadLimit) * 100);
+            const gReadRem = Math.max(0, gReadLimit - gRead);
 
-              return (
-                <div className="space-y-2.5">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3 space-y-1.5">
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <span className="font-semibold text-slate-800 dark:text-slate-200">
-                          Letture totali progetto ({ptLabel})
-                        </span>
-                        <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
-                          {gRead.toLocaleString('it-IT')} / {gReadLimit.toLocaleString('it-IT')} u.
-                        </span>
-                      </div>
-                      <div
-                        className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
-                        role="progressbar"
-                        aria-valuenow={gRead}
-                        aria-valuemin={0}
-                        aria-valuemax={gReadLimit}
-                        aria-label="Quota letture reali globali su Firestore"
-                      >
-                        <div
-                          className={`h-full rounded-full transition-all duration-300 ${
-                            gReadPct >= 90
-                              ? 'bg-rose-500'
-                              : gReadPct >= 70
-                                ? 'bg-amber-500'
-                                : 'bg-emerald-500 dark:bg-emerald-400'
-                          }`}
-                          style={{ width: `${gRead > 0 ? Math.max(1.5, gReadPct) : 0}%` }}
-                        />
-                      </div>
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums text-slate-700 dark:text-slate-300">
-                        <span>
-                          {gReadPct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
-                          <strong className="text-slate-900 dark:text-slate-100">
-                            {gReadRem.toLocaleString('it-IT')}
-                          </strong>{' '}
-                          u.
-                        </span>
-                      </div>
-                      <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
-                        {cloudQuota.hasEnterpriseBillingMetrics
-                          ? `Fatturabili: ${cloudQuota.metrics.billableReadUnits.toLocaleString('it-IT')} · Real-time: ${cloudQuota.metrics.billableRealtimeReadUnits.toLocaleString('it-IT')} · Doc ops: ${cloudQuota.metrics.readOpsCount.toLocaleString('it-IT')}`
-                          : `Doc ops lette: ${cloudQuota.metrics.readOpsCount.toLocaleString('it-IT')}`}
-                      </div>
-                    </div>
+            const gWrite = isCloudMonitoring ? cloudQuota!.metrics!.totalWriteUnits : freeWriteUnits;
+            const gWriteLimit = isCloudMonitoring
+              ? cloudQuota!.limits!.writeUnits
+              : DAILY_FREE_WRITES_LIMIT;
+            const gWritePct = Math.min(100, (gWrite / gWriteLimit) * 100);
+            const gWriteRem = Math.max(0, gWriteLimit - gWrite);
 
-                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3 space-y-1.5">
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <span className="font-semibold text-slate-800 dark:text-slate-200">
-                          Scritture totali progetto ({ptLabel})
-                        </span>
-                        <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
-                          {gWrite.toLocaleString('it-IT')} / {gWriteLimit.toLocaleString('it-IT')} u.
-                        </span>
-                      </div>
-                      <div
-                        className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
-                        role="progressbar"
-                        aria-valuenow={gWrite}
-                        aria-valuemin={0}
-                        aria-valuemax={gWriteLimit}
-                        aria-label="Quota scritture reali globali su Firestore"
-                      >
-                        <div
-                          className={`h-full rounded-full transition-all duration-300 ${
-                            gWritePct >= 90
-                              ? 'bg-rose-500'
-                              : gWritePct >= 70
-                                ? 'bg-amber-500'
-                                : 'bg-indigo-500 dark:bg-indigo-400'
-                          }`}
-                          style={{ width: `${gWrite > 0 ? Math.max(1.5, gWritePct) : 0}%` }}
-                        />
-                      </div>
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums text-slate-700 dark:text-slate-300">
-                        <span>
-                          {gWritePct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
-                          <strong className="text-slate-900 dark:text-slate-100">
-                            {gWriteRem.toLocaleString('it-IT')}
-                          </strong>{' '}
-                          u.
-                        </span>
-                      </div>
-                      <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
-                        Scritti: {cloudQuota.metrics.writeOpsCount.toLocaleString('it-IT')} · Eliminati:{' '}
-                        {cloudQuota.metrics.deleteOpsCount.toLocaleString('it-IT')} /{' '}
-                        {cloudQuota.limits.deletes.toLocaleString('it-IT')}
-                      </div>
-                    </div>
-                  </div>
+            const [ptY, ptM, ptD] = (
+              (isCloudMonitoring ? cloudQuota?.ptDate : todayUsage.date) || ''
+            ).split('-');
+            const ptLabel = ptY && ptM && ptD ? `${ptD}/${ptM}/${ptY}` : 'oggi PT';
 
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                    <span>
-                      Fonte ufficiale Google Cloud Monitoring ({cloudQuota.projectId}) · latenza metriche ~1–3 min ·{' '}
-                      {cloudQuota.fetchedAt
-                        ? `Aggiornato alle ${new Date(cloudQuota.fetchedAt).toLocaleTimeString('it-IT', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}`
-                        : ''}
-                      {cloudQuota.cached ? ' (cache 2 min)' : ''}
-                    </span>
-                    {cloudQuota.usedDedicatedReadOnlyVar === false && (
-                      <span className="text-amber-700 dark:text-amber-300">
-                        In uso FIREBASE_SERVICE_ACCOUNT di fallback (puoi impostare GCP_MONITORING_SERVICE_ACCOUNT dedicata in sola lettura)
+            return (
+              <div className="space-y-2.5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">
+                        {isCloudMonitoring
+                          ? `Letture totali progetto (${ptLabel})`
+                          : `Letture totali multi-browser (${ptLabel})`}
                       </span>
-                    )}
+                      <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
+                        {gRead.toLocaleString('it-IT')} / {gReadLimit.toLocaleString('it-IT')} u.
+                      </span>
+                    </div>
+                    <div
+                      className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
+                      role="progressbar"
+                      aria-valuenow={gRead}
+                      aria-valuemin={0}
+                      aria-valuemax={gReadLimit}
+                      aria-label="Quota letture globali giornaliere su Firestore"
+                    >
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ${
+                          gReadPct >= 90
+                            ? 'bg-rose-500'
+                            : gReadPct >= 70
+                              ? 'bg-amber-500'
+                              : 'bg-emerald-500 dark:bg-emerald-400'
+                        }`}
+                        style={{ width: `${gRead > 0 ? Math.max(1.5, gReadPct) : 0}%` }}
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                      <span>
+                        {gReadPct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
+                        <strong className="text-slate-900 dark:text-slate-100">
+                          {gReadRem.toLocaleString('it-IT')}
+                        </strong>{' '}
+                        u.
+                      </span>
+                    </div>
+                    <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                      {isCloudMonitoring
+                        ? cloudQuota!.hasEnterpriseBillingMetrics
+                          ? `Fatturabili: ${cloudQuota!.metrics!.billableReadUnits.toLocaleString('it-IT')} · Real-time: ${cloudQuota!.metrics!.billableRealtimeReadUnits.toLocaleString('it-IT')} · Doc ops: ${cloudQuota!.metrics!.readOpsCount.toLocaleString('it-IT')}`
+                          : `Doc ops lette: ${cloudQuota!.metrics!.readOpsCount.toLocaleString('it-IT')}`
+                        : `${freeReadOps.toLocaleString('it-IT')} doc letti su ${mergedFreeBrowsers.length} ${mergedFreeBrowsers.length === 1 ? 'browser' : 'browser/dispositivi'}`}
+                    </div>
                   </div>
-                  {cloudQuota.diagnostics &&
-                    (cloudQuota.diagnostics.totalSeriesCount === 0 ||
-                      cloudQuota.diagnostics.failedQueriesCount > 0) && (
-                      <div className="text-[11px] rounded-md border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/60 px-2.5 py-1.5 text-slate-600 dark:text-slate-300">
-                        {cloudQuota.diagnostics.totalSeriesCount === 0 ? (
-                          <span>
-                            Nessuna serie temporale Firestore trovata nella finestra PT odierna
-                            {cloudQuota.diagnostics.detectedDatabaseIds?.length
-                              ? ` (database rilevati: ${cloudQuota.diagnostics.detectedDatabaseIds.join(', ')})`
-                              : ''}
-                            {cloudQuota.diagnostics.firstError
-                              ? ` · Dettaglio: ${cloudQuota.diagnostics.firstError}`
-                              : ''}
-                            {cloudQuota.diagnostics.availableFirestoreMetricsSample?.length
-                              ? ` · Metriche attive: ${cloudQuota.diagnostics.availableFirestoreMetricsSample.slice(0, 6).join(', ')}`
-                              : ''}
-                          </span>
-                        ) : (
-                          <span>
-                            Alcune metriche secondarie non hanno risposto ({cloudQuota.diagnostics.firstError})
-                          </span>
-                        )}
-                      </div>
-                    )}
+
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">
+                        {isCloudMonitoring
+                          ? `Scritture totali progetto (${ptLabel})`
+                          : `Scritture totali multi-browser (${ptLabel})`}
+                      </span>
+                      <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
+                        {gWrite.toLocaleString('it-IT')} / {gWriteLimit.toLocaleString('it-IT')} u.
+                      </span>
+                    </div>
+                    <div
+                      className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
+                      role="progressbar"
+                      aria-valuenow={gWrite}
+                      aria-valuemin={0}
+                      aria-valuemax={gWriteLimit}
+                      aria-label="Quota scritture globali giornaliere su Firestore"
+                    >
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ${
+                          gWritePct >= 90
+                            ? 'bg-rose-500'
+                            : gWritePct >= 70
+                              ? 'bg-amber-500'
+                              : 'bg-indigo-500 dark:bg-indigo-400'
+                        }`}
+                        style={{ width: `${gWrite > 0 ? Math.max(1.5, gWritePct) : 0}%` }}
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                      <span>
+                        {gWritePct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
+                        <strong className="text-slate-900 dark:text-slate-100">
+                          {gWriteRem.toLocaleString('it-IT')}
+                        </strong>{' '}
+                        u.
+                      </span>
+                    </div>
+                    <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                      Scritti:{' '}
+                      {(isCloudMonitoring
+                        ? cloudQuota!.metrics!.writeOpsCount
+                        : freeWriteOps
+                      ).toLocaleString('it-IT')}{' '}
+                      · Eliminati:{' '}
+                      {(isCloudMonitoring
+                        ? cloudQuota!.metrics!.deleteOpsCount
+                        : freeDeleteOps
+                      ).toLocaleString('it-IT')}{' '}
+                      / {DAILY_FREE_WRITES_LIMIT.toLocaleString('it-IT')}
+                    </div>
+                  </div>
                 </div>
-              );
-            })()
-          ) : null}
+
+                {!isCloudMonitoring && mergedFreeBrowsers.length > 0 && (
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 px-3 py-2 space-y-1">
+                    <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                      Dettaglio per browser/dispositivo ({ptLabel})
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
+                      {mergedFreeBrowsers.map((dev) => {
+                        const isThisBrowser = dev.browserId === currentDevice.browserId;
+                        return (
+                          <div
+                            key={dev.browserId}
+                            className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-slate-50 dark:bg-slate-950/60 border border-slate-200/70 dark:border-slate-800/70"
+                          >
+                            <span className="truncate text-slate-700 dark:text-slate-200">
+                              {dev.browserLabel}
+                              {isThisBrowser ? ' (questo)' : ''}
+                            </span>
+                            <span className="font-mono tabular-nums text-slate-900 dark:text-slate-100 shrink-0">
+                              {dev.readUnits.toLocaleString('it-IT')} R · {dev.writeUnits.toLocaleString('it-IT')} W
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                  <span>
+                    {isCloudMonitoring
+                      ? `Fonte ufficiale Google Cloud Monitoring (${cloudQuota!.projectId}) · latenza ~1–3 min`
+                      : `Sincronizzazione gratuita Spark (Render + Firestore · 0 € · nessun account fatturazione richiesto)`}
+                    {cloudQuota?.fetchedAt
+                      ? ` · Aggiornato alle ${new Date(cloudQuota.fetchedAt).toLocaleTimeString('it-IT', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}`
+                      : ''}
+                    {loadingCloudQuota ? ' · sync...' : ''}
+                  </span>
+                  {cloudQuotaError && cloudQuotaError !== 'no_backend' && cloudQuotaError !== 'auth_required' && (
+                    <span className="text-amber-700 dark:text-amber-300">
+                      {cloudQuotaError}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Today's Persistent Browser Telemetry Cards */}
@@ -1269,8 +1290,8 @@ export function SettingsView({
         )}
 
         <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-3 leading-relaxed">
-          <strong>Come leggere le due sezioni:</strong> il riquadro <strong>Quota Reale Globale</strong> interroga Google Cloud Monitoring tramite il backend Render (usando un Service Account in sola lettura, senza consumare Firestore) per sommare <strong>tutti</strong> i browser, dispositivi, Apps Script e GitHub Actions sul database{' '}
-          <span className="font-mono text-[10px]">{FIRESTORE_DATABASE_ID}</span>. I riquadri qui sotto salvano su IndexedDB i dettagli immediati di <strong>questo singolo browser</strong>. Puoi sempre confrontare i grafici ufficiali completi su{' '}
+          <strong>Come leggere le due sezioni:</strong> il riquadro <strong>Quota Globale Multi-Browser</strong> somma in automatico i contatori di tutti i tuoi browser e dispositivi sul database{' '}
+          <span className="font-mono text-[10px]">{FIRESTORE_DATABASE_ID}</span> a costo <strong>0 €</strong> (nessuna fatturazione Google Cloud richiesta, sincronizzazione tramite Render e backup a 0 letture extra). I riquadri qui sotto mostrano i dettagli immediati di <strong>questo singolo browser</strong> su IndexedDB. Per vedere eventuali operazioni di script esterni (Apps Script / GitHub Actions) puoi aprire i grafici ufficiali gratis su{' '}
           <a
             href={firebaseConsoleUsageUrl}
             target="_blank"

@@ -240,6 +240,7 @@ function resolveOpGroupMeta(
         docId.startsWith('rem_') ||
         docId.startsWith('vinted_') ||
         docId.startsWith('car_') ||
+        docId.startsWith('telemetry_') ||
         docId === 'app_settings_state' ||
         docId === 'climate_autopilot_state' ||
         docId === 'reminders_notify_config';

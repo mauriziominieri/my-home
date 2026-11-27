@@ -52,6 +52,7 @@ import {
   FIRESTORE_DATABASE_ID,
   FirestoreWriteStats,
   flushSimulatedFirestoreOps,
+  getFirestoreQuotaDayIsoDate,
   getGmailAccessToken,
   getRegisteredBaseDocData,
   getSimulatedBatchPlan,
@@ -73,6 +74,7 @@ import {
   SimulatedFirestoreOp,
   SimulatedFlushState,
   subscribeAuthWithGmailCleanup,
+  subscribeDailyFirestoreUsage,
   subscribeFirestoreQuotaExceeded,
   subscribeFirestoreWriteStats,
   subscribeSimulatedFirestoreOps,
@@ -581,6 +583,14 @@ import {
   SYSTEM_ROOM_VINTED,
   vintedSaleToArticlePayload,
 } from './utils/vintedStore';
+import { resolveApiUrl } from './utils/apiBase';
+import {
+  buildBrowserTelemetryArticlePayload,
+  getBrowserDeviceInfo,
+  getTelemetryDocId,
+  parseBrowserTelemetryFromArticles,
+  SYSTEM_ROOM_TELEMETRY,
+} from './utils/telemetrySync';
 import { OverviewView } from './components/OverviewView';
 import { DomoticsView } from './components/DomoticsView';
 import { EnergyDatabaseView } from './components/EnergyDatabaseView';
@@ -1227,6 +1237,153 @@ export default function App() {
       registerCloudSettingsSaver(null);
     };
   }, [activeUid]);
+
+  const telemetrySyncStateRef = useRef<{
+    lastRenderSignature: string;
+    lastCloudDate: string;
+    lastCloudReadUnits: number;
+    lastCloudWriteUnits: number;
+    lastCloudSavedAt: number;
+    latestToday: {
+      date: string;
+      reads: number;
+      readUnits: number;
+      writes: number;
+      deletes: number;
+      writeUnits: number;
+      savedInTestMode: number;
+      quotaHit?: boolean;
+    } | null;
+  }>({
+    lastRenderSignature: '',
+    lastCloudDate: '',
+    lastCloudReadUnits: -1,
+    lastCloudWriteUnits: -1,
+    lastCloudSavedAt: 0,
+    latestToday: null,
+  });
+
+  useEffect(() => {
+    if (!user || !canEdit || !activeUid || !homeArticlesLoaded) return;
+    const { browserId, browserLabel } = getBrowserDeviceInfo();
+    const todayKey = getFirestoreQuotaDayIsoDate();
+    const existingCloud = parseBrowserTelemetryFromArticles(homeArticles, todayKey).find(
+      (d) => d.browserId === browserId
+    );
+    if (existingCloud && telemetrySyncStateRef.current.lastCloudDate !== todayKey) {
+      telemetrySyncStateRef.current.lastCloudDate = todayKey;
+      telemetrySyncStateRef.current.lastCloudReadUnits = existingCloud.readUnits;
+      telemetrySyncStateRef.current.lastCloudWriteUnits = existingCloud.writeUnits;
+    }
+
+    const pushToRender = async (
+      entry: NonNullable<typeof telemetrySyncStateRef.current.latestToday>
+    ) => {
+      const endpoint = resolveApiUrl('/api/firestore/telemetry');
+      if (!endpoint || !auth.currentUser) return;
+      const sig = `${entry.date}:${entry.readUnits}:${entry.writeUnits}:${entry.savedInTestMode}:${entry.reads}`;
+      if (sig === telemetrySyncStateRef.current.lastRenderSignature) return;
+      try {
+        const idToken = await auth.currentUser.getIdToken();
+        const resp = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            ptDate: entry.date,
+            browserId,
+            browserLabel,
+            reads: entry.reads,
+            readUnits: entry.readUnits,
+            writes: entry.writes,
+            deletes: entry.deletes,
+            writeUnits: entry.writeUnits,
+            savedInTestMode: entry.savedInTestMode,
+            quotaHit: Boolean(entry.quotaHit),
+          }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (resp.ok) {
+          telemetrySyncStateRef.current.lastRenderSignature = sig;
+        }
+      } catch {
+        // silent background sync
+      }
+    };
+
+    const pushToFirestoreIfNeeded = async (
+      entry: NonNullable<typeof telemetrySyncStateRef.current.latestToday>,
+      minReadDelta: number,
+      minWriteDelta: number,
+      minIntervalMs: number
+    ) => {
+      if (isFirestoreWritesDisabled()) return;
+      const now = Date.now();
+      const st = telemetrySyncStateRef.current;
+      if (st.lastCloudDate !== entry.date) {
+        st.lastCloudDate = entry.date;
+        st.lastCloudReadUnits = 0;
+        st.lastCloudWriteUnits = 0;
+      }
+      if (entry.readUnits === 0 && entry.writeUnits === 0) return;
+      const deltaR = entry.readUnits - Math.max(0, st.lastCloudReadUnits);
+      const deltaW = entry.writeUnits - Math.max(0, st.lastCloudWriteUnits);
+      if (deltaR < minReadDelta && deltaW < minWriteDelta) return;
+      if (now - st.lastCloudSavedAt < minIntervalMs) return;
+
+      st.lastCloudSavedAt = now;
+      st.lastCloudReadUnits = entry.readUnits;
+      st.lastCloudWriteUnits = entry.writeUnits;
+      const docPath = `users/${activeUid}/homeArticles/${getTelemetryDocId(browserId)}`;
+      await saveSystemStateDoc(
+        docPath,
+        buildBrowserTelemetryArticlePayload(
+          activeUid,
+          browserId,
+          browserLabel,
+          {
+            ...entry,
+            settingsWrites: 0,
+          },
+          serverTimestamp()
+        )
+      ).catch(() => {
+        // ignore quota/network errors
+      });
+    };
+
+    let renderTimer: number | null = null;
+    const unsubscribe = subscribeDailyFirestoreUsage((entries) => {
+      const currentPt = getFirestoreQuotaDayIsoDate();
+      const todayEntry = entries.find((e) => e.date === currentPt);
+      if (!todayEntry) return;
+      telemetrySyncStateRef.current.latestToday = todayEntry;
+
+      if (renderTimer !== null) window.clearTimeout(renderTimer);
+      renderTimer = window.setTimeout(() => {
+        void pushToRender(todayEntry);
+      }, 4_000);
+
+      void pushToFirestoreIfNeeded(todayEntry, 40, 5, 5 * 60 * 1000);
+    });
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && telemetrySyncStateRef.current.latestToday) {
+        const latest = telemetrySyncStateRef.current.latestToday;
+        void pushToRender(latest);
+        void pushToFirestoreIfNeeded(latest, 15, 2, 60 * 1000);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      unsubscribe();
+      if (renderTimer !== null) window.clearTimeout(renderTimer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [user, canEdit, activeUid, homeArticlesLoaded, appSettings.backendApiUrl, appSettings.firestoreWritesDisabled]);
 
   const autoPlantParams = useMemo(
     () => derivePlantParamsFromBills(electricityBills),
@@ -4900,8 +5057,14 @@ export default function App() {
           a.room !== SYSTEM_ROOM_MIGRATION_META &&
           a.room !== SYSTEM_ROOM_APP_SETTINGS &&
           a.room !== SYSTEM_ROOM_REMINDERS &&
-          a.room !== SYSTEM_ROOM_VINTED
+          a.room !== SYSTEM_ROOM_VINTED &&
+          a.room !== SYSTEM_ROOM_TELEMETRY
       ),
+    [homeArticles]
+  );
+
+  const telemetryArticles = useMemo(
+    () => homeArticles.filter((a) => a.room === SYSTEM_ROOM_TELEMETRY),
     [homeArticles]
   );
 
@@ -6870,6 +7033,7 @@ export default function App() {
               onRequestEnableFirestoreWrites={() => setPendingDbActionModal('reenable')}
               onRequestFlushFirestoreOps={() => setPendingDbActionModal('flush')}
               queueContext={simulatedQueueContext}
+              telemetryArticles={telemetryArticles}
               countsSummary={{
                 readings: readings.length,
                 climateLogs: climateLogs.length,
