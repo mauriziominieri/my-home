@@ -28,6 +28,15 @@ COSA FA QUESTO SCRIPT:
    - Ogni volta che viene importata almeno una NUOVA bolletta (Luce, Acqua o TARI),
      invia subito una notifica riepilogativa sia via Email (Gmail SMTP) sia su WhatsApp
      (CallMeBot, usando i secrets CALLMEBOT_PHONE / CALLMEBOT_API_KEY o la config in app).
+
+4. CONVIENE LASCIARLO ATTIVO INSIEME A `apps-script/sync_consumi_edistribuzione.js`? SÌ (consigliato):
+   - Nessun conflitto né duplicati sui consumi kWh: entrambi controllano le sole date più
+     recenti dell'ultima già salvata su `energyReadings`; il primo che legge l'email dalla
+     INBOX salva i dati e la sposta nel Cestino, mentre l'altro non trova nulla (0 scritture).
+   - Lasciarli entrambi attivi offre doppia sicurezza sui consumi giornalieri (Apps Script
+     è più puntuale ogni 10 min e non usa App Password IMAP, mentre questo script su GitHub
+     Actions funge da backup per i kWh ed è indispensabile per bollette, Vault PDF e avvisi;
+     su repository GitHub pubblico i minuti di GitHub Actions sono gratuiti e illimitati).
 """
 
 import csv

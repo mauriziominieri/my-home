@@ -20,6 +20,15 @@
  * - Promemoria scadenze casa & manutenzione auto (Email/WhatsApp giornaliero)
  *   -> gestiti in questo stesso progetto Apps Script dal file: `notifiche_promemoria_giornaliere.js`
  *
+ * CONVIENE LASCIARLI ENTRAMBI ATTIVI? SÌ (consigliato):
+ * - Non vanno in conflitto e non creano duplicati: il primo che trova l'email e-distribuzione
+ *   in INBOX salva i giorni mancanti e la sposta nel Cestino; l'altro al giro successivo non
+ *   la trova più (o ignora le date <= ultima data su Firestore con 0 scritture).
+ * - Apps Script è più puntuale ogni 10 minuti e usa Gmail nativamente (senza App Password);
+ *   lo script Python su GitHub Actions funge da backup automatico per i kWh ed è comunque
+ *   indispensabile perché è l'unico a importare le bollette (Luce, Acqua, TARI) e inviare
+ *   i relativi avvisi Email/WhatsApp (su repo GitHub pubblico Actions è gratuito e illimitato).
+ *
  * Come attivarlo una sola volta su https://script.google.com :
  * 1. Collega il progetto GCP numero 902318210670 (Impostazioni progetto -> Cambia progetto)
  *    oppure imposta la proprietà script `FIREBASE_SERVICE_ACCOUNT`.

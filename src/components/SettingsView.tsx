@@ -27,6 +27,7 @@ import {
   Zap,
 } from 'lucide-react';
 import {
+  auth,
   clearDailyFirestoreUsageHistory,
   clearSimulatedFirestoreOps,
   DAILY_FREE_READS_LIMIT,
@@ -61,8 +62,44 @@ import {
 } from '../utils/appSettings';
 import {
   isStaticHostingOrigin,
+  markSameOriginBackendUnavailable,
   resetBackendAvailabilityCache,
+  resolveApiUrl,
 } from '../utils/apiBase';
+
+interface CloudFirestoreQuotaPayload {
+  ok: boolean;
+  configured?: boolean;
+  source?: 'cloud_monitoring';
+  ptDate?: string;
+  windowStartIso?: string;
+  windowEndIso?: string;
+  resetIso?: string;
+  projectId?: string;
+  databaseId?: string;
+  usedDedicatedReadOnlyVar?: boolean;
+  fetchedAt?: number;
+  cached?: boolean;
+  limits?: {
+    readUnits: number;
+    writeUnits: number;
+    deletes: number;
+  };
+  metrics?: {
+    billableReadUnits: number;
+    billableRealtimeReadUnits: number;
+    totalReadUnits: number;
+    billableWriteUnits: number;
+    totalWriteUnits: number;
+    readOpsCount: number;
+    writeOpsCount: number;
+    deleteOpsCount: number;
+  };
+  hasEnterpriseBillingMetrics?: boolean;
+  reason?: string;
+  errorCode?: string;
+  message?: string;
+}
 
 const ACCENT_PALETTE_OPTIONS: {
   id: AppAccentPalette;
@@ -190,11 +227,74 @@ export function SettingsView({
   const [confirmClearUsageHistory, setConfirmClearUsageHistory] = useState(false);
   const [backendUrlInput, setBackendUrlInput] = useState(() => settings.backendApiUrl || '');
   const [testingBackend, setTestingBackend] = useState(false);
+  const [cloudQuota, setCloudQuota] = useState<CloudFirestoreQuotaPayload | null>(null);
+  const [loadingCloudQuota, setLoadingCloudQuota] = useState(false);
+  const [cloudQuotaError, setCloudQuotaError] = useState<string | null>(null);
   const isStaticHost = useMemo(() => isStaticHostingOrigin(), []);
 
   useEffect(() => {
     setBackendUrlInput(settings.backendApiUrl || '');
   }, [settings.backendApiUrl]);
+
+  async function fetchCloudMonitoringQuota(forceRefresh = false) {
+    const endpoint = resolveApiUrl(
+      `/api/firestore/quota${forceRefresh ? '?refresh=1' : ''}`
+    );
+    if (!endpoint) {
+      setCloudQuota(null);
+      setCloudQuotaError('no_backend');
+      return;
+    }
+    const currentUser = auth.currentUser;
+    if (!currentUser || !userEmail) {
+      setCloudQuota(null);
+      setCloudQuotaError('auth_required');
+      return;
+    }
+
+    setLoadingCloudQuota(true);
+    setCloudQuotaError(null);
+    try {
+      const idToken = await currentUser.getIdToken();
+      const resp = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          Accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(25_000),
+      });
+      const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+      if (!contentType.includes('application/json')) {
+        if (!settings.backendApiUrl && !isStaticHost && (resp.status === 404 || resp.status === 405)) {
+          markSameOriginBackendUnavailable();
+        }
+        throw new Error(
+          resp.status === 404
+            ? 'Endpoint /api/firestore/quota non ancora presente sul server backend collegato (esegui il deploy di server.ts).'
+            : `Risposta non valida dal backend (HTTP ${resp.status})`
+        );
+      }
+      const data = (await resp.json().catch(() => null)) as CloudFirestoreQuotaPayload | null;
+      if (!data || typeof data.ok !== 'boolean') {
+        throw new Error(`Risposta JSON non valida (HTTP ${resp.status})`);
+      }
+      setCloudQuota(data);
+    } catch (err) {
+      setCloudQuotaError(
+        err instanceof Error
+          ? err.message
+          : 'Impossibile contattare il backend Render per Cloud Monitoring.'
+      );
+    } finally {
+      setLoadingCloudQuota(false);
+    }
+  }
+
+  useEffect(() => {
+    void fetchCloudMonitoringQuota(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userEmail, settings.backendApiUrl]);
 
   useEffect(() => {
     return subscribeFirestoreWriteStats(setWriteStats);
@@ -238,6 +338,9 @@ export function SettingsView({
   const readPct = Math.min(100, (todayUsage.readUnits / DAILY_FREE_READS_LIMIT) * 100);
   const readRemaining = Math.max(0, DAILY_FREE_READS_LIMIT - todayUsage.readUnits);
   const firebaseConsoleUsageUrl = `https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/firestore/databases/${FIRESTORE_DATABASE_ID}/usage`;
+  const gcpServiceAccountsUrl = `https://console.cloud.google.com/iam-admin/serviceaccounts?project=${cloudQuota?.projectId || FIREBASE_PROJECT_ID}`;
+  const gcpMonitoringApiUrl = `https://console.cloud.google.com/apis/library/monitoring.googleapis.com?project=${cloudQuota?.projectId || FIREBASE_PROJECT_ID}`;
+  const gcpIamUrl = `https://console.cloud.google.com/iam-admin/iam?project=${cloudQuota?.projectId || FIREBASE_PROJECT_ID}`;
 
   const totalRecords = useMemo(
     () =>
@@ -702,6 +805,249 @@ export function SettingsView({
           </div>
         )}
 
+        {/* Global Authoritative Quota via Backend Render + Google Cloud Monitoring */}
+        <div className="mb-4 rounded-xl border border-sky-200 dark:border-sky-500/30 bg-sky-50/50 dark:bg-sky-950/20 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Globe className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+              <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                Quota Reale Globale (tutti i browser, dispositivi e script)
+              </span>
+              <span className="px-2 py-0.5 text-[10px] font-semibold rounded-md bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">
+                0 quota Firestore consumata
+              </span>
+            </div>
+
+            <button
+              type="button"
+              disabled={loadingCloudQuota}
+              onClick={() => void fetchCloudMonitoringQuota(true)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-lg border border-sky-300 dark:border-sky-500/40 bg-white dark:bg-slate-900 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/40 transition-colors disabled:opacity-60"
+            >
+              <RefreshCw className={`w-3 h-3 ${loadingCloudQuota ? 'animate-spin' : ''}`} />
+              <span>{loadingCloudQuota ? 'Aggiornamento...' : 'Aggiorna quota reale'}</span>
+            </button>
+          </div>
+
+          {loadingCloudQuota && !cloudQuota && !cloudQuotaError ? (
+            <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 py-1">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-600 dark:text-sky-400" />
+              <span>Interrogazione Google Cloud Monitoring tramite backend Render in corso...</span>
+            </div>
+          ) : cloudQuotaError === 'no_backend' ? (
+            <div className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              Per leggere i contatori ufficiali globali da GitHub Pages, configura l&apos;URL del backend Render nella sezione{' '}
+              <strong className="text-slate-900 dark:text-slate-100">Server Backend Ricerche</strong> in fondo a questa pagina.
+            </div>
+          ) : cloudQuotaError === 'auth_required' ? (
+            <div className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              Effettua il login con il tuo account Google per interrogare in sicurezza la quota reale globale dal backend.
+            </div>
+          ) : cloudQuotaError ? (
+            <div className="rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50/80 dark:bg-amber-950/30 px-3 py-2.5 text-xs text-amber-900 dark:text-amber-200 flex flex-wrap items-center justify-between gap-2">
+              <span>{cloudQuotaError}</span>
+              <button
+                type="button"
+                onClick={() => void fetchCloudMonitoringQuota(true)}
+                className="font-semibold underline shrink-0"
+              >
+                Riprova
+              </button>
+            </div>
+          ) : cloudQuota && cloudQuota.configured === false ? (
+            <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-3 space-y-2 text-xs text-slate-700 dark:text-slate-300">
+              <div className="font-semibold text-slate-900 dark:text-slate-100">
+                Configura il Service Account in sola lettura su Render per sbloccare il totale globale
+              </div>
+              <ol className="list-decimal pl-4 space-y-1 text-[11px] leading-relaxed">
+                <li>
+                  In{' '}
+                  <a
+                    href={gcpServiceAccountsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline font-medium text-sky-700 dark:text-sky-300"
+                  >
+                    Google Cloud IAM → Service Accounts
+                  </a>{' '}
+                  crea un Service Account con il solo ruolo{' '}
+                  <span className="font-mono text-[10px] px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
+                    roles/monitoring.viewer
+                  </span>{' '}
+                  (Visualizzatore monitoraggio), genera la chiave JSON e abilita la{' '}
+                  <a
+                    href={gcpMonitoringApiUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline font-medium text-sky-700 dark:text-sky-300"
+                  >
+                    Cloud Monitoring API
+                  </a>
+                  .
+                </li>
+                <li>
+                  Su Render → <strong>Environment</strong> aggiungi la variabile{' '}
+                  <span className="font-mono text-[10px] px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
+                    GCP_MONITORING_SERVICE_ACCOUNT
+                  </span>{' '}
+                  incollando quel JSON, salva e clicca <strong>Aggiorna quota reale</strong>.
+                </li>
+              </ol>
+            </div>
+          ) : cloudQuota && cloudQuota.ok === false ? (
+            <div className="rounded-lg border border-rose-300 dark:border-rose-500/40 bg-rose-50/80 dark:bg-rose-950/30 px-3 py-2.5 text-xs text-rose-900 dark:text-rose-200 flex flex-wrap items-center justify-between gap-2">
+              <span>{cloudQuota.message || 'Errore nella lettura di Google Cloud Monitoring.'}</span>
+              {cloudQuota.errorCode === 'api_disabled' && (
+                <a
+                  href={gcpMonitoringApiUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline font-semibold whitespace-nowrap"
+                >
+                  Abilita Cloud Monitoring API
+                </a>
+              )}
+              {cloudQuota.errorCode === 'permission_denied' && (
+                <a
+                  href={gcpIamUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline font-semibold whitespace-nowrap"
+                >
+                  Apri permessi IAM
+                </a>
+              )}
+            </div>
+          ) : cloudQuota?.ok && cloudQuota.metrics && cloudQuota.limits ? (
+            (() => {
+              const gRead = cloudQuota.metrics.totalReadUnits;
+              const gReadLimit = cloudQuota.limits.readUnits;
+              const gReadPct = Math.min(100, (gRead / gReadLimit) * 100);
+              const gReadRem = Math.max(0, gReadLimit - gRead);
+
+              const gWrite = cloudQuota.metrics.totalWriteUnits;
+              const gWriteLimit = cloudQuota.limits.writeUnits;
+              const gWritePct = Math.min(100, (gWrite / gWriteLimit) * 100);
+              const gWriteRem = Math.max(0, gWriteLimit - gWrite);
+
+              const [ptY, ptM, ptD] = (cloudQuota.ptDate || '').split('-');
+              const ptLabel = ptY && ptM && ptD ? `${ptD}/${ptM}/${ptY}` : 'oggi PT';
+
+              return (
+                <div className="space-y-2.5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">
+                          Letture totali progetto ({ptLabel})
+                        </span>
+                        <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
+                          {gRead.toLocaleString('it-IT')} / {gReadLimit.toLocaleString('it-IT')} u.
+                        </span>
+                      </div>
+                      <div
+                        className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
+                        role="progressbar"
+                        aria-valuenow={gRead}
+                        aria-valuemin={0}
+                        aria-valuemax={gReadLimit}
+                        aria-label="Quota letture reali globali su Firestore"
+                      >
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            gReadPct >= 90
+                              ? 'bg-rose-500'
+                              : gReadPct >= 70
+                                ? 'bg-amber-500'
+                                : 'bg-emerald-500 dark:bg-emerald-400'
+                          }`}
+                          style={{ width: `${gRead > 0 ? Math.max(1.5, gReadPct) : 0}%` }}
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                        <span>
+                          {gReadPct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
+                          <strong className="text-slate-900 dark:text-slate-100">
+                            {gReadRem.toLocaleString('it-IT')}
+                          </strong>{' '}
+                          u.
+                        </span>
+                      </div>
+                      <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                        {cloudQuota.hasEnterpriseBillingMetrics
+                          ? `Fatturabili: ${cloudQuota.metrics.billableReadUnits.toLocaleString('it-IT')} · Real-time: ${cloudQuota.metrics.billableRealtimeReadUnits.toLocaleString('it-IT')} · Doc ops: ${cloudQuota.metrics.readOpsCount.toLocaleString('it-IT')}`
+                          : `Doc ops lette: ${cloudQuota.metrics.readOpsCount.toLocaleString('it-IT')}`}
+                      </div>
+                    </div>
+
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">
+                          Scritture totali progetto ({ptLabel})
+                        </span>
+                        <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
+                          {gWrite.toLocaleString('it-IT')} / {gWriteLimit.toLocaleString('it-IT')} u.
+                        </span>
+                      </div>
+                      <div
+                        className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
+                        role="progressbar"
+                        aria-valuenow={gWrite}
+                        aria-valuemin={0}
+                        aria-valuemax={gWriteLimit}
+                        aria-label="Quota scritture reali globali su Firestore"
+                      >
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            gWritePct >= 90
+                              ? 'bg-rose-500'
+                              : gWritePct >= 70
+                                ? 'bg-amber-500'
+                                : 'bg-indigo-500 dark:bg-indigo-400'
+                          }`}
+                          style={{ width: `${gWrite > 0 ? Math.max(1.5, gWritePct) : 0}%` }}
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                        <span>
+                          {gWritePct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
+                          <strong className="text-slate-900 dark:text-slate-100">
+                            {gWriteRem.toLocaleString('it-IT')}
+                          </strong>{' '}
+                          u.
+                        </span>
+                      </div>
+                      <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                        Scritti: {cloudQuota.metrics.writeOpsCount.toLocaleString('it-IT')} · Eliminati:{' '}
+                        {cloudQuota.metrics.deleteOpsCount.toLocaleString('it-IT')} /{' '}
+                        {cloudQuota.limits.deletes.toLocaleString('it-IT')}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                    <span>
+                      Fonte ufficiale Google Cloud Monitoring ({cloudQuota.projectId}) · latenza metriche ~1–3 min ·{' '}
+                      {cloudQuota.fetchedAt
+                        ? `Aggiornato alle ${new Date(cloudQuota.fetchedAt).toLocaleTimeString('it-IT', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}`
+                        : ''}
+                      {cloudQuota.cached ? ' (cache 2 min)' : ''}
+                    </span>
+                    {cloudQuota.usedDedicatedReadOnlyVar === false && (
+                      <span className="text-amber-700 dark:text-amber-300">
+                        In uso FIREBASE_SERVICE_ACCOUNT di fallback (puoi impostare GCP_MONITORING_SERVICE_ACCOUNT dedicata in sola lettura)
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()
+          ) : null}
+        </div>
+
         {/* Today's Persistent Browser Telemetry Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
           <div className={`${subSurfaceCls} p-3.5 space-y-2`}>
@@ -863,8 +1209,8 @@ export function SettingsView({
         )}
 
         <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-3 leading-relaxed">
-          <strong>Perché non vedi la percentuale globale qui dentro:</strong> l&apos;SDK Web di Firebase non fornisce un&apos;API per leggere dal browser i contatori ufficiali del progetto Google Cloud. Questa scheda salva su IndexedDB (quindi non si azzera ricaricando la pagina) le operazioni di <strong>questo browser</strong> stimate in Read Units (4 KiB) e Write Units (1 KiB) per il database Enterprise{' '}
-          <span className="font-mono text-[10px]">{FIRESTORE_DATABASE_ID}</span>. Richieste da altri dispositivi/schede, Apps Script (promemoria giornalieri) e chunk PDF grandi concorrono alla quota reale visibile su{' '}
+          <strong>Come leggere le due sezioni:</strong> il riquadro <strong>Quota Reale Globale</strong> interroga Google Cloud Monitoring tramite il backend Render (usando un Service Account in sola lettura, senza consumare Firestore) per sommare <strong>tutti</strong> i browser, dispositivi, Apps Script e GitHub Actions sul database{' '}
+          <span className="font-mono text-[10px]">{FIRESTORE_DATABASE_ID}</span>. I riquadri qui sotto salvano su IndexedDB i dettagli immediati di <strong>questo singolo browser</strong>. Puoi sempre confrontare i grafici ufficiali completi su{' '}
           <a
             href={firebaseConsoleUsageUrl}
             target="_blank"

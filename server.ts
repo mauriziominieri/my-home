@@ -1,10 +1,626 @@
 import 'dotenv/config';
+import crypto from 'crypto';
 import express from 'express';
 import http from 'http';
 import https from 'https';
 import path from 'path';
 import fs from 'fs';
 import { GoogleGenAI } from '@google/genai';
+
+const MONITORING_CACHE_TTL_MS = 2 * 60 * 1000;
+const FIREBASE_CERTS_URL =
+  'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
+
+interface MonitoringServiceAccountCreds {
+  clientEmail: string;
+  privateKey: string;
+  projectId: string;
+  dedicatedReadOnly: boolean;
+}
+
+interface FirestoreCloudQuotaPayload {
+  ok: boolean;
+  configured: boolean;
+  source: 'cloud_monitoring';
+  ptDate?: string;
+  windowStartIso?: string;
+  windowEndIso?: string;
+  resetIso?: string;
+  projectId: string;
+  databaseId: string;
+  usedDedicatedReadOnlyVar?: boolean;
+  fetchedAt: number;
+  cached?: boolean;
+  limits?: {
+    readUnits: number;
+    writeUnits: number;
+    deletes: number;
+  };
+  metrics?: {
+    billableReadUnits: number;
+    billableRealtimeReadUnits: number;
+    totalReadUnits: number;
+    billableWriteUnits: number;
+    totalWriteUnits: number;
+    readOpsCount: number;
+    writeOpsCount: number;
+    deleteOpsCount: number;
+  };
+  hasEnterpriseBillingMetrics?: boolean;
+  reason?: string;
+  errorCode?: string;
+  message?: string;
+}
+
+let cachedMonitoringQuota: { expiresAt: number; payload: FirestoreCloudQuotaPayload } | null = null;
+let cachedMonitoringToken: { expiresAt: number; accessToken: string } | null = null;
+let cachedFirebaseCerts: { expiresAt: number; certs: Record<string, string> } | null = null;
+
+function readAppletFirebaseConfig(): { projectId: string; databaseId: string } {
+  let fileProjectId = '';
+  let fileDatabaseId = '';
+  try {
+    const cfgPath = path.resolve(import.meta.dirname, 'firebase-applet-config.json');
+    if (fs.existsSync(cfgPath)) {
+      const raw = JSON.parse(fs.readFileSync(cfgPath, 'utf8')) as {
+        projectId?: unknown;
+        firestoreDatabaseId?: unknown;
+      };
+      if (typeof raw.projectId === 'string') fileProjectId = raw.projectId.trim();
+      if (typeof raw.firestoreDatabaseId === 'string') {
+        fileDatabaseId = raw.firestoreDatabaseId.trim();
+      }
+    }
+  } catch {
+    // ignore malformed local config file
+  }
+  return {
+    projectId: (
+      process.env.FIREBASE_PROJECT_ID ||
+      process.env.GCP_PROJECT_ID ||
+      fileProjectId ||
+      'gen-lang-client-0721850501'
+    ).trim(),
+    databaseId: (
+      process.env.FIRESTORE_DATABASE_ID ||
+      fileDatabaseId ||
+      'ai-studio-30a168e3-8158-474f-b9f2-f717d7220314'
+    ).trim(),
+  };
+}
+
+function loadMonitoringServiceAccount(): MonitoringServiceAccountCreds | null {
+  const dedicatedRaw = (process.env.GCP_MONITORING_SERVICE_ACCOUNT || '').trim();
+  const fallbackRaw = (process.env.FIREBASE_SERVICE_ACCOUNT || '').trim();
+  const rawInput = dedicatedRaw || fallbackRaw;
+  if (!rawInput) return null;
+
+  const tryParseSaJson = (text: string): Record<string, unknown> | null => {
+    try {
+      const parsed = JSON.parse(text);
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  let parsed = tryParseSaJson(rawInput);
+  if (!parsed) {
+    try {
+      const decoded = Buffer.from(rawInput, 'base64').toString('utf8');
+      parsed = tryParseSaJson(decoded);
+    } catch {
+      parsed = null;
+    }
+  }
+  if (!parsed) return null;
+
+  const clientEmail = typeof parsed.client_email === 'string' ? parsed.client_email.trim() : '';
+  const privateKeyRaw = typeof parsed.private_key === 'string' ? parsed.private_key : '';
+  const privateKey = privateKeyRaw.replace(/\\n/g, '\n').trim();
+  const projectId = typeof parsed.project_id === 'string' ? parsed.project_id.trim() : '';
+  if (!clientEmail || !privateKey || !privateKey.includes('PRIVATE KEY')) {
+    return null;
+  }
+  return {
+    clientEmail,
+    privateKey,
+    projectId,
+    dedicatedReadOnly: Boolean(dedicatedRaw),
+  };
+}
+
+function base64UrlEncode(input: Buffer | string): string {
+  return Buffer.from(input)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function base64UrlDecodeToBuffer(b64u: string): Buffer {
+  const normalized = b64u.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
+  return Buffer.from(normalized + pad, 'base64');
+}
+
+function isAllowedAuthenticatedOrigin(originHeader: string | undefined, req: express.Request): boolean {
+  if (!originHeader) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(originHeader);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+  const origin = parsed.origin;
+
+  const staticAllowed = new Set<string>([
+    'https://mauriziominieri.github.io',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+  ]);
+  if (staticAllowed.has(origin)) return true;
+
+  const appUrlRaw = (process.env.APP_URL || '').trim();
+  if (appUrlRaw) {
+    try {
+      if (new URL(appUrlRaw).origin === origin) return true;
+    } catch {
+      // ignore invalid APP_URL
+    }
+  }
+
+  const forwardedHost = String(req.headers['x-forwarded-host'] || req.headers.host || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  if (forwardedHost && parsed.host.toLowerCase() === forwardedHost) return true;
+
+  if (/^https:\/\/ais-(?:dev|pre)-[a-z0-9-]+\.[a-z0-9-]+\.run\.app$/i.test(origin)) {
+    return true;
+  }
+  return false;
+}
+
+async function getFirebasePublicCerts(): Promise<Record<string, string>> {
+  const now = Date.now();
+  if (cachedFirebaseCerts && cachedFirebaseCerts.expiresAt > now) {
+    return cachedFirebaseCerts.certs;
+  }
+  const resp = await fetch(FIREBASE_CERTS_URL, {
+    method: 'GET',
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status} fetching Firebase public certs`);
+  }
+  const certs = (await resp.json()) as Record<string, string>;
+  const cc = String(resp.headers.get('cache-control') || '');
+  const maxAgeMatch = cc.match(/max-age=(\d+)/i);
+  const ttlSec = maxAgeMatch?.[1] ? Math.max(60, Math.min(86_400, Number(maxAgeMatch[1]))) : 3600;
+  cachedFirebaseCerts = {
+    certs,
+    expiresAt: now + ttlSec * 1000,
+  };
+  return certs;
+}
+
+async function verifyFirebaseIdToken(
+  authHeader: string | undefined,
+  projectId: string
+): Promise<{ uid: string; email: string }> {
+  const rawHeader = typeof authHeader === 'string' ? authHeader.trim() : '';
+  if (!rawHeader.toLowerCase().startsWith('bearer ')) {
+    throw new Error('missing_bearer');
+  }
+  const token = rawHeader.slice(7).trim();
+  const segments = token.split('.');
+  if (segments.length !== 3) {
+    throw new Error('invalid_jwt');
+  }
+
+  const [headerB64, payloadB64, sigB64] = segments;
+  const header = JSON.parse(base64UrlDecodeToBuffer(headerB64).toString('utf8')) as {
+    alg?: string;
+    kid?: string;
+  };
+  const payload = JSON.parse(base64UrlDecodeToBuffer(payloadB64).toString('utf8')) as {
+    iss?: string;
+    aud?: string;
+    sub?: string;
+    exp?: number;
+    iat?: number;
+    email?: string;
+    email_verified?: boolean;
+  };
+
+  if (header.alg !== 'RS256' || !header.kid) {
+    throw new Error('invalid_header');
+  }
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (payload.aud !== projectId || payload.iss !== `https://securetoken.google.com/${projectId}`) {
+    throw new Error('invalid_issuer');
+  }
+  if (!payload.sub || typeof payload.sub !== 'string') {
+    throw new Error('invalid_sub');
+  }
+  if (typeof payload.exp !== 'number' || payload.exp <= nowSec) {
+    throw new Error('token_expired');
+  }
+  if (typeof payload.iat !== 'number' || payload.iat > nowSec + 300) {
+    throw new Error('invalid_iat');
+  }
+
+  const certs = await getFirebasePublicCerts();
+  const certPem = certs[header.kid];
+  if (!certPem) {
+    throw new Error('unknown_kid');
+  }
+
+  const verifier = crypto.createVerify('RSA-SHA256');
+  verifier.update(`${headerB64}.${payloadB64}`);
+  verifier.end();
+  const validSig = verifier.verify(certPem, base64UrlDecodeToBuffer(sigB64));
+  if (!validSig) {
+    throw new Error('bad_signature');
+  }
+
+  const email = typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : '';
+  if (!email || payload.email_verified !== true) {
+    throw new Error('unverified_email');
+  }
+
+  const allowedEnv = (process.env.MONITORING_ALLOWED_EMAILS || '').trim();
+  const allowedEmails = new Set(
+    (allowedEnv ? allowedEnv.split(',') : ['mauminieri@gmail.com', 'd0ppia3mmec@gmail.com'])
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  if (!allowedEmails.has(email)) {
+    throw new Error('forbidden_email');
+  }
+
+  return { uid: payload.sub, email };
+}
+
+function getPtOffsetMinutes(utcMs: number): number {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    timeZoneName: 'shortOffset',
+  });
+  const tzPart = fmt.formatToParts(new Date(utcMs)).find((p) => p.type === 'timeZoneName')?.value || '';
+  const m = tzPart.match(/GMT([+-]\d{1,2})(?::?(\d{2}))?/i);
+  if (!m) return -8 * 60;
+  const hours = Number(m[1]);
+  const mins = Number(m[2] || 0);
+  return hours * 60 + (hours < 0 ? -mins : mins);
+}
+
+function getPtQuotaWindowRange(nowMs = Date.now()): {
+  ptDate: string;
+  startIso: string;
+  endIso: string;
+  resetIso: string;
+} {
+  const dateParts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(nowMs));
+  const y = Number(dateParts.find((p) => p.type === 'year')?.value || 2026);
+  const m = Number(dateParts.find((p) => p.type === 'month')?.value || 1);
+  const d = Number(dateParts.find((p) => p.type === 'day')?.value || 1);
+  const ptDate = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+  const approxMidnightUtc = Date.UTC(y, m - 1, d, 0, 0, 0);
+  const offsetMin = getPtOffsetMinutes(approxMidnightUtc - 8 * 60 * 60 * 1000);
+  let startMs = approxMidnightUtc - offsetMin * 60 * 1000;
+  const refinedOffsetMin = getPtOffsetMinutes(startMs + 60_000);
+  startMs = approxMidnightUtc - refinedOffsetMin * 60 * 1000;
+
+  const nextApproxMidnightUtc = Date.UTC(y, m - 1, d + 1, 0, 0, 0);
+  const nextOffsetMin = getPtOffsetMinutes(nextApproxMidnightUtc - offsetMin * 60 * 1000 + 3 * 3600 * 1000);
+  const resetMs = nextApproxMidnightUtc - nextOffsetMin * 60 * 1000;
+
+  return {
+    ptDate,
+    startIso: new Date(startMs).toISOString(),
+    endIso: new Date(Math.max(startMs + 60_000, nowMs)).toISOString(),
+    resetIso: new Date(resetMs).toISOString(),
+  };
+}
+
+async function getMonitoringAccessToken(creds: MonitoringServiceAccountCreds): Promise<string> {
+  const now = Date.now();
+  if (cachedMonitoringToken && cachedMonitoringToken.expiresAt > now + 60_000) {
+    return cachedMonitoringToken.accessToken;
+  }
+
+  const nowSec = Math.floor(now / 1000);
+  const header = base64UrlEncode(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const claim = base64UrlEncode(
+    JSON.stringify({
+      iss: creds.clientEmail,
+      scope: 'https://www.googleapis.com/auth/monitoring.read',
+      aud: 'https://oauth2.googleapis.com/token',
+      iat: nowSec,
+      exp: nowSec + 3600,
+    })
+  );
+  const signer = crypto.createSign('RSA-SHA256');
+  signer.update(`${header}.${claim}`);
+  signer.end();
+  const signature = base64UrlEncode(signer.sign(creds.privateKey));
+  const assertion = `${header}.${claim}.${signature}`;
+
+  const resp = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion,
+    }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  const json = (await resp.json().catch(() => null)) as {
+    access_token?: string;
+    expires_in?: number;
+    error_description?: string;
+    error?: string;
+  } | null;
+  if (!resp.ok || !json?.access_token) {
+    const errMsg = json?.error_description || json?.error || `HTTP ${resp.status}`;
+    throw new Error(`OAuth token error: ${errMsg}`);
+  }
+  const expiresInSec = Number(json.expires_in || 3600);
+  cachedMonitoringToken = {
+    accessToken: json.access_token,
+    expiresAt: now + expiresInSec * 1000,
+  };
+  return json.access_token;
+}
+
+async function queryCloudMonitoringMetricSum(
+  accessToken: string,
+  projectId: string,
+  databaseId: string,
+  metricType: string,
+  startIso: string,
+  endIso: string
+): Promise<{ sum: number; seriesCount: number }> {
+  const runQuery = async (includeResourceTypeFilter: boolean): Promise<{ sum: number; seriesCount: number }> => {
+    const filter = includeResourceTypeFilter
+      ? `metric.type = "${metricType}" AND resource.type = "firestore.googleapis.com/Database" AND resource.labels.database_id = "${databaseId}"`
+      : `metric.type = "${metricType}" AND resource.labels.database_id = "${databaseId}"`;
+
+    let pageToken = '';
+    let sum = 0;
+    let seriesCount = 0;
+    let pages = 0;
+
+    do {
+      pages += 1;
+      const params = new URLSearchParams({
+        filter,
+        'interval.startTime': startIso,
+        'interval.endTime': endIso,
+        'aggregation.alignmentPeriod': '3600s',
+        'aggregation.perSeriesAligner': 'ALIGN_SUM',
+        'aggregation.crossSeriesReducer': 'REDUCE_SUM',
+        view: 'FULL',
+      });
+      if (pageToken) params.set('pageToken', pageToken);
+
+      const url = `https://monitoring.googleapis.com/v3/projects/${encodeURIComponent(
+        projectId
+      )}/timeSeries?${params.toString()}`;
+      const resp = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(12_000),
+      });
+      const json = (await resp.json().catch(() => null)) as {
+        timeSeries?: Array<{
+          points?: Array<{
+            value?: { int64Value?: string; doubleValue?: number };
+          }>;
+        }>;
+        nextPageToken?: string;
+        error?: { code?: number; status?: string; message?: string };
+      } | null;
+
+      if (!resp.ok) {
+        const errStatus = json?.error?.status || '';
+        const errMessage = json?.error?.message || `HTTP ${resp.status}`;
+        const err = new Error(errMessage) as Error & { gcpStatus?: string; httpStatus?: number };
+        err.gcpStatus = errStatus;
+        err.httpStatus = resp.status;
+        throw err;
+      }
+
+      const series = Array.isArray(json?.timeSeries) ? json.timeSeries : [];
+      seriesCount += series.length;
+      for (const s of series) {
+        for (const p of s.points || []) {
+          const valObj = p.value;
+          if (!valObj) continue;
+          const n =
+            typeof valObj.doubleValue === 'number'
+              ? valObj.doubleValue
+              : valObj.int64Value !== undefined
+                ? Number(valObj.int64Value)
+                : 0;
+          if (Number.isFinite(n) && n > 0) {
+            sum += n;
+          }
+        }
+      }
+      pageToken = typeof json?.nextPageToken === 'string' ? json.nextPageToken : '';
+    } while (pageToken && pages < 5);
+
+    return { sum: Math.round(sum), seriesCount };
+  };
+
+  try {
+    const primary = await runQuery(true);
+    if (primary.seriesCount > 0) return primary;
+    return await runQuery(false);
+  } catch (err) {
+    const gcpErr = err as { httpStatus?: number; gcpStatus?: string };
+    if (gcpErr.httpStatus === 400 || gcpErr.gcpStatus === 'INVALID_ARGUMENT') {
+      return await runQuery(false);
+    }
+    throw err;
+  }
+}
+
+async function fetchFirestoreMonitoringQuota(forceRefresh = false): Promise<FirestoreCloudQuotaPayload> {
+  const { projectId: cfgProjectId, databaseId } = readAppletFirebaseConfig();
+  const creds = loadMonitoringServiceAccount();
+  if (!creds) {
+    return {
+      ok: true,
+      configured: false,
+      source: 'cloud_monitoring',
+      projectId: cfgProjectId,
+      databaseId,
+      fetchedAt: Date.now(),
+      reason: 'missing_service_account',
+      message:
+        'Aggiungi la variabile ambiente GCP_MONITORING_SERVICE_ACCOUNT su Render con il JSON di un Service Account in sola lettura (ruolo Visualizzatore monitoraggio / roles/monitoring.viewer).',
+    };
+  }
+
+  const targetProjectId = cfgProjectId || creds.projectId;
+  const now = Date.now();
+  if (!forceRefresh && cachedMonitoringQuota && cachedMonitoringQuota.expiresAt > now) {
+    return {
+      ...cachedMonitoringQuota.payload,
+      cached: true,
+    };
+  }
+
+  const windowRange = getPtQuotaWindowRange(now);
+  const accessToken = await getMonitoringAccessToken(creds);
+
+  const metricSpecs = [
+    { key: 'billableReadUnits', metric: 'firestore.googleapis.com/api/billable_read_units' },
+    {
+      key: 'billableRealtimeReadUnits',
+      metric: 'firestore.googleapis.com/api/billable_realtime_read_units',
+    },
+    { key: 'billableWriteUnits', metric: 'firestore.googleapis.com/api/billable_write_units' },
+    { key: 'readOpsCount', metric: 'firestore.googleapis.com/document/read_ops_count' },
+    { key: 'writeOpsCount', metric: 'firestore.googleapis.com/document/write_ops_count' },
+    { key: 'deleteOpsCount', metric: 'firestore.googleapis.com/document/delete_ops_count' },
+  ] as const;
+
+  const settled = await Promise.allSettled(
+    metricSpecs.map((spec) =>
+      queryCloudMonitoringMetricSum(
+        accessToken,
+        targetProjectId,
+        databaseId,
+        spec.metric,
+        windowRange.startIso,
+        windowRange.endIso
+      )
+    )
+  );
+
+  // Check if all queries failed with permission/API-disabled error
+  const permissionErr = settled.find(
+    (r): r is PromiseRejectedResult =>
+      r.status === 'rejected' &&
+      (/PERMISSION_DENIED|disabled|not been used in project|SERVICE_DISABLED|403/i.test(
+        String(r.reason?.message || r.reason || '')
+      ))
+  );
+  if (permissionErr && settled.every((r) => r.status === 'rejected')) {
+    const rawMsg = String(permissionErr.reason?.message || '');
+    const isApiDisabled = /disabled|not been used in project|SERVICE_DISABLED/i.test(rawMsg);
+    return {
+      ok: false,
+      configured: true,
+      source: 'cloud_monitoring',
+      projectId: targetProjectId,
+      databaseId,
+      usedDedicatedReadOnlyVar: creds.dedicatedReadOnly,
+      fetchedAt: now,
+      errorCode: isApiDisabled ? 'api_disabled' : 'permission_denied',
+      message: isApiDisabled
+        ? 'Abilita "Cloud Monitoring API" (monitoring.googleapis.com) sul progetto Google Cloud per leggere le metriche.'
+        : 'Il Service Account configurato non ha il permesso roles/monitoring.viewer (Visualizzatore monitoraggio) su Google Cloud.',
+    };
+  }
+
+  const values: Record<string, { sum: number; seriesCount: number }> = {};
+  metricSpecs.forEach((spec, idx) => {
+    const resItem = settled[idx];
+    values[spec.key] =
+      resItem.status === 'fulfilled' ? resItem.value : { sum: 0, seriesCount: 0 };
+  });
+
+  const billableReadUnits = values.billableReadUnits.sum;
+  const billableRealtimeReadUnits = values.billableRealtimeReadUnits.sum;
+  const billableWriteUnits = values.billableWriteUnits.sum;
+  const readOpsCount = values.readOpsCount.sum;
+  const writeOpsCount = values.writeOpsCount.sum;
+  const deleteOpsCount = values.deleteOpsCount.sum;
+
+  const hasEnterpriseBillingMetrics =
+    values.billableReadUnits.seriesCount > 0 ||
+    values.billableRealtimeReadUnits.seriesCount > 0 ||
+    values.billableWriteUnits.seriesCount > 0;
+
+  const totalReadUnits =
+    billableReadUnits + billableRealtimeReadUnits > 0
+      ? billableReadUnits + billableRealtimeReadUnits
+      : readOpsCount;
+  const totalWriteUnits =
+    billableWriteUnits > 0 ? billableWriteUnits : writeOpsCount + deleteOpsCount;
+
+  const payload: FirestoreCloudQuotaPayload = {
+    ok: true,
+    configured: true,
+    source: 'cloud_monitoring',
+    ptDate: windowRange.ptDate,
+    windowStartIso: windowRange.startIso,
+    windowEndIso: windowRange.endIso,
+    resetIso: windowRange.resetIso,
+    projectId: targetProjectId,
+    databaseId,
+    usedDedicatedReadOnlyVar: creds.dedicatedReadOnly,
+    fetchedAt: now,
+    cached: false,
+    limits: {
+      readUnits: 50_000,
+      writeUnits: 20_000,
+      deletes: 20_000,
+    },
+    metrics: {
+      billableReadUnits,
+      billableRealtimeReadUnits,
+      totalReadUnits,
+      billableWriteUnits,
+      totalWriteUnits,
+      readOpsCount,
+      writeOpsCount,
+      deleteOpsCount,
+    },
+    hasEnterpriseBillingMetrics,
+  };
+
+  cachedMonitoringQuota = {
+    payload,
+    expiresAt: now + MONITORING_CACHE_TTL_MS,
+  };
+  return payload;
+}
 
 const isProd = process.env.NODE_ENV === 'production';
 
@@ -390,6 +1006,25 @@ async function startServer() {
   app.use(express.json({ limit: '12mb' }));
 
   app.use('/api', (req, res, next) => {
+    const isAuthenticatedQuotaRoute =
+      req.path === '/firestore/quota' || req.path.startsWith('/firestore/quota/');
+    if (isAuthenticatedQuotaRoute) {
+      const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
+      const originAllowed = !origin || isAllowedAuthenticatedOrigin(origin, req);
+      if (origin && originAllowed) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
+      }
+      if (req.method === 'OPTIONS') {
+        res.status(originAllowed ? 204 : 403).end();
+        return;
+      }
+      next();
+      return;
+    }
+
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
@@ -5558,6 +6193,40 @@ async function startServer() {
         console.warn('Errore classificazione documento AI, uso fallback locale:', error);
       }
       res.json(fallback);
+    }
+  });
+
+  app.get('/api/firestore/quota', async (req, res) => {
+    const { projectId } = readAppletFirebaseConfig();
+    try {
+      await verifyFirebaseIdToken(req.headers.authorization, projectId);
+    } catch (authErr) {
+      const code = authErr instanceof Error ? authErr.message : 'unauthorized';
+      res.status(code === 'forbidden_email' ? 403 : 401).json({
+        ok: false,
+        errorCode: code,
+        message:
+          code === 'forbidden_email'
+            ? 'Account non autorizzato a consultare le statistiche Cloud Monitoring.'
+            : 'Accesso richiesto: effettua il login con Google per consultare la quota reale.',
+      });
+      return;
+    }
+
+    const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
+    try {
+      const result = await fetchFirestoreMonitoringQuota(forceRefresh);
+      res.json(result);
+    } catch (err) {
+      console.error('Errore interrogazione Cloud Monitoring Firestore:', err instanceof Error ? err.message : err);
+      res.status(502).json({
+        ok: false,
+        configured: true,
+        source: 'cloud_monitoring',
+        errorCode: 'monitoring_unreachable',
+        message:
+          'Impossibile interrogare Google Cloud Monitoring al momento. Riprova tra qualche istante.',
+      });
     }
   });
 
