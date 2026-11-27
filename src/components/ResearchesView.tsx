@@ -43,6 +43,7 @@ import {
   ProductResearchStatus,
 } from '../types/home';
 import {
+  discardSimulatedFirestoreOps,
   getSimulatedFirestoreOps,
   restoreSimulatedDeletedAttachment,
   SimulatedFirestoreOp,
@@ -92,6 +93,14 @@ import {
   clientInspectWithOpenCatalogs,
   markOlderDocumentVersions,
 } from '../utils/clientCatalogInspect';
+import {
+  diffResearchSpecs,
+  diffVariantOptionLists,
+  normalizeBulletCompareKey,
+  normalizeSpecLabelKey,
+  parseResearchQueueDiffDetails,
+  ResearchSiteRefreshDiff,
+} from '../utils/researchDiff';
 
 interface InspectedDocumentLink {
   title: string;
@@ -395,6 +404,42 @@ function writeCachedUnavailableVariants(
   }
 }
 
+const SITE_REFRESH_DIFF_STORAGE_KEY = 'myhome_research_site_diff_v1';
+
+function readSiteRefreshDiffMap(): Record<string, ResearchSiteRefreshDiff> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(SITE_REFRESH_DIFF_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, ResearchSiteRefreshDiff>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSiteRefreshDiffMap(nextMap: Record<string, ResearchSiteRefreshDiff>) {
+  if (typeof window === 'undefined') return;
+  try {
+    const keys = Object.keys(nextMap);
+    const trimmed =
+      keys.length > 60
+        ? Object.fromEntries(
+            Object.entries(nextMap)
+              .sort(([, a], [, b]) => (b.refreshedAt || 0) - (a.refreshedAt || 0))
+              .slice(0, 60)
+          )
+        : nextMap;
+    if (Object.keys(trimmed).length === 0) {
+      window.localStorage.removeItem(SITE_REFRESH_DIFF_STORAGE_KEY);
+    } else {
+      window.localStorage.setItem(SITE_REFRESH_DIFF_STORAGE_KEY, JSON.stringify(trimmed));
+    }
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
 function ColorSwatchDot({
   color,
   size = 'md',
@@ -678,6 +723,7 @@ function canonicalUrlForCompare(raw?: string): string {
       }
       kept.set(k, v);
     }
+    kept.sort();
     const qs = kept.toString();
     const cleanPath = parsed.pathname.replace(/\/+$/, '') || '/';
     return `${host}${cleanPath}${qs ? `?${qs}` : ''}`.toLowerCase();
@@ -1066,6 +1112,7 @@ interface CollapsibleColorChipsProps {
   colors: string[];
   activeColor?: string;
   unavailableColors?: string[];
+  addedColors?: string[];
   expanded: boolean;
   onToggleExpand: () => void;
   readOnly?: boolean;
@@ -1077,6 +1124,7 @@ function CollapsibleColorChips({
   colors,
   activeColor,
   unavailableColors,
+  addedColors,
   expanded,
   onToggleExpand,
   readOnly = false,
@@ -1205,12 +1253,19 @@ function CollapsibleColorChips({
               (u) => normalizeColorOptionKey(u) === normalizeColorOptionKey(colOpt)
             )
           );
+          const isAddedOnSite = Boolean(
+            addedColors?.some(
+              (a) => normalizeColorOptionKey(a) === normalizeColorOptionKey(colOpt)
+            )
+          );
           const activeClasses = highlightActive
             ? 'bg-amber-50 border-amber-500 text-amber-900 dark:bg-amber-500/20 dark:border-amber-400 dark:text-amber-100 font-semibold ring-1 ring-amber-400/60'
             : 'bg-sky-50 border-sky-500/80 text-sky-900 dark:bg-sky-500/15 dark:border-sky-400/70 dark:text-slate-100 font-semibold';
           const colorTitle = isMissingOnSite
             ? `Seleziona colore ${colOpt} (non più presente sul sito all'ultimo aggiornamento · opzione mantenuta)`
-            : `Seleziona colore ${colOpt}`;
+            : isAddedOnSite
+              ? `Seleziona colore ${colOpt} (nuovo colore trovato sul sito)`
+              : `Seleziona colore ${colOpt}`;
           return readOnly ? (
             <span
               key={colOpt}
@@ -1222,13 +1277,20 @@ function CollapsibleColorChips({
                   ? activeClasses
                   : isMissingOnSite
                     ? 'bg-slate-50/70 border-slate-300 text-slate-500 dark:bg-slate-950/40 dark:border-slate-700 dark:text-slate-400 opacity-85'
-                    : 'bg-slate-50 border-slate-200 text-slate-600 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-400'
+                    : isAddedOnSite
+                      ? 'bg-emerald-50 border-emerald-400 text-emerald-900 dark:bg-emerald-500/15 dark:border-emerald-400/70 dark:text-emerald-200 font-semibold'
+                      : 'bg-slate-50 border-slate-200 text-slate-600 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-400'
               }`}
             >
               <ColorSwatchDot color={colOpt} size="sm" />
               <span>{colOpt}</span>
               {isMissingOnSite && (
                 <span className="text-[9px] font-medium opacity-75">(storico)</span>
+              )}
+              {isAddedOnSite && !isMissingOnSite && (
+                <span className="text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">
+                  +Nuovo
+                </span>
               )}
             </span>
           ) : (
@@ -1244,13 +1306,20 @@ function CollapsibleColorChips({
                   ? activeClasses
                   : isMissingOnSite
                     ? 'bg-slate-50/70 border-slate-300 text-slate-600 hover:border-slate-400 dark:bg-slate-950/40 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-500 opacity-85'
-                    : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-300 dark:hover:border-slate-600'
+                    : isAddedOnSite
+                      ? 'bg-emerald-50 border-emerald-400 text-emerald-900 hover:border-emerald-500 dark:bg-emerald-500/15 dark:border-emerald-400/70 dark:text-emerald-200 font-semibold'
+                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-300 dark:hover:border-slate-600'
               }`}
             >
               <ColorSwatchDot color={colOpt} size="sm" />
               <span>{colOpt}</span>
               {isMissingOnSite && (
                 <span className="text-[9px] font-medium opacity-75">(storico)</span>
+              )}
+              {isAddedOnSite && !isMissingOnSite && (
+                <span className="text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">
+                  +Nuovo
+                </span>
               )}
             </button>
           );
@@ -1453,6 +1522,18 @@ export function ResearchesView({
   const [unavailableVariantsById, setUnavailableVariantsById] = useState<
     Record<string, UnavailableVariantsEntry>
   >({});
+  const [siteRefreshDiffById, setSiteRefreshDiffById] = useState<
+    Record<string, ResearchSiteRefreshDiff>
+  >(() => readSiteRefreshDiffMap());
+  const dismissSiteRefreshDiff = (id: string) => {
+    setSiteRefreshDiffById((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      writeSiteRefreshDiffMap(next);
+      return next;
+    });
+  };
   const [lazySizePriceLoadingIds, setLazySizePriceLoadingIds] = useState<
     Record<string, boolean>
   >({});
@@ -1563,17 +1644,34 @@ export function ResearchesView({
   const localQueueChangesById = useMemo(() => {
     const map: Record<
       string,
-      { isNew: boolean; changedFields: Set<string>; details: string[] }
+      { isNew: boolean; changedFields: Set<string>; details: string[]; opIds: string[] }
     > = {};
     const ensureEntry = (id: string) => {
       if (!map[id]) {
-        map[id] = { isNew: false, changedFields: new Set<string>(), details: [] };
+        map[id] = { isNew: false, changedFields: new Set<string>(), details: [], opIds: [] };
       }
       return map[id];
     };
+    const pushOpId = (entry: { opIds: string[] }, opId?: string) => {
+      if (opId && !entry.opIds.includes(opId)) {
+        entry.opIds.push(opId);
+      }
+    };
     const pushDetail = (entry: { details: string[] }, detail: string) => {
+      const lower = detail.trim().toLowerCase();
+      const isMultiItemDiff =
+        lower.startsWith('specifica ') ||
+        lower.startsWith('punto chiave ') ||
+        lower.startsWith('colore aggiunt') ||
+        lower.startsWith('colori aggiunt') ||
+        lower.startsWith('colore rimoss') ||
+        lower.startsWith('colori rimoss') ||
+        lower.startsWith('taglia aggiunt') ||
+        lower.startsWith('taglie aggiunt') ||
+        lower.startsWith('taglia rimoss') ||
+        lower.startsWith('taglie rimoss');
       const colonIdx = detail.indexOf(':');
-      if (colonIdx > 0) {
+      if (!isMultiItemDiff && colonIdx > 0) {
         const prefix = detail.slice(0, colonIdx + 1).toLowerCase();
         const existingIdx = entry.details.findIndex((d) =>
           d.toLowerCase().startsWith(prefix)
@@ -1588,6 +1686,7 @@ export function ResearchesView({
       }
     };
     const handleTargetPath = (
+      opId: string,
       path: string | undefined,
       opFields?: string[],
       opDetails?: string[],
@@ -1595,11 +1694,21 @@ export function ResearchesView({
       opData?: Record<string, unknown>,
       opGroupKey?: string
     ) => {
-      if (!path) return;
+      if (!path) {
+        if (opGroupKey?.startsWith('research:')) {
+          const resId = opGroupKey.slice(9);
+          if (resId) {
+            const entry = ensureEntry(resId);
+            pushOpId(entry, opId);
+          }
+        }
+        return;
+      }
       const resMatch = path.match(/\/productResearches\/([^/]+)$/);
       if (resMatch?.[1]) {
         const resId = resMatch[1];
         const entry = ensureEntry(resId);
+        pushOpId(entry, opId);
         if (opFields?.includes('__new__')) {
           entry.isNew = true;
         }
@@ -1626,6 +1735,7 @@ export function ResearchesView({
         }
         if (targetResId) {
           const entry = ensureEntry(targetResId);
+          pushOpId(entry, opId);
           entry.changedFields.add('attachments');
           pushDetail(
             entry,
@@ -1636,18 +1746,10 @@ export function ResearchesView({
     };
 
     for (const op of simulatedOps) {
-      if (op.kind === 'set' || op.kind === 'delete') {
-        handleTargetPath(
-          op.path,
-          op.changedFields,
-          op.changedDetails,
-          op.kind,
-          op.data,
-          op.groupKey
-        );
-      } else if (op.kind === 'batch' && op.batchOps) {
+      if (op.kind === 'batch' && op.batchOps) {
         for (const sub of op.batchOps) {
           handleTargetPath(
+            op.id,
             sub.path,
             op.changedFields,
             op.changedDetails,
@@ -1656,6 +1758,16 @@ export function ResearchesView({
             op.groupKey
           );
         }
+      } else {
+        handleTargetPath(
+          op.id,
+          op.path,
+          op.changedFields,
+          op.changedDetails,
+          op.kind,
+          op.data,
+          op.groupKey
+        );
       }
     }
     return map;
@@ -2562,6 +2674,15 @@ export function ResearchesView({
     return false;
   }
 
+  const findExistingByCanonicalUrl = (rawUrl: string): ProductResearchRecord | undefined => {
+    const targetCanon = canonicalUrlForCompare(rawUrl);
+    if (!targetCanon) return undefined;
+    return allResearches.find((existing) => {
+      const effective = getEffectiveItem(existing);
+      return canonicalUrlForCompare(effective.url) === targetCanon;
+    });
+  };
+
   async function handleQuickAddSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (readOnly) return;
@@ -2577,9 +2698,34 @@ export function ResearchesView({
       return;
     }
 
+    const existingByInputUrl = findExistingByCanonicalUrl(validUrl);
+    if (existingByInputUrl) {
+      setInspecting(true);
+      try {
+        const refreshedOk = await handleRefreshFromSite(existingByInputUrl);
+        if (refreshedOk) {
+          setLinkInput('');
+          setDraftOpen(false);
+        }
+      } finally {
+        setInspecting(false);
+      }
+      return;
+    }
+
     setInspecting(true);
     try {
       const inspected = await inspectProductLink(validUrl);
+      const existingByInspectedUrl = findExistingByCanonicalUrl(inspected.url);
+      if (existingByInspectedUrl) {
+        const refreshedOk = await handleRefreshFromSite(existingByInspectedUrl);
+        if (refreshedOk) {
+          setLinkInput('');
+          setDraftOpen(false);
+        }
+        return;
+      }
+
       const resolvedBrand = inferProductBrand(inspected);
       const resolvedRoom =
         normalizeResearchRoom(inspected.room) ||
@@ -3249,6 +3395,9 @@ export function ResearchesView({
       setPendingEditSave(null);
       setEditingId((curr) => (curr === item.id ? null : curr));
       handleDiscardPendingCardEdit(item.id);
+      if (actuallyChanged) {
+        dismissSiteRefreshDiff(item.id);
+      }
       setBrokenImages((prev) => {
         if (!prev[item.id]) return prev;
         const next = { ...prev };
@@ -3286,8 +3435,8 @@ export function ResearchesView({
     }
   }
 
-  async function handleRefreshFromSite(item: ProductResearchRecord) {
-    if (readOnly) return;
+  async function handleRefreshFromSite(item: ProductResearchRecord): Promise<boolean> {
+    if (readOnly) return false;
     setRefreshingId(item.id);
     setLinkError(null);
     setLinkNotice(null);
@@ -3298,7 +3447,7 @@ export function ResearchesView({
         setLinkNotice(
           `Per aggiornare automaticamente "${item.title}" da ${inspected.store} su GitHub Pages, configura l'URL Server Backend in Impostazioni oppure usa l'app su AI Studio / server locale.`
         );
-        return;
+        return false;
       }
       const hasMultiColorSource =
         (item.availableColors?.length || 0) > 0 ||
@@ -3524,7 +3673,7 @@ export function ResearchesView({
             `Nessuna modifica trovata online per la bozza "${effectiveDraft.title}".`
           );
         }
-        return;
+        return true;
       }
 
       const proposedPayload = resolvePreservedFields(item);
@@ -3633,8 +3782,38 @@ export function ResearchesView({
         }
       }
 
-      if ((!fieldsChanged || Boolean(otherIdenticalItem)) && !hasNewDocs) {
+      const prevMissingColorKeys = new Set(
+        (prevUnavailable?.colors || []).map(normalizeColorOptionKey)
+      );
+      const newlyMissingColors = missingColorsNow.filter(
+        (c) => !prevMissingColorKeys.has(normalizeColorOptionKey(c))
+      );
+      const prevMissingSizeKeys = new Set(
+        (prevUnavailable?.sizes || []).map(normalizeSizeOptionKey)
+      );
+      const newlyMissingSizes = missingSizesNow.filter(
+        (s) => !prevMissingSizeKeys.has(normalizeSizeOptionKey(s))
+      );
+      const specsDiff = diffResearchSpecs(item.specs, proposedPayload.specs);
+      const colorListDiff = diffVariantOptionLists(
+        item.availableColors,
+        proposedPayload.availableColors,
+        'color'
+      );
+      const sizeListDiff = diffVariantOptionLists(
+        item.availableSizes,
+        proposedPayload.availableSizes,
+        'size'
+      );
+
+      if (
+        (!fieldsChanged || Boolean(otherIdenticalItem)) &&
+        !hasNewDocs &&
+        newlyMissingColors.length === 0 &&
+        newlyMissingSizes.length === 0
+      ) {
         preservePendingSelectionsAfterRefresh();
+        dismissSiteRefreshDiff(item.id);
         setBrokenImages((prev) => {
           if (!prev[item.id]) return prev;
           const next = { ...prev };
@@ -3646,7 +3825,7 @@ export function ResearchesView({
             ? `Nessuna riscrittura effettuata: i dati trovati online coincidono già con l'articolo "${otherIdenticalItem.title}" già presente (0 operazioni Firestore).`
             : `Nessuna modifica online per "${item.title}": i dati sul sito coincidono già con la scheda salvata (0 operazioni Firestore).`
         );
-        return;
+        return true;
       }
 
       if (willUpdateBase) {
@@ -3675,6 +3854,52 @@ export function ResearchesView({
       if (totalDocs > 0) {
         setOpenAttachmentsIds((prev) => ({ ...prev, [item.id]: true }));
       }
+
+      const nextSiteDiff: ResearchSiteRefreshDiff = {
+        refreshedAt: Date.now(),
+        addedTechSpecs: specsDiff.addedTechSpecs,
+        modifiedTechSpecs: specsDiff.modifiedTechSpecs,
+        removedTechSpecs: specsDiff.removedTechSpecs,
+        addedBullets: specsDiff.addedBullets,
+        removedBullets: specsDiff.removedBullets,
+        addedColors: colorListDiff.added,
+        removedColors:
+          newlyMissingColors.length > 0 ? newlyMissingColors : colorListDiff.removed,
+        addedSizes: sizeListDiff.added,
+        removedSizes: newlyMissingSizes.length > 0 ? newlyMissingSizes : sizeListDiff.removed,
+        priceChange:
+          normalizeMoneyForCompare(item.priceEur) !==
+          normalizeMoneyForCompare(proposedPayload.priceEur)
+            ? { prev: item.priceEur, next: proposedPayload.priceEur }
+            : undefined,
+        titleChanged: item.title.trim() !== proposedPayload.title.trim(),
+        modelChanged: (item.model || '').trim() !== (proposedPayload.model || '').trim(),
+        imageChanged: (item.imageUrl || '').trim() !== (proposedPayload.imageUrl || '').trim(),
+        addedDocsCount: totalDocs > 0 ? totalDocs : undefined,
+      };
+      const hasAnyStructuredSiteDiff =
+        nextSiteDiff.addedTechSpecs.length > 0 ||
+        nextSiteDiff.modifiedTechSpecs.length > 0 ||
+        nextSiteDiff.removedTechSpecs.length > 0 ||
+        nextSiteDiff.addedBullets.length > 0 ||
+        nextSiteDiff.removedBullets.length > 0 ||
+        nextSiteDiff.addedColors.length > 0 ||
+        nextSiteDiff.removedColors.length > 0 ||
+        nextSiteDiff.addedSizes.length > 0 ||
+        nextSiteDiff.removedSizes.length > 0 ||
+        Boolean(nextSiteDiff.priceChange) ||
+        Boolean(nextSiteDiff.titleChanged) ||
+        Boolean(nextSiteDiff.modelChanged) ||
+        Boolean(nextSiteDiff.imageChanged) ||
+        Boolean(nextSiteDiff.addedDocsCount);
+      if (hasAnyStructuredSiteDiff) {
+        setSiteRefreshDiffById((prev) => {
+          const updated = { ...prev, [item.id]: nextSiteDiff };
+          writeSiteRefreshDiffMap(updated);
+          return updated;
+        });
+      }
+
       if (
         inspected.blockedBySite &&
         inspected.extractedFrom !== 'page-meta' &&
@@ -3688,7 +3913,12 @@ export function ResearchesView({
             inspected.aiKeyMissing ? ' e la ricerca online AI non è attiva su questo server' : ''
           }: eventuali foto, prezzi o documenti vanno inseriti manualmente.`
         );
-      } else if (!willUpdateBase && totalDocs === 0) {
+      } else if (
+        !willUpdateBase &&
+        totalDocs === 0 &&
+        newlyMissingColors.length === 0 &&
+        newlyMissingSizes.length === 0
+      ) {
         setLinkNotice(
           `Nessuna modifica online per "${nextTitle || item.title}": i link esterni già presenti non sono ancora scaricabili automaticamente (0 operazioni Firestore).`
         );
@@ -3701,6 +3931,35 @@ export function ResearchesView({
             : '',
           docStats.linked > 0 ? `${docStats.linked} link aggiunti` : '',
         ].filter(Boolean);
+        const diffSummaryParts = [
+          specsDiff.modifiedTechSpecs.length > 0
+            ? `${specsDiff.modifiedTechSpecs.length} spec. aggiornate`
+            : '',
+          specsDiff.addedTechSpecs.length > 0
+            ? `${specsDiff.addedTechSpecs.length} spec. aggiunte`
+            : '',
+          specsDiff.removedTechSpecs.length > 0
+            ? `${specsDiff.removedTechSpecs.length} spec. rimosse`
+            : '',
+          specsDiff.addedBullets.length > 0
+            ? `${specsDiff.addedBullets.length} info aggiunte`
+            : '',
+          specsDiff.removedBullets.length > 0
+            ? `${specsDiff.removedBullets.length} info rimosse`
+            : '',
+          colorListDiff.added.length > 0
+            ? `${colorListDiff.added.length} colori aggiunti`
+            : '',
+          newlyMissingColors.length > 0
+            ? `${newlyMissingColors.length} colori non più sul sito`
+            : '',
+          sizeListDiff.added.length > 0
+            ? `${sizeListDiff.added.length} taglie aggiunte`
+            : '',
+          newlyMissingSizes.length > 0
+            ? `${newlyMissingSizes.length} taglie non più sul sito`
+            : '',
+        ].filter(Boolean);
         const preservedMissingLabels = [
           ...(nextUnavailableEntry?.sizes || []),
           ...(nextUnavailableEntry?.colors || []),
@@ -3712,21 +3971,29 @@ export function ResearchesView({
         setFeedback(
           willUpdateBase
             ? `Scheda "${nextTitle || item.title}" aggiornata dal sito${
-                docSummaryParts.length > 0 ? ` (${docSummaryParts.join(', ')})` : ''
+                diffSummaryParts.length > 0 ? ` (${diffSummaryParts.join(', ')})` : ''
+              }${
+                docSummaryParts.length > 0 ? ` · ${docSummaryParts.join(', ')}` : ''
               } e ${
                 writesDisabled
                   ? 'salvata in locale in coda per Firestore'
                   : 'salvata su Firestore'
               } (selezioni utente mantenute).${preservedMissingText}`
-            : `Aggiunti solo i nuovi allegati (${docSummaryParts.join(', ')}) a "${
-                nextTitle || item.title
-              }" senza riscrivere la scheda.${preservedMissingText}`
+            : newlyMissingColors.length > 0 || newlyMissingSizes.length > 0
+              ? `Aggiornate le disponibilità dal sito per "${nextTitle || item.title}"${
+                  diffSummaryParts.length > 0 ? ` (${diffSummaryParts.join(', ')})` : ''
+                }.${preservedMissingText}`
+              : `Aggiunti solo i nuovi allegati (${docSummaryParts.join(', ')}) a "${
+                  nextTitle || item.title
+                }" senza riscrivere la scheda.${preservedMissingText}`
         );
       }
+      return true;
     } catch (err) {
       setLinkError(
         err instanceof Error ? err.message : 'Non è stato possibile aggiornare i dati dal link.'
       );
+      return false;
     } finally {
       setRefreshingId(null);
     }
@@ -5056,6 +5323,16 @@ export function ResearchesView({
     }
   }
 
+  const matchedExistingForInput = useMemo(() => {
+    const valid = normalizeUrlInput(linkInput);
+    if (!valid) return undefined;
+    const targetCanon = canonicalUrlForCompare(valid);
+    if (!targetCanon) return undefined;
+    return allResearches.find(
+      (existing) => canonicalUrlForCompare(existing.url) === targetCanon
+    );
+  }, [linkInput, allResearches]);
+
   const availableStores = useMemo(() => {
     const set = new Set<string>();
     for (const r of allResearches) {
@@ -5399,19 +5676,52 @@ export function ResearchesView({
         ]}
       />
 
-      {/* Hero URL Paste Searchbar */}
-      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 sm:p-5 space-y-3.5 shadow-xs dark:shadow-none">
-        <form onSubmit={handleQuickAddSubmit} className="space-y-3">
-          <label
-            htmlFor="research-url-input"
-            className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200"
-          >
-            <Link2 className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
-            Incolla il link di un prodotto da aggiungere alla lista Prodotti
-          </label>
+      {/* Hero URL Command Bar */}
+      <section className="relative overflow-hidden bg-gradient-to-br from-sky-50/90 via-white to-indigo-50/55 dark:from-slate-900 dark:via-slate-900 dark:to-sky-950/35 border-2 border-sky-300/85 dark:border-sky-500/40 rounded-2xl p-4 sm:p-6 space-y-4 shadow-md shadow-sky-950/5 dark:shadow-xl dark:shadow-black/30">
+        <div
+          className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-500 via-cyan-400 to-indigo-500"
+          aria-hidden="true"
+        />
+
+        <form onSubmit={handleQuickAddSubmit} className="space-y-3.5">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <label
+              htmlFor="research-url-input"
+              className="flex items-start gap-3 cursor-pointer min-w-0"
+            >
+              <span className="w-9 h-9 rounded-xl bg-sky-600 text-white dark:bg-sky-500 dark:text-slate-950 flex items-center justify-center shrink-0 shadow-sm shadow-sky-600/25">
+                {matchedExistingForInput ? (
+                  <RefreshCw className="w-4 h-4" />
+                ) : (
+                  <Link2 className="w-4 h-4" />
+                )}
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm sm:text-base font-bold text-slate-900 dark:text-slate-50 tracking-tight">
+                  Aggiungi o aggiorna un prodotto da link
+                </span>
+                <span className="block text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                  Incolla l&apos;URL di un prodotto nuovo per importare foto, prezzo, varianti e PDF, oppure un link già in lista per aggiornarlo dal sito.
+                </span>
+              </span>
+            </label>
+          </div>
+
           <div className="flex flex-col sm:flex-row gap-2.5">
             <div className="relative flex-1 min-w-0">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <span
+                className={`w-7 h-7 rounded-lg flex items-center justify-center absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none transition-colors ${
+                  matchedExistingForInput
+                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300'
+                    : 'bg-sky-100/90 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300'
+                }`}
+              >
+                {matchedExistingForInput ? (
+                  <RefreshCw className="w-3.5 h-3.5" />
+                ) : (
+                  <Link2 className="w-3.5 h-3.5" />
+                )}
+              </span>
               <input
                 id="research-url-input"
                 type="text"
@@ -5424,9 +5734,13 @@ export function ResearchesView({
                 placeholder={
                   readOnly
                     ? 'Accedi con Google per incollare nuovi link prodotto...'
-                    : 'https://www.amazon.it/dp/... oppure link MediaWorld, Electrolux, IKEA...'
+                    : 'Incolla qui il link del prodotto (Amazon, Electrolux, MediaWorld, IKEA...)'
                 }
-                className="w-full pl-10 pr-9 py-2.5 text-sm text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500 dark:focus:border-sky-400 disabled:opacity-60"
+                className={`w-full pl-11 pr-10 py-3 sm:py-3.5 text-sm sm:text-[15px] font-medium text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-950 border-2 rounded-xl shadow-xs placeholder:font-normal placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-4 transition-all disabled:opacity-60 ${
+                  matchedExistingForInput
+                    ? 'border-amber-400 dark:border-amber-500/70 focus:border-amber-500 focus:ring-amber-500/15'
+                    : 'border-sky-200 dark:border-slate-700 focus:border-sky-500 dark:focus:border-sky-400 focus:ring-sky-500/15'
+                }`}
               />
               {linkInput && !readOnly && (
                 <button
@@ -5436,7 +5750,7 @@ export function ResearchesView({
                     setLinkError(null);
                   }}
                   aria-label="Svuota link"
-                  className="p-1 text-slate-400 hover:text-slate-800 dark:text-slate-500 dark:hover:text-slate-200 absolute right-2.5 top-1/2 -translate-y-1/2"
+                  className="p-1.5 text-slate-400 hover:text-slate-800 dark:text-slate-500 dark:hover:text-slate-200 absolute right-2.5 top-1/2 -translate-y-1/2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -5448,21 +5762,55 @@ export function ResearchesView({
                 <button
                   type="button"
                   disabled={inspecting || savingNew}
-                  onClick={() => void handleOpenDraftFromLink()}
-                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-xl transition-colors whitespace-nowrap disabled:opacity-50"
+                  onClick={() => {
+                    if (matchedExistingForInput) {
+                      const targetId = matchedExistingForInput.id;
+                      startEditItem(matchedExistingForInput);
+                      setLinkInput('');
+                      window.requestAnimationFrame(() => {
+                        document
+                          .getElementById(`research-card-${targetId}`)
+                          ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      });
+                      return;
+                    }
+                    void handleOpenDraftFromLink();
+                  }}
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3.5 py-3 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-xl transition-colors whitespace-nowrap disabled:opacity-50"
                 >
                   <Pencil className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
-                  <span>{linkInput.trim() ? 'Anteprima / Modifica' : 'Inserimento manuale'}</span>
+                  <span>
+                    {matchedExistingForInput
+                      ? 'Modifica scheda'
+                      : linkInput.trim()
+                        ? 'Anteprima / Modifica'
+                        : 'Inserimento manuale'}
+                  </span>
                 </button>
                 <button
                   type="submit"
                   disabled={!linkInput.trim() || inspecting || savingNew}
-                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-400 dark:hover:bg-sky-300 rounded-xl transition-colors whitespace-nowrap disabled:opacity-50"
+                  className={`flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-5 py-3 text-xs sm:text-sm font-semibold rounded-xl shadow-sm transition-colors whitespace-nowrap disabled:opacity-50 ${
+                    matchedExistingForInput
+                      ? 'text-white bg-amber-600 hover:bg-amber-700 dark:text-slate-950 dark:bg-amber-400 dark:hover:bg-amber-300 shadow-amber-600/20'
+                      : 'text-white bg-sky-600 hover:bg-sky-700 dark:text-slate-950 dark:bg-sky-400 dark:hover:bg-sky-300 shadow-sky-600/20'
+                  }`}
                 >
                   {inspecting || savingNew ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>{inspecting && !savingNew ? 'Estraggo dati...' : 'Salvo...'}</span>
+                      <span>
+                        {savingNew
+                          ? 'Salvo...'
+                          : matchedExistingForInput
+                            ? 'Aggiorno dal sito...'
+                            : 'Estraggo dati...'}
+                      </span>
+                    </>
+                  ) : matchedExistingForInput ? (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      <span>Aggiorna dal sito</span>
                     </>
                   ) : (
                     <>
@@ -5474,6 +5822,18 @@ export function ResearchesView({
               </div>
             )}
           </div>
+
+          {matchedExistingForInput && (
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-amber-50/90 dark:bg-amber-500/10 border border-amber-300/80 dark:border-amber-500/35 text-xs text-amber-900 dark:text-amber-200">
+              <span className="min-w-0 truncate">
+                <span className="font-semibold">Prodotto già in lista:</span>{' '}
+                <span>{getEffectiveItem(matchedExistingForInput).title}</span>
+              </span>
+              <span className="text-[11px] font-medium text-amber-800 dark:text-amber-300 shrink-0">
+                Premi Invio o &quot;Aggiorna dal sito&quot; per confrontare e aggiornare la scheda
+              </span>
+            </div>
+          )}
         </form>
 
         {/* Optional Draft Review Form */}
@@ -6743,6 +7103,139 @@ export function ResearchesView({
             const isSpecsChanged = isFieldQueued('specs');
             const isAttachChanged = isFieldQueued('attachments');
 
+            const storedRefreshDiff = !isLocalDraft ? siteRefreshDiffById[item.id] : undefined;
+            const queueParsedDiff = localQueueChange
+              ? parseResearchQueueDiffDetails(localQueueChange.details)
+              : undefined;
+
+            const currentTechByKey = new Map<string, string>();
+            const currentBulletKeySet = new Set<string>();
+            for (const entry of specEntries) {
+              if (!entry.isBullet && entry.label) {
+                currentTechByKey.set(
+                  normalizeSpecLabelKey(entry.label),
+                  entry.value.replace(/\s+/g, ' ').trim()
+                );
+              } else {
+                currentBulletKeySet.add(normalizeBulletCompareKey(entry.value));
+              }
+            }
+            const currentColorKeySet = new Set(allAvailableColors.map(normalizeColorOptionKey));
+            const currentSizeKeySet = new Set(allAvailableSizes.map(normalizeSizeOptionKey));
+            const unavailableColorKeySet = new Set(
+              (unavailableColorList || []).map(normalizeColorOptionKey)
+            );
+
+            const rawAddedTech = [
+              ...(storedRefreshDiff?.addedTechSpecs || []),
+              ...(queueParsedDiff?.addedTechSpecs || []),
+            ];
+            const addedTechMap = new Map<string, { label: string; value: string }>();
+            for (const t of rawAddedTech) {
+              const k = normalizeSpecLabelKey(t.label);
+              if (currentTechByKey.has(k) && !addedTechMap.has(k)) {
+                addedTechMap.set(k, t);
+              }
+            }
+
+            const rawModTech = [
+              ...(storedRefreshDiff?.modifiedTechSpecs || []),
+              ...(queueParsedDiff?.modifiedTechSpecs || []),
+            ];
+            const modifiedTechMap = new Map<
+              string,
+              { label: string; prevValue: string; nextValue: string }
+            >();
+            for (const t of rawModTech) {
+              const k = normalizeSpecLabelKey(t.label);
+              const curVal = currentTechByKey.get(k);
+              if (
+                curVal !== undefined &&
+                curVal !== t.prevValue.replace(/\s+/g, ' ').trim() &&
+                !modifiedTechMap.has(k)
+              ) {
+                modifiedTechMap.set(k, t);
+              }
+            }
+
+            const rawRemTech = [
+              ...(storedRefreshDiff?.removedTechSpecs || []),
+              ...(queueParsedDiff?.removedTechSpecs || []),
+            ];
+            const removedTechMap = new Map<string, { label: string; prevValue: string }>();
+            for (const t of rawRemTech) {
+              const k = normalizeSpecLabelKey(t.label);
+              if (!currentTechByKey.has(k) && !removedTechMap.has(k)) {
+                removedTechMap.set(k, t);
+              }
+            }
+
+            const addedBulletKeySet = new Set<string>();
+            for (const b of [
+              ...(storedRefreshDiff?.addedBullets || []),
+              ...(queueParsedDiff?.addedBullets || []),
+            ]) {
+              const bk = normalizeBulletCompareKey(b);
+              if (currentBulletKeySet.has(bk)) {
+                addedBulletKeySet.add(bk);
+              }
+            }
+
+            const removedBulletsMap = new Map<string, string>();
+            for (const b of [
+              ...(storedRefreshDiff?.removedBullets || []),
+              ...(queueParsedDiff?.removedBullets || []),
+            ]) {
+              const bk = normalizeBulletCompareKey(b);
+              if (!currentBulletKeySet.has(bk) && !removedBulletsMap.has(bk)) {
+                removedBulletsMap.set(bk, b);
+              }
+            }
+
+            const validAddedColors = Array.from(
+              new Set(
+                [
+                  ...(storedRefreshDiff?.addedColors || []),
+                  ...(queueParsedDiff?.addedColors || []),
+                ].filter((c) => currentColorKeySet.has(normalizeColorOptionKey(c)))
+              )
+            );
+            const validAddedSizes = Array.from(
+              new Set(
+                [
+                  ...(storedRefreshDiff?.addedSizes || []),
+                  ...(queueParsedDiff?.addedSizes || []),
+                ].filter((s) => currentSizeKeySet.has(normalizeSizeOptionKey(s)))
+              )
+            );
+            const validAddedSizeKeySet = new Set(validAddedSizes.map(normalizeSizeOptionKey));
+
+            const validRemovedColors = Array.from(
+              new Set(
+                [
+                  ...(storedRefreshDiff?.removedColors || []),
+                  ...(queueParsedDiff?.removedColors || []),
+                ].filter((c) => {
+                  const ck = normalizeColorOptionKey(c);
+                  return !currentColorKeySet.has(ck) || unavailableColorKeySet.has(ck);
+                })
+              )
+            );
+            const validRemovedSizes = Array.from(
+              new Set(
+                [
+                  ...(storedRefreshDiff?.removedSizes || []),
+                  ...(queueParsedDiff?.removedSizes || []),
+                ].filter((s) => {
+                  const sk = normalizeSizeOptionKey(s);
+                  return !currentSizeKeySet.has(sk) || unavailableSizeKeys.has(sk);
+                })
+              )
+            );
+
+            const validRemovedTechList = Array.from(removedTechMap.values());
+            const validRemovedBulletsList = Array.from(removedBulletsMap.values());
+
             if (isEditing && !readOnly) {
               const origBrand = (
                 normalizeBrandName(item.brand) ||
@@ -7521,6 +8014,7 @@ export function ResearchesView({
 
             return (
               <article
+                id={`research-card-${item.id}`}
                 key={item.id}
                 className={`bg-white dark:bg-slate-900 border rounded-xl overflow-hidden flex flex-col transition-colors shadow-xs dark:shadow-none ${
                   isLocalDraft || hasPendingEdits
@@ -7782,6 +8276,7 @@ export function ResearchesView({
                           colors={allAvailableColors}
                           activeColor={effectiveItem.color}
                           unavailableColors={unavailableColorList}
+                          addedColors={validAddedColors}
                           expanded={isColorsExpanded}
                           highlightActive={isColorChanged}
                           onToggleExpand={() =>
@@ -7826,10 +8321,13 @@ export function ResearchesView({
                               Boolean(effectiveItem.size) &&
                               normalizeSizeOptionKey(effectiveItem.size!) === sizeOptKey;
                             const isMissingOnSite = unavailableSizeKeys.has(sizeOptKey);
+                            const isAddedOnSite = validAddedSizeKeySet.has(sizeOptKey);
                             const optPrice = findSizePrice(effectiveItem.sizePrices, sizeOpt);
                             const missingHint = isMissingOnSite
                               ? " · non più disponibile sul sito all'ultimo aggiornamento (opzione mantenuta)"
-                              : '';
+                              : isAddedOnSite
+                                ? ' · nuova opzione trovata sul sito'
+                                : '';
                             const sizeTooltip =
                               typeof optPrice === 'number'
                                 ? `Seleziona taglia ${sizeOpt} · ${formatEuroIt(optPrice)}${missingHint}`
@@ -7847,13 +8345,20 @@ export function ResearchesView({
                                     ? activeSizeCls
                                     : isMissingOnSite
                                       ? 'bg-slate-50/70 border-slate-300 text-slate-500 dark:bg-slate-950/40 dark:border-slate-700 dark:text-slate-400 opacity-85'
-                                      : 'bg-slate-50 border-slate-200 text-slate-500 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-400'
+                                      : isAddedOnSite
+                                        ? 'bg-emerald-50 border-emerald-400 text-emerald-900 dark:bg-emerald-500/15 dark:border-emerald-400/70 dark:text-emerald-200 font-semibold'
+                                        : 'bg-slate-50 border-slate-200 text-slate-500 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-400'
                                 }`}
                               >
                                 <span>{sizeOpt}</span>
                                 {isMissingOnSite && (
                                   <span className="text-[9px] font-sans font-medium opacity-75">
                                     (storico)
+                                  </span>
+                                )}
+                                {isAddedOnSite && !isMissingOnSite && (
+                                  <span className="text-[9px] font-sans font-semibold text-emerald-700 dark:text-emerald-300">
+                                    +Nuova
                                   </span>
                                 )}
                               </span>
@@ -7868,13 +8373,20 @@ export function ResearchesView({
                                     ? activeSizeCls
                                     : isMissingOnSite
                                       ? 'bg-slate-50/70 border-slate-300 text-slate-600 hover:border-slate-400 dark:bg-slate-950/40 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-500 opacity-85'
-                                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-300 dark:hover:border-slate-600'
+                                      : isAddedOnSite
+                                        ? 'bg-emerald-50 border-emerald-400 text-emerald-900 hover:border-emerald-500 dark:bg-emerald-500/15 dark:border-emerald-400/70 dark:text-emerald-200 font-semibold'
+                                        : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300 dark:bg-slate-950/70 dark:border-slate-800 dark:text-slate-300 dark:hover:border-slate-600'
                                 }`}
                               >
                                 <span>{sizeOpt}</span>
                                 {isMissingOnSite && (
                                   <span className="text-[9px] font-sans font-medium opacity-75">
                                     (storico)
+                                  </span>
+                                )}
+                                {isAddedOnSite && !isMissingOnSite && (
+                                  <span className="text-[9px] font-sans font-semibold text-emerald-700 dark:text-emerald-300">
+                                    +Nuova
                                   </span>
                                 )}
                               </button>
@@ -7919,7 +8431,10 @@ export function ResearchesView({
                   )}
 
                   {/* 5. Specifications & Notes with Vedi tutti i dettagli / Mostra meno in both Grid & List */}
-                  {(filteredSpecEntries.length > 0 || hasUniqueNotes) && (
+                  {(filteredSpecEntries.length > 0 ||
+                    hasUniqueNotes ||
+                    validRemovedTechList.length > 0 ||
+                    validRemovedBulletsList.length > 0) && (
                     <div
                       className={`${isList ? 'space-y-1' : 'space-y-2'} ${
                         isSpecsChanged
@@ -7927,6 +8442,7 @@ export function ResearchesView({
                           : ''
                       }`}
                     >
+
                       {hasUniqueNotes && (
                         <p
                           className={`text-xs text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line break-words ${
@@ -7941,11 +8457,11 @@ export function ResearchesView({
                         </p>
                       )}
 
-                      {visibleTechSpecs.length > 0 && (
+                      {(visibleTechSpecs.length > 0 || validRemovedTechList.length > 0) && (
                         <ul
                           className={
                             isList
-                              ? `${isSpecsExpanded ? 'grid' : 'hidden sm:grid'} grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-0.5 text-[11px] text-slate-600 dark:text-slate-300 leading-snug`
+                              ? `${isSpecsExpanded || validRemovedTechList.length > 0 ? 'grid' : 'hidden sm:grid'} grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-0.5 text-[11px] text-slate-600 dark:text-slate-300 leading-snug`
                               : 'space-y-1 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed'
                           }
                         >
@@ -7953,8 +8469,20 @@ export function ResearchesView({
                             const isColorSpec =
                               entry.label?.toLowerCase() === 'colore' ||
                               entry.label?.toLowerCase() === 'color';
+                            const labelKey = entry.label ? normalizeSpecLabelKey(entry.label) : '';
+                            const isAddedSpec = labelKey ? addedTechMap.has(labelKey) : false;
+                            const modSpec = labelKey ? modifiedTechMap.get(labelKey) : undefined;
                             return (
-                              <li key={`tech-${idx}`} className="flex items-start gap-1.5 min-w-0">
+                              <li
+                                key={`tech-${idx}`}
+                                className={`flex items-start gap-1.5 min-w-0 ${
+                                  isAddedSpec
+                                    ? 'px-1.5 py-0.5 rounded bg-emerald-50/85 dark:bg-emerald-500/10 border border-emerald-200/80 dark:border-emerald-500/30'
+                                    : modSpec
+                                      ? 'px-1.5 py-0.5 rounded bg-amber-50/90 dark:bg-amber-500/10 border border-amber-200/80 dark:border-amber-500/30'
+                                      : ''
+                                }`}
+                              >
                                 <span className="text-sky-600 dark:text-sky-400 shrink-0">·</span>
                                 <span className="min-w-0 break-words">
                                   {isColorSpec ? (
@@ -7975,69 +8503,130 @@ export function ResearchesView({
                                       </span>
                                     </>
                                   )}
+                                  {isAddedSpec && (
+                                    <span className="ml-1.5 px-1 py-0 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200 text-[9px] font-semibold">
+                                      Nuova
+                                    </span>
+                                  )}
+                                  {modSpec && (
+                                    <span className="ml-1.5 inline-flex flex-wrap items-center gap-1">
+                                      <span className="px-1 py-0 rounded bg-amber-100 text-amber-800 dark:bg-amber-500/25 dark:text-amber-200 text-[9px] font-semibold">
+                                        Aggiornata
+                                      </span>
+                                      <span className="text-[10px] text-amber-800/90 dark:text-amber-300/90">
+                                        (prima: {modSpec.prevValue})
+                                      </span>
+                                    </span>
+                                  )}
                                 </span>
                               </li>
                             );
                           })}
+                          {validRemovedTechList.map((remSpec, idx) => (
+                            <li
+                              key={`tech-rem-${idx}`}
+                              className="flex items-start gap-1.5 min-w-0 px-1.5 py-0.5 rounded border border-dashed border-rose-300/90 dark:border-rose-500/40 bg-rose-50/70 dark:bg-rose-950/20"
+                            >
+                              <span className="px-1 py-0 rounded bg-rose-100 text-rose-800 dark:bg-rose-500/25 dark:text-rose-200 text-[9px] font-semibold shrink-0 mt-0.5">
+                                Rimossa
+                              </span>
+                              <span className="min-w-0 break-words line-through text-rose-800/80 dark:text-rose-200/80">
+                                <span>{remSpec.label}: </span>
+                                <span className="font-medium">{remSpec.prevValue}</span>
+                              </span>
+                            </li>
+                          ))}
                         </ul>
                       )}
 
-                      {visibleDescriptiveSpecs.length > 0 && (
-                        <ul
+                      {(visibleDescriptiveSpecs.length > 0 || validRemovedBulletsList.length > 0) && (
+                        <div
                           className={
-                            isList
-                              ? `${isSpecsExpanded ? 'block' : 'hidden sm:block'} ${
-                                  visibleTechSpecs.length > 0
-                                    ? 'pt-2 mt-1.5 border-t border-slate-200 dark:border-slate-800/70 '
-                                    : ''
-                                }columns-1 ${
-                                  visibleDescriptiveSpecs.length === 2 ||
-                                  visibleDescriptiveSpecs.length === 4
-                                    ? 'md:columns-2'
-                                    : visibleDescriptiveSpecs.length >= 3
-                                      ? 'md:columns-2 xl:columns-3'
-                                      : ''
-                                } gap-x-5 text-[11px] text-slate-600 dark:text-slate-300 leading-snug`
-                              : `${
-                                  visibleTechSpecs.length > 0
-                                    ? 'pt-1.5 mt-1.5 border-t border-slate-200 dark:border-slate-800/70 '
-                                    : ''
-                                }space-y-1 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed`
+                            visibleTechSpecs.length > 0 || validRemovedTechList.length > 0
+                              ? 'pt-1.5 mt-1.5 border-t border-slate-200 dark:border-slate-800/70 space-y-1.5'
+                              : 'space-y-1.5'
                           }
                         >
-                          {visibleDescriptiveSpecs.map((entry, idx) => {
-                            const dashIdx = entry.value.indexOf(' — ');
-                            const hasLeadHeadline = dashIdx > 2 && dashIdx <= 90;
-                            return (
-                              <li
-                                key={`desc-${idx}`}
-                                className={
-                                  isList
-                                    ? 'break-inside-avoid mb-1.5 last:mb-0'
-                                    : 'flex items-start gap-1.5 min-w-0'
-                                }
-                              >
-                                <div className="flex items-start gap-1.5 min-w-0">
-                                  <span className="text-sky-600 dark:text-sky-400 shrink-0">·</span>
-                                  <span className="min-w-0 break-words">
-                                    {hasLeadHeadline ? (
-                                      <>
-                                        <span className="text-slate-900 dark:text-slate-100 font-semibold">
-                                          {entry.value.slice(0, dashIdx)}
-                                        </span>
-                                        <span className="text-slate-600 dark:text-slate-300">
-                                          {entry.value.slice(dashIdx)}
-                                        </span>
-                                      </>
-                                    ) : (
-                                      <span>{entry.value}</span>
-                                    )}
+                          {visibleDescriptiveSpecs.length > 0 && (
+                            <ul
+                              className={
+                                isList
+                                  ? `${isSpecsExpanded ? 'block' : 'hidden sm:block'} columns-1 ${
+                                      visibleDescriptiveSpecs.length === 2 ||
+                                      visibleDescriptiveSpecs.length === 4
+                                        ? 'md:columns-2'
+                                        : visibleDescriptiveSpecs.length >= 3
+                                          ? 'md:columns-2 xl:columns-3'
+                                          : ''
+                                    } gap-x-5 text-[11px] text-slate-600 dark:text-slate-300 leading-snug`
+                                  : 'space-y-1 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed'
+                              }
+                            >
+                              {visibleDescriptiveSpecs.map((entry, idx) => {
+                                const dashIdx = entry.value.indexOf(' — ');
+                                const hasLeadHeadline = dashIdx > 2 && dashIdx <= 90;
+                                const isAddedBullet = addedBulletKeySet.has(
+                                  normalizeBulletCompareKey(entry.value)
+                                );
+                                return (
+                                  <li
+                                    key={`desc-${idx}`}
+                                    className={`${
+                                      isList
+                                        ? 'break-inside-avoid mb-1.5 last:mb-0'
+                                        : 'flex items-start gap-1.5 min-w-0'
+                                    } ${
+                                      isAddedBullet
+                                        ? 'px-1.5 py-0.5 rounded bg-emerald-50/85 dark:bg-emerald-500/10 border border-emerald-200/80 dark:border-emerald-500/30'
+                                        : ''
+                                    }`}
+                                  >
+                                    <div className="flex items-start gap-1.5 min-w-0">
+                                      <span className="text-sky-600 dark:text-sky-400 shrink-0">·</span>
+                                      <span className="min-w-0 break-words">
+                                        {hasLeadHeadline ? (
+                                          <>
+                                            <span className="text-slate-900 dark:text-slate-100 font-semibold">
+                                              {entry.value.slice(0, dashIdx)}
+                                            </span>
+                                            <span className="text-slate-600 dark:text-slate-300">
+                                              {entry.value.slice(dashIdx)}
+                                            </span>
+                                          </>
+                                        ) : (
+                                          <span>{entry.value}</span>
+                                        )}
+                                        {isAddedBullet && (
+                                          <span className="ml-1.5 px-1 py-0 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200 text-[9px] font-semibold">
+                                            Nuova
+                                          </span>
+                                        )}
+                                      </span>
+                                    </div>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          )}
+
+                          {validRemovedBulletsList.length > 0 && (
+                            <ul className="space-y-1 text-[11px] leading-snug">
+                              {validRemovedBulletsList.map((remBullet, idx) => (
+                                <li
+                                  key={`desc-rem-${idx}`}
+                                  className="flex items-start gap-1.5 min-w-0 px-2 py-1 rounded border border-dashed border-rose-300/90 dark:border-rose-500/40 bg-rose-50/75 dark:bg-rose-950/20"
+                                >
+                                  <span className="px-1.5 py-0 rounded bg-rose-100 text-rose-800 dark:bg-rose-500/25 dark:text-rose-200 text-[9px] font-semibold shrink-0 mt-0.5">
+                                    Rimossa dal sito
                                   </span>
-                                </div>
-                              </li>
-                            );
-                          })}
-                        </ul>
+                                  <span className="min-w-0 break-words line-through text-rose-800/85 dark:text-rose-200/85">
+                                    {remBullet}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
                       )}
 
                       {(hasExtraDetails || (isList && filteredSpecEntries.length > 0)) && (
@@ -8926,24 +9515,59 @@ export function ResearchesView({
                 )}
 
                 {!isLocalDraft && !hasPendingEdits && localQueueChange && (
-                  <div className="px-3 py-1.5 border-t border-amber-200 dark:border-amber-500/35 bg-amber-50/90 dark:bg-amber-950/30 flex flex-wrap items-center gap-1.5 text-[11px]">
-                    <span className="inline-flex items-center gap-1.5 font-semibold text-amber-800 dark:text-amber-200 shrink-0">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 dark:bg-amber-400 shrink-0" />
-                      {localQueueChange.isNew
-                        ? 'Nuovo in locale · Non ancora su Firestore'
-                        : 'Modificato in locale · Non ancora su Firestore'}
-                    </span>
-                    {localQueueChange.details.length > 0 && (
-                      <div className="flex flex-wrap items-center gap-1">
-                        {localQueueChange.details.map((detail, idx) => (
-                          <span
-                            key={idx}
-                            className="px-1.5 py-0.5 rounded bg-white/90 dark:bg-slate-900/80 border border-amber-300/80 dark:border-amber-500/40 text-[10px] font-medium text-amber-900 dark:text-amber-200"
-                          >
-                            {detail}
-                          </span>
-                        ))}
-                      </div>
+                  <div className="px-3 py-1.5 border-t border-amber-200 dark:border-amber-500/35 bg-amber-50/90 dark:bg-amber-950/30 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                    <div className="flex flex-wrap items-center gap-1.5 min-w-0 flex-1">
+                      <span className="inline-flex items-center gap-1.5 font-semibold text-amber-800 dark:text-amber-200 shrink-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 dark:bg-amber-400 shrink-0" />
+                        {localQueueChange.isNew
+                          ? 'Nuovo in locale · Non ancora su Firestore'
+                          : 'Modificato in locale · Non ancora su Firestore'}
+                      </span>
+                      {localQueueChange.details.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1">
+                          {localQueueChange.details.map((detail, idx) => (
+                            <span
+                              key={idx}
+                              className="px-1.5 py-0.5 rounded bg-white/90 dark:bg-slate-900/80 border border-amber-300/80 dark:border-amber-500/40 text-[10px] font-medium text-amber-900 dark:text-amber-200"
+                            >
+                              {detail}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {!readOnly && localQueueChange.opIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          discardSimulatedFirestoreOps(localQueueChange.opIds);
+                          dismissSiteRefreshDiff(item.id);
+                          handleDiscardPendingCardEdit(item.id);
+                          if (editingId === item.id) {
+                            setEditingId(null);
+                          }
+                          setFeedback(
+                            localQueueChange.isNew
+                              ? `Prodotto simulato "${item.title}" eliminato dalla coda locale.`
+                              : `Modifiche simulate per "${item.title}" eliminate dalla coda locale.`
+                          );
+                        }}
+                        title={
+                          localQueueChange.isNew
+                            ? 'Elimina questo prodotto simulato dalla coda locale'
+                            : 'Elimina le modifiche simulate di questo prodotto dalla coda locale'
+                        }
+                        className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold rounded-md border border-rose-300 bg-white/95 hover:bg-rose-50 text-rose-700 dark:border-rose-500/45 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 dark:text-rose-200 transition-colors shrink-0 ml-auto"
+                      >
+                        {localQueueChange.isNew ? (
+                          <Trash2 className="w-3 h-3 shrink-0" />
+                        ) : (
+                          <RotateCcw className="w-3 h-3 shrink-0" />
+                        )}
+                        <span>
+                          {localQueueChange.isNew ? 'Elimina simulato' : 'Elimina modifiche'}
+                        </span>
+                      </button>
                     )}
                   </div>
                 )}

@@ -46,7 +46,6 @@ const VALID_START_SECTIONS: readonly DefaultStartSection[] = [
   'domotica',
   'consumi',
   'bollette',
-  'articoli',
   'ricerche',
   'documenti',
   'macchina',

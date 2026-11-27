@@ -488,7 +488,7 @@ export function InfoGuideView() {
                   <strong className="text-slate-800 dark:text-slate-200">Verifica picchi e guasti:</strong> nell&apos;app e-distribuzione puoi anche controllare in tempo reale eventuali interruzioni di corrente programmate o guasti nella tua zona.
                 </li>
                 <li>
-                  <strong className="text-slate-800 dark:text-slate-200">Database Unico su Firebase Firestore:</strong> tutti i consumi, le bollette (Luce, Acqua, TARI), i PDF originali nel Vault, i documenti, le tariffe e gli articoli vivono direttamente sul tuo progetto Firebase (<span className="font-mono text-sky-700 dark:text-sky-300">gen-lang-client-0721850501</span>), senza file JSON intermedi né branch secondari su GitHub.
+                  <strong className="text-slate-800 dark:text-slate-200">Database Unico su Firebase Firestore:</strong> tutti i consumi, le bollette (Luce, Acqua, TARI), i PDF originali nel Vault, i documenti, le tariffe e i prodotti vivono direttamente sul tuo progetto Firebase (<span className="font-mono text-sky-700 dark:text-sky-300">gen-lang-client-0721850501</span>), senza file JSON intermedi né branch secondari su GitHub.
                 </li>
               </ul>
             </div>

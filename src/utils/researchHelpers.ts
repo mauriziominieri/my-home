@@ -803,3 +803,28 @@ export function computeMissingLiveOptions(
   });
 }
 
+const DEFAULT_EXTRA_FAMILY_PNC_OR_MODEL_RE =
+  /\b(?:LR7G86XW|914921766|KESC8310L|911536603|TR7G93W|916900033|EIL63443|949599155)\b/i;
+
+export function isDefaultExtraFamilyProduct(item: {
+  title?: string;
+  model?: string;
+  url?: string;
+  specs?: string;
+}): boolean {
+  const haystack = [item.title, item.model, item.url, item.specs].filter(Boolean).join(' ');
+  return DEFAULT_EXTRA_FAMILY_PNC_OR_MODEL_RE.test(haystack);
+}
+
+export function resolveEffectiveFamilyWarranty(item: {
+  familyWarranty?: boolean;
+  title?: string;
+  model?: string;
+  url?: string;
+  specs?: string;
+}): boolean {
+  if (typeof item.familyWarranty === 'boolean') return item.familyWarranty;
+  return isDefaultExtraFamilyProduct(item);
+}
+
+

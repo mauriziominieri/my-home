@@ -201,9 +201,9 @@ function resolveOpGroupMeta(
         }
         return {
           groupKey: `article:${refFromData.parentId}`,
-          groupSection: 'Articoli',
+          groupSection: 'Documenti',
           groupTitle:
-            context?.articleTitlesById?.[refFromData.parentId] || op.groupTitle || 'Articolo',
+            context?.articleTitlesById?.[refFromData.parentId] || op.groupTitle || 'Documento',
           isParentSubject: false,
         };
       }
@@ -223,11 +223,11 @@ function resolveOpGroupMeta(
         }
         return {
           groupKey: `article:${linkedMeta.parentId}`,
-          groupSection: 'Articoli',
+          groupSection: 'Documenti',
           groupTitle:
             linkedMeta.parentTitle ||
             context?.articleTitlesById?.[linkedMeta.parentId] ||
-            'Articolo',
+            'Documento',
           isParentSubject: false,
         };
       }
@@ -248,7 +248,7 @@ function resolveOpGroupMeta(
       if (!isSystemOrSpecial) {
         return {
           groupKey: `article:${docId}`,
-          groupSection: 'Articoli',
+          groupSection: 'Casa',
           groupTitle: context?.articleTitlesById?.[docId] || op.targetTitle,
           isParentSubject: true,
         };
@@ -264,7 +264,7 @@ function resolveOpGroupMeta(
     if (manualMatch?.[1] && context?.articleTitlesById?.[manualMatch[1]]) {
       return {
         groupKey: `article:${manualMatch[1]}`,
-        groupSection: 'Articoli',
+        groupSection: 'Casa',
         groupTitle: context.articleTitlesById[manualMatch[1]],
         isParentSubject: false,
       };
@@ -284,7 +284,7 @@ function resolveOpGroupMeta(
               linkedMeta.parentType === 'research'
                 ? `research:${linkedMeta.parentId}`
                 : `article:${linkedMeta.parentId}`,
-            groupSection: linkedMeta.parentType === 'research' ? 'Prodotti' : 'Articoli',
+            groupSection: linkedMeta.parentType === 'research' ? 'Prodotti' : 'Documenti',
             groupTitle: linkedMeta.parentTitle || linkedMeta.title || docId,
             isParentSubject: false,
           };

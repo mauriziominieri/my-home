@@ -11,11 +11,11 @@ import {
   FileText,
   FileUp,
   FolderOpen,
+  Layers,
   LayoutGrid,
   Link2,
   List,
   Loader2,
-  Package,
   Paperclip,
   Pencil,
   Plus,
@@ -37,7 +37,6 @@ import {
   ArticleAttachmentType,
   BillRecord,
   GsePaymentRecord,
-  HomeArticleRecord,
   HomeDocumentCategory,
   HomeDocumentRecord,
   ProductResearchRecord,
@@ -80,7 +79,6 @@ import {
 import {
   buildResearchDocumentRef,
   isCarLinkedDocument,
-  parseArticleDocumentRef,
   parseCarDocumentRef,
   parseResearchDocumentRef,
 } from '../utils/carGroceryStore';
@@ -93,7 +91,6 @@ interface DocumentsViewProps {
   waterBills: WaterBillRecord[];
   tariBills: TariBillRecord[];
   gsePayments?: GsePaymentRecord[];
-  articles?: HomeArticleRecord[];
   researches?: ProductResearchRecord[];
   carPlate?: string;
   readOnly?: boolean;
@@ -113,17 +110,24 @@ interface DocumentsViewProps {
   onDeleteGsePayment?: (id: string) => Promise<void>;
 }
 
-type OriginKey = 'documenti' | 'articoli' | 'ricerche' | 'macchina' | 'bollette';
+type OriginKey = 'documenti' | 'ricerche' | 'macchina' | 'bollette';
 type OriginFilter = 'all' | OriginKey;
 type ViewMode = 'list' | 'grid';
 
 const VIEW_MODE_STORAGE_KEY = 'myhome_documents_view_mode_v1';
+const GROUP_BY_PRODUCT_STORAGE_KEY = 'myhome_documents_group_by_product_v1';
 
 interface OriginMeta {
   key: Exclude<OriginKey, 'bollette'>;
   label: string;
   detail: string;
   badgeClass: string;
+  groupKey: string;
+  groupTitle: string;
+  groupSubtitle?: string;
+  attachmentTypeLabel?: string;
+  imageUrl?: string;
+  isApplianceOrArticle?: boolean;
 }
 
 interface UnifiedDocumentRow {
@@ -247,6 +251,17 @@ function readInitialViewMode(): ViewMode {
   return 'list';
 }
 
+function readInitialGroupByProduct(): boolean {
+  try {
+    const saved = localStorage.getItem(GROUP_BY_PRODUCT_STORAGE_KEY);
+    if (saved === 'false') return false;
+    if (saved === 'true') return true;
+  } catch {
+    // ignore storage errors
+  }
+  return true;
+}
+
 function isPdfFile(file: File): boolean {
   return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
 }
@@ -332,7 +347,6 @@ export function DocumentsView({
   waterBills,
   tariBills,
   gsePayments = [],
-  articles = [],
   researches = [],
   carPlate = 'EA218ES',
   readOnly = false,
@@ -353,6 +367,8 @@ export function DocumentsView({
 }: DocumentsViewProps) {
   const [activeTab, setActiveTab] = useState<'all' | 'bollette' | 'ricerche' | HomeDocumentCategory>('all');
   const [originFilter, setOriginFilter] = useState<OriginFilter>('all');
+  const [productFilter, setProductFilter] = useState<string>('all');
+  const [groupByProduct, setGroupByProduct] = useState<boolean>(readInitialGroupByProduct);
   const [viewMode, setViewMode] = useState<ViewMode>(readInitialViewMode);
   const [searchQuery, setSearchQuery] = useState('');
   const [vaultMeta, setVaultMeta] = useState<Record<string, VaultFileMeta>>({});
@@ -409,6 +425,18 @@ export function DocumentsView({
     } catch {
       // ignore storage errors
     }
+  }
+
+  function handleToggleGroupByProduct() {
+    setGroupByProduct((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(GROUP_BY_PRODUCT_STORAGE_KEY, String(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
   }
 
   async function reloadVaultMeta() {
@@ -1564,12 +1592,6 @@ export function DocumentsView({
     }
   }
 
-  const articlesMap = useMemo(() => {
-    const map = new Map<string, HomeArticleRecord>();
-    for (const art of articles) map.set(art.id, art);
-    return map;
-  }, [articles]);
-
   const researchesMap = useMemo(() => {
     const map = new Map<string, ProductResearchRecord>();
     for (const res of researches) map.set(res.id, res);
@@ -1577,29 +1599,24 @@ export function DocumentsView({
   }, [researches]);
 
   function resolveDocumentOrigin(doc: HomeDocumentRecord): OriginMeta {
-    const artRef = parseArticleDocumentRef(doc.referenceCode);
-    if (artRef) {
-      const art = articlesMap.get(artRef.articleId);
-      const typeLabel = formatAttachmentTypeLabel(artRef.docType);
-      return {
-        key: 'articoli',
-        label: 'Articoli',
-        detail: [art?.name || 'Articolo Casa', typeLabel].filter(Boolean).join(' · '),
-        badgeClass:
-          'bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30',
-      };
-    }
-
     const resRef = parseResearchDocumentRef(doc.referenceCode);
     if (resRef) {
       const res = researchesMap.get(resRef.researchId);
       const typeLabel = formatAttachmentTypeLabel(resRef.docType);
+      const groupTitle = res?.title || 'Prodotto';
+      const groupSubtitle = [res?.brand, res?.model, res?.room].filter(Boolean).join(' · ') || undefined;
       return {
         key: 'ricerche',
         label: 'Prodotti',
-        detail: [res?.title || 'Prodotto', typeLabel].filter(Boolean).join(' · '),
+        detail: [groupTitle, typeLabel].filter(Boolean).join(' · '),
         badgeClass:
           'bg-violet-50 dark:bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-500/30',
+        groupKey: `res:${resRef.researchId}`,
+        groupTitle,
+        groupSubtitle,
+        attachmentTypeLabel: typeLabel || undefined,
+        imageUrl: res?.imageUrl,
+        isApplianceOrArticle: true,
       };
     }
 
@@ -1612,6 +1629,9 @@ export function DocumentsView({
         detail: typeLabel || 'Documento veicolo',
         badgeClass:
           'bg-orange-50 dark:bg-orange-500/15 text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-500/30',
+        groupKey: `car:${carRef?.plate || carPlate}`,
+        groupTitle: `Macchina ${carRef?.plate || carPlate}`,
+        attachmentTypeLabel: typeLabel || 'Documento veicolo',
       };
     }
 
@@ -1621,58 +1641,58 @@ export function DocumentsView({
       detail: '',
       badgeClass:
         'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700',
+      groupKey: 'house',
+      groupTitle: 'Documenti Casa & Generali',
     };
   }
 
   const allUnifiedDocumentRows = useMemo<UnifiedDocumentRow[]>(() => {
-    const knownKeys = new Set<string>();
-    const rows: UnifiedDocumentRow[] = documents.map((doc) => {
-      if (doc.attachmentKey) knownKeys.add(doc.attachmentKey);
-      return {
-        rowKey: `doc_${doc.id}`,
-        doc,
-        origin: resolveDocumentOrigin(doc),
-        editable: true,
-        deletable: true,
-        fileKey: doc.attachmentKey,
-        sharePayload: buildDocumentSharePayload(doc),
-      };
-    });
+    return documents.map((doc) => ({
+      rowKey: `doc_${doc.id}`,
+      doc,
+      origin: resolveDocumentOrigin(doc),
+      editable: true,
+      deletable: true,
+      fileKey: doc.attachmentKey,
+      sharePayload: buildDocumentSharePayload(doc),
+    }));
+  }, [documents, researchesMap, carPlate]);
 
-    // Include legacy inline article manuals stored on article.manualFileKey if not already represented in documents
-    for (const art of articles) {
-      if (!art.manualFileKey || knownKeys.has(art.manualFileKey)) continue;
-      if (!readOnly && !vaultMeta[art.manualFileKey] && !art.manualFileName) continue;
-      const syntheticDoc: HomeDocumentRecord = {
-        id: `legacy_manual_${art.id}`,
-        title: `Manuale ${art.name}`.slice(0, 80),
-        category: 'Altro',
-        provider: art.brand || 'Manuale Articolo',
-        referenceCode: `ART:${art.id}:manuale`,
-        fileName: art.manualFileName || `${art.name}.pdf`,
-        attachmentKey: art.manualFileKey,
-        pinned: false,
-        notes: art.room ? `Stanza: ${art.room}` : undefined,
-      };
-      rows.push({
-        rowKey: `legacy_art_${art.id}`,
-        doc: syntheticDoc,
-        origin: {
-          key: 'articoli',
-          label: 'Articoli',
-          detail: `${art.name} · Manuale articolo`,
-          badgeClass:
-            'bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30',
-        },
-        editable: false,
-        deletable: false,
-        fileKey: art.manualFileKey,
-        sharePayload: buildDocumentSharePayload(syntheticDoc),
-      });
+  const linkedProductFilterOptions = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        groupKey: string;
+        title: string;
+        subtitle?: string;
+        imageUrl?: string;
+        kind: 'ricerche';
+        count: number;
+      }
+    >();
+    let otherCount = 0;
+    for (const row of allUnifiedDocumentRows) {
+      if (row.origin.isApplianceOrArticle) {
+        const existing = map.get(row.origin.groupKey);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          map.set(row.origin.groupKey, {
+            groupKey: row.origin.groupKey,
+            title: row.origin.groupTitle,
+            subtitle: row.origin.groupSubtitle,
+            imageUrl: row.origin.imageUrl,
+            kind: 'ricerche',
+            count: 1,
+          });
+        }
+      } else {
+        otherCount += 1;
+      }
     }
-
-    return rows;
-  }, [documents, articles, articlesMap, researchesMap, carPlate, vaultMeta, readOnly]);
+    const items = [...map.values()].sort((a, b) => a.title.localeCompare(b.title, 'it'));
+    return { items, otherCount };
+  }, [allUnifiedDocumentRows]);
 
   const filteredDocumentRows = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -1680,6 +1700,14 @@ export function DocumentsView({
       .filter((row) => {
         if (originFilter === 'bollette') return false;
         if (originFilter !== 'all' && row.origin.key !== originFilter) return false;
+        if (productFilter === 'unlinked' && row.origin.isApplianceOrArticle) return false;
+        if (
+          productFilter !== 'all' &&
+          productFilter !== 'unlinked' &&
+          row.origin.groupKey !== productFilter
+        ) {
+          return false;
+        }
         if (
           activeTab !== 'all' &&
           activeTab !== 'bollette' &&
@@ -1698,6 +1726,9 @@ export function DocumentsView({
           row.doc.fileName,
           row.origin.label,
           row.origin.detail,
+          row.origin.groupTitle,
+          row.origin.groupSubtitle,
+          row.origin.attachmentTypeLabel,
         ]
           .filter(Boolean)
           .some((f) => String(f).toLowerCase().includes(q));
@@ -1706,7 +1737,58 @@ export function DocumentsView({
         if (a.doc.pinned !== b.doc.pinned) return a.doc.pinned ? -1 : 1;
         return a.doc.title.localeCompare(b.doc.title, 'it');
       });
-  }, [allUnifiedDocumentRows, activeTab, originFilter, searchQuery]);
+  }, [allUnifiedDocumentRows, activeTab, originFilter, productFilter, searchQuery]);
+
+  const groupedDocumentSections = useMemo(() => {
+    const productBuckets = new Map<
+      string,
+      {
+        groupKey: string;
+        title: string;
+        subtitle?: string;
+        imageUrl?: string;
+        originKey: Exclude<OriginKey, 'bollette'>;
+        rows: UnifiedDocumentRow[];
+      }
+    >();
+    const otherRows: UnifiedDocumentRow[] = [];
+
+    for (const row of filteredDocumentRows) {
+      if (row.origin.isApplianceOrArticle) {
+        const existing = productBuckets.get(row.origin.groupKey);
+        if (existing) {
+          existing.rows.push(row);
+        } else {
+          productBuckets.set(row.origin.groupKey, {
+            groupKey: row.origin.groupKey,
+            title: row.origin.groupTitle,
+            subtitle: row.origin.groupSubtitle,
+            imageUrl: row.origin.imageUrl,
+            originKey: row.origin.key,
+            rows: [row],
+          });
+        }
+      } else {
+        otherRows.push(row);
+      }
+    }
+
+    const sections = [...productBuckets.values()].sort((a, b) =>
+      a.title.localeCompare(b.title, 'it')
+    );
+
+    if (otherRows.length > 0) {
+      sections.push({
+        groupKey: 'other_house',
+        title: 'Documenti Casa & Altri',
+        subtitle: 'Contratti, assicurazioni, documenti casa e veicolo non collegati a un prodotto',
+        originKey: 'documenti',
+        rows: otherRows,
+      });
+    }
+
+    return sections;
+  }, [filteredDocumentRows]);
 
   const shareableElectricityBills = useMemo(
     () =>
@@ -1833,7 +1915,6 @@ export function DocumentsView({
   const originCounts = useMemo(() => {
     const counts = {
       documenti: 0,
-      articoli: 0,
       ricerche: 0,
       macchina: 0,
     };
@@ -1867,7 +1948,7 @@ export function DocumentsView({
             Archivio Unificato Documenti &amp; Allegati
           </h1>
           <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-            Tutti i documenti e allegati di Casa, Bollette &amp; GSE, Prodotti, Articoli e Macchina in un unico archivio sincronizzato.
+            Tutti i documenti e allegati di Casa, Bollette &amp; GSE, Prodotti e Macchina in un unico archivio sincronizzato.
           </p>
         </div>
 
@@ -1996,7 +2077,7 @@ export function DocumentsView({
         pageName="Documenti"
         unlockedFeatures={[
           'Importazione automatica da file o da link: riconosce bollette, documenti casa e associa gli allegati ai prodotti esistenti',
-          'Vista unica di tutti gli allegati (Documenti Casa, Bollette & GSE, Prodotti, Articoli, Macchina)',
+          'Vista unica di tutti gli allegati (Documenti Casa, Bollette & GSE, Prodotti, Macchina)',
           'Apri in nuova scheda, Scarica, Condividi o Elimina ogni allegato da qualsiasi dispositivo',
         ]}
         gmailFeatures={[
@@ -2130,9 +2211,10 @@ export function DocumentsView({
               onClick={() => {
                 setActiveTab('all');
                 setOriginFilter('all');
+                setProductFilter('all');
               }}
               className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                activeTab === 'all' && originFilter === 'all'
+                activeTab === 'all' && originFilter === 'all' && productFilter === 'all'
                   ? 'bg-brand-600 text-white border-brand-600 dark:bg-brand-400 dark:text-slate-950 dark:border-brand-400'
                   : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
               }`}
@@ -2203,6 +2285,7 @@ export function DocumentsView({
                   setOriginFilter(next);
                   if (next === 'bollette') {
                     setActiveTab('bollette');
+                    setProductFilter('all');
                   } else if (next === 'ricerche') {
                     setActiveTab('ricerche');
                   } else if (activeTab === 'bollette' || activeTab === 'ricerche') {
@@ -2217,7 +2300,6 @@ export function DocumentsView({
                 <option value="documenti">Documenti Casa ({originCounts.documenti})</option>
                 <option value="ricerche">Prodotti ({originCounts.ricerche})</option>
                 <option value="bollette">Bollette &amp; GSE ({totalShareableBillsCount})</option>
-                <option value="articoli">Articoli ({originCounts.articoli})</option>
                 <option value="macchina">
                   Macchina {carPlate} ({originCounts.macchina})
                 </option>
@@ -2229,10 +2311,29 @@ export function DocumentsView({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Cerca documento, articolo, bolletta..."
+                placeholder="Cerca lavatrice, documento, bolletta..."
                 className="w-full pl-8 pr-3 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </div>
+
+            {linkedProductFilterOptions.items.length > 0 &&
+              activeTab !== 'bollette' &&
+              originFilter !== 'bollette' && (
+                <button
+                  type="button"
+                  onClick={handleToggleGroupByProduct}
+                  aria-pressed={groupByProduct}
+                  title="Raggruppa i documenti per prodotto / elettrodomestico"
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+                    groupByProduct
+                      ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-400 dark:text-slate-950 dark:border-sky-400'
+                      : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  Divisi per prodotto
+                </button>
+              )}
 
             <div className="inline-flex items-center p-0.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100/80 dark:bg-slate-950/70">
               <button
@@ -2262,6 +2363,70 @@ export function DocumentsView({
             </div>
           </div>
         </div>
+
+        {/* Quick Appliance / Product Filter Bar */}
+        {linkedProductFilterOptions.items.length > 0 &&
+          activeTab !== 'bollette' &&
+          originFilter !== 'bollette' && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mr-1">
+                Elettrodomestico / Prodotto:
+              </span>
+              <button
+                type="button"
+                onClick={() => setProductFilter('all')}
+                className={`px-2.5 py-1 text-xs font-medium rounded-md border transition-colors ${
+                  productFilter === 'all'
+                    ? 'bg-slate-900 text-white border-slate-900 dark:bg-slate-100 dark:text-slate-950 dark:border-slate-100'
+                    : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
+                }`}
+              >
+                Tutti ({allUnifiedDocumentRows.length})
+              </button>
+              {linkedProductFilterOptions.items.map((item) => {
+                const active = productFilter === item.groupKey;
+                return (
+                  <button
+                    key={item.groupKey}
+                    type="button"
+                    onClick={() => {
+                      setProductFilter(active ? 'all' : item.groupKey);
+                      if (originFilter !== 'all' && originFilter !== item.kind) {
+                        setOriginFilter('all');
+                      }
+                    }}
+                    title={item.subtitle ? `${item.title} — ${item.subtitle}` : item.title}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border transition-colors max-w-[260px] ${
+                      active
+                        ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-400 dark:text-slate-950 dark:border-sky-400'
+                        : 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-800 hover:border-sky-400 dark:hover:border-sky-500/50'
+                    }`}
+                  >
+                    <ShoppingBag className="w-3 h-3 shrink-0 opacity-80" />
+                    <span className="truncate">{item.title}</span>
+                    <span className="font-mono text-[11px] opacity-75 shrink-0">
+                      ({item.count})
+                    </span>
+                  </button>
+                );
+              })}
+              {linkedProductFilterOptions.otherCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setProductFilter(productFilter === 'unlinked' ? 'all' : 'unlinked')
+                  }
+                  className={`px-2.5 py-1 text-xs font-medium rounded-md border transition-colors ${
+                    productFilter === 'unlinked'
+                      ? 'bg-slate-800 text-white border-slate-800 dark:bg-slate-200 dark:text-slate-950 dark:border-slate-200'
+                      : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:text-slate-900 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Altri documenti ({linkedProductFilterOptions.otherCount})
+                </button>
+              )}
+            </div>
+          )}
       </div>
 
       {/* Add / Edit Modal */}
@@ -2889,396 +3054,484 @@ export function DocumentsView({
           );
         }
 
+        const renderDocsTable = (rows: UnifiedDocumentRow[], hideLinkedOriginColumn = false) => (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left">
+              <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Documento</th>
+                  <th className="px-3 py-2.5 font-medium">
+                    {hideLinkedOriginColumn ? 'Tipo / Origine' : 'Prodotto / Origine'}
+                  </th>
+                  <th className="px-3 py-2.5 font-medium">Categoria</th>
+                  <th className="px-3 py-2.5 font-medium">Ente / Fornitore</th>
+                  <th className="px-3 py-2.5 font-medium">Allegato / Link</th>
+                  <th className="px-4 py-2.5 font-medium text-right">Azioni</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200/80 dark:divide-slate-800/70">
+                {rows.map((row) => {
+                  const { doc, origin, fileKey, sharePayload, editable, deletable } = row;
+                  const catMeta = CATEGORY_STYLE[doc.category] || CATEGORY_STYLE.Altro;
+                  const CatIcon = catMeta.icon;
+                  const localFile = fileKey ? vaultMeta[fileKey] : undefined;
+                  const canOpen = Boolean((!readOnly && (localFile || doc.fileName)) || doc.cloudUrl);
+                  const openBusyKey = fileKey || doc.cloudUrl || doc.id;
+                  return (
+                    <tr key={row.rowKey} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                      <td className="px-4 py-2.5 max-w-xs">
+                        <div className="flex items-center gap-1.5 font-semibold text-slate-900 dark:text-slate-100">
+                          {doc.pinned && (
+                            <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500 shrink-0" />
+                          )}
+                          <span className="truncate">{doc.title}</span>
+                        </div>
+                        {origin.attachmentTypeLabel && (
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                            {origin.attachmentTypeLabel}
+                          </div>
+                        )}
+                        {(doc.issueDate || doc.expiryDate) && (
+                          <div className="text-[10px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
+                            {doc.issueDate ? `Data: ${doc.issueDate}` : ''}
+                            {doc.issueDate && doc.expiryDate ? ' · ' : ''}
+                            {doc.expiryDate ? `Scad: ${doc.expiryDate}` : ''}
+                          </div>
+                        )}
+                      </td>
+
+                      <td className="px-3 py-2.5 max-w-[240px]">
+                        {origin.isApplianceOrArticle && !hideLinkedOriginColumn ? (
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-1.5 font-semibold text-slate-900 dark:text-slate-100">
+                              <ShoppingBag className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
+                              <span className="truncate">{origin.groupTitle}</span>
+                            </div>
+                            <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                              {[origin.label, origin.attachmentTypeLabel, origin.groupSubtitle]
+                                .filter(Boolean)
+                                .join(' · ')}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-0.5">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold border rounded-md ${origin.badgeClass}`}
+                            >
+                              {origin.key === 'macchina' ? (
+                                <Car className="w-3 h-3" />
+                              ) : origin.key === 'ricerche' ? (
+                                <ShoppingBag className="w-3 h-3" />
+                              ) : (
+                                <FolderOpen className="w-3 h-3" />
+                              )}
+                              {origin.attachmentTypeLabel || origin.label}
+                            </span>
+                            {hideLinkedOriginColumn && origin.isApplianceOrArticle && (
+                              <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                                {origin.label}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </td>
+
+                      <td className="px-3 py-2.5">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold border rounded-md ${catMeta.badge}`}
+                        >
+                          <CatIcon className="w-3 h-3" />
+                          {doc.category}
+                        </span>
+                      </td>
+
+                      <td className="px-3 py-2.5 text-slate-700 dark:text-slate-300">
+                        <div className="font-medium">{doc.provider}</div>
+                        {doc.referenceCode &&
+                          !doc.referenceCode.startsWith('ART:') &&
+                          !doc.referenceCode.startsWith('RES:') &&
+                          !doc.referenceCode.startsWith('AUTO:') && (
+                            <div className="text-[10px] font-mono text-slate-500">
+                              {doc.referenceCode}
+                            </div>
+                          )}
+                      </td>
+
+                      <td className="px-3 py-2.5">
+                        {localFile ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 text-[10px] font-medium">
+                            <FileCheck2 className="w-3 h-3" />
+                            {localFile.origin === 'firestore' ? 'Cloud · ' : ''}
+                            {formatFileSize(localFile.size) || 'File'}
+                          </span>
+                        ) : doc.fileName ? (
+                          <span className="text-[10px] text-slate-600 dark:text-slate-400 truncate max-w-[160px] inline-block">
+                            {doc.fileName}
+                          </span>
+                        ) : doc.cloudUrl ? (
+                          <span className="text-[10px] text-sky-600 dark:text-sky-400">
+                            Link Cloud
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-400">Scheda digitale</span>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                        <div className="inline-flex items-center justify-end gap-1">
+                          {canOpen && (
+                            <button
+                              type="button"
+                              disabled={openingAttachmentKey === openBusyKey}
+                              onClick={() =>
+                                void handleOpenAttachment(
+                                  readOnly ? undefined : fileKey,
+                                  doc.cloudUrl,
+                                  doc.fileName || doc.title
+                                )
+                              }
+                              title="Apri in nuova scheda"
+                              aria-label="Apri in nuova scheda"
+                              className="p-1.5 text-sky-600 hover:bg-slate-200/70 dark:text-sky-300 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
+                            >
+                              {openingAttachmentKey === openBusyKey ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void downloadShareableItem(
+                                readOnly ? { ...sharePayload, attachmentKey: undefined } : sharePayload
+                              )
+                            }
+                            title="Scarica"
+                            aria-label="Scarica"
+                            className="p-1.5 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShareItem(sharePayload)}
+                            title="Condividi"
+                            aria-label="Condividi"
+                            className="p-1.5 text-sky-600 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-500/15 rounded-lg transition-colors"
+                          >
+                            <Share2 className="w-3.5 h-3.5" />
+                          </button>
+                          {!readOnly && editable && (
+                            <button
+                              type="button"
+                              onClick={() => openEditForm(doc)}
+                              title="Modifica documento"
+                              aria-label="Modifica documento"
+                              className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-300 rounded-lg"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {!readOnly && deletable && (
+                            <button
+                              type="button"
+                              onClick={() => setPendingDelete({ type: 'document', doc })}
+                              title="Elimina documento"
+                              aria-label="Elimina documento"
+                              className="p-1.5 text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+
+        const renderDocsGrid = (rows: UnifiedDocumentRow[], hideLinkedOriginBanner = false) => (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {rows.map((row) => {
+              const { doc, origin, fileKey, sharePayload, editable, deletable } = row;
+              const meta = CATEGORY_STYLE[doc.category] || CATEGORY_STYLE.Altro;
+              const Icon = meta.icon;
+              const localFile = fileKey ? vaultMeta[fileKey] : undefined;
+              const canOpen = Boolean((!readOnly && (localFile || doc.fileName)) || doc.cloudUrl);
+              const openBusyKey = fileKey || doc.cloudUrl || doc.id;
+
+              return (
+                <article
+                  key={row.rowKey}
+                  className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 rounded-xl p-4 flex flex-col justify-between gap-3 transition-colors shadow-xs dark:shadow-none"
+                >
+                  <div className="space-y-2.5">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                        <span className="inline-flex items-center gap-1 font-semibold text-slate-700 dark:text-slate-200">
+                          <Icon className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+                          {doc.category}
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span>{origin.attachmentTypeLabel || origin.label}</span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        {doc.pinned && (
+                          <span
+                            title="In evidenza"
+                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-semibold bg-amber-50 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30 rounded"
+                          >
+                            <Star className="w-2.5 h-2.5 fill-amber-500 text-amber-500 dark:fill-amber-300 dark:text-amber-300" />
+                            Top
+                          </span>
+                        )}
+                        {localFile ? (
+                          <span
+                            title={
+                              localFile.origin === 'firestore'
+                                ? 'Salvato su Firestore (scaricabile anche da altri dispositivi)'
+                                : 'Solo cache locale su questo browser'
+                            }
+                            className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 rounded"
+                          >
+                            <FileCheck2 className="w-3 h-3" />
+                            {localFile.origin === 'firestore' ? 'Cloud · ' : ''}
+                            {formatFileSize(localFile.size) || 'File'}
+                          </span>
+                        ) : doc.fileName ? (
+                          <span className="px-2 py-0.5 text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded">
+                            {doc.fileName}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    {origin.isApplianceOrArticle && !hideLinkedOriginBanner && (
+                      <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800">
+                        {origin.imageUrl ? (
+                          <img
+                            src={origin.imageUrl}
+                            alt=""
+                            className="w-6 h-6 rounded object-cover shrink-0 bg-white"
+                          />
+                        ) : (
+                          <ShoppingBag className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+                        )}
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
+                            {origin.groupTitle}
+                          </div>
+                          {origin.groupSubtitle && (
+                            <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                              {origin.groupSubtitle}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                        {doc.title}
+                      </h3>
+                      <div className="text-xs text-sky-700 dark:text-sky-300 font-medium mt-0.5">
+                        {doc.provider}
+                      </div>
+                    </div>
+
+                    {(doc.referenceCode || doc.issueDate || doc.expiryDate) && (
+                      <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 rounded-lg p-2.5 text-[11px] space-y-1">
+                        {doc.referenceCode &&
+                          !doc.referenceCode.startsWith('ART:') &&
+                          !doc.referenceCode.startsWith('RES:') &&
+                          !doc.referenceCode.startsWith('AUTO:') && (
+                            <div className="flex justify-between gap-2">
+                              <span className="text-slate-500">Codice / Pratica:</span>
+                              <span className="font-mono text-slate-800 dark:text-slate-200 truncate">
+                                {doc.referenceCode}
+                              </span>
+                            </div>
+                          )}
+                        {doc.issueDate && (
+                          <div className="flex justify-between gap-2">
+                            <span className="text-slate-500">Data:</span>
+                            <span className="font-mono text-slate-700 dark:text-slate-300">
+                              {doc.issueDate}
+                            </span>
+                          </div>
+                        )}
+                        {doc.expiryDate && (
+                          <div className="flex justify-between gap-2">
+                            <span className="text-slate-500">Scadenza:</span>
+                            <span className="font-mono text-amber-700 dark:text-amber-300">
+                              {doc.expiryDate}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {doc.notes && (
+                      <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                        {doc.notes}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="pt-2.5 border-t border-slate-200 dark:border-slate-800/80 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      {canOpen && (
+                        <button
+                          type="button"
+                          disabled={openingAttachmentKey === openBusyKey}
+                          onClick={() =>
+                            void handleOpenAttachment(
+                              readOnly ? undefined : fileKey,
+                              doc.cloudUrl,
+                              doc.fileName || doc.title
+                            )
+                          }
+                          title="Apri in nuova scheda"
+                          aria-label="Apri in nuova scheda"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 dark:bg-sky-500/15 dark:hover:bg-sky-500/25 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-500/35 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          {openingAttachmentKey === openBusyKey ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          )}
+                          Apri
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void downloadShareableItem(
+                            readOnly
+                              ? { ...sharePayload, attachmentKey: undefined }
+                              : sharePayload
+                          )
+                        }
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors"
+                      >
+                        <Download className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                        Scarica
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShareItem(sharePayload)}
+                        aria-label="Condividi documento"
+                        title="Condividi"
+                        className="p-1.5 bg-sky-50 dark:bg-sky-500/15 hover:bg-sky-100 dark:hover:bg-sky-500/25 border border-sky-200 dark:border-sky-500/35 text-sky-700 dark:text-sky-300 rounded-lg"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {!readOnly && (editable || deletable) && (
+                      <div className="flex items-center gap-1">
+                        {editable && (
+                          <button
+                            type="button"
+                            onClick={() => openEditForm(doc)}
+                            aria-label="Modifica documento"
+                            className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-300 rounded-lg"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {deletable && (
+                          <button
+                            type="button"
+                            onClick={() => setPendingDelete({ type: 'document', doc })}
+                            aria-label="Elimina documento"
+                            className="p-1.5 text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        );
+
+        const useGroupedLayout =
+          groupByProduct && linkedProductFilterOptions.items.length > 0 && productFilter === 'all';
+
         return (
           <div className="space-y-6">
-            {showDocsSection && filteredDocumentRows.length > 0 && (
-              viewMode === 'list' ? (
+            {showDocsSection &&
+              filteredDocumentRows.length > 0 &&
+              (useGroupedLayout ? (
+                <div className="space-y-5">
+                  {groupedDocumentSections.map((section) => (
+                    <section
+                      key={section.groupKey}
+                      className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none"
+                    >
+                      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/50 flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          {section.imageUrl ? (
+                            <img
+                              src={section.imageUrl}
+                              alt=""
+                              className="w-9 h-9 rounded-lg object-cover border border-slate-200 dark:border-slate-700 bg-white shrink-0"
+                            />
+                          ) : (
+                            <div className="w-9 h-9 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center shrink-0">
+                              {section.originKey === 'ricerche' ? (
+                                <ShoppingBag className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+                              ) : (
+                                <FolderOpen className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                              )}
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
+                              {section.title}{' '}
+                              <span className="font-mono text-xs font-normal text-slate-500 dark:text-slate-400">
+                                ({section.rows.length})
+                              </span>
+                            </h2>
+                            {section.subtitle && (
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                                {section.subtitle}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {viewMode === 'list' ? (
+                        renderDocsTable(section.rows, true)
+                      ) : (
+                        <div className="p-4">{renderDocsGrid(section.rows, true)}</div>
+                      )}
+                    </section>
+                  ))}
+                </div>
+              ) : viewMode === 'list' ? (
                 <section className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
                   <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
                     <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
                       Documenti &amp; Allegati dalle Pagine ({filteredDocumentRows.length})
                     </h2>
                   </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs text-left">
-                      <thead className="bg-slate-50 dark:bg-slate-950/60 text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                        <tr>
-                          <th className="px-4 py-2.5 font-medium">Documento</th>
-                          <th className="px-3 py-2.5 font-medium">Origine</th>
-                          <th className="px-3 py-2.5 font-medium">Categoria</th>
-                          <th className="px-3 py-2.5 font-medium">Ente / Fornitore</th>
-                          <th className="px-3 py-2.5 font-medium">Allegato / Link</th>
-                          <th className="px-4 py-2.5 font-medium text-right">Azioni</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200/80 dark:divide-slate-800/70">
-                        {filteredDocumentRows.map((row) => {
-                          const { doc, origin, fileKey, sharePayload, editable, deletable } = row;
-                          const catMeta = CATEGORY_STYLE[doc.category] || CATEGORY_STYLE.Altro;
-                          const CatIcon = catMeta.icon;
-                          const localFile = fileKey ? vaultMeta[fileKey] : undefined;
-                          const canOpen = Boolean(
-                            (!readOnly && (localFile || doc.fileName)) || doc.cloudUrl
-                          );
-                          const openBusyKey = fileKey || doc.cloudUrl || doc.id;
-                          return (
-                            <tr
-                              key={row.rowKey}
-                              className="hover:bg-slate-50 dark:hover:bg-slate-800/30"
-                            >
-                              <td className="px-4 py-2.5 max-w-xs">
-                                <div className="flex items-center gap-1.5 font-semibold text-slate-900 dark:text-slate-100">
-                                  {doc.pinned && (
-                                    <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500 shrink-0" />
-                                  )}
-                                  <span className="truncate">{doc.title}</span>
-                                </div>
-                                {origin.detail && (
-                                  <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                                    {origin.detail}
-                                  </div>
-                                )}
-                                {(doc.issueDate || doc.expiryDate) && (
-                                  <div className="text-[10px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
-                                    {doc.issueDate ? `Data: ${doc.issueDate}` : ''}
-                                    {doc.issueDate && doc.expiryDate ? ' · ' : ''}
-                                    {doc.expiryDate ? `Scad: ${doc.expiryDate}` : ''}
-                                  </div>
-                                )}
-                              </td>
-
-                              <td className="px-3 py-2.5">
-                                <span
-                                  className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold border rounded-md ${origin.badgeClass}`}
-                                >
-                                  {origin.key === 'macchina' ? (
-                                    <Car className="w-3 h-3" />
-                                  ) : origin.key === 'articoli' ? (
-                                    <Package className="w-3 h-3" />
-                                  ) : origin.key === 'ricerche' ? (
-                                    <ShoppingBag className="w-3 h-3" />
-                                  ) : (
-                                    <FolderOpen className="w-3 h-3" />
-                                  )}
-                                  {origin.label}
-                                </span>
-                              </td>
-
-                              <td className="px-3 py-2.5">
-                                <span
-                                  className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold border rounded-md ${catMeta.badge}`}
-                                >
-                                  <CatIcon className="w-3 h-3" />
-                                  {doc.category}
-                                </span>
-                              </td>
-
-                              <td className="px-3 py-2.5 text-slate-700 dark:text-slate-300">
-                                <div className="font-medium">{doc.provider}</div>
-                                {doc.referenceCode &&
-                                  !doc.referenceCode.startsWith('ART:') &&
-                                  !doc.referenceCode.startsWith('RES:') &&
-                                  !doc.referenceCode.startsWith('AUTO:') && (
-                                    <div className="text-[10px] font-mono text-slate-500">
-                                      {doc.referenceCode}
-                                    </div>
-                                  )}
-                              </td>
-
-                              <td className="px-3 py-2.5">
-                                {localFile ? (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 text-[10px] font-medium">
-                                    <FileCheck2 className="w-3 h-3" />
-                                    {localFile.origin === 'firestore' ? 'Cloud · ' : ''}
-                                    {formatFileSize(localFile.size) || 'File'}
-                                  </span>
-                                ) : doc.fileName ? (
-                                  <span className="text-[10px] text-slate-600 dark:text-slate-400 truncate max-w-[160px] inline-block">
-                                    {doc.fileName}
-                                  </span>
-                                ) : doc.cloudUrl ? (
-                                  <span className="text-[10px] text-sky-600 dark:text-sky-400">
-                                    Link Cloud
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] text-slate-400">Scheda digitale</span>
-                                )}
-                              </td>
-
-                              <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                                <div className="inline-flex items-center justify-end gap-1">
-                                  {canOpen && (
-                                    <button
-                                      type="button"
-                                      disabled={openingAttachmentKey === openBusyKey}
-                                      onClick={() =>
-                                        void handleOpenAttachment(
-                                          readOnly ? undefined : fileKey,
-                                          doc.cloudUrl,
-                                          doc.fileName || doc.title
-                                        )
-                                      }
-                                      title="Apri in nuova scheda"
-                                      aria-label="Apri in nuova scheda"
-                                      className="p-1.5 text-sky-600 hover:bg-slate-200/70 dark:text-sky-300 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
-                                    >
-                                      {openingAttachmentKey === openBusyKey ? (
-                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                      ) : (
-                                        <ExternalLink className="w-3.5 h-3.5" />
-                                      )}
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      void downloadShareableItem(
-                                        readOnly
-                                          ? { ...sharePayload, attachmentKey: undefined }
-                                          : sharePayload
-                                      )
-                                    }
-                                    title="Scarica"
-                                    aria-label="Scarica"
-                                    className="p-1.5 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors"
-                                  >
-                                    <Download className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setShareItem(sharePayload)}
-                                    title="Condividi"
-                                    aria-label="Condividi"
-                                    className="p-1.5 text-sky-600 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-500/15 rounded-lg transition-colors"
-                                  >
-                                    <Share2 className="w-3.5 h-3.5" />
-                                  </button>
-                                  {!readOnly && editable && (
-                                    <button
-                                      type="button"
-                                      onClick={() => openEditForm(doc)}
-                                      title="Modifica documento"
-                                      aria-label="Modifica documento"
-                                      className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-300 rounded-lg"
-                                    >
-                                      <Pencil className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
-                                  {!readOnly && deletable && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setPendingDelete({ type: 'document', doc })}
-                                      title="Elimina documento"
-                                      aria-label="Elimina documento"
-                                      className="p-1.5 text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                  {renderDocsTable(filteredDocumentRows, false)}
                 </section>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {filteredDocumentRows.map((row) => {
-                    const { doc, origin, fileKey, sharePayload, editable, deletable } = row;
-                    const meta = CATEGORY_STYLE[doc.category] || CATEGORY_STYLE.Altro;
-                    const Icon = meta.icon;
-                    const localFile = fileKey ? vaultMeta[fileKey] : undefined;
-                    const canOpen = Boolean(
-                      (!readOnly && (localFile || doc.fileName)) || doc.cloudUrl
-                    );
-                    const openBusyKey = fileKey || doc.cloudUrl || doc.id;
-
-                    return (
-                      <article
-                        key={row.rowKey}
-                        className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 rounded-xl p-4 flex flex-col justify-between gap-3 transition-colors shadow-xs dark:shadow-none"
-                      >
-                        <div className="space-y-2.5">
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span
-                                className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border rounded-md ${meta.badge}`}
-                              >
-                                <Icon className="w-3 h-3" />
-                                {doc.category}
-                              </span>
-                              <span
-                                className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold border rounded-md ${origin.badgeClass}`}
-                              >
-                                {origin.label}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center gap-1.5">
-                              {doc.pinned && (
-                                <span
-                                  title="In evidenza"
-                                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-semibold bg-amber-50 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30 rounded"
-                                >
-                                  <Star className="w-2.5 h-2.5 fill-amber-500 text-amber-500 dark:fill-amber-300 dark:text-amber-300" />
-                                  Top
-                                </span>
-                              )}
-                              {localFile ? (
-                                <span
-                                  title={
-                                    localFile.origin === 'firestore'
-                                      ? 'Salvato su Firestore (scaricabile anche da altri dispositivi)'
-                                      : 'Solo cache locale su questo browser'
-                                  }
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 rounded"
-                                >
-                                  <FileCheck2 className="w-3 h-3" />
-                                  {localFile.origin === 'firestore' ? 'Cloud · ' : ''}
-                                  {formatFileSize(localFile.size) || 'File'}
-                                </span>
-                              ) : doc.fileName ? (
-                                <span className="px-2 py-0.5 text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded">
-                                  {doc.fileName}
-                                </span>
-                              ) : null}
-                            </div>
-                          </div>
-
-                          <div>
-                            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                              {doc.title}
-                            </h3>
-                            <div className="text-xs text-sky-700 dark:text-sky-300 font-medium mt-0.5">
-                              {doc.provider}
-                            </div>
-                            {origin.detail && (
-                              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                                {origin.detail}
-                              </div>
-                            )}
-                          </div>
-
-                          {(doc.referenceCode || doc.issueDate || doc.expiryDate) && (
-                            <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 rounded-lg p-2.5 text-[11px] space-y-1">
-                              {doc.referenceCode && (
-                                <div className="flex justify-between gap-2">
-                                  <span className="text-slate-500">Codice / Pratica:</span>
-                                  <span className="font-mono text-slate-800 dark:text-slate-200 truncate">
-                                    {doc.referenceCode}
-                                  </span>
-                                </div>
-                              )}
-                              {doc.issueDate && (
-                                <div className="flex justify-between gap-2">
-                                  <span className="text-slate-500">Data:</span>
-                                  <span className="font-mono text-slate-700 dark:text-slate-300">
-                                    {doc.issueDate}
-                                  </span>
-                                </div>
-                              )}
-                              {doc.expiryDate && (
-                                <div className="flex justify-between gap-2">
-                                  <span className="text-slate-500">Scadenza:</span>
-                                  <span className="font-mono text-amber-700 dark:text-amber-300">
-                                    {doc.expiryDate}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {doc.notes && (
-                            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                              {doc.notes}
-                            </p>
-                          )}
-                        </div>
-
-                        <div className="pt-2.5 border-t border-slate-200 dark:border-slate-800/80 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5">
-                            {canOpen && (
-                              <button
-                                type="button"
-                                disabled={openingAttachmentKey === openBusyKey}
-                                onClick={() =>
-                                  void handleOpenAttachment(
-                                    readOnly ? undefined : fileKey,
-                                    doc.cloudUrl,
-                                    doc.fileName || doc.title
-                                  )
-                                }
-                                title="Apri in nuova scheda"
-                                aria-label="Apri in nuova scheda"
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 dark:bg-sky-500/15 dark:hover:bg-sky-500/25 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-500/35 rounded-lg transition-colors disabled:opacity-50"
-                              >
-                                {openingAttachmentKey === openBusyKey ? (
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                ) : (
-                                  <ExternalLink className="w-3.5 h-3.5" />
-                                )}
-                                Apri
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void downloadShareableItem(
-                                  readOnly
-                                    ? { ...sharePayload, attachmentKey: undefined }
-                                    : sharePayload
-                                )
-                              }
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors"
-                            >
-                              <Download className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
-                              Scarica
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setShareItem(sharePayload)}
-                              aria-label="Condividi documento"
-                              title="Condividi"
-                              className="p-1.5 bg-sky-50 dark:bg-sky-500/15 hover:bg-sky-100 dark:hover:bg-sky-500/25 border border-sky-200 dark:border-sky-500/35 text-sky-700 dark:text-sky-300 rounded-lg"
-                            >
-                              <Share2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-
-                          {!readOnly && (editable || deletable) && (
-                            <div className="flex items-center gap-1">
-                              {editable && (
-                                <button
-                                  type="button"
-                                  onClick={() => openEditForm(doc)}
-                                  aria-label="Modifica documento"
-                                  className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-300 rounded-lg"
-                                >
-                                  <Pencil className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                              {deletable && (
-                                <button
-                                  type="button"
-                                  onClick={() => setPendingDelete({ type: 'document', doc })}
-                                  aria-label="Elimina documento"
-                                  className="p-1.5 text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              )
-            )}
+                renderDocsGrid(filteredDocumentRows, false)
+              ))}
 
             {billsSection}
           </div>

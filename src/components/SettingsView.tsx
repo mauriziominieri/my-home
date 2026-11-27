@@ -202,7 +202,6 @@ interface SettingsViewProps {
     waterBills: number;
     tariBills: number;
     gsePayments: number;
-    articles: number;
     researches: number;
     documents: number;
     carLogs: number;
@@ -218,7 +217,6 @@ const START_SECTION_OPTIONS: { value: DefaultStartSection; label: string }[] = [
   { value: 'consumi', label: 'Consumi Annuali' },
   { value: 'domotica', label: 'Clima & Domotica' },
   { value: 'bollette', label: 'Bollette' },
-  { value: 'articoli', label: 'Articoli' },
   { value: 'ricerche', label: 'Prodotti' },
   { value: 'documenti', label: 'Documenti' },
   { value: 'macchina', label: 'Macchina' },
@@ -791,7 +789,7 @@ export function SettingsView({
             </div>
 
             <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              Attiva questa opzione quando vuoi fare test nel browser (aggiungere articoli, cambiare varianti su Prodotti, provare la domotica o caricare allegati) senza consumare la quota giornaliera gratuita di Firebase Firestore. Tutte le operazioni simulate restano salvate e visibili in locale e, dopo tua conferma, vengono inviate a Firestore in un unico blocco batch quando riattivi le scritture.
+              Attiva questa opzione quando vuoi fare test nel browser (aggiungere prodotti, cambiare varianti su Prodotti, provare la domotica o caricare allegati) senza consumare la quota giornaliera gratuita di Firebase Firestore. Tutte le operazioni simulate restano salvate e visibili in locale e, dopo tua conferma, vengono inviate a Firestore in un unico blocco batch quando riattivi le scritture.
             </p>
           </div>
 
@@ -2071,7 +2069,7 @@ export function SettingsView({
                 {totalRecords}
               </div>
               <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                {countsSummary.readings} giorni · {countsSummary.researches} prodotti · {countsSummary.articles} articoli
+                {countsSummary.readings} giorni · {countsSummary.researches} prodotti · {countsSummary.documents} documenti
               </div>
             </div>
           </div>

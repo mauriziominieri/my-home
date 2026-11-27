@@ -9,7 +9,6 @@ export type NavSection =
   | 'domotica'
   | 'consumi'
   | 'bollette'
-  | 'articoli'
   | 'ricerche'
   | 'documenti'
   | 'macchina'
@@ -444,6 +443,7 @@ export interface ProductResearchRecord {
   model?: string;
   specs?: string;
   notes?: string;
+  familyWarranty?: boolean;
   createdAtMs?: number;
 }
 

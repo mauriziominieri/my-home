@@ -741,7 +741,34 @@ function inferDetailFieldKey(detail: string): string | null {
   if (lower.startsWith('titolo')) return 'title';
   if (lower.startsWith('immagine')) return 'imageUrl';
   if (lower.startsWith('link url')) return 'url';
-  if (lower.startsWith('specifiche') || lower.startsWith('prezzi supermercati')) return 'specs';
+  if (
+    lower.startsWith('specifiche') ||
+    lower.startsWith('specifica ') ||
+    lower.startsWith('punto chiave') ||
+    lower.startsWith('punti chiave') ||
+    lower.startsWith('prezzi supermercati')
+  ) {
+    return 'specs';
+  }
+  if (
+    lower.startsWith('varianti colore') ||
+    lower.startsWith('colore aggiunt') ||
+    lower.startsWith('colori aggiunt') ||
+    lower.startsWith('colore rimoss') ||
+    lower.startsWith('colori rimoss')
+  ) {
+    return 'availableColors';
+  }
+  if (
+    lower.startsWith('varianti taglia') ||
+    lower.startsWith('taglia aggiunt') ||
+    lower.startsWith('taglie aggiunt') ||
+    lower.startsWith('taglia rimoss') ||
+    lower.startsWith('taglie rimoss')
+  ) {
+    return 'availableSizes';
+  }
+  if (lower.startsWith('foto per variante')) return 'colorImages';
   if (lower.startsWith('note')) return 'notes';
   if (lower.startsWith('nome:')) return 'name';
   if (lower.startsWith('data ')) return 'purchaseDate';
@@ -770,6 +797,8 @@ function inferDetailFieldKey(detail: string): string | null {
   if (lower.startsWith('pod:')) return 'podCode';
   return null;
 }
+
+const MULTI_VALUE_DETAIL_FIELDS = new Set(['specs', 'availableColors', 'availableSizes']);
 
 function mergeDetailsForCompactedOp(
   opsForPath: SimulatedFirestoreOp[],
@@ -807,9 +836,12 @@ function mergeDetailsForCompactedOp(
   }
 
   // Fallback: keep only details from earlier ops whose inferred field is still in netSet.
+  // For multi-value fields (specs, availableColors, availableSizes), keep all details from the latest op that touched that field.
   const collected: string[] = [];
   const byPrefix = new Map<string, string>();
+  const latestMultiFieldDetails = new Map<string, string[]>();
   for (const op of opsForPath) {
+    const multiInThisOp = new Map<string, string[]>();
     for (const detail of op.changedDetails || []) {
       const inferredKey = inferDetailFieldKey(detail);
       if (inferredKey && !netSet.has(inferredKey)) {
@@ -818,12 +850,26 @@ function mergeDetailsForCompactedOp(
           continue;
         }
       }
+      if (inferredKey && MULTI_VALUE_DETAIL_FIELDS.has(inferredKey)) {
+        const list = multiInThisOp.get(inferredKey) || [];
+        if (!list.includes(detail)) list.push(detail);
+        multiInThisOp.set(inferredKey, list);
+        continue;
+      }
       const colonIdx = detail.indexOf(':');
       const prefix = colonIdx > 0 ? detail.slice(0, colonIdx + 1).toLowerCase() : detail.toLowerCase();
       byPrefix.set(prefix, detail);
     }
+    multiInThisOp.forEach((vals, key) => {
+      latestMultiFieldDetails.set(key, vals);
+    });
   }
   byPrefix.forEach((val) => collected.push(val));
+  latestMultiFieldDetails.forEach((vals) => {
+    for (const v of vals) {
+      if (!collected.includes(v)) collected.push(v);
+    }
+  });
   return collected.length > 0 ? collected : undefined;
 }
 
@@ -1481,6 +1527,13 @@ function buildFoldedChangedDetails(
       } else if (key === 'specs') {
         handled.add(key);
         details.push('Specifiche aggiornate');
+      } else if (key === 'familyWarranty') {
+        handled.add(key);
+        details.push(
+          next === true
+            ? 'Assicurazione Extra Family attivata'
+            : 'Assicurazione Extra Family disattivata'
+        );
       } else if (key === 'availableColors' || key === 'availableSizes' || key === 'colorImages') {
         handled.add(key);
       }

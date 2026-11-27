@@ -10,8 +10,8 @@ on:
       - 'vite.config.ts'
       - 'tsconfig.json'
       - 'index.html'
+      - 'firebase-applet-config.json'
       - 'src/**'
-      - '.github/workflows/deploy-render.yml'
   workflow_dispatch:
 
 concurrency:

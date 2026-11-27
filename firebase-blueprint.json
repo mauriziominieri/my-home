@@ -265,6 +265,7 @@
         "model": { "type": "string", "maxLength": 80 },
         "specs": { "type": "string", "maxLength": 2000 },
         "notes": { "type": "string", "maxLength": 400 },
+        "familyWarranty": { "type": "boolean", "description": "Copertura Assicurazione Extra Family attiva" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["ownerId", "url", "title", "store", "category", "status", "createdAt"]
