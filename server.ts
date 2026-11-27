@@ -47,6 +47,15 @@ interface FirestoreCloudQuotaPayload {
     deleteOpsCount: number;
   };
   hasEnterpriseBillingMetrics?: boolean;
+  diagnostics?: {
+    totalSeriesCount: number;
+    failedQueriesCount: number;
+    firstError?: string;
+    detectedResourceTypes?: string[];
+    detectedDatabaseIds?: string[];
+    matchedMetrics?: string[];
+    availableFirestoreMetricsSample?: string[];
+  };
   reason?: string;
   errorCode?: string;
   message?: string;
@@ -179,7 +188,7 @@ function isAllowedAuthenticatedOrigin(originHeader: string | undefined, req: exp
     .toLowerCase();
   if (forwardedHost && parsed.host.toLowerCase() === forwardedHost) return true;
 
-  if (/^https:\/\/ais-(?:dev|pre)-[a-z0-9-]+\.[a-z0-9-]+\.run\.app$/i.test(origin)) {
+  if (/^https:\/\/ais-(?:dev|pre)-[a-z0-9-]+\.(?:[a-z0-9-]+\.)+run\.app$/i.test(origin)) {
     return true;
   }
   return false;
@@ -384,6 +393,31 @@ async function getMonitoringAccessToken(creds: MonitoringServiceAccountCreds): P
   return json.access_token;
 }
 
+interface MetricQueryResult {
+  sum: number;
+  seriesCount: number;
+  resourceTypes: string[];
+  databaseIds: string[];
+}
+
+function doesSeriesMatchDatabase(
+  labels: Record<string, string> | undefined,
+  targetDatabaseId: string
+): boolean {
+  if (!labels) return true;
+  const dbLabel =
+    typeof labels.database_id === 'string'
+      ? labels.database_id.trim()
+      : typeof labels.database === 'string'
+        ? labels.database.trim()
+        : '';
+  // Series from resource types without database_id (e.g. firestore_instance) are project-level
+  if (!dbLabel) return true;
+  if (dbLabel === targetDatabaseId) return true;
+  if (dbLabel.endsWith(`/${targetDatabaseId}`)) return true;
+  return false;
+}
+
 async function queryCloudMonitoringMetricSum(
   accessToken: string,
   projectId: string,
@@ -391,15 +425,16 @@ async function queryCloudMonitoringMetricSum(
   metricType: string,
   startIso: string,
   endIso: string
-): Promise<{ sum: number; seriesCount: number }> {
-  const runQuery = async (includeResourceTypeFilter: boolean): Promise<{ sum: number; seriesCount: number }> => {
-    const filter = includeResourceTypeFilter
-      ? `metric.type = "${metricType}" AND resource.type = "firestore.googleapis.com/Database" AND resource.labels.database_id = "${databaseId}"`
-      : `metric.type = "${metricType}" AND resource.labels.database_id = "${databaseId}"`;
-
+): Promise<MetricQueryResult> {
+  const executeQuery = async (
+    filter: string,
+    useAggregation: boolean
+  ): Promise<MetricQueryResult> => {
     let pageToken = '';
     let sum = 0;
-    let seriesCount = 0;
+    let matchedSeriesCount = 0;
+    const resourceTypes = new Set<string>();
+    const databaseIds = new Set<string>();
     let pages = 0;
 
     do {
@@ -408,11 +443,12 @@ async function queryCloudMonitoringMetricSum(
         filter,
         'interval.startTime': startIso,
         'interval.endTime': endIso,
-        'aggregation.alignmentPeriod': '3600s',
-        'aggregation.perSeriesAligner': 'ALIGN_SUM',
-        'aggregation.crossSeriesReducer': 'REDUCE_SUM',
         view: 'FULL',
       });
+      if (useAggregation) {
+        params.set('aggregation.alignmentPeriod', '3600s');
+        params.set('aggregation.perSeriesAligner', 'ALIGN_SUM');
+      }
       if (pageToken) params.set('pageToken', pageToken);
 
       const url = `https://monitoring.googleapis.com/v3/projects/${encodeURIComponent(
@@ -425,6 +461,7 @@ async function queryCloudMonitoringMetricSum(
       });
       const json = (await resp.json().catch(() => null)) as {
         timeSeries?: Array<{
+          resource?: { type?: string; labels?: Record<string, string> };
           points?: Array<{
             value?: { int64Value?: string; doubleValue?: number };
           }>;
@@ -443,8 +480,16 @@ async function queryCloudMonitoringMetricSum(
       }
 
       const series = Array.isArray(json?.timeSeries) ? json.timeSeries : [];
-      seriesCount += series.length;
       for (const s of series) {
+        if (s.resource?.type) resourceTypes.add(s.resource.type);
+        const dbLabel =
+          s.resource?.labels?.database_id || s.resource?.labels?.database || '';
+        if (dbLabel) databaseIds.add(dbLabel);
+
+        if (!doesSeriesMatchDatabase(s.resource?.labels, databaseId)) {
+          continue;
+        }
+        matchedSeriesCount += 1;
         for (const p of s.points || []) {
           const valObj = p.value;
           if (!valObj) continue;
@@ -460,21 +505,75 @@ async function queryCloudMonitoringMetricSum(
         }
       }
       pageToken = typeof json?.nextPageToken === 'string' ? json.nextPageToken : '';
-    } while (pageToken && pages < 5);
+    } while (pageToken && pages < 8);
 
-    return { sum: Math.round(sum), seriesCount };
+    return {
+      sum: Math.round(sum),
+      seriesCount: matchedSeriesCount,
+      resourceTypes: [...resourceTypes],
+      databaseIds: [...databaseIds],
+    };
   };
 
-  try {
-    const primary = await runQuery(true);
-    if (primary.seriesCount > 0) return primary;
-    return await runQuery(false);
-  } catch (err) {
-    const gcpErr = err as { httpStatus?: number; gcpStatus?: string };
-    if (gcpErr.httpStatus === 400 || gcpErr.gcpStatus === 'INVALID_ARGUMENT') {
-      return await runQuery(false);
+  const runWithAggregationFallback = async (filter: string): Promise<MetricQueryResult> => {
+    try {
+      return await executeQuery(filter, true);
+    } catch (err) {
+      const gcpErr = err as { httpStatus?: number; gcpStatus?: string };
+      if (gcpErr.httpStatus === 400 || gcpErr.gcpStatus === 'INVALID_ARGUMENT') {
+        return await executeQuery(filter, false);
+      }
+      throw err;
     }
-    throw err;
+  };
+
+  // 1) Try database-filtered query first (fast & targeted for Firestore Database resource)
+  if (databaseId) {
+    try {
+      const dbSpecific = await runWithAggregationFallback(
+        `metric.type = "${metricType}" AND resource.labels.database_id = "${databaseId}"`
+      );
+      if (dbSpecific.seriesCount > 0) return dbSpecific;
+    } catch (err) {
+      const gcpErr = err as { httpStatus?: number; gcpStatus?: string };
+      // If metric resource type does not support database_id label, fall back to metric-only filter
+      if (gcpErr.httpStatus !== 400 && gcpErr.gcpStatus !== 'INVALID_ARGUMENT') {
+        throw err;
+      }
+    }
+  }
+
+  // 2) Fallback: query project-wide by metric.type (handles firestore_instance or differing label shapes)
+  return await runWithAggregationFallback(`metric.type = "${metricType}"`);
+}
+
+async function listActiveFirestoreMetricDescriptors(
+  accessToken: string,
+  projectId: string
+): Promise<string[]> {
+  try {
+    const params = new URLSearchParams({
+      filter: 'metric.type = starts_with("firestore.googleapis.com/")',
+      pageSize: '60',
+    });
+    const url = `https://monitoring.googleapis.com/v3/projects/${encodeURIComponent(
+      projectId
+    )}/metricDescriptors?${params.toString()}`;
+    const resp = await fetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!resp.ok) return [];
+    const json = (await resp.json().catch(() => null)) as {
+      metricDescriptors?: Array<{ type?: string }>;
+    } | null;
+    return (json?.metricDescriptors || [])
+      .map((d) => (typeof d.type === 'string' ? d.type.replace('firestore.googleapis.com/', '') : ''))
+      .filter(Boolean)
+      .slice(0, 20);
+  } catch {
+    return [];
   }
 }
 
@@ -517,6 +616,9 @@ async function fetchFirestoreMonitoringQuota(forceRefresh = false): Promise<Fire
     { key: 'readOpsCount', metric: 'firestore.googleapis.com/document/read_ops_count' },
     { key: 'writeOpsCount', metric: 'firestore.googleapis.com/document/write_ops_count' },
     { key: 'deleteOpsCount', metric: 'firestore.googleapis.com/document/delete_ops_count' },
+    { key: 'readCount', metric: 'firestore.googleapis.com/document/read_count' },
+    { key: 'writeCount', metric: 'firestore.googleapis.com/document/write_count' },
+    { key: 'deleteCount', metric: 'firestore.googleapis.com/document/delete_count' },
   ] as const;
 
   const settled = await Promise.allSettled(
@@ -532,17 +634,39 @@ async function fetchFirestoreMonitoringQuota(forceRefresh = false): Promise<Fire
     )
   );
 
-  // Check if all queries failed with permission/API-disabled error
-  const permissionErr = settled.find(
-    (r): r is PromiseRejectedResult =>
-      r.status === 'rejected' &&
-      (/PERMISSION_DENIED|disabled|not been used in project|SERVICE_DISABLED|403/i.test(
-        String(r.reason?.message || r.reason || '')
-      ))
+  // Check if all queries failed
+  const rejectedItems = settled
+    .map((r, idx) => ({ r, spec: metricSpecs[idx] }))
+    .filter((item): item is { r: PromiseRejectedResult; spec: (typeof metricSpecs)[number] } =>
+      item.r.status === 'rejected'
+    );
+
+  const permissionErr = rejectedItems.find((item) =>
+    /PERMISSION_DENIED|disabled|not been used in project|SERVICE_DISABLED|403/i.test(
+      String(item.r.reason?.message || item.r.reason || '')
+    )
   );
-  if (permissionErr && settled.every((r) => r.status === 'rejected')) {
-    const rawMsg = String(permissionErr.reason?.message || '');
-    const isApiDisabled = /disabled|not been used in project|SERVICE_DISABLED/i.test(rawMsg);
+
+  if (rejectedItems.length === metricSpecs.length) {
+    if (permissionErr) {
+      const rawMsg = String(permissionErr.r.reason?.message || '');
+      const isApiDisabled = /disabled|not been used in project|SERVICE_DISABLED/i.test(rawMsg);
+      return {
+        ok: false,
+        configured: true,
+        source: 'cloud_monitoring',
+        projectId: targetProjectId,
+        databaseId,
+        usedDedicatedReadOnlyVar: creds.dedicatedReadOnly,
+        fetchedAt: now,
+        errorCode: isApiDisabled ? 'api_disabled' : 'permission_denied',
+        message: isApiDisabled
+          ? 'Abilita "Cloud Monitoring API" (monitoring.googleapis.com) sul progetto Google Cloud per leggere le metriche.'
+          : 'Il Service Account configurato non ha il permesso roles/monitoring.viewer (Visualizzatore monitoraggio) su Google Cloud.',
+      };
+    }
+
+    const firstMsg = String(rejectedItems[0]?.r.reason?.message || 'Errore query Cloud Monitoring');
     return {
       ok: false,
       configured: true,
@@ -551,26 +675,41 @@ async function fetchFirestoreMonitoringQuota(forceRefresh = false): Promise<Fire
       databaseId,
       usedDedicatedReadOnlyVar: creds.dedicatedReadOnly,
       fetchedAt: now,
-      errorCode: isApiDisabled ? 'api_disabled' : 'permission_denied',
-      message: isApiDisabled
-        ? 'Abilita "Cloud Monitoring API" (monitoring.googleapis.com) sul progetto Google Cloud per leggere le metriche.'
-        : 'Il Service Account configurato non ha il permesso roles/monitoring.viewer (Visualizzatore monitoraggio) su Google Cloud.',
+      errorCode: 'monitoring_query_failed',
+      message: `Errore interrogazione Cloud Monitoring: ${firstMsg.slice(0, 220)}`,
     };
   }
 
-  const values: Record<string, { sum: number; seriesCount: number }> = {};
+  const values: Record<string, MetricQueryResult> = {};
+  const allResourceTypes = new Set<string>();
+  const allDatabaseIds = new Set<string>();
+  const matchedMetrics: string[] = [];
+  let totalSeriesCount = 0;
+
   metricSpecs.forEach((spec, idx) => {
     const resItem = settled[idx];
-    values[spec.key] =
-      resItem.status === 'fulfilled' ? resItem.value : { sum: 0, seriesCount: 0 };
+    if (resItem.status === 'fulfilled') {
+      values[spec.key] = resItem.value;
+      totalSeriesCount += resItem.value.seriesCount;
+      resItem.value.resourceTypes.forEach((rt) => allResourceTypes.add(rt));
+      resItem.value.databaseIds.forEach((db) => allDatabaseIds.add(db));
+      if (resItem.value.seriesCount > 0) {
+        matchedMetrics.push(`${spec.key}=${resItem.value.sum}`);
+      }
+    } else {
+      values[spec.key] = { sum: 0, seriesCount: 0, resourceTypes: [], databaseIds: [] };
+    }
   });
 
   const billableReadUnits = values.billableReadUnits.sum;
   const billableRealtimeReadUnits = values.billableRealtimeReadUnits.sum;
   const billableWriteUnits = values.billableWriteUnits.sum;
-  const readOpsCount = values.readOpsCount.sum;
-  const writeOpsCount = values.writeOpsCount.sum;
-  const deleteOpsCount = values.deleteOpsCount.sum;
+  const readOpsCount =
+    values.readOpsCount.seriesCount > 0 ? values.readOpsCount.sum : values.readCount.sum;
+  const writeOpsCount =
+    values.writeOpsCount.seriesCount > 0 ? values.writeOpsCount.sum : values.writeCount.sum;
+  const deleteOpsCount =
+    values.deleteOpsCount.seriesCount > 0 ? values.deleteOpsCount.sum : values.deleteCount.sum;
 
   const hasEnterpriseBillingMetrics =
     values.billableReadUnits.seriesCount > 0 ||
@@ -583,6 +722,14 @@ async function fetchFirestoreMonitoringQuota(forceRefresh = false): Promise<Fire
       : readOpsCount;
   const totalWriteUnits =
     billableWriteUnits > 0 ? billableWriteUnits : writeOpsCount + deleteOpsCount;
+
+  let availableFirestoreMetricsSample: string[] | undefined;
+  if (totalSeriesCount === 0) {
+    availableFirestoreMetricsSample = await listActiveFirestoreMetricDescriptors(
+      accessToken,
+      targetProjectId
+    );
+  }
 
   const payload: FirestoreCloudQuotaPayload = {
     ok: true,
@@ -613,12 +760,31 @@ async function fetchFirestoreMonitoringQuota(forceRefresh = false): Promise<Fire
       deleteOpsCount,
     },
     hasEnterpriseBillingMetrics,
+    diagnostics: {
+      totalSeriesCount,
+      failedQueriesCount: rejectedItems.length,
+      ...(rejectedItems[0]
+        ? {
+            firstError: `${rejectedItems[0].spec.key}: ${String(
+              rejectedItems[0].r.reason?.message || 'error'
+            ).slice(0, 140)}`,
+          }
+        : {}),
+      ...(allResourceTypes.size > 0 ? { detectedResourceTypes: [...allResourceTypes] } : {}),
+      ...(allDatabaseIds.size > 0 ? { detectedDatabaseIds: [...allDatabaseIds] } : {}),
+      ...(matchedMetrics.length > 0 ? { matchedMetrics } : {}),
+      ...(availableFirestoreMetricsSample?.length
+        ? { availableFirestoreMetricsSample }
+        : {}),
+    },
   };
 
-  cachedMonitoringQuota = {
-    payload,
-    expiresAt: now + MONITORING_CACHE_TTL_MS,
-  };
+  if (totalSeriesCount > 0) {
+    cachedMonitoringQuota = {
+      payload,
+      expiresAt: now + MONITORING_CACHE_TTL_MS,
+    };
+  }
   return payload;
 }
 

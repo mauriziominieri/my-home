@@ -96,6 +96,15 @@ interface CloudFirestoreQuotaPayload {
     deleteOpsCount: number;
   };
   hasEnterpriseBillingMetrics?: boolean;
+  diagnostics?: {
+    totalSeriesCount: number;
+    failedQueriesCount: number;
+    firstError?: string;
+    detectedResourceTypes?: string[];
+    detectedDatabaseIds?: string[];
+    matchedMetrics?: string[];
+    availableFirestoreMetricsSample?: string[];
+  };
   reason?: string;
   errorCode?: string;
   message?: string;
@@ -262,7 +271,7 @@ export function SettingsView({
           Authorization: `Bearer ${idToken}`,
           Accept: 'application/json',
         },
-        signal: AbortSignal.timeout(25_000),
+        signal: AbortSignal.timeout(45_000),
       });
       const contentType = (resp.headers.get('content-type') || '').toLowerCase();
       if (!contentType.includes('application/json')) {
@@ -271,7 +280,7 @@ export function SettingsView({
         }
         throw new Error(
           resp.status === 404
-            ? 'Endpoint /api/firestore/quota non ancora presente sul server backend collegato (esegui il deploy di server.ts).'
+            ? 'Endpoint /api/firestore/quota non ancora presente sul server backend collegato (esegui il push/deploy di server.ts).'
             : `Risposta non valida dal backend (HTTP ${resp.status})`
         );
       }
@@ -281,11 +290,38 @@ export function SettingsView({
       }
       setCloudQuota(data);
     } catch (err) {
-      setCloudQuotaError(
-        err instanceof Error
-          ? err.message
-          : 'Impossibile contattare il backend Render per Cloud Monitoring.'
-      );
+      const rawMsg = err instanceof Error ? err.message : '';
+      const isNetworkOrCors =
+        err instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(rawMsg);
+      if (isNetworkOrCors) {
+        const healthUrl = resolveApiUrl('/api/health');
+        let healthOk = false;
+        if (healthUrl) {
+          try {
+            const healthResp = await fetch(healthUrl, {
+              method: 'GET',
+              mode: 'cors',
+              signal: AbortSignal.timeout(10_000),
+            });
+            healthOk = healthResp.ok;
+          } catch {
+            healthOk = false;
+          }
+        }
+        setCloudQuotaError(
+          healthOk
+            ? 'Il server Render è acceso, ma ha bloccato la richiesta /api/firestore/quota (CORS preflight su Authorization). Su Render sta ancora girando la versione precedente di server.ts: esegui il push su GitHub e attendi il termine del deploy su Render.'
+            : 'Il backend Render non risponde (potrebbe essere in risveglio da stand-by ~30-50s, oppure l’URL in Server Backend Ricerche non è raggiungibile). Attendi qualche secondo e riprova.'
+        );
+      } else if (err instanceof DOMException && err.name === 'TimeoutError') {
+        setCloudQuotaError(
+          'Timeout attesa backend Render (avvio lento o stand-by): attendi 20-30 secondi e clicca Riprova.'
+        );
+      } else {
+        setCloudQuotaError(
+          rawMsg || 'Impossibile contattare il backend Render per Cloud Monitoring.'
+        );
+      }
     } finally {
       setLoadingCloudQuota(false);
     }
@@ -1042,6 +1078,30 @@ export function SettingsView({
                       </span>
                     )}
                   </div>
+                  {cloudQuota.diagnostics &&
+                    (cloudQuota.diagnostics.totalSeriesCount === 0 ||
+                      cloudQuota.diagnostics.failedQueriesCount > 0) && (
+                      <div className="text-[11px] rounded-md border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/60 px-2.5 py-1.5 text-slate-600 dark:text-slate-300">
+                        {cloudQuota.diagnostics.totalSeriesCount === 0 ? (
+                          <span>
+                            Nessuna serie temporale Firestore trovata nella finestra PT odierna
+                            {cloudQuota.diagnostics.detectedDatabaseIds?.length
+                              ? ` (database rilevati: ${cloudQuota.diagnostics.detectedDatabaseIds.join(', ')})`
+                              : ''}
+                            {cloudQuota.diagnostics.firstError
+                              ? ` · Dettaglio: ${cloudQuota.diagnostics.firstError}`
+                              : ''}
+                            {cloudQuota.diagnostics.availableFirestoreMetricsSample?.length
+                              ? ` · Metriche attive: ${cloudQuota.diagnostics.availableFirestoreMetricsSample.slice(0, 6).join(', ')}`
+                              : ''}
+                          </span>
+                        ) : (
+                          <span>
+                            Alcune metriche secondarie non hanno risposto ({cloudQuota.diagnostics.firstError})
+                          </span>
+                        )}
+                      </div>
+                    )}
                 </div>
               );
             })()
