@@ -82,7 +82,7 @@ export function InfoGuideView() {
                 Istruzioni &amp; Passaggio di Consegne per un&apos;altra AI
               </div>
               <span className="px-2 py-0.5 text-[10px] font-mono font-semibold rounded bg-sky-100 dark:bg-sky-500/20 text-sky-800 dark:text-sky-200 border border-sky-200 dark:border-sky-500/30">
-                Aggiornate manualmente al 26/11/2026
+                Aggiornate manualmente al 27/11/2026
               </span>
             </div>
             <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed max-w-3xl">
@@ -494,82 +494,97 @@ export function InfoGuideView() {
             </div>
           </div>
 
-          {/* Flusso Automatico Email -> Firestore + Sincronizzazione manuale */}
+          {/* Flusso Automatico Email -> Firestore + Mappa Script Chi Fa Cosa */}
           <div className="bg-slate-50 dark:bg-slate-950/70 border border-sky-200 dark:border-sky-500/25 rounded-lg p-4 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="font-semibold text-xs text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
-                Flusso Completo: Email 24/7 ➔ Firestore Diretto (Dati + PDF)
+                Automazioni 24/7 (ogni 10 minuti): Chi fa cosa &amp; File di riferimento
               </div>
               <span className="px-2 py-0.5 text-[10px] font-mono bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-500/30 rounded">
-                Google Apps Script 24/7 · Solo INBOX · 0 crediti AI
+                Apps Script + GitHub Actions · Solo INBOX · 0 crediti AI
               </span>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-[11px]">
-              <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-lg p-3 space-y-1">
-                <div className="font-semibold text-sky-700 dark:text-sky-300">1. Controllo 24/7 (Google Apps Script)</div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 text-[11px]">
+              <div className="bg-white dark:bg-slate-900/80 border border-emerald-200 dark:border-emerald-500/30 rounded-lg p-3 space-y-1.5">
+                <div className="font-semibold text-emerald-700 dark:text-emerald-300">
+                  1. Bollette Luce, Acqua &amp; TARI (ogni 10 min · Restano in INBOX)
+                </div>
                 <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Il tuo{' '}
-                  <a
-                    href="https://script.google.com/u/1/home/projects/1Xv8LKzCxqu2n05njAGj9iMZLEETUD-uyUkaSkzThum6FmOStyTFiq5kh/edit"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-semibold text-sky-700 dark:text-sky-300 underline hover:opacity-80"
-                  >
-                    progetto Google Apps Script
-                  </a>{' '}
-                  gira sui server Google <strong className="text-slate-800 dark:text-slate-200">24/7 anche a PC e browser spenti</strong>, controllando la sola INBOX.
+                  Scansiona la INBOX per nuove bollette in <strong className="text-slate-800 dark:text-slate-200">qualsiasi formato</strong> (PDF, ZIP, CSV, XML FatturaPA, TXT, JSON, HTML o testo email), archivia il PDF su Firestore Vault e ti avvisa subito via <strong className="text-slate-800 dark:text-slate-200">Email + WhatsApp</strong>. <strong className="text-emerald-700 dark:text-emerald-300">Le email delle bollette NON vengono mai spostate nel Cestino.</strong>
                 </p>
+                <div className="font-mono text-[10px] text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded px-2 py-1 break-all">
+                  scripts/sync_gmail_consumi_e_bollette.py · src/utils/gmailSync.ts (manuale browser)
+                </div>
               </div>
-              <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-lg p-3 space-y-1">
-                <div className="font-semibold text-amber-700 dark:text-amber-300">2. Estrazione locale sicura</div>
+
+              <div className="bg-white dark:bg-slate-900/80 border border-sky-200 dark:border-sky-500/30 rounded-lg p-3 space-y-1.5">
+                <div className="font-semibold text-sky-700 dark:text-sky-300">
+                  2. Consumi Giornalieri kWh (ogni 10 min · Spostati nel Cestino)
+                </div>
                 <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Analizza <span className="text-slate-800 dark:text-slate-200">CSV/ZIP e-distribuzione</span> (via Apps Script/Browser) e i <span className="text-slate-800 dark:text-slate-200">PDF validi</span> delle bollette (tramite il bottone <em>Sincronizza Gmail</em> o upload manuale) a <strong className="text-slate-800 dark:text-slate-200">0 crediti AI</strong>.
+                  Legge le email <strong className="text-slate-800 dark:text-slate-200">&quot;Dettaglio curve di carico&quot;</strong> da <span className="font-mono">notifichemailped@enel.com</span> (CSV/ZIP F1/F2/F3), salva i giorni mancanti su Firestore e <strong className="text-rose-700 dark:text-rose-300">sposta nel Cestino</strong> solo queste email dopo il salvataggio.
                 </p>
+                <div className="font-mono text-[10px] text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded px-2 py-1 break-all">
+                  apps-script/sync_consumi_edistribuzione.js + scripts/sync_gmail_consumi_e_bollette.py
+                </div>
               </div>
-              <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-lg p-3 space-y-1">
-                <div className="font-semibold text-emerald-700 dark:text-emerald-300">3. Scrittura senza duplicati</div>
+
+              <div className="bg-white dark:bg-slate-900/80 border border-amber-200 dark:border-amber-500/30 rounded-lg p-3 space-y-1.5">
+                <div className="font-semibold text-amber-700 dark:text-amber-300">
+                  3. Confronto Fornitori Esterni vs Octopus 2027 (Email + WhatsApp)
+                </div>
                 <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Salva consumi e <strong className="text-slate-800 dark:text-slate-200">PDF originali</strong> nel <strong className="text-slate-800 dark:text-slate-200">Firestore Vault</strong> privato: i giorni e le bollette già presenti su Firestore vengono saltati senza duplicati.
+                  Controlla automaticamente i principali fornitori luce rispetto alla tua <strong className="text-slate-800 dark:text-slate-200">Octopus Fissa 24M 2027</strong> (0,1595 €/kWh + 6 €/mese). Se trova un risparmio &ge; 5 €/anno invia avviso <strong className="text-slate-800 dark:text-slate-200">Email + WhatsApp</strong>.
                 </p>
+                <div className="font-mono text-[10px] text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded px-2 py-1 break-all">
+                  scripts/check_octopus_tariff.py (.github/workflows/sync-gmail-consumi-bollette-tariffe.yml)
+                </div>
               </div>
-              <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-lg p-3 space-y-1">
-                <div className="font-semibold text-rose-700 dark:text-rose-300">4. Bollette sempre in INBOX</div>
+
+              <div className="bg-white dark:bg-slate-900/80 border border-indigo-200 dark:border-indigo-500/30 rounded-lg p-3 space-y-1.5">
+                <div className="font-semibold text-indigo-700 dark:text-indigo-300">
+                  4. Promemoria Casa &amp; Manutenzione Auto (1 volta al giorno)
+                </div>
                 <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Le email delle <strong className="text-slate-800 dark:text-slate-200">bollette (Luce, Acqua, TARI) non vengono mai spostate nel Cestino</strong>. Solo le email CSV/ZIP di e-distribuzione vengono cestinate dopo il salvataggio dei consumi.
+                  Legge live da Firestore scadenze casa e km/batteria Panda EA218ES inviando gli avvisi giornalieri via <strong className="text-slate-800 dark:text-slate-200">Email + WhatsApp</strong>.
                 </p>
+                <div className="font-mono text-[10px] text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded px-2 py-1 break-all">
+                  apps-script/notifiche_promemoria_giornaliere.js
+                </div>
               </div>
             </div>
 
             <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-lg p-3 space-y-2 text-[11px]">
               <div className="font-semibold text-slate-900 dark:text-slate-100">
-                Caselle e oggetti monitorati (solo INBOX):
+                Caselle e oggetti monitorati ogni 10 minuti (solo INBOX):
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 text-slate-700 dark:text-slate-300">
                 <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded px-2.5 py-2">
                   <div className="font-semibold text-sky-700 dark:text-sky-300">e-distribuzione / Enel</div>
                   <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">notifichemailped@enel.com</div>
-                  <div className="text-slate-600 dark:text-slate-400">Oggetto &quot;Dettaglio curve di carico&quot; · CSV/ZIP · Automatico 24/7 (Apps Script)</div>
+                  <div className="text-slate-600 dark:text-slate-400">Oggetto &quot;Dettaglio curve di carico&quot; · CSV/ZIP · Spostata nel Cestino dopo import</div>
                 </div>
                 <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded px-2.5 py-2">
                   <div className="font-semibold text-sky-700 dark:text-sky-300">Edison Energia (Luce)</div>
                   <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">fatturazione@edisonenergia.it</div>
-                  <div className="text-slate-600 dark:text-slate-400">Oggetto &quot;Fattura Edison Energia&quot; · PDF · Sync Gmail browser · Resta in INBOX</div>
+                  <div className="text-slate-600 dark:text-slate-400">PDF/CSV/XML/Email · Avviso Email+WA · Resta in INBOX</div>
                 </div>
                 <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded px-2.5 py-2">
                   <div className="font-semibold text-emerald-700 dark:text-emerald-300">Octopus Energy (Luce)</div>
                   <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">octopusenergy.it</div>
-                  <div className="text-slate-600 dark:text-slate-400">Oggetto &quot;Octopus Energy&quot; · Sync Gmail browser · Resta in INBOX</div>
+                  <div className="text-slate-600 dark:text-slate-400">PDF/CSV/XML/Email · Avviso Email+WA · Resta in INBOX</div>
                 </div>
                 <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded px-2.5 py-2">
                   <div className="font-semibold text-cyan-700 dark:text-cyan-300">AcegasApsAmga (Acqua)</div>
                   <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">acegasapsamga.it</div>
-                  <div className="text-slate-600 dark:text-slate-400">PDF con &quot;servizio idrico / acquedotto / fognatura / depurazione&quot; · Sync Gmail · Resta in INBOX</div>
+                  <div className="text-slate-600 dark:text-slate-400">&quot;servizio idrico / acquedotto&quot; (qualsiasi formato) · Avviso Email+WA · Resta in INBOX</div>
                 </div>
                 <div className="bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded px-2.5 py-2">
                   <div className="font-semibold text-amber-700 dark:text-amber-300">AcegasApsAmga (TARI)</div>
                   <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">tassa_rifiuti@acegasapsamga.it</div>
-                  <div className="text-slate-600 dark:text-slate-400">Oggetto/PDF &quot;Avviso di pagamento TARI&quot; / &quot;tassa rifiuti&quot; · Sync Gmail · Resta in INBOX</div>
+                  <div className="text-slate-600 dark:text-slate-400">&quot;Avviso di pagamento TARI&quot; / &quot;tassa rifiuti&quot; (qualsiasi formato) · Avviso Email+WA · Resta in INBOX</div>
                 </div>
               </div>
             </div>
@@ -577,24 +592,24 @@ export function InfoGuideView() {
             <div className="pt-2 border-t border-slate-200 dark:border-slate-800/80 grid grid-cols-1 md:grid-cols-2 gap-2.5 text-[11px]">
               <div className="bg-white dark:bg-slate-900/60 border border-emerald-200 dark:border-emerald-500/25 rounded-lg p-3 space-y-1">
                 <div className="font-semibold text-emerald-700 dark:text-emerald-300">
-                  1) Controllo 24/7 (Apps Script) + Bottone &quot;Sincronizza Gmail&quot;
+                  Link diretti Apps Script + GitHub Actions
                 </div>
                 <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-                  I consumi e-distribuzione vengono sincronizzati 24/7 dal{' '}
+                  Puoi aprire il{' '}
                   <a
                     href="https://script.google.com/u/1/home/projects/1Xv8LKzCxqu2n05njAGj9iMZLEETUD-uyUkaSkzThum6FmOStyTFiq5kh/edit"
                     target="_blank"
                     rel="noreferrer"
                     className="font-semibold text-emerald-700 dark:text-emerald-300 underline hover:opacity-80"
                   >
-                    progetto Apps Script
-                  </a>
-                  ; il tasto in alto <strong className="text-slate-800 dark:text-slate-200">&quot;Sincronizza Gmail&quot;</strong> resta disponibile per leggere subito anche le bollette PDF dalla INBOX.
+                    progetto Google Apps Script
+                  </a>{' '}
+                  oppure usare in qualsiasi momento il tasto <strong className="text-slate-800 dark:text-slate-200">&quot;Sincronizza Gmail&quot;</strong> nell&apos;app.
                 </p>
               </div>
               <div className="bg-white dark:bg-slate-900/60 border border-sky-200 dark:border-sky-500/25 rounded-lg p-3 space-y-1">
                 <div className="font-semibold text-sky-700 dark:text-sky-300">
-                  2) Migrazione 1-click dal vecchio DB
+                  Migrazione 1-click dal vecchio DB
                 </div>
                 <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
                   Accedendo con Google su questo progetto unificato, l&apos;eventuale banner iniziale in alto permette di copiare in un colpo solo tutto lo storico (consumi, bollette, PDF, spesa, auto e log clima) dal vecchio database al nuovo.

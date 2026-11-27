@@ -44,6 +44,7 @@ import {
 } from '../types/home';
 import {
   getSimulatedFirestoreOps,
+  restoreSimulatedDeletedAttachment,
   SimulatedFirestoreOp,
   subscribeFirestoreQuotaExceeded,
   subscribeSimulatedFirestoreOps,
@@ -121,7 +122,7 @@ interface ResearchesViewProps {
     provider: string,
     file: File,
     cloudUrl?: string,
-    options?: { isOlderVersion?: boolean }
+    options?: { isOlderVersion?: boolean; replacesDocId?: string }
   ) => Promise<void>;
   onAddResearchDocumentLink?: (
     researchId: string,
@@ -1303,12 +1304,36 @@ export function ResearchesView({
   const [pendingDraftFoundDocs, setPendingDraftFoundDocs] = useState<
     Record<string, InspectedDocumentLink[]>
   >({});
+  type OptionalResearchDocEntry = InspectedDocumentLink & {
+    restorableDocId?: string;
+    restorableAttachmentKey?: string;
+  };
   const [optionalOlderDocsById, setOptionalOlderDocsById] = useState<
-    Record<string, InspectedDocumentLink[]>
+    Record<string, OptionalResearchDocEntry[]>
   >({});
   const [attachingOptionalDocUrl, setAttachingOptionalDocUrl] = useState<string | null>(null);
   const [retryingDocId, setRetryingDocId] = useState<string | null>(null);
   const knownOlderDocUrlsRef = useRef<Set<string>>(new Set());
+  const pendingOptionalAttachedRef = useRef<
+    Map<string, Map<string, { entry: OptionalResearchDocEntry; seenInDocs: boolean }>>
+  >(new Map());
+
+  function trackQueuedCloudDoc(
+    researchId: string,
+    entry: OptionalResearchDocEntry
+  ) {
+    const normUrl = (entry.url || '').split('#')[0].toLowerCase();
+    if (!researchId || !normUrl) return;
+    let resMap = pendingOptionalAttachedRef.current.get(researchId);
+    if (!resMap) {
+      resMap = new Map();
+      pendingOptionalAttachedRef.current.set(researchId, resMap);
+    }
+    resMap.set(normUrl, {
+      entry: { ...entry, excluded: true },
+      seenInDocs: false,
+    });
+  }
 
   const allResearches = useMemo(
     () => [...pendingDraftItems, ...researches],
@@ -1567,7 +1592,8 @@ export function ResearchesView({
       opFields?: string[],
       opDetails?: string[],
       opKind?: string,
-      opData?: Record<string, unknown>
+      opData?: Record<string, unknown>,
+      opGroupKey?: string
     ) => {
       if (!path) return;
       const resMatch = path.match(/\/productResearches\/([^/]+)$/);
@@ -1595,6 +1621,9 @@ export function ResearchesView({
           const matchedDoc = researchDocuments.find((d) => d.id === docId);
           targetResId = parseResearchDocumentRef(matchedDoc?.referenceCode)?.researchId;
         }
+        if (!targetResId && opGroupKey?.startsWith('research:')) {
+          targetResId = opGroupKey.slice(9);
+        }
         if (targetResId) {
           const entry = ensureEntry(targetResId);
           entry.changedFields.add('attachments');
@@ -1608,15 +1637,122 @@ export function ResearchesView({
 
     for (const op of simulatedOps) {
       if (op.kind === 'set' || op.kind === 'delete') {
-        handleTargetPath(op.path, op.changedFields, op.changedDetails, op.kind, op.data);
+        handleTargetPath(
+          op.path,
+          op.changedFields,
+          op.changedDetails,
+          op.kind,
+          op.data,
+          op.groupKey
+        );
       } else if (op.kind === 'batch' && op.batchOps) {
         for (const sub of op.batchOps) {
-          handleTargetPath(sub.path, op.changedFields, op.changedDetails, sub.op, sub.data);
+          handleTargetPath(
+            sub.path,
+            op.changedFields,
+            op.changedDetails,
+            sub.op,
+            sub.data,
+            op.groupKey
+          );
         }
       }
     }
     return map;
   }, [simulatedOps, researchDocuments]);
+
+  useEffect(() => {
+    const activeResearchIds = new Set(researches.map((r) => r.id));
+
+    if (pendingOptionalAttachedRef.current.size > 0) {
+      const toRestore: Array<{ resId: string; entry: OptionalResearchDocEntry }> = [];
+      const removedParentIds: string[] = [];
+      for (const [resId, urlMap] of pendingOptionalAttachedRef.current.entries()) {
+        if (!activeResearchIds.has(resId)) {
+          const anySeen = Array.from(urlMap.values()).some((t) => t.seenInDocs);
+          if (anySeen) {
+            pendingOptionalAttachedRef.current.delete(resId);
+            removedParentIds.push(resId);
+          }
+          continue;
+        }
+        const currentDocs = getDocumentsForResearch(researchDocuments, resId);
+        const currentUrls = new Set(
+          currentDocs.map((d) => (d.cloudUrl || '').split('#')[0].toLowerCase()).filter(Boolean)
+        );
+        for (const [normUrl, tracker] of urlMap.entries()) {
+          if (currentUrls.has(normUrl)) {
+            tracker.seenInDocs = true;
+          } else if (tracker.seenInDocs) {
+            urlMap.delete(normUrl);
+            toRestore.push({ resId, entry: tracker.entry });
+          }
+        }
+        if (urlMap.size === 0) {
+          pendingOptionalAttachedRef.current.delete(resId);
+        }
+      }
+      if (toRestore.length > 0 || removedParentIds.length > 0) {
+        setOptionalOlderDocsById((prev) => {
+          const next = { ...prev };
+          for (const deadId of removedParentIds) {
+            delete next[deadId];
+          }
+          for (const { resId, entry } of toRestore) {
+            const normUrl = entry.url.split('#')[0].toLowerCase();
+            const curr = next[resId] || [];
+            if (!curr.some((d) => d.url.split('#')[0].toLowerCase() === normUrl)) {
+              next[resId] = [...curr, { ...entry, excluded: true }];
+            }
+          }
+          return next;
+        });
+      }
+      if (toRestore.length > 0) {
+        setOpenAttachmentsIds((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          for (const { resId } of toRestore) {
+            if (!next[resId]) {
+              next[resId] = true;
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      }
+    }
+
+    // Prune excluded entries for URLs that were restored back into researchDocuments (e.g. X on a delete op)
+    setOptionalOlderDocsById((prev) => {
+      const keys = Object.keys(prev);
+      if (keys.length === 0) return prev;
+      let changed = false;
+      const next: Record<string, OptionalResearchDocEntry[]> = {};
+      for (const resId of keys) {
+        const list = prev[resId] || [];
+        if (!activeResearchIds.has(resId)) {
+          changed = true;
+          continue;
+        }
+        const currentUrls = new Set(
+          getDocumentsForResearch(researchDocuments, resId)
+            .map((d) => (d.cloudUrl || '').split('#')[0].toLowerCase())
+            .filter(Boolean)
+        );
+        const filtered = list.filter(
+          (d) => !currentUrls.has((d.url || '').split('#')[0].toLowerCase())
+        );
+        if (filtered.length !== list.length) {
+          changed = true;
+        }
+        if (filtered.length > 0) {
+          next[resId] = filtered;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [researchDocuments, researches]);
 
   function hasQueuedOpForResearch(researchId: string): boolean {
     const ops = getSimulatedFirestoreOps();
@@ -2195,7 +2331,12 @@ export function ResearchesView({
             provider,
             file,
             docItem.url,
-            docItem.isOlderVersion ? { isOlderVersion: true } : undefined
+            docItem.isOlderVersion || existingLinkDoc
+              ? {
+                  ...(docItem.isOlderVersion ? { isOlderVersion: true } : {}),
+                  ...(existingLinkDoc ? { replacesDocId: existingLinkDoc.id } : {}),
+                }
+              : undefined
           );
           if (existingLinkDoc) {
             try {
@@ -2207,6 +2348,15 @@ export function ResearchesView({
           downloaded += 1;
           existingFileNameSet.add(fileName.toLowerCase());
           existingArchivedUrlSet.add(normUrl);
+          if (writesDisabled) {
+            trackQueuedCloudDoc(researchId, {
+              title: docItem.title.trim() || cleanDocTitle,
+              url: docItem.url,
+              kind: docItem.kind,
+              isOlderVersion: docItem.isOlderVersion,
+              excluded: true,
+            });
+          }
           return 'uploaded';
         } catch {
           return 'failed';
@@ -2313,6 +2463,15 @@ export function ResearchesView({
           );
           linked += 1;
           existingLinkOnlyByUrl.set(normUrl, {} as HomeDocumentRecord);
+          if (writesDisabled) {
+            trackQueuedCloudDoc(researchId, {
+              title: docItem.title.trim() || cleanDocTitle,
+              url: docItem.url,
+              kind: docItem.kind,
+              isOlderVersion: docItem.isOlderVersion,
+              excluded: true,
+            });
+          }
         } catch {
           // Ignore individual link-save errors
         }
@@ -4306,7 +4465,9 @@ export function ResearchesView({
         docType,
         docTitle,
         replaceLinkDoc?.provider || targetItem.brand || targetItem.store,
-        file
+        file,
+        replaceLinkDoc?.cloudUrl,
+        replaceLinkDoc ? { replacesDocId: replaceLinkDoc.id } : undefined
       );
       if (replaceLinkDoc) {
         try {
@@ -4411,6 +4572,14 @@ export function ResearchesView({
               validUrl
             );
             binaryUploaded = true;
+            if (writesDisabled) {
+              trackQueuedCloudDoc(item.id, {
+                title: docTitle,
+                url: validUrl,
+                kind: docType === 'garanzia_extra_family' ? 'certificato' : 'manuale',
+                excluded: true,
+              });
+            }
           }
         } else if (dlResp.ok && dlCt.includes('application/json')) {
           try {
@@ -4479,6 +4648,14 @@ export function ResearchesView({
           validUrl,
           linkNote
         );
+        if (writesDisabled) {
+          trackQueuedCloudDoc(item.id, {
+            title: docTitle,
+            url: validUrl,
+            kind: docType === 'garanzia_extra_family' ? 'certificato' : 'manuale',
+            excluded: true,
+          });
+        }
       }
 
       setCardAttachLinkUrl((prev) => ({ ...prev, [item.id]: '' }));
@@ -4672,7 +4849,15 @@ export function ResearchesView({
         type: fetchedBlob.type || fetchedCt.split(';')[0] || 'application/pdf',
       });
 
-      await onUploadResearchDocument(item.id, docType, cleanTitle, provider, fileObj, targetUrl);
+      await onUploadResearchDocument(
+        item.id,
+        docType,
+        cleanTitle,
+        provider,
+        fileObj,
+        targetUrl,
+        { replacesDocId: docItem.id }
+      );
       try {
         await onDeleteResearchDocument(docItem.id);
       } catch {
@@ -4718,6 +4903,7 @@ export function ResearchesView({
     }
     const normUrl = targetUrl.split('#')[0].toLowerCase();
     const wasOlder = knownOlderDocUrlsRef.current.has(normUrl);
+    pendingOptionalAttachedRef.current.get(item.id)?.delete(normUrl);
 
     setAttachingOptionalDocUrl(targetUrl);
     setLinkError(null);
@@ -4738,6 +4924,8 @@ export function ResearchesView({
               kind: savedDocType === 'garanzia_extra_family' ? 'certificato' : 'manuale',
               isOlderVersion: wasOlder || undefined,
               excluded: true,
+              restorableDocId: docItem.id,
+              restorableAttachmentKey: docItem.attachmentKey,
             },
           ],
         };
@@ -4753,9 +4941,13 @@ export function ResearchesView({
     if (readOnly) return;
     setDeletingDocId(docItem.id);
     setLinkError(null);
+    const deletedResearchId = parseResearchDocumentRef(docItem.referenceCode)?.researchId;
+    const normDeletedUrl = (docItem.cloudUrl || '').split('#')[0].toLowerCase();
+    if (deletedResearchId && normDeletedUrl) {
+      pendingOptionalAttachedRef.current.get(deletedResearchId)?.delete(normDeletedUrl);
+    }
     try {
       await onDeleteResearchDocument(docItem.id);
-      const deletedResearchId = parseResearchDocumentRef(docItem.referenceCode)?.researchId;
       if (deletedResearchId) {
         setPendingCardEdits((prev) => {
           const entry = prev[deletedResearchId];
@@ -8531,20 +8723,46 @@ export function ResearchesView({
                                       const isAttachingOlder = attachingOptionalDocUrl === olderDoc.url;
                                       const attachExcludedDoc = async () => {
                                         if (attachingOptionalDocUrl) return;
+                                        const normOlderUrl = olderDoc.url.split('#')[0].toLowerCase();
                                         if (isOlder) {
-                                          knownOlderDocUrlsRef.current.add(
-                                            olderDoc.url.split('#')[0].toLowerCase()
-                                          );
+                                          knownOlderDocUrlsRef.current.add(normOlderUrl);
                                         }
                                         setAttachingOptionalDocUrl(olderDoc.url);
                                         try {
-                                          await autoAttachInspectedDocuments(
+                                          if (writesDisabled) {
+                                            const restored = restoreSimulatedDeletedAttachment(
+                                              item.id,
+                                              olderDoc.url,
+                                              olderDoc.restorableDocId,
+                                              olderDoc.restorableAttachmentKey
+                                            );
+                                            if (restored) {
+                                              setOptionalOlderDocsById((prev) => {
+                                                const curr = prev[item.id] || [];
+                                                const next = curr.filter((d) => d.url !== olderDoc.url);
+                                                if (next.length === 0) {
+                                                  const copy = { ...prev };
+                                                  delete copy[item.id];
+                                                  return copy;
+                                                }
+                                                return { ...prev, [item.id]: next };
+                                              });
+                                              return;
+                                            }
+                                          }
+                                          const attachRes = await autoAttachInspectedDocuments(
                                             item.id,
                                             effectiveItem.title,
                                             effectiveItem.brand || effectiveItem.store,
                                             [{ ...olderDoc, excluded: false }],
                                             { upgradeLinkOnly: true }
                                           );
+                                          if (
+                                            writesDisabled &&
+                                            attachRes.downloaded + attachRes.linked > 0
+                                          ) {
+                                            trackQueuedCloudDoc(item.id, olderDoc);
+                                          }
                                           setOptionalOlderDocsById((prev) => {
                                             const curr = prev[item.id] || [];
                                             const next = curr.filter((d) => d.url !== olderDoc.url);

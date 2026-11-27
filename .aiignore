@@ -1,6 +1,6 @@
-# Generated runtime data files & binary assets (never read with AI to save credits)
-data/consumi.json
-data/bollette.json
+# Generated runtime data files, lockfiles & binary assets (never read with AI to save credits)
+public/assets/
+bun.lock
 dist/
 node_modules/
 

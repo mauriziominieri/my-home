@@ -237,6 +237,8 @@ export interface SimulatedFirestoreOp {
     keys: string[];
     ownerUid: string;
   };
+  sourceCloudUrl?: string;
+  replacesDocPath?: string;
 }
 
 export interface SimulatedFlushResult {
@@ -279,6 +281,8 @@ export interface SimulatedOpDetailHint {
   groupTitle?: string;
   changedFields?: string[];
   changedDetails?: string[];
+  sourceCloudUrl?: string;
+  replacesDocPath?: string;
 }
 
 const SIMULATED_OPS_STORAGE_KEY = 'myhome_simulated_firestore_ops_v1';
@@ -311,6 +315,8 @@ export function setSimulatedOpDetailHint(path: string, hint: SimulatedOpDetailHi
     groupTitle: hint.groupTitle?.trim() || prev.groupTitle,
     changedFields: cleanFields,
     changedDetails: cleanDetails,
+    sourceCloudUrl: hint.sourceCloudUrl?.trim() || prev.sourceCloudUrl,
+    replacesDocPath: hint.replacesDocPath?.trim() || prev.replacesDocPath,
   });
 }
 
@@ -468,6 +474,11 @@ function readInitialSimulatedOps(): SimulatedFirestoreOp[] {
 }
 
 let simulatedFirestoreOps: SimulatedFirestoreOp[] = readInitialSimulatedOps();
+const localOnlyVaultUploadKeys = new Set<string>(
+  simulatedFirestoreOps
+    .map((op) => (op.kind === 'vault_upload' ? op.vaultUpload?.fileKey : undefined))
+    .filter((k): k is string => Boolean(k))
+);
 const simulatedOpsListeners = new Set<(ops: SimulatedFirestoreOp[]) => void>();
 let simulatedFlushState: SimulatedFlushState = {
   flushing: false,
@@ -874,21 +885,54 @@ function finalizeUpdatedBatchOp(
   };
 }
 
+function extractVaultKeyFromSpecs(specs: unknown): string | null {
+  if (typeof specs !== 'string' || !specs) return null;
+  const m = specs.match(/(?:^|\|)KEY:([^|]+)/);
+  return m?.[1]?.trim() || null;
+}
+
 function isVaultKeyPresentInRegisteredBase(fileKey: string): boolean {
+  if (!fileKey) return false;
   for (const [colPath, docsMap] of registeredBaseCollections.entries()) {
-    if (
-      colPath.endsWith('/homeArticles') ||
-      colPath.endsWith('/electricityBills') ||
-      colPath.endsWith('/waterBills') ||
-      colPath.endsWith('/tariBills')
-    ) {
+    if (colPath.endsWith('/homeArticles')) {
       for (const docData of docsMap.values()) {
         if (
           docData.attachmentKey === fileKey ||
           docData.manualFileKey === fileKey ||
-          docData.pdfFileKey === fileKey
+          docData.pdfFileKey === fileKey ||
+          extractVaultKeyFromSpecs(docData.specs) === fileKey
         ) {
           return true;
+        }
+      }
+    } else if (colPath.endsWith('/gsePayments')) {
+      for (const docData of docsMap.values()) {
+        if (docData.attachmentFileKey === fileKey) {
+          return true;
+        }
+      }
+    } else if (colPath.endsWith('/electricityBills')) {
+      for (const docData of docsMap.values()) {
+        if (docData.pdfFileKey === fileKey) return true;
+        if (typeof docData.invoiceNumber === 'string' && docData.invoiceNumber) {
+          const slug = docData.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '');
+          if (`bill_elec_${slug || 'unknown'}` === fileKey) return true;
+        }
+      }
+    } else if (colPath.endsWith('/waterBills')) {
+      for (const docData of docsMap.values()) {
+        if (docData.pdfFileKey === fileKey) return true;
+        if (typeof docData.invoiceNumber === 'string' && docData.invoiceNumber) {
+          const slug = docData.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '');
+          if (`bill_water_${slug || 'unknown'}` === fileKey) return true;
+        }
+      }
+    } else if (colPath.endsWith('/tariBills')) {
+      for (const docData of docsMap.values()) {
+        if (docData.pdfFileKey === fileKey) return true;
+        if (typeof docData.noticeNumber === 'string' && docData.noticeNumber) {
+          const slug = docData.noticeNumber.replace(/[^a-zA-Z0-9_-]/g, '');
+          if (`bill_tari_${slug || 'unknown'}` === fileKey) return true;
         }
       }
     }
@@ -905,25 +949,29 @@ function compactVaultOps(ops: SimulatedFirestoreOp[]): SimulatedFirestoreOp[] {
     const op = ops[i];
     if (op.kind === 'vault_upload' && op.vaultUpload?.fileKey) {
       const k = op.vaultUpload.fileKey;
+      localOnlyVaultUploadKeys.add(k);
       const list = uploadedIndicesByKey.get(k) || [];
       list.push(i);
       uploadedIndicesByKey.set(k, list);
     } else if (op.kind === 'vault_delete' && op.vaultDelete?.keys?.length) {
       for (const k of op.vaultDelete.keys) {
         const prevUploads = uploadedIndicesByKey.get(k);
+        const createdLocallyOnly =
+          Boolean(prevUploads && prevUploads.length > 0) || localOnlyVaultUploadKeys.has(k);
         if (prevUploads && prevUploads.length > 0) {
           for (const idx of prevUploads) {
             uploadIndicesToDrop.add(idx);
           }
           uploadedIndicesByKey.delete(k);
-          if (!isVaultKeyPresentInRegisteredBase(k)) {
-            let dropSet = deletedKeysToDropByOpIndex.get(i);
-            if (!dropSet) {
-              dropSet = new Set<string>();
-              deletedKeysToDropByOpIndex.set(i, dropSet);
-            }
-            dropSet.add(k);
+        }
+        if (createdLocallyOnly && !isVaultKeyPresentInRegisteredBase(k)) {
+          let dropSet = deletedKeysToDropByOpIndex.get(i);
+          if (!dropSet) {
+            dropSet = new Set<string>();
+            deletedKeysToDropByOpIndex.set(i, dropSet);
           }
+          dropSet.add(k);
+          localOnlyVaultUploadKeys.delete(k);
         }
       }
     }
@@ -1270,12 +1318,447 @@ function compactSimulatedOpsList(
   return next;
 }
 
+const SIMULATED_META_KEYS = new Set(['ownerId', 'updatedAt', 'createdAt']);
+const RESEARCH_ROOM_LABELS_MAP: Record<string, string> = {
+  cucina: 'Cucina',
+  bagno1: 'Bagno 1',
+  bagno2: 'Bagno 2',
+  soggiorno: 'Soggiorno',
+  camera_matrimoniale: 'Camera matrimoniale',
+  studio_gaming: 'Studio / Camera gaming',
+  ripostiglio: 'Ripostiglio',
+  terrazza_ovest: 'Terrazza Ovest',
+  terrazza_est: 'Terrazza Est',
+};
+const RESEARCH_STATUS_LABELS_MAP: Record<string, string> = {
+  da_valutare: 'Da valutare',
+  acquistato: 'Acquistato',
+  scartato: 'Scartato',
+};
+
+function formatFoldedEuro(val: unknown): string {
+  return typeof val === 'number' && Number.isFinite(val)
+    ? `${val.toFixed(2).replace('.', ',')} €`
+    : '—';
+}
+
+function getOpNonMetaKeys(op: SimulatedFirestoreOp): string[] {
+  if (!op.data) return [];
+  return Object.keys(op.data).filter((k) => !SIMULATED_META_KEYS.has(k));
+}
+
+function isDocTypeMergeOp(cleanPath: string, op: SimulatedFirestoreOp): boolean {
+  if (!cleanPath.includes('/homeArticles/')) return false;
+  if (op.actionLabel === 'Tipo allegato aggiornato') return true;
+  const keys = getOpNonMetaKeys(op);
+  return (
+    keys.includes('serialNumber') &&
+    keys.every((k) => k === 'serialNumber' || k === 'category' || k === 'familyWarranty')
+  );
+}
+
+function canFoldMergeOps(
+  cleanPath: string,
+  earlierOp: SimulatedFirestoreOp,
+  incomingOp: SimulatedFirestoreOp
+): boolean {
+  if (isDocTypeMergeOp(cleanPath, earlierOp) && isDocTypeMergeOp(cleanPath, incomingOp)) {
+    return true;
+  }
+  const earlierSet = new Set(getOpNonMetaKeys(earlierOp));
+  const incomingKeys = getOpNonMetaKeys(incomingOp);
+  return incomingKeys.some((k) => earlierSet.has(k));
+}
+
+function applySingleOpToState(
+  state: Record<string, unknown> | undefined,
+  op: SimulatedFirestoreOp,
+  cleanTarget: string
+): Record<string, unknown> | undefined {
+  if (
+    (op.kind === 'set' || op.kind === 'delete') &&
+    op.path &&
+    op.path.replace(/^\/+|\/+$/g, '') === cleanTarget
+  ) {
+    if (op.kind === 'delete') return undefined;
+    const mergeOpt = Boolean(op.options?.merge);
+    return applySerializedPatchToRawDoc(mergeOpt ? state : undefined, op.data || {}, mergeOpt, op.createdAt);
+  }
+  if (op.kind === 'batch' && op.batchOps?.length) {
+    let nextState = state;
+    for (const sub of op.batchOps) {
+      if (sub.path.replace(/^\/+|\/+$/g, '') !== cleanTarget) continue;
+      if (sub.op === 'delete') {
+        nextState = undefined;
+      } else {
+        const mergeOpt = sub.op === 'update' || Boolean(sub.options?.merge);
+        nextState = applySerializedPatchToRawDoc(
+          mergeOpt ? nextState : undefined,
+          sub.data || {},
+          mergeOpt,
+          op.createdAt
+        );
+      }
+    }
+    return nextState;
+  }
+  return state;
+}
+
+function parseDocTypeFromSerialVal(val: unknown): string | null {
+  if (typeof val !== 'string') return null;
+  const parts = val.split('|');
+  if (parts.length === 3 && (parts[0] === 'RESDOC' || parts[0] === 'ARTDOC')) {
+    return parts[2] || null;
+  }
+  return null;
+}
+
+function buildFoldedChangedDetails(
+  cleanPath: string,
+  beforeState: Record<string, unknown>,
+  afterState: Record<string, unknown>,
+  netKeys: string[],
+  earlierOp: SimulatedFirestoreOp,
+  incomingOp: SimulatedFirestoreOp
+): string[] | undefined {
+  const details: string[] = [];
+  const handled = new Set<string>();
+  const isResearch = cleanPath.includes('/productResearches/');
+  const isDocArticle =
+    cleanPath.includes('/homeArticles/doc_') ||
+    cleanPath.includes('/homeArticles/resdoc_') ||
+    cleanPath.includes('/homeArticles/artdoc_') ||
+    String(afterState.room || beforeState.room || '') === '__documenti__';
+
+  if (isResearch) {
+    for (const key of netKeys) {
+      const prev = beforeState[key];
+      const next = afterState[key];
+      if (key === 'color') {
+        handled.add(key);
+        const p = typeof prev === 'string' && prev.trim() ? prev.trim() : 'Nessuno';
+        const n = typeof next === 'string' && next.trim() ? next.trim() : 'Rimosso';
+        details.push(`Colore: ${p} → ${n}`);
+      } else if (key === 'size') {
+        handled.add(key);
+        const p = typeof prev === 'string' && prev.trim() ? prev.trim() : 'Nessuna';
+        const n = typeof next === 'string' && next.trim() ? next.trim() : 'Rimossa';
+        details.push(`Taglia: ${p} → ${n}`);
+      } else if (key === 'room') {
+        handled.add(key);
+        const pKey = typeof prev === 'string' ? prev.trim() : '';
+        const nKey = typeof next === 'string' ? next.trim() : '';
+        const pLabel = pKey ? RESEARCH_ROOM_LABELS_MAP[pKey] || pKey : 'Senza stanza';
+        const nLabel = nKey ? RESEARCH_ROOM_LABELS_MAP[nKey] || nKey : 'Senza stanza';
+        details.push(`Stanza: ${pLabel} → ${nLabel}`);
+      } else if (key === 'status') {
+        handled.add(key);
+        const pKey = typeof prev === 'string' ? prev : 'da_valutare';
+        const nKey = typeof next === 'string' ? next : 'da_valutare';
+        details.push(
+          `Stato: ${RESEARCH_STATUS_LABELS_MAP[pKey] || pKey} → ${RESEARCH_STATUS_LABELS_MAP[nKey] || nKey}`
+        );
+      } else if (key === 'priceEur') {
+        handled.add(key);
+        details.push(`Prezzo: ${formatFoldedEuro(prev)} → ${formatFoldedEuro(next)}`);
+      } else if (key === 'paidPriceEur') {
+        handled.add(key);
+        details.push(`Pagato: ${formatFoldedEuro(prev)} → ${formatFoldedEuro(next)}`);
+      } else if (key === 'title') {
+        handled.add(key);
+        details.push('Titolo aggiornato');
+      } else if (key === 'imageUrl') {
+        handled.add(key);
+        details.push('Immagine aggiornata');
+      } else if (key === 'notes') {
+        handled.add(key);
+        const nStr = typeof next === 'string' ? next.trim() : '';
+        details.push(nStr ? `Note: "${nStr.length > 26 ? `${nStr.slice(0, 25)}…` : nStr}"` : 'Note rimosse');
+      } else if (key === 'specs') {
+        handled.add(key);
+        details.push('Specifiche aggiornate');
+      } else if (key === 'availableColors' || key === 'availableSizes' || key === 'colorImages') {
+        handled.add(key);
+      }
+    }
+  } else if (cleanPath.includes('/homeArticles/')) {
+    for (const key of netKeys) {
+      const prev = beforeState[key];
+      const next = afterState[key];
+      if (key === 'serialNumber') {
+        const pType = parseDocTypeFromSerialVal(prev);
+        const nType = parseDocTypeFromSerialVal(next);
+        if (pType && nType && pType !== nType) {
+          handled.add(key);
+          details.push(`Tipo allegato: ${pType} → ${nType}`);
+        }
+      } else if (key === 'category' && isDocArticle) {
+        handled.add(key);
+        details.push(`Categoria: ${String(prev || '—')} → ${String(next || '—')}`);
+      } else if (key === 'familyWarranty' && isDocArticle) {
+        handled.add(key);
+        details.push(next ? 'Documento in evidenza' : 'Rimosso da evidenza');
+      } else if (key === 'room') {
+        handled.add(key);
+        details.push(`Stanza: ${String(prev || '—')} → ${String(next || '—')}`);
+      }
+    }
+  }
+
+  const remainingKeys = netKeys.filter((k) => !handled.has(k));
+  if (remainingKeys.length > 0) {
+    const fallback = mergeDetailsForCompactedOp([earlierOp, incomingOp], remainingKeys, false) || [];
+    for (const item of fallback) {
+      if (!details.includes(item)) details.push(item);
+    }
+  }
+
+  return details.length > 0 ? details : undefined;
+}
+
+function isPathNetZeroAgainstBase(
+  ops: SimulatedFirestoreOp[],
+  cleanTarget: string
+): boolean {
+  const { known, baseDoc } = lookupRegisteredBaseDoc(cleanTarget);
+  if (!known || !baseDoc) return false;
+
+  let state: Record<string, unknown> | undefined = { ...baseDoc };
+  let wasDeleted = false;
+  let touched = false;
+
+  for (const op of ops) {
+    if (
+      (op.kind === 'set' || op.kind === 'delete') &&
+      op.path?.replace(/^\/+|\/+$/g, '') === cleanTarget
+    ) {
+      touched = true;
+      wasDeleted = op.kind === 'delete';
+      state = applySingleOpToState(state, op, cleanTarget);
+    } else if (
+      op.kind === 'batch' &&
+      op.batchOps?.some((s) => s.path.replace(/^\/+|\/+$/g, '') === cleanTarget)
+    ) {
+      touched = true;
+      for (const s of op.batchOps) {
+        if (s.path.replace(/^\/+|\/+$/g, '') === cleanTarget) {
+          wasDeleted = s.op === 'delete';
+        }
+      }
+      state = applySingleOpToState(state, op, cleanTarget);
+    }
+  }
+
+  if (!touched || wasDeleted) return false;
+  const finalState = state || {};
+  const allKeys = new Set([...Object.keys(baseDoc), ...Object.keys(finalState)]);
+  for (const k of allKeys) {
+    if (SIMULATED_META_KEYS.has(k)) continue;
+    const inBase = k in baseDoc && baseDoc[k] !== undefined;
+    const inFinal = k in finalState && finalState[k] !== undefined;
+    if (!inBase && !inFinal) continue;
+    if (inBase && inFinal && areFirestoreValuesEqual(baseDoc[k], finalState[k])) continue;
+    return false;
+  }
+  return true;
+}
+
+function stripPathFromOps(ops: SimulatedFirestoreOp[], cleanTarget: string): SimulatedFirestoreOp[] {
+  const next: SimulatedFirestoreOp[] = [];
+  for (const op of ops) {
+    if (
+      (op.kind === 'set' || op.kind === 'delete') &&
+      op.path?.replace(/^\/+|\/+$/g, '') === cleanTarget
+    ) {
+      continue;
+    }
+    if (
+      op.kind === 'batch' &&
+      op.batchOps?.some((sub) => sub.path.replace(/^\/+|\/+$/g, '') === cleanTarget)
+    ) {
+      const remaining = op.batchOps.filter(
+        (sub) => sub.path.replace(/^\/+|\/+$/g, '') !== cleanTarget
+      );
+      const finalized = finalizeUpdatedBatchOp(op, remaining);
+      if (finalized) next.push(finalized);
+      continue;
+    }
+    next.push(op);
+  }
+  return next;
+}
+
+function foldOrEnqueueSimulatedOp(
+  currentOps: SimulatedFirestoreOp[],
+  incoming: SimulatedFirestoreOp
+): SimulatedFirestoreOp[] {
+  if (incoming.kind === 'vault_delete') {
+    return compactVaultOps([...currentOps, incoming]);
+  }
+
+  const cleanPath = incoming.path?.replace(/^\/+|\/+$/g, '') || '';
+  if (!cleanPath) {
+    return [...currentOps, incoming];
+  }
+
+  if (incoming.kind === 'delete') {
+    const withDelete = [...currentOps, incoming];
+    const { known, baseDoc } = lookupRegisteredBaseDoc(cleanPath);
+    const hadLocalCreation = currentOps.some(
+      (o) =>
+        (o.kind === 'set' &&
+          !o.options?.merge &&
+          o.path?.replace(/^\/+|\/+$/g, '') === cleanPath) ||
+        (o.kind === 'batch' &&
+          Boolean(
+            o.batchOps?.some(
+              (sub) =>
+                sub.op === 'set' &&
+                !sub.options?.merge &&
+                sub.path.replace(/^\/+|\/+$/g, '') === cleanPath
+            )
+          ))
+    );
+    if ((known && !baseDoc) || (!known && hadLocalCreation)) {
+      const pairedKeys = new Set<string>();
+      for (const o of currentOps) {
+        if (o.kind === 'set' && o.path?.replace(/^\/+|\/+$/g, '') === cleanPath) {
+          for (const fk of collectPairedVaultFileKeys(o)) pairedKeys.add(fk);
+        } else if (o.kind === 'batch' && o.batchOps?.length) {
+          for (const sub of o.batchOps) {
+            if (sub.path.replace(/^\/+|\/+$/g, '') === cleanPath) {
+              for (const fk of collectVaultKeysFromRecord(sub.data)) pairedKeys.add(fk);
+            }
+          }
+        }
+      }
+      for (const fk of pairedKeys) {
+        localOnlyVaultUploadKeys.add(fk);
+      }
+      const stripped = stripPathFromOps(withDelete, cleanPath).filter(
+        (o) => !(o.kind === 'vault_upload' && o.vaultUpload?.fileKey && pairedKeys.has(o.vaultUpload.fileKey))
+      );
+      return compactVaultOps(stripped);
+    }
+    return withDelete;
+  }
+
+  if (incoming.kind === 'set' && incoming.options?.merge) {
+    const incomingNonMetaKeys = getOpNonMetaKeys(incoming);
+    if (incomingNonMetaKeys.length > 0) {
+      const laterTouchedKeys = new Set<string>();
+
+      for (let i = currentOps.length - 1; i >= 0; i -= 1) {
+        const cand = currentOps[i];
+        const candCleanPath = cand.path?.replace(/^\/+|\/+$/g, '') || '';
+        const touchesTarget =
+          ((cand.kind === 'set' || cand.kind === 'delete') && candCleanPath === cleanPath) ||
+          (cand.kind === 'batch' &&
+            Boolean(cand.batchOps?.some((s) => s.path.replace(/^\/+|\/+$/g, '') === cleanPath)));
+
+        if (!touchesTarget) continue;
+
+        if (cand.kind !== 'set' || !cand.options?.merge) {
+          // Reached creation / full-overwrite / delete boundary for this path
+          break;
+        }
+
+        const candKeys = getOpNonMetaKeys(cand);
+        const unionKeys = Array.from(new Set([...candKeys, ...incomingNonMetaKeys]));
+        const hasInterveningConflict = unionKeys.some((k) => laterTouchedKeys.has(k));
+
+        if (!hasInterveningConflict && canFoldMergeOps(cleanPath, cand, incoming)) {
+          const { baseDoc } = lookupRegisteredBaseDoc(cleanPath);
+          let beforeState: Record<string, unknown> | undefined = baseDoc ? { ...baseDoc } : undefined;
+          for (let j = 0; j < i; j += 1) {
+            beforeState = applySingleOpToState(beforeState, currentOps[j], cleanPath);
+          }
+
+          if (beforeState) {
+            let afterState = applySingleOpToState(beforeState, cand, cleanPath);
+            afterState = applySingleOpToState(afterState, incoming, cleanPath);
+            const safeAfter = afterState || {};
+            const netKeys: string[] = [];
+
+            for (const k of unionKeys) {
+              const inBefore = k in beforeState && beforeState[k] !== undefined;
+              const inAfter = k in safeAfter && safeAfter[k] !== undefined;
+              if (!inBefore && !inAfter) continue;
+              if (inBefore && inAfter && areFirestoreValuesEqual(beforeState[k], safeAfter[k])) {
+                continue;
+              }
+              netKeys.push(k);
+            }
+
+            if (netKeys.length === 0) {
+              const withoutPair = currentOps.filter((_, idx) => idx !== i);
+              return isPathNetZeroAgainstBase(withoutPair, cleanPath)
+                ? stripPathFromOps(withoutPair, cleanPath)
+                : withoutPair;
+            }
+
+            const mergedData: Record<string, unknown> = {};
+            const ownerVal = incoming.data?.ownerId ?? cand.data?.ownerId;
+            if (ownerVal !== undefined) mergedData.ownerId = ownerVal;
+            const updatedVal = incoming.data?.updatedAt ?? cand.data?.updatedAt;
+            if (updatedVal !== undefined) mergedData.updatedAt = updatedVal;
+
+            for (const k of netKeys) {
+              if (k in safeAfter && safeAfter[k] !== undefined) {
+                mergedData[k] = serializeFirestoreValue(safeAfter[k]);
+              } else {
+                mergedData[k] = { __fsSentinel: 'deleteField' };
+              }
+            }
+
+            const ancillaryKeys = new Set(['availableColors', 'availableSizes', 'colorImages']);
+            const displayFields = netKeys.filter((k) => !ancillaryKeys.has(k));
+            const resolvedDetails = buildFoldedChangedDetails(
+              cleanPath,
+              beforeState,
+              safeAfter,
+              netKeys,
+              cand,
+              incoming
+            );
+            const desc = describePathSectionAndTitle(cleanPath, mergedData);
+
+            const foldedOp: SimulatedFirestoreOp = {
+              ...cand,
+              createdAt: incoming.createdAt,
+              targetTitle: incoming.targetTitle || cand.targetTitle || desc.targetTitle,
+              actionLabel: isDocTypeMergeOp(cleanPath, incoming)
+                ? 'Tipo allegato aggiornato'
+                : cand.actionLabel || incoming.actionLabel,
+              data: mergedData,
+              changedFields: displayFields.length > 0 ? displayFields : netKeys,
+              changedDetails: resolvedDetails,
+            };
+
+            const updatedOps = currentOps.map((item, idx) => (idx === i ? foldedOp : item));
+            return isPathNetZeroAgainstBase(updatedOps, cleanPath)
+              ? stripPathFromOps(updatedOps, cleanPath)
+              : updatedOps;
+          }
+        }
+
+        for (const k of candKeys) {
+          laterTouchedKeys.add(k);
+        }
+      }
+    }
+  }
+
+  const nextOps = [...currentOps, incoming];
+  if (isPathNetZeroAgainstBase(nextOps, cleanPath)) {
+    return stripPathFromOps(nextOps, cleanPath);
+  }
+  return nextOps;
+}
+
 function enqueueSimulatedOp(op: SimulatedFirestoreOp): void {
-  // Keep every queued user action as an independent step so any single edit
-  // (e.g. changing status on a locally-added product) can be undone cleanly without
-  // wiping earlier creation or unrelated changes on the same document.
-  // Path compaction is still applied automatically at flush/plan time via compactSimulatedOpsList.
-  simulatedFirestoreOps = [...simulatedFirestoreOps, op];
+  simulatedFirestoreOps = foldOrEnqueueSimulatedOp(simulatedFirestoreOps, op);
   persistAndEmitSimulatedOps();
 }
 
@@ -1292,6 +1775,7 @@ export function enqueueSimulatedVaultUpload(payload: {
   displayTitle?: string;
   changedDetails?: string[];
 }): void {
+  localOnlyVaultUploadKeys.add(payload.fileKey);
   const estimatedOps = Math.max(2, Math.ceil((payload.size * 1.35) / 600_000) + 1);
   enqueueSimulatedOp({
     id: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -1347,18 +1831,33 @@ export function enqueueSimulatedVaultDelete(payload: {
   });
 }
 
+function collectVaultKeysFromRecord(data?: Record<string, unknown>): string[] {
+  const keys: string[] = [];
+  if (!data) return keys;
+  if (typeof data.attachmentKey === 'string' && data.attachmentKey) {
+    keys.push(data.attachmentKey);
+  }
+  if (typeof data.manualFileKey === 'string' && data.manualFileKey) {
+    keys.push(data.manualFileKey);
+  }
+  if (typeof data.pdfFileKey === 'string' && data.pdfFileKey) {
+    keys.push(data.pdfFileKey);
+  }
+  if (typeof data.attachmentFileKey === 'string' && data.attachmentFileKey) {
+    keys.push(data.attachmentFileKey);
+  }
+  const specsKey = extractVaultKeyFromSpecs(data.specs);
+  if (specsKey) keys.push(specsKey);
+  return keys;
+}
+
 function collectPairedVaultFileKeys(op: SimulatedFirestoreOp): string[] {
   const keys: string[] = [];
   if (op.kind === 'set' && op.data) {
-    if (typeof op.data.manualFileKey === 'string' && op.data.manualFileKey) {
-      keys.push(op.data.manualFileKey);
-    }
-    if (typeof op.data.pdfFileKey === 'string' && op.data.pdfFileKey) {
-      keys.push(op.data.pdfFileKey);
-    }
-    if (typeof op.data.specs === 'string') {
-      const m = op.data.specs.match(/(?:^|\|)KEY:([^|]+)/);
-      if (m?.[1]) keys.push(m[1]);
+    keys.push(...collectVaultKeysFromRecord(op.data));
+  } else if (op.kind === 'batch' && op.batchOps?.length) {
+    for (const sub of op.batchOps) {
+      keys.push(...collectVaultKeysFromRecord(sub.data));
     }
   }
   return keys;
@@ -1373,6 +1872,8 @@ export function discardSimulatedFirestoreOps(ids: string[]): void {
 
   const pairedVaultKeys = new Set<string>();
   const cancelledNewPaths = new Map<string, number>();
+  const cancelledReplacePaths = new Set<string>();
+  const cancelledReplaceVaultKeys = new Set<string>();
 
   for (const target of targets) {
     const isLocalCreation =
@@ -1389,10 +1890,22 @@ export function discardSimulatedFirestoreOps(ids: string[]): void {
         pairedVaultKeys.add(fk);
       }
     }
+    if (target.replacesDocPath) {
+      const cleanReplace = target.replacesDocPath.replace(/^\/+|\/+$/g, '');
+      if (cleanReplace) {
+        cancelledReplacePaths.add(cleanReplace);
+        const docId = cleanReplace.split('/').pop();
+        if (docId) {
+          cancelledReplaceVaultKeys.add(`att_${docId}`);
+          cancelledReplaceVaultKeys.add(`doc_${docId}`);
+        }
+      }
+    }
   }
 
-  const next = simulatedFirestoreOps.filter((op) => {
-    if (idSet.has(op.id)) return false;
+  const next: SimulatedFirestoreOp[] = [];
+  for (const op of simulatedFirestoreOps) {
+    if (idSet.has(op.id)) continue;
     if (
       op.kind === 'set' &&
       op.options?.merge &&
@@ -1400,21 +1913,113 @@ export function discardSimulatedFirestoreOps(ids: string[]): void {
       cancelledNewPaths.has(op.path) &&
       op.createdAt >= (cancelledNewPaths.get(op.path) ?? 0)
     ) {
-      return false;
+      continue;
     }
     if (
       op.kind === 'vault_upload' &&
       op.vaultUpload?.fileKey &&
       pairedVaultKeys.has(op.vaultUpload.fileKey)
     ) {
-      return false;
+      continue;
     }
-    return true;
-  });
+    if (
+      op.kind === 'delete' &&
+      op.path &&
+      cancelledReplacePaths.has(op.path.replace(/^\/+|\/+$/g, ''))
+    ) {
+      continue;
+    }
+    if (op.kind === 'vault_delete' && op.vaultDelete?.keys?.length) {
+      const remainingKeys = op.vaultDelete.keys.filter(
+        (k) => !cancelledReplaceVaultKeys.has(k)
+      );
+      if (remainingKeys.length === 0) continue;
+      if (remainingKeys.length !== op.vaultDelete.keys.length) {
+        next.push({
+          ...op,
+          targetTitle:
+            remainingKeys.length === 1 ? remainingKeys[0] : `${remainingKeys.length} allegati`,
+          writeCount: remainingKeys.length * 2,
+          vaultDelete: {
+            ...op.vaultDelete,
+            keys: remainingKeys,
+          },
+        });
+        continue;
+      }
+    }
+    next.push(op);
+  }
 
-  if (next.length === simulatedFirestoreOps.length) return;
+  if (next.length === simulatedFirestoreOps.length && next.every((o, idx) => o === simulatedFirestoreOps[idx])) {
+    return;
+  }
   simulatedFirestoreOps = next;
   persistAndEmitSimulatedOps();
+}
+
+export function restoreSimulatedDeletedAttachment(
+  researchId: string,
+  cloudUrl: string,
+  preferredDocId?: string,
+  preferredAttachmentKey?: string
+): boolean {
+  const normTargetUrl = cloudUrl.trim().split('#')[0].toLowerCase();
+  const targetGroupKey = `research:${researchId}`;
+  const matchingDeleteOps = simulatedFirestoreOps.filter((op) => {
+    if (op.kind !== 'delete' || !op.path) return false;
+    if (preferredDocId && op.path.endsWith(`/homeArticles/${preferredDocId}`)) {
+      return true;
+    }
+    if (normTargetUrl && op.groupKey === targetGroupKey && op.sourceCloudUrl) {
+      return op.sourceCloudUrl.trim().split('#')[0].toLowerCase() === normTargetUrl;
+    }
+    return false;
+  });
+
+  if (matchingDeleteOps.length === 0) return false;
+
+  const delIds = new Set(matchingDeleteOps.map((o) => o.id));
+  const vaultKeysToRestore = new Set<string>();
+  if (preferredAttachmentKey) vaultKeysToRestore.add(preferredAttachmentKey);
+  if (preferredDocId) {
+    vaultKeysToRestore.add(`att_${preferredDocId}`);
+    vaultKeysToRestore.add(`doc_${preferredDocId}`);
+  }
+  for (const delOp of matchingDeleteOps) {
+    const docId = delOp.path?.split('/').pop();
+    if (docId) {
+      vaultKeysToRestore.add(`att_${docId}`);
+      vaultKeysToRestore.add(`doc_${docId}`);
+    }
+  }
+
+  const next: SimulatedFirestoreOp[] = [];
+  for (const op of simulatedFirestoreOps) {
+    if (delIds.has(op.id)) continue;
+    if (op.kind === 'vault_delete' && op.vaultDelete?.keys?.length) {
+      const remainingKeys = op.vaultDelete.keys.filter((k) => !vaultKeysToRestore.has(k));
+      if (remainingKeys.length === 0) continue;
+      if (remainingKeys.length !== op.vaultDelete.keys.length) {
+        next.push({
+          ...op,
+          targetTitle:
+            remainingKeys.length === 1 ? remainingKeys[0] : `${remainingKeys.length} allegati`,
+          writeCount: remainingKeys.length * 2,
+          vaultDelete: {
+            ...op.vaultDelete,
+            keys: remainingKeys,
+          },
+        });
+        continue;
+      }
+    }
+    next.push(op);
+  }
+
+  simulatedFirestoreOps = next;
+  persistAndEmitSimulatedOps();
+  return true;
 }
 
 export function discardSimulatedFirestoreOp(id: string): void {
@@ -1422,6 +2027,7 @@ export function discardSimulatedFirestoreOp(id: string): void {
 }
 
 export function clearSimulatedFirestoreOps(): void {
+  localOnlyVaultUploadKeys.clear();
   if (simulatedFirestoreOps.length === 0) return;
   simulatedFirestoreOps = [];
   persistAndEmitSimulatedOps();
@@ -1749,6 +2355,7 @@ export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult
       try {
         const { replayVaultUploadToFirestore } = await import('./utils/documentVault');
         await replayVaultUploadToFirestore(op.vaultUpload);
+        localOnlyVaultUploadKeys.delete(op.vaultUpload.fileKey);
         flushed += 1;
         simulatedFirestoreOps = simulatedFirestoreOps.filter((item) => item.id !== op.id);
         persistAndEmitSimulatedOps();
@@ -2406,6 +3013,8 @@ export const guardedSetDoc: typeof rawSetDoc = (async (...args: unknown[]) => {
         path,
         data: serializedData,
         options: mergeOpt ? { merge: true } : undefined,
+        ...(hint?.sourceCloudUrl ? { sourceCloudUrl: hint.sourceCloudUrl } : {}),
+        ...(hint?.replacesDocPath ? { replacesDocPath: hint.replacesDocPath } : {}),
       });
     }
     recordFirestoreWritesSaved(1, `${resolvedAction} locale: ${resolvedTitle}`);
@@ -2454,6 +3063,7 @@ export const guardedDeleteDoc: typeof rawDeleteDoc = (async (...args: unknown[])
         changedDetails:
           hint?.changedDetails && hint.changedDetails.length > 0 ? hint.changedDetails : undefined,
         path,
+        ...(hint?.sourceCloudUrl ? { sourceCloudUrl: hint.sourceCloudUrl } : {}),
       });
     }
     recordFirestoreWritesSaved(1, `Eliminazione locale: ${resolvedTitle}`);

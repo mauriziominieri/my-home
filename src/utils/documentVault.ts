@@ -641,9 +641,6 @@ export async function deleteVaultFile(
   if (!key) return;
   const cleanKey = sanitizeVaultFileKey(key);
 
-  await deleteLocalCache(cleanKey);
-  cloudMetaCache.delete(cleanKey);
-
   if (isFirestoreWritesDisabled()) {
     recordFirestoreWritesSaved(1, `Rimozione allegato (${simHint?.displayTitle || cleanKey})`);
     const uid = getAuthenticatedUid(ownerUid);
@@ -657,6 +654,9 @@ export async function deleteVaultFile(
     notifyVaultUpdated();
     return;
   }
+
+  await deleteLocalCache(cleanKey);
+  cloudMetaCache.delete(cleanKey);
 
   const uid = getAuthenticatedUid(ownerUid);
   if (uid) {
@@ -698,11 +698,6 @@ export async function deleteVaultFiles(
     throw new Error('È necessario autenticarsi per eliminare i PDF archiviati.');
   }
 
-  for (const key of cleanKeys) {
-    await deleteLocalCache(key);
-    cloudMetaCache.delete(key);
-  }
-
   if (isFirestoreWritesDisabled()) {
     recordFirestoreWritesSaved(
       cleanKeys.length * 2,
@@ -715,6 +710,11 @@ export async function deleteVaultFiles(
     });
     notifyVaultUpdated();
     return;
+  }
+
+  for (const key of cleanKeys) {
+    await deleteLocalCache(key);
+    cloudMetaCache.delete(key);
   }
 
   await deleteVaultKeysFromFirestore(cleanKeys, uid);
@@ -764,6 +764,10 @@ export async function replayVaultDeleteToFirestore(params: {
     throw new Error('Autenticazione richiesta per sincronizzare le eliminazioni vault.');
   }
   await deleteVaultKeysFromFirestore(cleanKeys, uid, true);
+  for (const key of cleanKeys) {
+    await deleteLocalCache(key);
+    cloudMetaCache.delete(key);
+  }
 }
 
 export async function listVaultFileMetadata(

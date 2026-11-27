@@ -1,20 +1,29 @@
 /**
- * Trigger giornaliero 24/7 su Google Apps Script (es. ogni mattina alle 08:30).
- * LEGGE LIVE i promemoria direttamente da Firestore (gen-lang-client-0721850501):
- * qualsiasi modifica fatta su My Home (es. "Avvisa quanti mesi prima" da 3 a 1,
- * durata, capacità batteria, completato o rinnovo) viene applicata AUTOMATICAMENTE.
+ * my-home — Notifiche Giornaliere Promemoria & Manutenzione Auto (Google Apps Script 24/7)
+ * File: apps-script/notifiche_promemoria_giornaliere.js
  *
- * Configurazione su script.google.com -> Impostazioni progetto:
+ * COSA FA QUESTO SCRIPT:
+ * - Viene eseguito 1 volta al giorno su Google Apps Script tramite trigger su `checkMyHomeRemindersDaily`.
+ * - LEGGE LIVE da Firestore (`gen-lang-client-0721850501`) tutti i promemoria (`__promemoria__`),
+ *   i km/capacità batteria auto (`__macchina__`) e i canali salvati (`rem_notify_config`).
+ * - Qualsiasi modifica fatta nell'app (es. anticipo avviso, durata, completamento, rinnovo)
+ *   si riflette AUTOMATICAMENTE senza dover modificare questo script.
+ * - Invia avvisi via Email e WhatsApp (CallMeBot) per le scadenze imminenti o scadute.
+ *
+ * ALTRI SCRIPT DEL PROGETTO:
+ * - Consumi kWh ogni 10 min (`Dettaglio curve di carico`): `apps-script/sync_consumi_edistribuzione.js`
+ * - Consumi kWh + Bollette Luce/Acqua/TARI multi-formato ogni 10 min: `scripts/sync_gmail_consumi_e_bollette.py`
+ * - Confronto tariffe luce fornitori vs Octopus 2027: `scripts/check_octopus_tariff.py`
+ *
+ * Configurazione su https://script.google.com -> Impostazioni progetto:
  * 1) Proprietà script:
- *    - CALLMEBOT_PHONE   = 393XXXXXXXXX (il tuo numero con prefisso)
- *    - CALLMEBOT_API_KEY = <la tua apikey CallMeBot>
- *    - REMINDERS_EMAIL_TO = <la tua email> (opzionale se già salvata in Canali Avviso)
- *    - FIREBASE_OWNER_UID = <opzionale, altrimenti letto automaticamente da appMeta/owner>
- * 2) File manifest appsscript.json (Impostazioni progetto -> "Mostra file manifest"):
- *    assicurati che "oauthScopes" includa:
- *      "https://www.googleapis.com/auth/datastore",
- *      "https://www.googleapis.com/auth/script.external_request",
- *      "https://www.googleapis.com/auth/script.send_mail"
+ *    - CALLMEBOT_PHONE    = il tuo numero con prefisso (es. 393XXXXXXXXX)
+ *    - CALLMEBOT_API_KEY  = la tua apikey ricevuta da CallMeBot
+ *    - REMINDERS_EMAIL_TO = (opzionale) email destinatario
+ * 2) File manifest `appsscript.json` ("oauthScopes"):
+ *    - "https://www.googleapis.com/auth/datastore"
+ *    - "https://www.googleapis.com/auth/script.external_request"
+ *    - "https://www.googleapis.com/auth/script.send_mail"
  */
 function checkMyHomeRemindersDaily() {
   var FIREBASE_PROJECT_ID = 'gen-lang-client-0721850501';
@@ -27,7 +36,7 @@ function checkMyHomeRemindersDaily() {
     '/documents';
 
   var props = PropertiesService.getScriptProperties();
-  var ownerUid = (props.getProperty('FIREBASE_OWNER_UID') || '').trim();
+  var ownerUid = (props.getProperty('FIREBASE_OWNER_UID') || "UnFRruOuLTMCgy8ftX8AQEw8I4K3").trim();
   if (!ownerUid) {
     var metaResp = UrlFetchApp.fetch(BASE_DOCS_URL + '/appMeta/owner', { muteHttpExceptions: true });
     if (metaResp.getResponseCode() >= 200 && metaResp.getResponseCode() < 300) {
@@ -154,12 +163,7 @@ function checkMyHomeRemindersDaily() {
     var startIso = normalizeIso_(r.startDate) || todayIso;
     var dueIso =
       normalizeIso_(r.customEndDate) ||
-      addDurationToIso_(
-        startIso,
-        Number(r.durationYears) || 0,
-        Number(r.durationMonths) || 0,
-        Number(r.durationDays) || 0
-      );
+      addDurationToIso_(startIso, Number(r.durationYears) || 0, Number(r.durationMonths) || 0, Number(r.durationDays) || 0);
     var warningStartIso = addDurationToIso_(
       dueIso,
       0,

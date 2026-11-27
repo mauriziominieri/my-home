@@ -19,13 +19,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verifica presenza script .gs
+      - name: Verifica presenza script (.gs / .js)
         id: check_files
         run: |
-          gs_count=$(find apps-script -maxdepth 2 -type f -name '*.gs' | wc -l | tr -d ' ')
+          gs_count=$(find apps-script -maxdepth 2 -type f \( -name '*.gs' -o -name '*.js' \) | wc -l | tr -d ' ')
           echo "gs_count=$gs_count" >> "$GITHUB_OUTPUT"
           if [ "$gs_count" -eq 0 ]; then
-            echo "::warning::Nessun file .gs presente in apps-script/. Esegui prima 'cd apps-script && npx @google/clasp pull' in locale per importare gli script live senza sovrascriverli."
+            echo "::warning::Nessun file .gs o .js presente in apps-script/. Esegui prima 'cd apps-script && npx @google/clasp pull' in locale per importare gli script live senza sovrascriverli."
           fi
 
       - name: Verifica secret CLASPRC_JSON

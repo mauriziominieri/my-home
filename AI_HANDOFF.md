@@ -1,6 +1,6 @@
 # my-home — Istruzioni Tecniche & Passaggio di Consegne AI
 
-> **Ultimo aggiornamento manuale:** `26/11/2026`
+> **Ultimo aggiornamento manuale:** `27/11/2026`
 > **Nota:** questo file `.md` **non si auto-genera** automaticamente a ogni modifica dell'app; va mantenuto manualmente quando cambiano architettura, flussi, componenti o API server.
 > **Scopo di questo file:** fornire a qualsiasi AI (Claude, ChatGPT, Gemini, Cursor, ecc.) tutto il contesto architetturale, le regole di sicurezza, le scorciatoie anti-spreco e la mappa completa dei file del progetto **my-home**, così da riprendere lo sviluppo subito senza consumare crediti in esplorazioni inutili.
 
@@ -50,15 +50,18 @@
 
 ## 3. Flusso Consumi & Bollette (Google Apps Script 24/7 + Sync Gmail Browser + Smart Import)
 
-1. **Google Apps Script 24/7 (esterno al repo):**
-   - Esegue automaticamente il controllo INBOX Gmail per le curve di carico **e-distribuzione** (`from:notifichemailped@enel.com` / `e-distribuzione`, soggetto `curve di carico`) salvando i consumi giornalieri su Firestore e spostando nel Cestino solo le email curve di carico già importate.
-2. **Lettura nell'App React (`src/App.tsx`):**
+1. **Google Apps Script 24/7 (`apps-script/sync_consumi_edistribuzione.js` + `apps-script/notifiche_promemoria_giornaliere.js`):**
+   - `sync_consumi_edistribuzione.js` (`syncMyHomeGmail24x7`) controlla ogni 10 minuti la INBOX Gmail per le curve di carico kWh **e-distribuzione** (`notifichemailped@enel.com` / `e-distribuzione`, oggetto `"Dettaglio curve di carico"`), salva `energyReadings` su Firestore e sposta nel Cestino solo quelle email già importate.
+   - `notifiche_promemoria_giornaliere.js` (`checkMyHomeRemindersDaily`) controlla 1 volta al giorno i promemoria e le scadenze auto su Firestore inviando Email + WhatsApp.
+2. **Sync Gmail Consumi & Bollette via GitHub Actions (`scripts/sync_gmail_consumi_e_bollette.py`, ogni 10 min via `.github/workflows/sync-gmail-consumi-bollette-tariffe.yml`):**
+   - Oltre alle curve di carico e-distribuzione (cestinate dopo il salvataggio), scansiona la INBOX ogni 10 minuti per bollette **Luce** (Edison, Octopus, Enel, Plenitude, ENGIE), **Acqua** (AcegasApsAmga) e **TARI** in qualsiasi formato allegato (`.pdf`, `.zip`, `.csv`, `.xml` FatturaPA, `.txt`, `.html` o corpo email), **senza mai cestinare le email delle bollette**, archivia il PDF nel Vault e invia notifica immediata **Email + WhatsApp** per ogni nuova bolletta importata.
+3. **Lettura nell'App React (`src/App.tsx`):**
    - Quando l'utente è autenticato (`user?.uid`), sottoscrive in tempo reale con `trackedOnSnapshot` tutte le subcollection sotto `users/{uid}/...` e `appMeta/octopusTariff`, salvando i dati in cache `localStorage` (`myhome_readings_cache_last`, ecc.) per consultazione offline/sloggata.
    - Supporta la migrazione one-click dal vecchio database (`spiritual-bearing-sq7xb`) via `src/utils/legacyMigration.ts`.
-3. **Sync Gmail Istantaneo dal Browser (`src/utils/gmailSync.ts`):**
+4. **Sync Gmail Istantaneo dal Browser (`src/utils/gmailSync.ts`):**
    - Pulsante **"Collega Gmail"** / **"Sincronizza Gmail"** visibile da loggati: scansiona la sola **INBOX** (mai Cestino/Spam) per estrarre bollette PDF **Edison/Octopus Luce**, **Acegas Acqua**, **TARI** e curve e-distribuzione, archiviando i PDF nel Vault Firestore e lasciando intatte in INBOX le email delle bollette.
-4. **Monitoraggio Tariffe (`scripts/check_octopus_tariff.py`):**
-   - Salva il confronto tariffe mercato su `appMeta/octopusTariff` (letto in `BillsView.tsx`).
+5. **Monitoraggio Tariffe (`scripts/check_octopus_tariff.py`):**
+   - Confronta i fornitori esterni con la tua offerta Octopus Fissa 24M (attiva dal 2027, 0,1595 €/kWh + 6 €/mese), salva su `appMeta/octopusTariff` (letto in `BillsView.tsx`) e invia Email + WhatsApp se un fornitore batte la tua offerta di almeno 5 €/anno.
 
 ---
 
@@ -104,9 +107,10 @@ Tutte le subcollection principali sotto `users/{userId}/`:
   - `appSettings.ts`, `articleCatalog.ts`, `billImporter.ts`, `carGroceryStore.ts`, `carInsuranceParser.ts`, `climateAutopilot.ts`, `climateTime.ts`, `documentVault.ts`, `edistribuzioneCsv.ts`, `freeArticleSearch.ts`, `gmailSync.ts`, `legacyMigration.ts`, `researchHelpers.ts`.
 - **Script, Backend & Workflow nel repo:**
   - `render.yaml`: Render Blueprint (`my-home-backend`, `autoDeploy: true`, `/api/health`).
-  - `apps-script/`: configurazione `@google/clasp` (`.clasp.json` + `.claspignore` + `README.md`) per il deploy automatico degli script `.gs` su Google Apps Script.
-  - `scripts/check_octopus_tariff.py`: monitoraggio tariffe su `appMeta/octopusTariff`.
-  - `.github/workflows/`: `deploy-pages.yml`, `deploy-render.yml`, `deploy-apps-script.yml`, `deploy-firestore-rules.yml`.
+  - `apps-script/`: `sync_consumi_edistribuzione.js` (consumi kWh e-distribuzione ogni 10 min), `notifiche_promemoria_giornaliere.js` (promemoria/auto giornalieri Email + WhatsApp), `.clasp.json`, `.claspignore`, `README.md`.
+  - `scripts/sync_gmail_consumi_e_bollette.py`: sync ogni 10 min da Gmail INBOX (consumi kWh + bollette multi-formato Luce/Acqua/TARI + avvisi Email/WhatsApp).
+  - `scripts/check_octopus_tariff.py`: monitoraggio tariffe su `appMeta/octopusTariff` (confronto vs Octopus 2027 + avvisi Email/WhatsApp).
+  - `.github/workflows/`: `deploy-pages.yml`, `deploy-render.yml`, `deploy-apps-script.yml`, `deploy-firestore-rules.yml`, `sync-gmail-consumi-bollette-tariffe.yml`.
 
 ---
 

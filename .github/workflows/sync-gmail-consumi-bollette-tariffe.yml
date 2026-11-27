@@ -1,0 +1,48 @@
+name: Sync automatico Gmail (consumi kWh, bollette Luce/Acqua/TARI e tariffe)
+
+on:
+  schedule:
+    - cron: '*/10 * * * *' # Ogni 10 minuti, 24/7 anche a browser chiuso (tempo minimo sicuro su GitHub)
+  workflow_dispatch:
+
+concurrency:
+  group: 'gmail-sync-and-tariff'
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installa dipendenze PDF e Firebase Admin SDK
+        run: pip install --quiet pypdf firebase-admin
+
+      - name: Sincronizza Gmail INBOX su Firestore (consumi kWh + bollette multi-formato + Email/WhatsApp)
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          CALLMEBOT_PHONE: ${{ secrets.CALLMEBOT_PHONE }}
+          CALLMEBOT_API_KEY: ${{ secrets.CALLMEBOT_API_KEY }}
+          POD_CODE: "IT001E11251419"
+        run: python scripts/sync_gmail_consumi_e_bollette.py
+
+      - name: Controlla tariffe luce (Octopus + principali fornitori)
+        continue-on-error: true
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          CALLMEBOT_PHONE: ${{ secrets.CALLMEBOT_PHONE }}
+          CALLMEBOT_API_KEY: ${{ secrets.CALLMEBOT_API_KEY }}
+        run: python scripts/check_octopus_tariff.py

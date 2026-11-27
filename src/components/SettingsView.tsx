@@ -29,6 +29,8 @@ import {
 import {
   clearDailyFirestoreUsageHistory,
   clearSimulatedFirestoreOps,
+  DAILY_FREE_READS_LIMIT,
+  DAILY_FREE_WRITES_LIMIT,
   DailyFirestoreUsageEntry,
   dismissSimulatedFlushResult,
   FIREBASE_PROJECT_ID,
@@ -231,6 +233,10 @@ export function SettingsView({
   }, [dailyUsage]);
 
   const todayWriteOps = todayUsage.writes + todayUsage.deletes;
+  const writePct = Math.min(100, (todayUsage.writeUnits / DAILY_FREE_WRITES_LIMIT) * 100);
+  const writeRemaining = Math.max(0, DAILY_FREE_WRITES_LIMIT - todayUsage.writeUnits);
+  const readPct = Math.min(100, (todayUsage.readUnits / DAILY_FREE_READS_LIMIT) * 100);
+  const readRemaining = Math.max(0, DAILY_FREE_READS_LIMIT - todayUsage.readUnits);
   const firebaseConsoleUsageUrl = `https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/firestore/databases/${FIRESTORE_DATABASE_ID}/usage`;
 
   const totalRecords = useMemo(
@@ -698,38 +704,94 @@ export function SettingsView({
 
         {/* Today's Persistent Browser Telemetry Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-          <div className={`${subSurfaceCls} p-3.5 space-y-1.5`}>
+          <div className={`${subSurfaceCls} p-3.5 space-y-2`}>
             <div className="flex items-center justify-between gap-2 text-xs">
               <span className="font-semibold text-slate-800 dark:text-slate-200">
                 Scritture da questo browser (oggi PT)
               </span>
               <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
-                {todayWriteOps.toLocaleString('it-IT')} op · {todayUsage.writeUnits.toLocaleString('it-IT')} unità (~1 KiB)
+                {todayUsage.writeUnits.toLocaleString('it-IT')} / {DAILY_FREE_WRITES_LIMIT.toLocaleString('it-IT')} unità
               </span>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-              <span className="font-mono tabular-nums">
-                {todayUsage.writes} scr. · {todayUsage.deletes} elim. · {todayUsage.settingsWrites} imp.
+
+            <div
+              className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
+              role="progressbar"
+              aria-valuenow={todayUsage.writeUnits}
+              aria-valuemin={0}
+              aria-valuemax={DAILY_FREE_WRITES_LIMIT}
+              aria-label="Quota scritture giornaliere da questo browser"
+            >
+              <div
+                className={`h-full rounded-full transition-all duration-300 ${
+                  quotaExceeded || todayUsage.quotaHit || writePct >= 90
+                    ? 'bg-rose-500'
+                    : writePct >= 70
+                      ? 'bg-amber-500'
+                      : 'bg-indigo-500 dark:bg-indigo-400'
+                }`}
+                style={{ width: `${todayUsage.writeUnits > 0 ? Math.max(1.5, writePct) : 0}%` }}
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+              <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                {writePct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
+                <strong className="text-slate-900 dark:text-slate-100">
+                  {writeRemaining.toLocaleString('it-IT')}
+                </strong>{' '}
+                u. ({todayWriteOps.toLocaleString('it-IT')} op)
               </span>
               <span className="font-mono tabular-nums text-amber-700 dark:text-amber-300">
                 Risparmiate (Test Mode): {todayUsage.savedInTestMode.toLocaleString('it-IT')}
               </span>
             </div>
+            <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+              Dettaglio: {todayUsage.writes} scr. · {todayUsage.deletes} elim. · {todayUsage.settingsWrites} imp.
+            </div>
           </div>
 
-          <div className={`${subSurfaceCls} p-3.5 space-y-1.5`}>
+          <div className={`${subSurfaceCls} p-3.5 space-y-2`}>
             <div className="flex items-center justify-between gap-2 text-xs">
               <span className="font-semibold text-slate-800 dark:text-slate-200">
                 Letture da questo browser (oggi PT)
               </span>
               <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
-                {todayUsage.reads.toLocaleString('it-IT')} doc/query · {todayUsage.readUnits.toLocaleString('it-IT')} unità (~4 KiB)
+                {todayUsage.readUnits.toLocaleString('it-IT')} / {DAILY_FREE_READS_LIMIT.toLocaleString('it-IT')} unità
               </span>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-              <span>
-                Include sincronizzazione listener, query e chunk PDF Vault.
+
+            <div
+              className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
+              role="progressbar"
+              aria-valuenow={todayUsage.readUnits}
+              aria-valuemin={0}
+              aria-valuemax={DAILY_FREE_READS_LIMIT}
+              aria-label="Quota letture giornaliere da questo browser"
+            >
+              <div
+                className={`h-full rounded-full transition-all duration-300 ${
+                  quotaExceeded || todayUsage.quotaHit || readPct >= 90
+                    ? 'bg-rose-500'
+                    : readPct >= 70
+                      ? 'bg-amber-500'
+                      : 'bg-sky-500 dark:bg-sky-400'
+                }`}
+                style={{ width: `${todayUsage.readUnits > 0 ? Math.max(1.5, readPct) : 0}%` }}
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+              <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                {readPct.toFixed(1).replace('.', ',')}% usata · Rimaste:{' '}
+                <strong className="text-slate-900 dark:text-slate-100">
+                  {readRemaining.toLocaleString('it-IT')}
+                </strong>{' '}
+                u. ({todayUsage.reads.toLocaleString('it-IT')} doc)
               </span>
+            </div>
+            <div className="text-[11px] text-slate-500 dark:text-slate-400">
+              Include sincronizzazione listener, query e chunk PDF Vault.
             </div>
           </div>
         </div>

@@ -2028,7 +2028,7 @@ function addDurationToIso_(iso, years, months, days) {
                 >
                   Google Apps Script
                 </a>{' '}
-                e imposta un attivatore giornaliero su <code className="font-mono text-sky-700 dark:text-sky-300">checkMyHomeRemindersDaily</code> (es. 08:00–09:00).
+                (file repo <code className="font-mono text-sky-700 dark:text-sky-300">apps-script/notifiche_promemoria_giornaliere.js</code>) e imposta un attivatore giornaliero su <code className="font-mono text-sky-700 dark:text-sky-300">checkMyHomeRemindersDaily</code> (es. 08:00–09:00).
               </p>
               <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 text-[11px] space-y-1.5">
                 <div className="font-semibold text-slate-800 dark:text-slate-200">

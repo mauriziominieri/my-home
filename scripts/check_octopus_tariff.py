@@ -1,9 +1,24 @@
+"""
+my-home — Monitoraggio Automatico Tariffe Luce di Mercato (GitHub Actions)
+Workflow: .github/workflows/sync-gmail-consumi-bollette-tariffe.yml
+
+COSA FA QUESTO SCRIPT:
+- Legge le tariffe luce fisse pubbliche dai principali fornitori italiani
+  (Octopus Energy, ENGIE, Eni Plenitude, E.ON, NeN, Sorgenia, Enel Energia).
+- Confronta il costo annuo stimato (su 2300 kWh/anno) rispetto alla tua offerta
+  Octopus Fissa 24M in partenza nel 2027 (0.1595 €/kWh + 6.00 €/mese).
+- Salva tutti i prezzi rilevati su Firestore (`appMeta/octopusTariff`) per mostrarli in Bollette.
+- Se trova un fornitore più conveniente di almeno 5 €/anno, ti invia un avviso sia via Email
+  (Gmail SMTP) sia su WhatsApp (CallMeBot), una sola volta per ogni nuova offerta trovata.
+"""
+
 import html as html_lib
 import json
 import os
 import re
 import smtplib
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from email.message import EmailMessage
@@ -287,6 +302,84 @@ def send_alert_email(best_offer: Dict[str, Any], my_annual: float) -> None:
     print(f"Email di avviso inviata a {gmail_user} per {best_offer['supplier']}.")
 
 
+def _resolve_whatsapp_phone(db_client: Any) -> str:
+    env_phone = re.sub(r"[^\d]", "", os.environ.get("CALLMEBOT_PHONE", "").strip())
+    if env_phone:
+        return env_phone
+    if db_client is None:
+        return ""
+    try:
+        owner_snap = db_client.collection("appMeta").document("owner").get()
+        owner_uid = (
+            str((owner_snap.to_dict() or {}).get("ownerUid", "")).strip()
+            if owner_snap.exists
+            else ""
+        )
+        if not owner_uid:
+            return ""
+        cfg_snap = (
+            db_client.collection("users")
+            .document(owner_uid)
+            .collection("homeArticles")
+            .document("rem_notify_config")
+            .get()
+        )
+        if cfg_snap.exists:
+            raw_json = str((cfg_snap.to_dict() or {}).get("manualExtractText", "") or "{}")
+            cfg = json.loads(raw_json)
+            return re.sub(r"[^\d]", "", str(cfg.get("whatsappPhone", "")).strip())
+    except Exception as exc:
+        print(f"Nota lettura numero WhatsApp da Firestore: {exc}")
+    return ""
+
+
+def send_alert_whatsapp(
+    best_offer: Dict[str, Any], my_annual: float, db_client: Any = None
+) -> bool:
+    api_key = os.environ.get("CALLMEBOT_API_KEY", "").strip()
+    phone = _resolve_whatsapp_phone(db_client)
+    if not api_key or not phone:
+        print(
+            "Avviso WhatsApp saltato: imposta CALLMEBOT_API_KEY e CALLMEBOT_PHONE su GitHub Secrets "
+            "per ricevere anche le notifiche WhatsApp sulle offerte luce."
+        )
+        return False
+
+    est_saving = round(my_annual - float(best_offer["estAnnualEur"]), 2)
+    wa_body = (
+        f"*My Home — Offerta luce migliore trovata*\n\n"
+        f"- Fornitore: *{best_offer['supplier']}* ({best_offer['offerName']})\n"
+        f"- Prezzo: {best_offer['rateEurKwh']:.4f} €/kWh (+{best_offer['fixedEurMonth']:.2f} €/mese)\n"
+        f"- Stima su {int(ANNUAL_KWH_BENCHMARK)} kWh: {best_offer['estAnnualEur']:.2f} €/anno\n"
+        f"- Tua Octopus attuale: {MY_LOCKED_RATE:.4f} €/kWh ({my_annual:.2f} €/anno)\n"
+        f"- Risparmio stimato: *~{est_saving:.2f} €/anno*\n\n"
+        f"{best_offer['url']}"
+    )
+    if len(wa_body) > 1400:
+        wa_body = wa_body[:1397] + "..."
+
+    wa_url = (
+        "https://api.callmebot.com/whatsapp.php?phone="
+        + urllib.parse.quote(phone, safe="")
+        + "&text="
+        + urllib.parse.quote(wa_body, safe="")
+        + "&apikey="
+        + urllib.parse.quote(api_key, safe="")
+    )
+    req = urllib.request.Request(wa_url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            status = getattr(resp, "status", 200)
+            if 200 <= status < 300:
+                print(f"Messaggio WhatsApp inviato per {best_offer['supplier']}.")
+                return True
+            print(f"Errore CallMeBot HTTP {status} durante invio WhatsApp.")
+            return False
+    except Exception as exc:
+        print(f"Errore invio WhatsApp CallMeBot: {exc}")
+        return False
+
+
 def _get_firestore_client():
     sa_raw = os.environ.get("FIREBASE_SERVICE_ACCOUNT", "").strip()
     if not sa_raw:
@@ -315,6 +408,7 @@ def main() -> None:
         "currentRate": None,
         "lastAlertedRate": None,
         "lastAlertedKey": None,
+        "lastAlertedWhatsappKey": None,
         "competitors": [],
         "bestCompetitor": None,
         "updatedAt": None,
@@ -357,7 +451,13 @@ def main() -> None:
             if best_offer["supplier"] == "Octopus Energy":
                 state["lastAlertedRate"] = best_offer["rateEurKwh"]
         else:
-            print(f"Avviso già inviato per {alert_key}.")
+            print(f"Avviso email già inviato per {alert_key}.")
+
+        if state.get("lastAlertedWhatsappKey") != alert_key:
+            if send_alert_whatsapp(best_offer, my_annual, db_client=db_client):
+                state["lastAlertedWhatsappKey"] = alert_key
+        else:
+            print(f"Avviso WhatsApp già inviato per {alert_key}.")
     else:
         print("Nessun fornitore batte sensibilmente la tua Octopus Fissa 24M attuale.")
 

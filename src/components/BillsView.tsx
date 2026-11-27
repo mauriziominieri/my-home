@@ -967,33 +967,35 @@ export function BillsView({
         <summary className="cursor-pointer font-semibold text-slate-800 dark:text-slate-200 flex flex-wrap items-center justify-between gap-2 select-none">
           <span className="inline-flex items-center gap-2">
             <Mail className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
-            <span>Strategia di ricerca email Gmail &amp; sincronizzazione</span>
+            <span>Automazione Gmail ogni 10 min (Bollette + Consumi) &amp; File Script</span>
           </span>
           <span className="px-2 py-0.5 text-[10px] font-mono bg-sky-500/10 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/25 dark:border-sky-500/30 rounded">
-            Apps Script 24/7 (consumi) + Sync Gmail (bollette PDF) · Solo INBOX
+            Ogni 10 min 24/7 · Bollette in INBOX · Consumi nel Cestino
           </span>
         </summary>
         <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-800/80 space-y-2.5 text-[11px] text-slate-600 dark:text-slate-300">
           <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-            I consumi e-distribuzione vengono sincronizzati 24/7 su{' '}
+            Ogni <strong className="text-slate-900 dark:text-slate-200">10 minuti</strong>, lo script automatico{' '}
+            <code className="font-mono text-sky-700 dark:text-sky-300">scripts/sync_gmail_consumi_e_bollette.py</code>{' '}
+            (workflow <code className="font-mono text-slate-700 dark:text-slate-300">sync-gmail-consumi-bollette-tariffe.yml</code>) e{' '}
             <a
               href="https://script.google.com/u/1/home/projects/1Xv8LKzCxqu2n05njAGj9iMZLEETUD-uyUkaSkzThum6FmOStyTFiq5kh/edit"
               target="_blank"
               rel="noreferrer"
               className="font-semibold text-sky-700 dark:text-sky-300 underline hover:opacity-80"
             >
-              Google Apps Script
-            </a>
-            ; cliccando <strong className="text-slate-900 dark:text-slate-200">&quot;Sincronizza Gmail&quot;</strong> in alto l&apos;app controlla la sola <strong className="text-slate-900 dark:text-slate-200">INBOX</strong> (mai Spam o Cestino) ed estrae le bollette PDF di Luce, Acqua e TARI (puoi comunque sempre usare anche &quot;Importa bolletta&quot;). Le email delle bollette vengono <strong className="text-emerald-700 dark:text-emerald-300">solo lette e lasciate sempre nella tua INBOX</strong>.
+              Apps Script (<code className="font-mono">sync_consumi_edistribuzione.js</code>)
+            </a>{' '}
+            controllano la sola <strong className="text-slate-900 dark:text-slate-200">INBOX</strong>. Le bollette (Luce, Acqua, TARI) sono supportate in <strong className="text-slate-900 dark:text-slate-200">qualsiasi formato</strong> (PDF, ZIP, CSV, XML FatturaPA, TXT, HTML o testo email), <strong className="text-emerald-700 dark:text-emerald-300">restano sempre nella INBOX (mai cestinate)</strong> e inviano avviso immediato <strong className="text-slate-900 dark:text-slate-200">Email + WhatsApp</strong>. Puoi comunque forzare subito un controllo manuale dal browser con <strong className="text-slate-900 dark:text-slate-200">&quot;Sincronizza Gmail&quot;</strong> (<code className="font-mono">src/utils/gmailSync.ts</code>).
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-0.5">
-              <div className="font-semibold text-sky-700 dark:text-sky-300">Luce — Edison Energia</div>
+              <div className="font-semibold text-sky-700 dark:text-sky-300">Luce — Edison / Altri</div>
               <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">
                 from:fatturazione@edisonenergia.it · subject:&quot;Fattura Edison Energia&quot;
               </div>
               <div className="text-slate-500 dark:text-slate-400">
-                PDF con parole chiave &quot;edison&quot;, &quot;energia elettrica&quot; o &quot;kwh&quot; · Resta in INBOX
+                Ogni 10 min · PDF/CSV/XML/Email · Avviso Email+WA · Resta in INBOX
               </div>
             </div>
             <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-0.5">
@@ -1002,7 +1004,7 @@ export function BillsView({
                 from:octopusenergy.it · subject:&quot;Octopus Energy&quot;
               </div>
               <div className="text-slate-500 dark:text-slate-400">
-                PDF bolletta con &quot;octopus&quot; o &quot;kwh&quot; (contratti esclusi) · Resta in INBOX
+                Ogni 10 min · PDF/CSV/XML/Email (contratti esclusi) · Avviso Email+WA · Resta in INBOX
               </div>
             </div>
             <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-0.5">
@@ -1011,7 +1013,7 @@ export function BillsView({
                 from:acegasapsamga.it (non TARI)
               </div>
               <div className="text-slate-500 dark:text-slate-400">
-                PDF con &quot;servizio idrico&quot;, &quot;acquedotto&quot;, &quot;fognatura&quot;, &quot;depurazione&quot; o &quot;acegas&quot; senza kWh · Resta in INBOX
+                Ogni 10 min · &quot;servizio idrico / acquedotto / fognatura&quot; · Avviso Email+WA · Resta in INBOX
               </div>
             </div>
             <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-0.5">
@@ -1020,16 +1022,18 @@ export function BillsView({
                 from:tassa_rifiuti@acegasapsamga.it · subject:&quot;Avviso di pagamento TARI&quot;
               </div>
               <div className="text-slate-500 dark:text-slate-400">
-                Oppure from:acegasapsamga.it + PDF con &quot;tassa rifiuti&quot; / &quot;TARI&quot; · Resta in INBOX
+                Ogni 10 min · &quot;tassa rifiuti / TARI&quot; (qualsiasi formato) · Avviso Email+WA · Resta in INBOX
               </div>
             </div>
             <div className="bg-slate-50 dark:bg-slate-950/75 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-0.5 sm:col-span-2 lg:col-span-2">
-              <div className="font-semibold text-slate-800 dark:text-slate-200">Consumi Elettrici — e-distribuzione (CSV / ZIP, Apps Script 24/7)</div>
+              <div className="font-semibold text-slate-800 dark:text-slate-200">
+                Consumi Elettrici — e-distribuzione (CSV / ZIP · Ogni 10 min)
+              </div>
               <div className="font-mono text-[10px] text-slate-800 dark:text-slate-200 break-all">
-                from:notifichemailped@enel.com · from:e-distribuzione.it/.com · subject:&quot;curve di carico&quot;
+                from:notifichemailped@enel.com · subject:&quot;Dettaglio curve di carico&quot; · sync_consumi_edistribuzione.js + sync_gmail_consumi_e_bollette.py
               </div>
               <div className="text-slate-500 dark:text-slate-400">
-                Unico tipo di email spostato nel Cestino dopo il salvataggio delle letture su Firestore
+                Unico tipo di email spostato nel Cestino dopo il salvataggio delle letture giornaliere kWh su Firestore
               </div>
             </div>
           </div>
@@ -2395,7 +2399,7 @@ export function BillsView({
                       <Bell className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                       <span>
                         Confronto tariffe mercato (Solo Luce ·{' '}
-                        <strong className="text-slate-900 dark:text-slate-100">{marketMonitor.competitors.length}</strong> fornitori di riferimento) vs tua{' '}
+                        <strong className="text-slate-900 dark:text-slate-100">{marketMonitor.competitors.length}</strong> fornitori esterni, script <code className="font-mono text-[10px] text-sky-700 dark:text-sky-300">check_octopus_tariff.py</code>) vs tua Octopus 2027{' '}
                         <span className="font-mono text-emerald-700 dark:text-emerald-300">
                           {marketMonitor.myLockedRate.toFixed(4).replace('.', ',')} €/kWh
                         </span>

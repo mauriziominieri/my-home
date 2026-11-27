@@ -4656,7 +4656,7 @@ export default function App() {
   async function handleUploadLinkedDocument(
     docItem: Omit<HomeDocumentRecord, 'id'>,
     file: File,
-    options?: { isOlderVersion?: boolean }
+    options?: { isOlderVersion?: boolean; replacesDocId?: string }
   ) {
     if (!user) throw new Error('Accedi per archiviare il documento su Firebase.');
     const isOlderVersion = Boolean(options?.isOlderVersion);
@@ -4748,6 +4748,8 @@ export default function App() {
           resRef?.docType ? `Tipo: ${resRef.docType}` : artRef?.docType ? `Tipo: ${artRef.docType}` : '',
           `File: ${stored.fileName}`,
         ].filter(Boolean),
+        ...(docItem.cloudUrl?.trim() ? { sourceCloudUrl: docItem.cloudUrl.trim() } : {}),
+        ...(options?.replacesDocId ? { replacesDocPath: `${basePath}/${options.replacesDocId}` } : {}),
       });
       await setDoc(doc(db, basePath, docId), payload);
       if (isFirestoreWritesDisabled()) {
@@ -4799,7 +4801,7 @@ export default function App() {
     provider: string,
     file: File,
     cloudUrl?: string,
-    options?: { isOlderVersion?: boolean }
+    options?: { isOlderVersion?: boolean; replacesDocId?: string }
   ) {
     const todayIt = new Date().toLocaleDateString('it-IT');
     await handleUploadLinkedDocument(
@@ -5681,6 +5683,7 @@ export default function App() {
         actionLabel: linkedGroupHint ? 'Allegato rimosso' : 'Eliminazione',
         ...linkedGroupHint,
         changedDetails: targetDoc.fileName ? [`File: ${targetDoc.fileName}`] : undefined,
+        ...(targetDoc.cloudUrl?.trim() ? { sourceCloudUrl: targetDoc.cloudUrl.trim() } : {}),
       });
     }
     try {

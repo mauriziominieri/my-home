@@ -1,17 +1,30 @@
 /**
- * my-home — Sync Gmail 24/7 (Google Apps Script)
+ * my-home — Lettura automatica CONSUMI GIORNALIERI kWh da Gmail (Google Apps Script 24/7)
+ * File: apps-script/sync_consumi_edistribuzione.js
  *
- * Controlla la sola INBOX di Gmail ogni N minuti (5, 10, 15, 30 o 60 min)
- * SEMPRE, anche a PC spento, browser chiuso o quando sei fuori per settimane/mesi.
+ * COSA FA QUESTO SCRIPT:
+ * - Controlla la sola INBOX di Gmail ogni 10 minuti (SYNC_INTERVAL_MINUTES = 10), 24/7 a PC spento.
+ * - Legge ESCLUSIVAMENTE le email dei consumi elettrici giornalieri di e-distribuzione:
+ *     • Oggetto: "Dettaglio curve di carico"
+ *     • Mittenti: notifichemailped@enel.com, e-distribuzione.it, e-distribuzione.com
+ *     • Allegati: file .csv o .zip con i quarti d'ora/ore (calcola F1, F2, F3, totale kWh e picco kW)
+ * - Salva i nuovi consumi giornalieri su Firebase Firestore (collection `energyReadings`).
+ * - Sposta nel Cestino SOLO le email "Dettaglio curve di carico" già importate con successo.
+ *
+ * COSA NON FA QUESTO SCRIPT (gestito dagli altri file):
+ * - Bollette Luce / Acqua / TARI (PDF, CSV, XML, ZIP, corpo email) + avvisi Email/WhatsApp
+ *   -> gestiti ogni 10 minuti da GitHub Actions: `scripts/sync_gmail_consumi_e_bollette.py`
+ *      (workflow: `.github/workflows/sync-gmail-consumi-bollette-tariffe.yml`; le bollette NON vanno mai nel Cestino)
+ * - Confronto tariffe luce fornitori esterni vs Octopus 2027
+ *   -> gestito da: `scripts/check_octopus_tariff.py`
+ * - Promemoria scadenze casa & manutenzione auto (Email/WhatsApp giornaliero)
+ *   -> gestiti in questo stesso progetto Apps Script dal file: `notifiche_promemoria_giornaliere.js`
  *
  * Come attivarlo una sola volta su https://script.google.com :
- * 1. Crea un Nuovo progetto e incolla questo file in Code.gs.
- * 2. Consigliato (0 chiavi/password): vai su Impostazioni progetto -> Progetto Google Cloud Platform (GCP)
- *    -> Cambia progetto -> inserisci il numero progetto: 902318210670
- *    (oppure, in alternativa, aggiungi la proprietà script FIREBASE_SERVICE_ACCOUNT con il JSON del service account).
- *    In Impostazioni progetto attiva anche "Mostra il file manifest appsscript.json nell'editor"
- *    e verifica che includa gli scope Gmail + Datastore.
- * 3. Seleziona la funzione "attivaControlloAutomatico" in alto e clicca Esegui (accetta i permessi Google).
+ * 1. Collega il progetto GCP numero 902318210670 (Impostazioni progetto -> Cambia progetto)
+ *    oppure imposta la proprietà script `FIREBASE_SERVICE_ACCOUNT`.
+ * 2. Verifica che `appsscript.json` includa gli scope Gmail + Datastore.
+ * 3. Seleziona `attivaControlloAutomatico` in alto e clicca Esegui (accetta i permessi Google).
  */
 
 const FIREBASE_PROJECT_ID = 'gen-lang-client-0721850501';

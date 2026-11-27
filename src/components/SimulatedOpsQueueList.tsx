@@ -398,10 +398,17 @@ function buildSimulatedOpGroups(
       const remainingVaultDeletes = [...vaultDeleteOps];
       for (const delOp of deleteOps) {
         const fk = extractVaultKeyFromOpData(delOp.data);
+        const delDocId = delOp.path?.split('/').pop();
+        const candidateKeys = [
+          fk,
+          delDocId ? `att_${delDocId}` : null,
+          delDocId ? `doc_${delDocId}` : null,
+        ].filter((k): k is string => Boolean(k));
         const matched: SimulatedFirestoreOp[] = [];
-        if (fk) {
+        if (candidateKeys.length > 0) {
           for (let i = remainingVaultDeletes.length - 1; i >= 0; i -= 1) {
-            if (remainingVaultDeletes[i].vaultDelete?.keys?.includes(fk)) {
+            const vKeys = remainingVaultDeletes[i].vaultDelete?.keys || [];
+            if (candidateKeys.some((ck) => vKeys.includes(ck))) {
               matched.push(remainingVaultDeletes[i]);
               consumedVaultOpIds.add(remainingVaultDeletes[i].id);
               remainingVaultDeletes.splice(i, 1);
@@ -412,7 +419,7 @@ function buildSimulatedOpGroups(
           pairedDeletesByDocOpId.set(delOp.id, matched);
         }
       }
-      if (remainingVaultDeletes.length > 0) {
+      if (remainingVaultDeletes.length > 0 && deleteOps.length === 1) {
         const targetDel = deleteOps[0];
         const prev = pairedDeletesByDocOpId.get(targetDel.id) || [];
         remainingVaultDeletes.forEach((v) => consumedVaultOpIds.add(v.id));
