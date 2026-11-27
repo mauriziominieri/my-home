@@ -1828,12 +1828,12 @@ function addDurationToIso_(iso, years, months, days) {
 
                     {/* Right: Single Lifecycle Progress Bar */}
                     <div className="flex-1 min-w-0 space-y-1.5">
-                      <div className="flex items-center justify-between text-xs tabular-nums gap-2">
-                        <span className="font-medium text-slate-700 dark:text-slate-300">
+                      <div className="flex flex-wrap items-center justify-between text-xs tabular-nums gap-x-2 gap-y-0.5">
+                        <span className="font-medium text-slate-700 dark:text-slate-300 shrink-0">
                           Vita: <strong className="font-mono">{pctRounded.toFixed(1).replace('.', ',')}%</strong>
                         </span>
                         <span
-                          className={`font-semibold text-right ${
+                          className={`font-semibold text-right whitespace-nowrap ${
                             reminder.completed
                               ? 'text-emerald-700 dark:text-emerald-300'
                               : lifecycle.isOverdue
@@ -1863,12 +1863,12 @@ function addDurationToIso_(iso, years, months, days) {
                   </div>
                 ) : (
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between text-xs tabular-nums">
-                      <span className="font-medium text-slate-700 dark:text-slate-300">
+                    <div className="flex flex-wrap items-center justify-between text-xs tabular-nums gap-x-2 gap-y-0.5">
+                      <span className="font-medium text-slate-700 dark:text-slate-300 shrink-0">
                         Vita trascorsa: <strong className="font-mono">{pctRounded.toFixed(1).replace('.', ',')}%</strong>
                       </span>
                       <span
-                        className={`font-semibold ${
+                        className={`font-semibold text-right whitespace-nowrap ${
                           reminder.completed
                             ? 'text-emerald-700 dark:text-emerald-300'
                             : lifecycle.isOverdue

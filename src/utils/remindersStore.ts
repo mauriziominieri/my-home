@@ -161,7 +161,7 @@ export function formatRemainingDaysHuman(days: number): string {
     chunks.push(`${remDays || abs} ${remDays === 1 ? 'giorno' : 'giorni'}`);
   }
   const text = chunks.slice(0, 2).join(' e ');
-  return days < 0 ? `Scaduto da ${text} (${abs} gg)` : `Mancano ${text} (${days} gg)`;
+  return days < 0 ? `Scaduto da ${text}` : `Mancano ${text}`;
 }
 
 export function computeReminderLifecycle(
