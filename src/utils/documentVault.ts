@@ -297,12 +297,22 @@ function getAuthenticatedUid(preferredUid?: string): string | null {
   return currentUid;
 }
 
+export interface VaultSimulatedHint {
+  groupKey?: string;
+  groupSection?: string;
+  groupTitle?: string;
+  actionLabel?: string;
+  displayTitle?: string;
+  changedDetails?: string[];
+}
+
 export async function saveVaultFile(
   key: string,
   file: Blob,
   fileName: string,
   mimeType?: string,
-  ownerUid?: string
+  ownerUid?: string,
+  simHint?: VaultSimulatedHint
 ): Promise<StoredVaultFile> {
   if (file.size <= 0) {
     throw new Error('Il file selezionato è vuoto (0 byte).');
@@ -340,7 +350,7 @@ export async function saveVaultFile(
 
   if (isFirestoreWritesDisabled()) {
     const estimatedChunks = Math.max(1, Math.ceil((file.size * 1.35) / CHUNK_CHAR_SIZE));
-    recordFirestoreWritesSaved(estimatedChunks + 1, `Allegato vault (${safeFileName})`);
+    recordFirestoreWritesSaved(estimatedChunks + 1, `Allegato (${safeFileName})`);
     const localRecord: StoredVaultFile = {
       ...record,
       origin: 'local',
@@ -354,6 +364,7 @@ export async function saveVaultFile(
       mimeType: safeMime,
       size: file.size,
       ownerUid: uid,
+      ...simHint,
     });
     notifyVaultUpdated();
     return localRecord;
@@ -622,7 +633,11 @@ export async function getVaultFile(key: string, ownerUid?: string): Promise<Stor
   return null;
 }
 
-export async function deleteVaultFile(key: string, ownerUid?: string): Promise<void> {
+export async function deleteVaultFile(
+  key: string,
+  ownerUid?: string,
+  simHint?: VaultSimulatedHint
+): Promise<void> {
   if (!key) return;
   const cleanKey = sanitizeVaultFileKey(key);
 
@@ -630,10 +645,14 @@ export async function deleteVaultFile(key: string, ownerUid?: string): Promise<v
   cloudMetaCache.delete(cleanKey);
 
   if (isFirestoreWritesDisabled()) {
-    recordFirestoreWritesSaved(1, `Eliminazione allegato vault (${cleanKey})`);
+    recordFirestoreWritesSaved(1, `Rimozione allegato (${simHint?.displayTitle || cleanKey})`);
     const uid = getAuthenticatedUid(ownerUid);
     if (uid) {
-      enqueueSimulatedVaultDelete({ keys: [cleanKey], ownerUid: uid });
+      enqueueSimulatedVaultDelete({
+        keys: [cleanKey],
+        ownerUid: uid,
+        ...simHint,
+      });
     }
     notifyVaultUpdated();
     return;
@@ -666,7 +685,11 @@ export async function deleteVaultFile(key: string, ownerUid?: string): Promise<v
   notifyVaultUpdated();
 }
 
-export async function deleteVaultFiles(keys: string[], ownerUid?: string): Promise<void> {
+export async function deleteVaultFiles(
+  keys: string[],
+  ownerUid?: string,
+  simHint?: VaultSimulatedHint
+): Promise<void> {
   const cleanKeys = Array.from(new Set(keys.map(sanitizeVaultFileKey)));
   if (cleanKeys.length === 0) return;
 
@@ -681,8 +704,15 @@ export async function deleteVaultFiles(keys: string[], ownerUid?: string): Promi
   }
 
   if (isFirestoreWritesDisabled()) {
-    recordFirestoreWritesSaved(cleanKeys.length * 2, 'Eliminazione allegati vault (test)');
-    enqueueSimulatedVaultDelete({ keys: cleanKeys, ownerUid: uid });
+    recordFirestoreWritesSaved(
+      cleanKeys.length * 2,
+      `Rimozione allegati (${simHint?.displayTitle || cleanKeys.length})`
+    );
+    enqueueSimulatedVaultDelete({
+      keys: cleanKeys,
+      ownerUid: uid,
+      ...simHint,
+    });
     notifyVaultUpdated();
     return;
   }

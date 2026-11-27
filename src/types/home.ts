@@ -256,6 +256,8 @@ export interface CarProfile {
   batterySpec?: string;
   batteryInstalledDate?: string;
   batteryIntervalMonths?: number;
+  batteryCapacityPct?: number;
+  batteryCapacityDate?: string;
   timingBeltDate?: string;
   timingBeltKm?: number;
   sparkPlugsDate?: string;
@@ -476,6 +478,8 @@ export interface HomeReminderRecord {
   completedDate?: string;
   renewalCount?: number;
   lastNotifiedDate?: string; // YYYY-MM-DD
+  capacityPct?: number; // 0-100 (es. stato capacità batteria auto)
+  capacityCheckedDate?: string; // YYYY-MM-DD
   notes?: string;
 }
 

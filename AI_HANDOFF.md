@@ -102,9 +102,11 @@ Tutte le subcollection principali sotto `users/{userId}/`:
   - `AccessUnlockBanner.tsx`, `AddReadingModal.tsx`, `ErrorBoundary.tsx`, `SortableHeader.tsx`, `VaultCloudNotice.tsx`.
 - **Utilities (`src/utils/`):**
   - `appSettings.ts`, `articleCatalog.ts`, `billImporter.ts`, `carGroceryStore.ts`, `carInsuranceParser.ts`, `climateAutopilot.ts`, `climateTime.ts`, `documentVault.ts`, `edistribuzioneCsv.ts`, `freeArticleSearch.ts`, `gmailSync.ts`, `legacyMigration.ts`, `researchHelpers.ts`.
-- **Script & Workflow residui nel repo:**
+- **Script, Backend & Workflow nel repo:**
+  - `render.yaml`: Render Blueprint (`my-home-backend`, `autoDeploy: true`, `/api/health`).
+  - `apps-script/`: configurazione `@google/clasp` (`.clasp.json` + `.claspignore` + `README.md`) per il deploy automatico degli script `.gs` su Google Apps Script.
   - `scripts/check_octopus_tariff.py`: monitoraggio tariffe su `appMeta/octopusTariff`.
-  - `.github/workflows/deploy-pages.yml` & `.github/workflows/deploy-firestore-rules.yml`.
+  - `.github/workflows/`: `deploy-pages.yml`, `deploy-render.yml`, `deploy-apps-script.yml`, `deploy-firestore-rules.yml`.
 
 ---
 

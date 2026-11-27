@@ -1,0 +1,280 @@
+/**
+ * Trigger giornaliero 24/7 su Google Apps Script (es. ogni mattina alle 08:30).
+ * LEGGE LIVE i promemoria direttamente da Firestore (gen-lang-client-0721850501):
+ * qualsiasi modifica fatta su My Home (es. "Avvisa quanti mesi prima" da 3 a 1,
+ * durata, capacità batteria, completato o rinnovo) viene applicata AUTOMATICAMENTE.
+ *
+ * Configurazione su script.google.com -> Impostazioni progetto:
+ * 1) Proprietà script:
+ *    - CALLMEBOT_PHONE   = 393XXXXXXXXX (il tuo numero con prefisso)
+ *    - CALLMEBOT_API_KEY = <la tua apikey CallMeBot>
+ *    - REMINDERS_EMAIL_TO = <la tua email> (opzionale se già salvata in Canali Avviso)
+ *    - FIREBASE_OWNER_UID = <opzionale, altrimenti letto automaticamente da appMeta/owner>
+ * 2) File manifest appsscript.json (Impostazioni progetto -> "Mostra file manifest"):
+ *    assicurati che "oauthScopes" includa:
+ *      "https://www.googleapis.com/auth/datastore",
+ *      "https://www.googleapis.com/auth/script.external_request",
+ *      "https://www.googleapis.com/auth/script.send_mail"
+ */
+function checkMyHomeRemindersDaily() {
+  var FIREBASE_PROJECT_ID = 'gen-lang-client-0721850501';
+  var FIRESTORE_DB_ID = 'ai-studio-30a168e3-8158-474f-b9f2-f717d7220314';
+  var BASE_DOCS_URL =
+    'https://firestore.googleapis.com/v1/projects/' +
+    FIREBASE_PROJECT_ID +
+    '/databases/' +
+    FIRESTORE_DB_ID +
+    '/documents';
+
+  var props = PropertiesService.getScriptProperties();
+  var ownerUid = (props.getProperty('FIREBASE_OWNER_UID') || '').trim();
+  if (!ownerUid) {
+    var metaResp = UrlFetchApp.fetch(BASE_DOCS_URL + '/appMeta/owner', { muteHttpExceptions: true });
+    if (metaResp.getResponseCode() >= 200 && metaResp.getResponseCode() < 300) {
+      var metaJson = JSON.parse(metaResp.getContentText() || '{}');
+      ownerUid =
+        (metaJson.fields && metaJson.fields.ownerUid && metaJson.fields.ownerUid.stringValue) || '';
+    }
+  }
+  if (!ownerUid) {
+    throw new Error('Impossibile determinare FIREBASE_OWNER_UID da appMeta/owner.');
+  }
+
+  var oauthToken = ScriptApp.getOAuthToken();
+  var queryUrl = BASE_DOCS_URL + '/users/' + encodeURIComponent(ownerUid) + ':runQuery';
+  var queryPayload = {
+    structuredQuery: {
+      from: [{ collectionId: 'homeArticles' }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: 'room' },
+          op: 'IN',
+          value: {
+            arrayValue: {
+              values: [{ stringValue: '__promemoria__' }, { stringValue: '__macchina__' }]
+            }
+          }
+        }
+      }
+    }
+  };
+
+  var queryResp = UrlFetchApp.fetch(queryUrl, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + oauthToken },
+    payload: JSON.stringify(queryPayload),
+    muteHttpExceptions: true
+  });
+
+  var qCode = queryResp.getResponseCode();
+  if (qCode < 200 || qCode >= 300) {
+    throw new Error(
+      'Errore lettura Firestore HTTP ' +
+        qCode +
+        '. Verifica che appsscript.json abbia lo scope https://www.googleapis.com/auth/datastore. Dettagli: ' +
+        queryResp.getContentText()
+    );
+  }
+
+  var rows = JSON.parse(queryResp.getContentText() || '[]');
+  var liveReminders = [];
+  var firestoreEmail = '';
+  var firestorePhone = '';
+  var carCurrentKm = 0;
+  var carBatteryCapacityPct = null;
+
+  rows.forEach(function (row) {
+    var doc = row && row.document;
+    if (!doc || !doc.fields) return;
+    var parts = String(doc.name || '').split('/');
+    var docId = parts[parts.length - 1] || '';
+    var fields = doc.fields;
+    var room = (fields.room && fields.room.stringValue) || '';
+    var specs = (fields.specs && fields.specs.stringValue) || '';
+    var rawJson = (fields.manualExtractText && fields.manualExtractText.stringValue) || '';
+
+    if (docId === 'rem_notify_config') {
+      try {
+        var cfg = JSON.parse(rawJson || '{}');
+        if (cfg.defaultEmail) firestoreEmail = String(cfg.defaultEmail).trim();
+        if (cfg.whatsappPhone) firestorePhone = String(cfg.whatsappPhone).replace(/[^\d]/g, '');
+      } catch (e) {}
+      return;
+    }
+
+    if (room === '__macchina__') {
+      var kmMatch = specs.match(/(?:^|\|)KM:(\d+)/);
+      if (kmMatch) {
+        var kmVal = Number(kmMatch[1]);
+        if (kmVal > carCurrentKm) carCurrentKm = kmVal;
+      }
+      if (docId === 'car_profile_ea218es' && rawJson) {
+        try {
+          var carExtra = JSON.parse(rawJson);
+          if (typeof carExtra.batteryCapacityPct === 'number') {
+            carBatteryCapacityPct = carExtra.batteryCapacityPct;
+          }
+        } catch (e) {}
+      }
+      return;
+    }
+
+    if (room === '__promemoria__') {
+      var parsed = null;
+      try {
+        parsed = rawJson ? JSON.parse(rawJson) : null;
+      } catch (e) {
+        parsed = null;
+      }
+      if (parsed && typeof parsed === 'object') {
+        if (!parsed.title && fields.name && fields.name.stringValue) {
+          parsed.title = fields.name.stringValue;
+        }
+        liveReminders.push(parsed);
+      }
+    }
+  });
+
+  var EMAIL_TO = (props.getProperty('REMINDERS_EMAIL_TO') || firestoreEmail || '').trim();
+  var WA_PHONE = (props.getProperty('CALLMEBOT_PHONE') || firestorePhone || '').replace(/[^\d]/g, '');
+  var CALLMEBOT_KEY = (props.getProperty('CALLMEBOT_API_KEY') || '').trim();
+
+  var todayIso = Utilities.formatDate(new Date(), 'Europe/Rome', 'yyyy-MM-dd');
+  var todayParts = todayIso.split('-');
+  var todayUtc = Date.UTC(Number(todayParts[0]), Number(todayParts[1]) - 1, Number(todayParts[2]));
+
+  var emailAlerts = [];
+  var whatsappAlerts = [];
+
+  liveReminders.forEach(function (r) {
+    if (!r || r.completed || r.notifyEnabled === false) return;
+    if (r.lastNotifiedDate === todayIso) return;
+
+    var startIso = normalizeIso_(r.startDate) || todayIso;
+    var dueIso =
+      normalizeIso_(r.customEndDate) ||
+      addDurationToIso_(
+        startIso,
+        Number(r.durationYears) || 0,
+        Number(r.durationMonths) || 0,
+        Number(r.durationDays) || 0
+      );
+    var warningStartIso = addDurationToIso_(
+      dueIso,
+      0,
+      -(Number(r.leadMonths) || 0),
+      -(Number(r.leadDays) || 0)
+    );
+
+    var dueParts = dueIso.split('-');
+    var dueUtc = Date.UTC(Number(dueParts[0]), Number(dueParts[1]) - 1, Number(dueParts[2]));
+    var diffDays = Math.round((dueUtc - todayUtc) / 86400000);
+
+    var isKmWarning = false;
+    var isKmOverdue = false;
+    var kmNote = '';
+    if (r.trackKm && Number(r.intervalKm) > 0 && carCurrentKm > 0) {
+      var baseKm = typeof r.startKm === 'number' ? r.startKm : carCurrentKm;
+      var kmElapsed = Math.max(0, Math.round(carCurrentKm - baseKm));
+      var kmRemaining = Math.round(Number(r.intervalKm) - kmElapsed);
+      var kmPct = (kmElapsed / Number(r.intervalKm)) * 100;
+      isKmOverdue = kmRemaining <= 0;
+      isKmWarning = kmPct >= 85 || kmRemaining <= 1500;
+      kmNote = ' · ' + kmElapsed + '/' + r.intervalKm + ' km';
+    }
+
+    var isOverdue = diffDays < 0 || isKmOverdue;
+    var isInWarningWindow = todayIso >= warningStartIso || isKmWarning || isOverdue;
+    if (!isInWarningWindow) return;
+
+    var capPct =
+      typeof r.capacityPct === 'number'
+        ? r.capacityPct
+        : /batteria/i.test(String(r.title || '')) && carBatteryCapacityPct !== null
+          ? carBatteryCapacityPct
+          : null;
+    var capNote = capPct !== null ? ' · Capacità: ' + capPct + '%' : '';
+
+    var statusLabel =
+      diffDays < 0
+        ? 'SCADUTO da ' + Math.abs(diffDays) + ' gg'
+        : diffDays === 0
+          ? 'SCADE OGGI'
+          : 'mancano ' + diffDays + ' gg';
+    var line = '• ' + r.title + ' — ' + dueIso + ' (' + statusLabel + ')' + kmNote + capNote;
+
+    if (r.notifyEmail !== false) emailAlerts.push(line);
+    if (r.notifyWhatsapp === true) whatsappAlerts.push(line);
+  });
+
+  if (emailAlerts.length > 0 && EMAIL_TO) {
+    var emailBody =
+      'Promemoria giornalieri My Home (' +
+      todayIso +
+      '):\n\n' +
+      emailAlerts.join('\n') +
+      '\n\nApri https://mauriziominieri.github.io/my-home/ per rinnovare o completare.';
+    MailApp.sendEmail(EMAIL_TO, '[My Home] ' + emailAlerts.length + ' scadenze in corso', emailBody);
+  }
+
+  if (whatsappAlerts.length > 0 && WA_PHONE && CALLMEBOT_KEY) {
+    var waBody =
+      '*My Home — Promemoria (' +
+      todayIso +
+      ')*\n\n' +
+      whatsappAlerts.join('\n') +
+      '\n\nhttps://mauriziominieri.github.io/my-home/';
+    if (waBody.length > 1400) {
+      waBody = waBody.slice(0, 1397) + '...';
+    }
+    var waUrl =
+      'https://api.callmebot.com/whatsapp.php?phone=' +
+      encodeURIComponent(WA_PHONE) +
+      '&text=' +
+      encodeURIComponent(waBody) +
+      '&apikey=' +
+      encodeURIComponent(CALLMEBOT_KEY);
+    var resp = UrlFetchApp.fetch(waUrl, { muteHttpExceptions: true });
+    var code = resp.getResponseCode();
+    if (code < 200 || code >= 300) {
+      Logger.log('Errore CallMeBot HTTP ' + code + ': ' + resp.getContentText());
+    }
+  }
+}
+
+function normalizeIso_(raw) {
+  if (!raw) return '';
+  var s = String(raw).trim();
+  var mIso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (mIso) return mIso[1] + '-' + mIso[2] + '-' + mIso[3];
+  var mIt = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mIt) {
+    var dd = mIt[1].length < 2 ? '0' + mIt[1] : mIt[1];
+    var mm = mIt[2].length < 2 ? '0' + mIt[2] : mIt[2];
+    return mIt[3] + '-' + mm + '-' + dd;
+  }
+  return '';
+}
+
+function addDurationToIso_(iso, years, months, days) {
+  var p = iso.split('-');
+  var dt = new Date(Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2])));
+  var totalMonths = Math.round((years || 0) * 12 + (months || 0));
+  if (totalMonths !== 0) {
+    var origDay = dt.getUTCDate();
+    dt.setUTCDate(1);
+    dt.setUTCMonth(dt.getUTCMonth() + totalMonths);
+    var maxDays = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 1, 0)).getUTCDate();
+    dt.setUTCDate(Math.min(origDay, maxDays));
+  }
+  if (days) {
+    dt.setUTCDate(dt.getUTCDate() + Math.round(days));
+  }
+  var y = dt.getUTCFullYear();
+  var m = String(dt.getUTCMonth() + 1);
+  if (m.length < 2) m = '0' + m;
+  var d = String(dt.getUTCDate());
+  if (d.length < 2) d = '0' + d;
+  return y + '-' + m + '-' + d;
+}

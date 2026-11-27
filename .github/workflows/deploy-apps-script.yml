@@ -1,0 +1,62 @@
+name: Deploy Google Apps Script
+
+on:
+  push:
+    branches: ['main']
+    paths:
+      - 'apps-script/**'
+      - '.github/workflows/deploy-apps-script.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: 'apps-script-deploy'
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verifica presenza script .gs
+        id: check_files
+        run: |
+          gs_count=$(find apps-script -maxdepth 2 -type f -name '*.gs' | wc -l | tr -d ' ')
+          echo "gs_count=$gs_count" >> "$GITHUB_OUTPUT"
+          if [ "$gs_count" -eq 0 ]; then
+            echo "::warning::Nessun file .gs presente in apps-script/. Esegui prima 'cd apps-script && npx @google/clasp pull' in locale per importare gli script live senza sovrascriverli."
+          fi
+
+      - name: Verifica secret CLASPRC_JSON
+        id: check_secret
+        if: steps.check_files.outputs.gs_count != '0'
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ]; then
+            echo "::warning::Secret GitHub CLASPRC_JSON non configurato. Esegui 'npx @google/clasp login' in locale e salva ~/.clasprc.json nel secret CLASPRC_JSON per abilitare il deploy automatico su Apps Script."
+            echo "has_secret=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_secret=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.check_files.outputs.gs_count != '0' && steps.check_secret.outputs.has_secret == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Scrivi credenziali clasp e pubblica su Google Apps Script
+        if: steps.check_files.outputs.gs_count != '0' && steps.check_secret.outputs.has_secret == 'true'
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          chmod 600 "$HOME/.clasprc.json"
+          cd apps-script
+          npx --yes @google/clasp@2.4.2 push --force
+
+      - name: Pulizia credenziali
+        if: always()
+        run: rm -f "$HOME/.clasprc.json"

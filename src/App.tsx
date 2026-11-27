@@ -46,10 +46,10 @@ import {
   clearSimulatedFirestoreOps,
   connectGmailAccount,
   db,
-  discardSimulatedFirestoreOp,
   dismissFirestoreQuotaExceeded,
   dismissSimulatedFlushResult,
   FIREBASE_PROJECT_ID,
+  FIRESTORE_DATABASE_ID,
   FirestoreWriteStats,
   flushSimulatedFirestoreOps,
   getGmailAccessToken,
@@ -289,6 +289,33 @@ function diffProductResearchFields(
     changedDetails.push(
       nextNotes ? `Note: "${truncateDetailVal(nextNotes, 26)}"` : 'Note rimosse'
     );
+  }
+
+  const prevColors = Array.isArray(prev.availableColors) ? prev.availableColors : [];
+  const nextColors = Array.isArray(next.availableColors) ? next.availableColors : [];
+  if (JSON.stringify(prevColors) !== JSON.stringify(nextColors)) {
+    changedFields.push('availableColors');
+    changedDetails.push(
+      nextColors.length > 0
+        ? `Varianti colore: ${nextColors.length} opzioni`
+        : 'Varianti colore rimosse'
+    );
+  }
+
+  const prevSizes = Array.isArray(prev.availableSizes) ? prev.availableSizes : [];
+  const nextSizes = Array.isArray(next.availableSizes) ? next.availableSizes : [];
+  if (JSON.stringify(prevSizes) !== JSON.stringify(nextSizes)) {
+    changedFields.push('availableSizes');
+    changedDetails.push(
+      nextSizes.length > 0
+        ? `Varianti taglia: ${nextSizes.length} opzioni`
+        : 'Varianti taglia rimosse'
+    );
+  }
+
+  if (JSON.stringify(prev.colorImages || {}) !== JSON.stringify(next.colorImages || {})) {
+    changedFields.push('colorImages');
+    changedDetails.push('Foto per variante aggiornate');
   }
 
   return { changedFields, changedDetails };
@@ -542,6 +569,7 @@ import {
   articleToReminderConfig,
   buildDailyReminderDigestText,
   computeReminderLifecycle,
+  formatIsoToItDate,
   REMINDERS_CONFIG_DOC_ID,
   reminderConfigToArticlePayload,
   ReminderLifecycleInfo,
@@ -567,6 +595,10 @@ import { VintedView } from './components/VintedView';
 import { ClimateAutopilotInput } from './components/ClimateAutopilotCard';
 import { InfoGuideView } from './components/InfoGuideView';
 import { SettingsView } from './components/SettingsView';
+import {
+  SimulatedOpsQueueList,
+  SimulatedQueueContext,
+} from './components/SimulatedOpsQueueList';
 import { VaultCloudNotice } from './components/VaultCloudNotice';
 
 const EXTENDED_ROOM_OVERRIDES_KEY = 'myhome_research_terrace_rooms_v1';
@@ -3429,6 +3461,9 @@ export default function App() {
       setSimulatedOpDetailHint(`${basePath}/${docId}`, {
         title: String(payload.title),
         actionLabel: 'Nuovo prodotto',
+        groupKey: `research:${docId}`,
+        groupSection: 'Prodotti',
+        groupTitle: String(payload.title),
         changedFields: newDiff.changedFields,
         changedDetails: newDiff.changedDetails,
       });
@@ -3596,14 +3631,7 @@ export default function App() {
     if (prevResearch && changedKeys.size === 0) {
       return;
     }
-    const baseResearchRaw = rawSnapshotsRef.current.productResearches?.find((d) => d.id === id);
-    const baseResearch =
-      isFirestoreWritesDisabled() && baseResearchRaw
-        ? mapRawProductResearches([baseResearchRaw], user.uid)[0]
-        : undefined;
-    const queueDiff = baseResearch
-      ? diffProductResearchFields(baseResearch, nextSnapshotForDiff)
-      : updateDiff;
+    const queueDiff = updateDiff;
     let writePayload: Record<string, unknown> = payload;
     if (prevResearch && changedKeys.size > 0) {
       const partialPayload: Record<string, unknown> = {
@@ -3619,7 +3647,10 @@ export default function App() {
     try {
       setSimulatedOpDetailHint(path, {
         title: String(payload.title),
-        actionLabel: 'Modifica',
+        actionLabel: 'Modifica scheda',
+        groupKey: `research:${id}`,
+        groupSection: 'Prodotti',
+        groupTitle: String(payload.title),
         changedFields: queueDiff.changedFields,
         changedDetails: queueDiff.changedDetails,
       });
@@ -3688,23 +3719,54 @@ export default function App() {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
     const path = `users/${user.uid}/productResearches/${id}`;
     const targetResearch = productResearches.find((r) => r.id === id);
+    const researchTitle = targetResearch?.title || id;
     if (targetResearch) {
-      setSimulatedOpTitleHint(path, targetResearch.title);
+      setSimulatedOpDetailHint(path, {
+        title: researchTitle,
+        actionLabel: 'Eliminazione prodotto',
+        groupKey: `research:${id}`,
+        groupSection: 'Prodotti',
+        groupTitle: researchTitle,
+        changedDetails: ['Scheda prodotto rimossa'],
+      });
     }
     const linkedDocs = getDocumentsForResearch(homeDocuments, id);
     try {
       await deleteDoc(doc(db, path));
       const keysToDelete: string[] = [];
+      const removedFileNames: string[] = [];
       for (const linked of linkedDocs) {
         if (/^[a-zA-Z0-9_-]+$/.test(linked.id)) {
           const linkedPath = `users/${user.uid}/homeArticles/${linked.id}`;
-          setSimulatedOpTitleHint(linkedPath, linked.title || linked.fileName || linked.id);
+          const linkedLabel = linked.title || linked.fileName || linked.id;
+          setSimulatedOpDetailHint(linkedPath, {
+            title: linkedLabel,
+            actionLabel: 'Allegato rimosso',
+            groupKey: `research:${id}`,
+            groupSection: 'Prodotti',
+            groupTitle: researchTitle,
+            changedDetails: linked.fileName ? [`File: ${linked.fileName}`] : undefined,
+          });
           await deleteDoc(doc(db, linkedPath));
         }
-        if (linked.attachmentKey) keysToDelete.push(linked.attachmentKey);
+        if (linked.attachmentKey) {
+          keysToDelete.push(linked.attachmentKey);
+          if (linked.fileName || linked.title) {
+            removedFileNames.push(linked.fileName || linked.title);
+          }
+        }
       }
       if (keysToDelete.length > 0) {
-        await deleteVaultFiles(keysToDelete, user.uid);
+        await deleteVaultFiles(keysToDelete, user.uid, {
+          groupKey: `research:${id}`,
+          groupSection: 'Prodotti',
+          groupTitle: researchTitle,
+          actionLabel: 'File allegati rimossi',
+          displayTitle:
+            removedFileNames.length === 1
+              ? removedFileNames[0]
+              : `${removedFileNames.length || keysToDelete.length} file allegati`,
+        });
       }
       if (isFirestoreWritesDisabled()) {
         setProductResearches((prev) => prev.filter((r) => r.id !== id));
@@ -4369,7 +4431,8 @@ export default function App() {
 
   async function saveArticleManual(
     file: File,
-    articleId: string
+    articleId: string,
+    articleTitle?: string
   ): Promise<{ key: string; fileName: string }> {
     if (!user) throw new Error('Accedi per archiviare il manuale su Firebase.');
     if (file.size > MAX_CLOUD_FILE_BYTES) {
@@ -4377,7 +4440,13 @@ export default function App() {
     }
 
     const key = `article_manual_${articleId}_${Date.now()}`;
-    const stored = await saveVaultFile(key, file, file.name, 'application/pdf', user.uid);
+    const stored = await saveVaultFile(key, file, file.name, 'application/pdf', user.uid, {
+      groupKey: `article:${articleId}`,
+      groupSection: 'Articoli',
+      groupTitle: articleTitle || 'Articolo',
+      actionLabel: 'Manuale PDF caricato',
+      displayTitle: file.name,
+    });
     if (!stored.cloudSynced) {
       await deleteVaultFile(key, user.uid);
       throw new Error('Il manuale non è stato salvato su Firebase. Verifica la connessione e le regole del vault.');
@@ -4385,16 +4454,58 @@ export default function App() {
     return { key, fileName: stored.fileName };
   }
 
+  function resolveArticleQueueLinkMeta(
+    article: Omit<HomeArticleRecord, 'id'>,
+    docId: string
+  ): {
+    groupKey?: string;
+    groupSection?: string;
+    groupTitle?: string;
+    actionOverride?: string;
+  } {
+    const resRef = parseResearchDocumentRef(article.serialNumber);
+    if (resRef) {
+      const parentRes = productResearches.find((r) => r.id === resRef.researchId);
+      return {
+        groupKey: `research:${resRef.researchId}`,
+        groupSection: 'Prodotti',
+        groupTitle: parentRes?.title || 'Prodotto',
+        actionOverride: 'Link documento collegato',
+      };
+    }
+    const artRef = parseArticleDocumentRef(article.serialNumber);
+    if (artRef) {
+      const parentArt = homeArticles.find((a) => a.id === artRef.articleId);
+      return {
+        groupKey: `article:${artRef.articleId}`,
+        groupSection: 'Articoli',
+        groupTitle: parentArt?.name || 'Articolo',
+        actionOverride: 'Link documento collegato',
+      };
+    }
+    if (!article.room.startsWith('__') && !docId.startsWith('car_')) {
+      return {
+        groupKey: `article:${docId}`,
+        groupSection: 'Articoli',
+        groupTitle: article.name.slice(0, 80),
+      };
+    }
+    return {};
+  }
+
   async function handleAddArticle(
     article: Omit<HomeArticleRecord, 'id'>,
     customPrefix = 'art',
-    manualFile?: File
+    manualFile?: File,
+    docQueueOptions?: { isOlderVersion?: boolean }
   ): Promise<string | undefined> {
     if (!user) return undefined;
     const basePath = `users/${user.uid}/homeArticles`;
     const safePrefix = customPrefix.replace(/[^a-zA-Z0-9_-]/g, '') || 'art';
     const docId = `${safePrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const uploadedManual = manualFile ? await saveArticleManual(manualFile, docId) : undefined;
+    const uploadedManual = manualFile
+      ? await saveArticleManual(manualFile, docId, article.name.slice(0, 80))
+      : undefined;
     const payload: Record<string, unknown> = {
       ownerId: user.uid,
       name: article.name.slice(0, 80),
@@ -4442,11 +4553,22 @@ export default function App() {
     }
     try {
       const artDiff = diffHomeArticleFields(undefined, article, docId);
+      const linkMeta = resolveArticleQueueLinkMeta(article, docId);
+      const isOlderLinkedDoc = Boolean(docQueueOptions?.isOlderVersion && linkMeta.actionOverride);
+      const resolvedActionLabel = isOlderLinkedDoc
+        ? 'Link allegato (versione vecchia)'
+        : linkMeta.actionOverride || 'Nuovo elemento';
+      const resolvedChangedDetails = isOlderLinkedDoc
+        ? ['Versione vecchia inclusa', ...artDiff.changedDetails]
+        : artDiff.changedDetails;
       setSimulatedOpDetailHint(`${basePath}/${docId}`, {
         title: article.name.slice(0, 80),
-        actionLabel: 'Nuovo elemento',
+        actionLabel: resolvedActionLabel,
+        groupKey: linkMeta.groupKey,
+        groupSection: linkMeta.groupSection,
+        groupTitle: linkMeta.groupTitle,
         changedFields: artDiff.changedFields,
-        changedDetails: artDiff.changedDetails,
+        changedDetails: resolvedChangedDetails,
       });
       await setDoc(doc(db, basePath, docId), payload);
       if (isFirestoreWritesDisabled()) {
@@ -4500,8 +4622,11 @@ export default function App() {
     await handleUpdateArticle(id, groceryProductToArticlePayload(product));
   }
 
-  async function handleAddDocument(docItem: Omit<HomeDocumentRecord, 'id'>) {
-    return handleAddArticle(homeDocumentToArticlePayload(docItem), 'doc');
+  async function handleAddDocument(
+    docItem: Omit<HomeDocumentRecord, 'id'>,
+    options?: { isOlderVersion?: boolean }
+  ) {
+    return handleAddArticle(homeDocumentToArticlePayload(docItem), 'doc', undefined, options);
   }
 
   async function handleUpdateDocument(id: string, docItem: Omit<HomeDocumentRecord, 'id'>) {
@@ -4530,21 +4655,51 @@ export default function App() {
 
   async function handleUploadLinkedDocument(
     docItem: Omit<HomeDocumentRecord, 'id'>,
-    file: File
+    file: File,
+    options?: { isOlderVersion?: boolean }
   ) {
     if (!user) throw new Error('Accedi per archiviare il documento su Firebase.');
+    const isOlderVersion = Boolean(options?.isOlderVersion);
     const basePath = `users/${user.uid}/homeArticles`;
     const docId = `doc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const attachmentKey = docItem.attachmentKey
       ? sanitizeVaultFileKey(docItem.attachmentKey)
       : sanitizeVaultFileKey(`att_${docId}`);
 
+    const resRef = parseResearchDocumentRef(docItem.referenceCode);
+    const artRef = parseArticleDocumentRef(docItem.referenceCode);
+    const parentRes = resRef
+      ? productResearches.find((r) => r.id === resRef.researchId)
+      : undefined;
+    const parentArt = artRef
+      ? homeArticles.find((a) => a.id === artRef.articleId)
+      : undefined;
+    const linkedGroupHint = resRef
+      ? {
+          groupKey: `research:${resRef.researchId}`,
+          groupSection: 'Prodotti',
+          groupTitle: parentRes?.title || 'Prodotto',
+        }
+      : artRef
+        ? {
+            groupKey: `article:${artRef.articleId}`,
+            groupSection: 'Articoli',
+            groupTitle: parentArt?.name || 'Articolo',
+          }
+        : undefined;
+
     const stored = await saveVaultFile(
       attachmentKey,
       file,
       file.name,
       file.type || 'application/octet-stream',
-      user.uid
+      user.uid,
+      {
+        ...linkedGroupHint,
+        actionLabel: isOlderVersion ? 'File allegato (versione vecchia)' : 'File allegato (PDF)',
+        displayTitle: docItem.title.slice(0, 80),
+        changedDetails: [isOlderVersion ? 'Versione vecchia inclusa' : '', file.name].filter(Boolean),
+      }
     );
     if (!stored.cloudSynced) {
       await deleteVaultFiles([attachmentKey], user.uid);
@@ -4583,6 +4738,17 @@ export default function App() {
     }
 
     try {
+      setSimulatedOpDetailHint(`${basePath}/${docId}`, {
+        title: articlePayload.name.slice(0, 80),
+        actionLabel: isOlderVersion ? 'Allegato PDF (versione vecchia)' : 'Allegato PDF caricato',
+        ...linkedGroupHint,
+        changedFields: ['__new__'],
+        changedDetails: [
+          isOlderVersion ? 'Versione vecchia inclusa' : '',
+          resRef?.docType ? `Tipo: ${resRef.docType}` : artRef?.docType ? `Tipo: ${artRef.docType}` : '',
+          `File: ${stored.fileName}`,
+        ].filter(Boolean),
+      });
       await setDoc(doc(db, basePath, docId), payload);
       if (isFirestoreWritesDisabled()) {
         setHomeArticles((prev) =>
@@ -4632,7 +4798,8 @@ export default function App() {
     title: string,
     provider: string,
     file: File,
-    cloudUrl?: string
+    cloudUrl?: string,
+    options?: { isOlderVersion?: boolean }
   ) {
     const todayIt = new Date().toLocaleDateString('it-IT');
     await handleUploadLinkedDocument(
@@ -4646,7 +4813,8 @@ export default function App() {
         cloudUrl: cloudUrl?.trim() || undefined,
         notes: `File allegato a prodotto (${docType})`,
       },
-      file
+      file,
+      options
     );
   }
 
@@ -4656,19 +4824,23 @@ export default function App() {
     title: string,
     provider: string,
     cloudUrl: string,
-    noteText?: string
+    noteText?: string,
+    options?: { isOlderVersion?: boolean }
   ) {
     const todayIt = new Date().toLocaleDateString('it-IT');
-    await handleAddDocument({
-      title: title.slice(0, 80),
-      category: docType === 'garanzia_extra_family' ? 'Assicurazioni' : 'Altro',
-      provider: (provider || 'Prodotti').slice(0, 80),
-      referenceCode: buildResearchDocumentRef(researchId, docType),
-      issueDate: todayIt,
-      pinned: docType === 'scontrino_fattura' || docType === 'garanzia_extra_family',
-      cloudUrl: cloudUrl.trim(),
-      notes: noteText || `Documento ufficiale collegato (${docType})`,
-    });
+    await handleAddDocument(
+      {
+        title: title.slice(0, 80),
+        category: docType === 'garanzia_extra_family' ? 'Assicurazioni' : 'Altro',
+        provider: (provider || 'Prodotti').slice(0, 80),
+        referenceCode: buildResearchDocumentRef(researchId, docType),
+        issueDate: todayIt,
+        pinned: docType === 'scontrino_fattura' || docType === 'garanzia_extra_family',
+        cloudUrl: cloudUrl.trim(),
+        notes: noteText || `Documento ufficiale collegato (${docType})`,
+      },
+      options
+    );
   }
 
   async function handleUpdateResearchDocumentType(
@@ -4786,6 +4958,17 @@ export default function App() {
         .filter((r): r is HomeReminderRecord => Boolean(r)),
     [homeArticles]
   );
+
+  const batteryReminderCapacity = useMemo(() => {
+    const match = reminders.find(
+      (r) => /\bbatteria\b/i.test(r.title) && typeof r.capacityPct === 'number'
+    );
+    if (!match || typeof match.capacityPct !== 'number') return undefined;
+    return {
+      pct: match.capacityPct,
+      date: match.capacityCheckedDate ? formatIsoToItDate(match.capacityCheckedDate) : undefined,
+    };
+  }, [reminders]);
 
   const dueRemindersToday = useMemo(
     () =>
@@ -4971,6 +5154,42 @@ export default function App() {
     () => homeDocuments.filter((d) => Boolean(parseResearchDocumentRef(d.referenceCode))),
     [homeDocuments]
   );
+
+  const simulatedQueueContext = useMemo<SimulatedQueueContext>(() => {
+    const productTitlesById: Record<string, string> = {};
+    for (const r of productResearches) {
+      if (r.id && r.title) productTitlesById[r.id] = r.title;
+    }
+    const articleTitlesById: Record<string, string> = {};
+    for (const a of homeArticles) {
+      if (a.id && a.name) articleTitlesById[a.id] = a.name;
+    }
+    const docLinksById: NonNullable<SimulatedQueueContext['docLinksById']> = {};
+    for (const d of homeDocuments) {
+      const resRef = parseResearchDocumentRef(d.referenceCode);
+      if (resRef) {
+        docLinksById[d.id] = {
+          parentType: 'research',
+          parentId: resRef.researchId,
+          parentTitle: productTitlesById[resRef.researchId],
+          title: d.title,
+          fileName: d.fileName,
+        };
+        continue;
+      }
+      const artRef = parseArticleDocumentRef(d.referenceCode);
+      if (artRef) {
+        docLinksById[d.id] = {
+          parentType: 'article',
+          parentId: artRef.articleId,
+          parentTitle: articleTitlesById[artRef.articleId],
+          title: d.title,
+          fileName: d.fileName,
+        };
+      }
+    }
+    return { productTitlesById, articleTitlesById, docLinksById };
+  }, [productResearches, homeArticles, homeDocuments]);
 
   // Auto-seed ConTe.it car policy once for owner if not yet persisted
   useEffect(() => {
@@ -5283,8 +5502,11 @@ export default function App() {
   ) {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
     const path = `users/${user.uid}/homeArticles/${id}`;
-    const existingManualKey = homeArticles.find((entry) => entry.id === id)?.manualFileKey;
-    const uploadedManual = manualFile ? await saveArticleManual(manualFile, id) : undefined;
+    const existingArticle = homeArticles.find((entry) => entry.id === id);
+    const existingManualKey = existingArticle?.manualFileKey;
+    const uploadedManual = manualFile
+      ? await saveArticleManual(manualFile, id, article.name.slice(0, 80))
+      : undefined;
     const payload: Record<string, unknown> = {
       ownerId: user.uid,
       name: article.name.slice(0, 80),
@@ -5356,22 +5578,7 @@ export default function App() {
     if (prevArticle && changedArticleKeys.size === 0 && !manualFile) {
       return;
     }
-    const baseArticleRaw = rawSnapshotsRef.current.homeArticles?.find((d) => d.id === id);
-    const baseArticle =
-      isFirestoreWritesDisabled() && baseArticleRaw
-        ? mapRawHomeArticles([baseArticleRaw])[0]
-        : undefined;
-    const queueArtDiff = baseArticle
-      ? diffHomeArticleFields(
-          baseArticle,
-          {
-            ...article,
-            manualFileKey: uploadedManual?.key ?? article.manualFileKey,
-            manualFileName: uploadedManual?.fileName ?? article.manualFileName,
-          },
-          id
-        )
-      : artUpdateDiff;
+    const queueArtDiff = artUpdateDiff;
     let useArticleMerge = false;
     let articleWritePayload: Record<string, unknown> = payload;
     if (prevArticle && changedArticleKeys.size > 0) {
@@ -5392,9 +5599,16 @@ export default function App() {
       articleWritePayload = partialArticlePayload;
     }
     try {
+      const linkMeta = resolveArticleQueueLinkMeta(article, id);
       setSimulatedOpDetailHint(path, {
         title: article.name.slice(0, 80),
-        actionLabel: 'Modifica',
+        actionLabel:
+          linkMeta.groupSection === 'Prodotti' && queueArtDiff.changedFields.includes('serialNumber')
+            ? 'Tipo allegato aggiornato'
+            : 'Modifica',
+        groupKey: linkMeta.groupKey,
+        groupSection: linkMeta.groupSection,
+        groupTitle: linkMeta.groupTitle,
         changedFields: queueArtDiff.changedFields,
         changedDetails: queueArtDiff.changedDetails,
       });
@@ -5426,7 +5640,13 @@ export default function App() {
     }
     const newManualKey = uploadedManual?.key || article.manualFileKey;
     if (existingManualKey && existingManualKey !== newManualKey) {
-      await deleteVaultFiles([existingManualKey], user.uid);
+      await deleteVaultFiles([existingManualKey], user.uid, {
+        groupKey: `article:${id}`,
+        groupSection: 'Articoli',
+        groupTitle: article.name.slice(0, 80),
+        actionLabel: 'Vecchio manuale rimosso',
+        displayTitle: existingArticle?.manualFileName || 'Manuale precedente',
+      });
     }
   }
 
@@ -5434,13 +5654,43 @@ export default function App() {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(docId)) return;
     const targetDoc = homeDocuments.find((d) => d.id === docId);
     const path = `users/${user.uid}/homeArticles/${docId}`;
+    const resRef = targetDoc ? parseResearchDocumentRef(targetDoc.referenceCode) : null;
+    const artRef = targetDoc ? parseArticleDocumentRef(targetDoc.referenceCode) : null;
+    const parentRes = resRef
+      ? productResearches.find((r) => r.id === resRef.researchId)
+      : undefined;
+    const parentArt = artRef
+      ? homeArticles.find((a) => a.id === artRef.articleId)
+      : undefined;
+    const linkedGroupHint = resRef
+      ? {
+          groupKey: `research:${resRef.researchId}`,
+          groupSection: 'Prodotti',
+          groupTitle: parentRes?.title || 'Prodotto',
+        }
+      : artRef
+        ? {
+            groupKey: `article:${artRef.articleId}`,
+            groupSection: 'Articoli',
+            groupTitle: parentArt?.name || 'Articolo',
+          }
+        : undefined;
     if (targetDoc) {
-      setSimulatedOpTitleHint(path, targetDoc.title || targetDoc.fileName || docId);
+      setSimulatedOpDetailHint(path, {
+        title: targetDoc.title || targetDoc.fileName || docId,
+        actionLabel: linkedGroupHint ? 'Allegato rimosso' : 'Eliminazione',
+        ...linkedGroupHint,
+        changedDetails: targetDoc.fileName ? [`File: ${targetDoc.fileName}`] : undefined,
+      });
     }
     try {
       await deleteDoc(doc(db, path));
       if (targetDoc?.attachmentKey) {
-        await deleteVaultFiles([targetDoc.attachmentKey], user.uid);
+        await deleteVaultFiles([targetDoc.attachmentKey], user.uid, {
+          ...linkedGroupHint,
+          actionLabel: 'File allegato rimosso',
+          displayTitle: targetDoc.fileName || targetDoc.title || 'Allegato',
+        });
       }
       if (isFirestoreWritesDisabled()) {
         setHomeArticles((prev) => prev.filter((a) => a.id !== docId));
@@ -5455,8 +5705,20 @@ export default function App() {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
     const path = `users/${user.uid}/homeArticles/${id}`;
     const article = homeArticles.find((entry) => entry.id === id);
+    const articleTitle = article?.name || id;
+    const isRegularArt = Boolean(article && !article.room.startsWith('__') && !id.startsWith('car_'));
     if (article) {
-      setSimulatedOpTitleHint(path, article.name || id);
+      setSimulatedOpDetailHint(path, {
+        title: articleTitle,
+        actionLabel: 'Eliminazione',
+        ...(isRegularArt
+          ? {
+              groupKey: `article:${id}`,
+              groupSection: 'Articoli',
+              groupTitle: articleTitle,
+            }
+          : {}),
+      });
     }
     const linkedDocs = articleDocuments.filter(
       (d) => parseArticleDocumentRef(d.referenceCode)?.articleId === id
@@ -5464,17 +5726,45 @@ export default function App() {
     try {
       await deleteDoc(doc(db, path));
       const keysToDelete: string[] = [];
-      if (article?.manualFileKey) keysToDelete.push(article.manualFileKey);
+      const fileNamesToDelete: string[] = [];
+      if (article?.manualFileKey) {
+        keysToDelete.push(article.manualFileKey);
+        if (article.manualFileName) fileNamesToDelete.push(article.manualFileName);
+      }
       for (const linked of linkedDocs) {
         if (/^[a-zA-Z0-9_-]+$/.test(linked.id)) {
           const linkedPath = `users/${user.uid}/homeArticles/${linked.id}`;
-          setSimulatedOpTitleHint(linkedPath, linked.title || linked.fileName || linked.id);
+          setSimulatedOpDetailHint(linkedPath, {
+            title: linked.title || linked.fileName || linked.id,
+            actionLabel: 'Allegato rimosso',
+            groupKey: `article:${id}`,
+            groupSection: 'Articoli',
+            groupTitle: articleTitle,
+          });
           await deleteDoc(doc(db, linkedPath));
         }
-        if (linked.attachmentKey) keysToDelete.push(linked.attachmentKey);
+        if (linked.attachmentKey) {
+          keysToDelete.push(linked.attachmentKey);
+          if (linked.fileName || linked.title) {
+            fileNamesToDelete.push(linked.fileName || linked.title);
+          }
+        }
       }
       if (keysToDelete.length > 0) {
-        await deleteVaultFiles(keysToDelete, user.uid);
+        await deleteVaultFiles(keysToDelete, user.uid, {
+          ...(isRegularArt
+            ? {
+                groupKey: `article:${id}`,
+                groupSection: 'Articoli',
+                groupTitle: articleTitle,
+              }
+            : {}),
+          actionLabel: 'File allegati rimossi',
+          displayTitle:
+            fileNamesToDelete.length === 1
+              ? fileNamesToDelete[0]
+              : `${fileNamesToDelete.length || keysToDelete.length} file allegati`,
+        });
       }
       if (isFirestoreWritesDisabled()) {
         const deletedIds = new Set([id, ...linkedDocs.map((d) => d.id)]);
@@ -6014,67 +6304,12 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-                <div className="max-h-[45vh] sm:max-h-60 overflow-y-auto space-y-1.5 pr-1">
-                  {simulatedOps.map((op) => {
-                    const timeStr = new Date(op.createdAt).toLocaleTimeString('it-IT', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit',
-                    });
-                    const badgeCls =
-                      op.kind === 'delete' || op.kind === 'vault_delete'
-                        ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300'
-                        : op.kind === 'vault_upload'
-                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300'
-                          : 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300';
-                    return (
-                      <div
-                        key={op.id}
-                        className="px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 flex items-start justify-between gap-2 text-xs"
-                      >
-                        <div className="min-w-0 flex-1 space-y-1">
-                          <div className="flex flex-wrap items-center gap-2 min-w-0">
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${badgeCls}`}>
-                              {op.actionLabel}
-                            </span>
-                            <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 shrink-0">
-                              {op.section}
-                            </span>
-                            <span className="font-semibold text-slate-900 dark:text-slate-100 truncate">
-                              {op.targetTitle}
-                            </span>
-                          </div>
-                          {op.changedDetails && op.changedDetails.length > 0 && (
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              {op.changedDetails.map((detail, idx) => (
-                                <span
-                                  key={idx}
-                                  className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-500/12 dark:text-amber-300 dark:border-amber-500/30 text-[10px] font-medium"
-                                >
-                                  {detail}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
-                            {timeStr} · {op.writeCount} op
-                          </span>
-                          <button
-                            type="button"
-                            disabled={flushState.flushing}
-                            onClick={() => discardSimulatedFirestoreOp(op.id)}
-                            title="Rimuovi questa operazione dalla coda"
-                            className="p-1 rounded text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                <SimulatedOpsQueueList
+                  ops={simulatedOps}
+                  context={simulatedQueueContext}
+                  flushing={flushState.flushing}
+                  maxHeightClass="max-h-[45vh] sm:max-h-64"
+                />
               </div>
             )}
 
@@ -6129,14 +6364,23 @@ export default function App() {
                     <strong className="font-semibold text-amber-900 dark:text-amber-200">
                       Quota gratuita giornaliera Firestore esaurita:
                     </strong>{' '}
-                    i nuovi salvataggi e il caricamento file su cloud sono bloccati fino al reset automatico di domani.{' '}
+                    i nuovi salvataggi e il caricamento file su cloud sono bloccati fino al reset (ore 09:00 ora italiana / 00:00 Pacifico).{' '}
+                    <a
+                      href={`https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/firestore/databases/${FIRESTORE_DATABASE_ID}/usage`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline text-amber-700 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-100 font-medium"
+                    >
+                      Apri Quota Reale su Firebase Console
+                    </a>
+                    {' · '}
                     <a
                       href="https://firebase.google.com/pricing#cloud-firestore"
                       target="_blank"
                       rel="noreferrer"
                       className="underline text-amber-700 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-100 font-medium"
                     >
-                      Dettagli limiti Spark
+                      Limiti Enterprise Spark
                     </a>
                   </span>
                 </div>
@@ -6543,6 +6787,7 @@ export default function App() {
               insurancePolicy={carPolicy}
               logs={carLogs}
               carDocuments={carDocuments}
+              batteryReminderCapacity={batteryReminderCapacity}
               readOnly={!canEdit}
               onSignIn={handleSignIn}
               onSaveProfile={handleSaveCarProfile}
@@ -6562,6 +6807,7 @@ export default function App() {
               notifyConfig={reminderNotifyConfig}
               carProfile={effectiveCarProfileForReminders}
               todayIso={todayIso}
+              ownerUid={activeUid}
               readOnly={!canEdit}
               isGmailConnected={Boolean(gmailToken)}
               sendingEmail={sendingReminderEmail}
@@ -6620,6 +6866,7 @@ export default function App() {
               onExportBackup={handleExportFullBackup}
               onRequestEnableFirestoreWrites={() => setPendingDbActionModal('reenable')}
               onRequestFlushFirestoreOps={() => setPendingDbActionModal('flush')}
+              queueContext={simulatedQueueContext}
               countsSummary={{
                 readings: readings.length,
                 climateLogs: climateLogs.length,
@@ -6724,29 +6971,13 @@ export default function App() {
                     </div>
                   )}
 
-                  <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1">
-                    {simulatedOps.map((op) => (
-                      <div
-                        key={op.id}
-                        className="px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-[11px]"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 dark:bg-sky-500/15 dark:text-sky-300 text-[10px] font-semibold shrink-0">
-                            {op.actionLabel}
-                          </span>
-                          <span className="text-slate-500 dark:text-slate-400 shrink-0">
-                            {op.section}
-                          </span>
-                          <span className="font-semibold text-slate-900 dark:text-slate-100 truncate">
-                            {op.targetTitle}
-                          </span>
-                        </div>
-                        <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 shrink-0">
-                          {op.writeCount} op
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                  <SimulatedOpsQueueList
+                    ops={simulatedOps}
+                    context={simulatedQueueContext}
+                    flushing={flushState.flushing}
+                    readOnlyActions
+                    maxHeightClass="max-h-56"
+                  />
                 </>
               ) : (
                 <p className="leading-relaxed">

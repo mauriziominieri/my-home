@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: my-home-backend
+    runtime: node
+    plan: free
+    branch: main
+    autoDeploy: true
+    healthCheckPath: /api/health
+    buildCommand: npm install --include=dev --legacy-peer-deps && npm install --include=dev --legacy-peer-deps react-is && npm run build
+    startCommand: npx tsx server.ts
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: GEMINI_API_KEY
+        sync: false

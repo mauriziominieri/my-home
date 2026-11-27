@@ -277,6 +277,8 @@ interface CarProfileExtraJson {
   batterySpec?: string;
   batteryInstalledDate?: string;
   batteryIntervalMonths?: number;
+  batteryCapacityPct?: number;
+  batteryCapacityDate?: string;
   timingBeltDate?: string;
   timingBeltKm?: number;
   sparkPlugsDate?: string;
@@ -360,6 +362,11 @@ export function articleToCarProfile(article?: HomeArticleRecord): CarProfile {
     batteryInstalledDate: optStr(extra?.batteryInstalledDate),
     batteryIntervalMonths:
       optNum(extra?.batteryIntervalMonths) ?? DEFAULT_PANDA_PROFILE.batteryIntervalMonths,
+    batteryCapacityPct:
+      optNum(extra?.batteryCapacityPct) !== undefined
+        ? Math.min(100, optNum(extra?.batteryCapacityPct)!)
+        : undefined,
+    batteryCapacityDate: optStr(extra?.batteryCapacityDate),
     timingBeltDate: optStr(extra?.timingBeltDate),
     timingBeltKm: optNum(extra?.timingBeltKm),
     sparkPlugsDate: optStr(extra?.sparkPlugsDate),
@@ -425,6 +432,12 @@ export function carProfileToArticlePayload(
       : {}),
     ...(optNum(profile.batteryIntervalMonths) !== undefined
       ? { batteryIntervalMonths: optNum(profile.batteryIntervalMonths) }
+      : {}),
+    ...(optNum(profile.batteryCapacityPct) !== undefined
+      ? { batteryCapacityPct: Math.min(100, optNum(profile.batteryCapacityPct)!) }
+      : {}),
+    ...(optStr(profile.batteryCapacityDate)
+      ? { batteryCapacityDate: optStr(profile.batteryCapacityDate) }
       : {}),
     ...(optStr(profile.timingBeltDate) ? { timingBeltDate: optStr(profile.timingBeltDate) } : {}),
     ...(optNum(profile.timingBeltKm) !== undefined

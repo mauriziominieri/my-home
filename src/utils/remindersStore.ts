@@ -329,6 +329,11 @@ export function articleToReminder(article: HomeArticleRecord): HomeReminderRecor
         completedDate: parsed.completedDate || undefined,
         renewalCount: typeof parsed.renewalCount === 'number' ? parsed.renewalCount : 0,
         lastNotifiedDate: parsed.lastNotifiedDate || undefined,
+        capacityPct:
+          typeof parsed.capacityPct === 'number' && Number.isFinite(parsed.capacityPct)
+            ? Math.min(100, Math.max(0, Math.round(parsed.capacityPct * 10) / 10))
+            : undefined,
+        capacityCheckedDate: normalizeReminderDateIso(parsed.capacityCheckedDate) || undefined,
         notes: parsed.notes || article.notes || undefined,
       };
     } catch {
@@ -369,10 +374,9 @@ export function reminderToArticlePayload(
     familyWarranty: Boolean(reminder.notifyEnabled),
     purchaseDate: formatIsoToItDate(startIso).slice(0, 20),
     warrantyEnd: formatIsoToItDate(dueIso).slice(0, 20),
-    specs: `NOTIFY:${reminder.notifyEnabled ? 'ON' : 'OFF'}|LEAD:${reminder.leadMonths}M${reminder.leadDays}D|DONE:${reminder.completed ? 1 : 0}`.slice(
-      0,
-      240
-    ),
+    specs: `NOTIFY:${reminder.notifyEnabled ? 'ON' : 'OFF'}|LEAD:${reminder.leadMonths}M${reminder.leadDays}D|DONE:${reminder.completed ? 1 : 0}${
+      typeof reminder.capacityPct === 'number' ? `|CAP:${reminder.capacityPct}%` : ''
+    }`.slice(0, 240),
     notes: reminder.notes ? reminder.notes.trim().slice(0, 240) : undefined,
     manualExtractText: serialized,
   };
@@ -389,11 +393,11 @@ export const REMINDER_PRESETS: ReminderTemplatePreset[] = [
   {
     key: 'car_battery',
     label: 'Batteria Auto (4,5 anni)',
-    description: 'Cambiata il 26/11/2026 · durata 4 anni e 6 mesi · avviso 3 mesi prima',
-    build: (_todayIso, carProfile) => ({
+    description: 'Monitoraggio batteria auto · durata 4 anni e 6 mesi · capacità % e preavviso personalizzabile',
+    build: (todayIso, carProfile) => ({
       title: `Batteria Auto (${carProfile.brand} ${carProfile.plate})`,
       category: 'auto_manutenzione',
-      startDate: normalizeReminderDateIso(carProfile.batteryInstalledDate) || '2026-11-26',
+      startDate: normalizeReminderDateIso(carProfile.batteryInstalledDate) || todayIso,
       durationYears: 4,
       durationMonths: 6,
       durationDays: 0,
@@ -405,6 +409,8 @@ export const REMINDER_PRESETS: ReminderTemplatePreset[] = [
       renewable: true,
       completed: false,
       renewalCount: 0,
+      capacityPct: carProfile.batteryCapacityPct,
+      capacityCheckedDate: normalizeReminderDateIso(carProfile.batteryCapacityDate) || undefined,
       notes: 'Durata media 4 anni e mezzo. Avviso quotidiano fino alla sostituzione.',
     }),
   },
@@ -559,6 +565,13 @@ export function buildDailyReminderDigestText(
     if (lifecycle.kmProgressPct !== undefined && reminder.intervalKm) {
       lines.push(
         `   Km percorsi dal cambio: ${lifecycle.kmElapsed?.toLocaleString('it-IT')} / ${reminder.intervalKm.toLocaleString('it-IT')} km (restano ${lifecycle.kmRemaining?.toLocaleString('it-IT')} km)`
+      );
+    }
+    if (typeof reminder.capacityPct === 'number') {
+      lines.push(
+        `   Capacità misurata: ${reminder.capacityPct}%${
+          reminder.capacityCheckedDate ? ` (al ${formatIsoToItDate(reminder.capacityCheckedDate)})` : ''
+        }`
       );
     }
     if (reminder.notes) {

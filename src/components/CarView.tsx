@@ -59,6 +59,7 @@ interface CarViewProps {
   insurancePolicy: CarInsurancePolicy;
   logs: CarLogEntry[];
   carDocuments: HomeDocumentRecord[];
+  batteryReminderCapacity?: { pct: number; date?: string };
   readOnly?: boolean;
   onSignIn?: () => void;
   onOpenReminders?: () => void;
@@ -128,6 +129,7 @@ export function CarView({
   insurancePolicy,
   logs,
   carDocuments,
+  batteryReminderCapacity,
   readOnly = false,
   onSignIn,
   onOpenReminders,
@@ -190,6 +192,10 @@ export function CarView({
   const [batteryIntervalMonths, setBatteryIntervalMonths] = useState(
     profile.batteryIntervalMonths !== undefined ? String(profile.batteryIntervalMonths) : '54'
   );
+  const [batteryCapacityPct, setBatteryCapacityPct] = useState(
+    profile.batteryCapacityPct !== undefined ? String(profile.batteryCapacityPct) : ''
+  );
+  const [batteryCapacityDate, setBatteryCapacityDate] = useState(profile.batteryCapacityDate || '');
   const [timingBeltDate, setTimingBeltDate] = useState(profile.timingBeltDate || '');
   const [timingBeltKm, setTimingBeltKm] = useState(
     profile.timingBeltKm !== undefined ? String(profile.timingBeltKm) : ''
@@ -289,6 +295,16 @@ export function CarView({
     setBatteryIntervalMonths(
       profile.batteryIntervalMonths !== undefined ? String(profile.batteryIntervalMonths) : '54'
     );
+    setBatteryCapacityPct(
+      profile.batteryCapacityPct !== undefined
+        ? String(profile.batteryCapacityPct)
+        : batteryReminderCapacity?.pct !== undefined
+          ? String(batteryReminderCapacity.pct)
+          : ''
+    );
+    setBatteryCapacityDate(
+      profile.batteryCapacityDate || batteryReminderCapacity?.date || ''
+    );
     setTimingBeltDate(profile.timingBeltDate || '');
     setTimingBeltKm(profile.timingBeltKm !== undefined ? String(profile.timingBeltKm) : '');
     setSparkPlugsDate(profile.sparkPlugsDate || '');
@@ -355,6 +371,11 @@ export function CarView({
         batterySpec: batterySpec.trim() || undefined,
         batteryInstalledDate: batteryInstalledDate.trim() || undefined,
         batteryIntervalMonths: parseOptionalInt(batteryIntervalMonths),
+        batteryCapacityPct: (() => {
+          const cap = parseOptionalDecimal(batteryCapacityPct);
+          return cap !== undefined ? Math.min(100, Math.max(0, cap)) : undefined;
+        })(),
+        batteryCapacityDate: batteryCapacityDate.trim() || undefined,
         timingBeltDate: timingBeltDate.trim() || undefined,
         timingBeltKm: parseOptionalInt(timingBeltKm),
         sparkPlugsDate: sparkPlugsDate.trim() || undefined,
@@ -1051,6 +1072,16 @@ export function CarView({
                   profile.batteryInstalledDate
                     ? `${profile.batteryInstalledDate} (durata ~${profile.batteryIntervalMonths || 54} mesi)`
                     : 'Da annotare (es. 26/11/2026)',
+                ],
+                [
+                  'Capacità batteria (%)',
+                  (() => {
+                    const pct = profile.batteryCapacityPct ?? batteryReminderCapacity?.pct;
+                    const dt = profile.batteryCapacityDate || batteryReminderCapacity?.date;
+                    return pct !== undefined
+                      ? `${pct}%${dt ? ` (misurata il ${dt})` : ''}`
+                      : 'Da annotare (es. 36% al 26/11/2026)';
+                  })(),
                 ],
                 [
                   'Cinghia distribuzione',
@@ -2070,6 +2101,29 @@ export function CarView({
                 value={batteryIntervalMonths}
                 onChange={(e) => setBatteryIntervalMonths(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Capacità batteria (%)</span>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.5"
+                placeholder="Es. 36 (test elettrauto)"
+                value={batteryCapacityPct}
+                onChange={(e) => setBatteryCapacityPct(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-600 dark:text-slate-400">Data misura capacità</span>
+              <input
+                type="text"
+                placeholder="Es. 26/11/2026"
+                value={batteryCapacityDate}
+                onChange={(e) => setBatteryCapacityDate(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
               />
             </label>
             <label className="space-y-1">

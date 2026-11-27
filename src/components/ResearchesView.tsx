@@ -120,7 +120,8 @@ interface ResearchesViewProps {
     title: string,
     provider: string,
     file: File,
-    cloudUrl?: string
+    cloudUrl?: string,
+    options?: { isOlderVersion?: boolean }
   ) => Promise<void>;
   onAddResearchDocumentLink?: (
     researchId: string,
@@ -128,7 +129,8 @@ interface ResearchesViewProps {
     title: string,
     provider: string,
     cloudUrl: string,
-    noteText?: string
+    noteText?: string,
+    options?: { isOlderVersion?: boolean }
   ) => Promise<void>;
   onUpdateResearchDocumentType?: (
     docId: string,
@@ -2192,7 +2194,8 @@ export function ResearchesView({
             fullTitle,
             provider,
             file,
-            docItem.url
+            docItem.url,
+            docItem.isOlderVersion ? { isOlderVersion: true } : undefined
           );
           if (existingLinkDoc) {
             try {
@@ -2305,7 +2308,8 @@ export function ResearchesView({
             fullTitle,
             provider,
             docItem.url,
-            `${reasonDetail} (${provider})`
+            `${reasonDetail} (${provider})`,
+            docItem.isOlderVersion ? { isOlderVersion: true } : undefined
           );
           linked += 1;
           existingLinkOnlyByUrl.set(normUrl, {} as HomeDocumentRecord);

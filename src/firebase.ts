@@ -178,6 +178,7 @@ export function subscribeFirestoreQuotaExceeded(
 
 export function notifyFirestoreQuotaExceeded(): void {
   quotaExceededObserved = true;
+  recordFirestoreQuotaExceededEvent();
   if (!quotaExceededActive) {
     quotaExceededActive = true;
     quotaExceededListeners.forEach((listener) => listener(true));
@@ -216,6 +217,9 @@ export interface SimulatedFirestoreOp {
   actionLabel: string;
   targetTitle: string;
   writeCount: number;
+  groupKey?: string;
+  groupSection?: string;
+  groupTitle?: string;
   changedFields?: string[];
   changedDetails?: string[];
   path?: string;
@@ -270,6 +274,9 @@ export interface SimulatedFlushState {
 export interface SimulatedOpDetailHint {
   title?: string;
   actionLabel?: string;
+  groupKey?: string;
+  groupSection?: string;
+  groupTitle?: string;
   changedFields?: string[];
   changedDetails?: string[];
 }
@@ -299,6 +306,9 @@ export function setSimulatedOpDetailHint(path: string, hint: SimulatedOpDetailHi
   simulatedOpDetailHints.set(path, {
     title: hint.title?.trim() || prev.title,
     actionLabel: hint.actionLabel?.trim() || prev.actionLabel,
+    groupKey: hint.groupKey?.trim() || prev.groupKey,
+    groupSection: hint.groupSection?.trim() || prev.groupSection,
+    groupTitle: hint.groupTitle?.trim() || prev.groupTitle,
     changedFields: cleanFields,
     changedDetails: cleanDetails,
   });
@@ -1073,6 +1083,9 @@ function compactSinglePathOps(
       createdAt: lastStandalone.createdAt,
       path: cleanTarget,
       section: firstStandalone.section || desc.section,
+      groupKey: lastStandalone.groupKey || firstStandalone.groupKey,
+      groupSection: lastStandalone.groupSection || firstStandalone.groupSection,
+      groupTitle: lastStandalone.groupTitle || firstStandalone.groupTitle,
       targetTitle:
         (lastOcc.kind === 'standalone' ? lastOcc.op.targetTitle : undefined) || desc.targetTitle,
       writeCount: 1,
@@ -1153,6 +1166,9 @@ function compactSinglePathOps(
         kind: 'set',
         path: cleanTarget,
         section: desc.section,
+        groupKey: lastStandalone.groupKey || firstStandalone.groupKey,
+        groupSection: lastStandalone.groupSection || firstStandalone.groupSection,
+        groupTitle: lastStandalone.groupTitle || firstStandalone.groupTitle,
         actionLabel:
           firstStandalone.actionLabel === 'Nuovo prodotto'
             ? 'Nuovo prodotto'
@@ -1255,19 +1271,11 @@ function compactSimulatedOpsList(
 }
 
 function enqueueSimulatedOp(op: SimulatedFirestoreOp): void {
-  const appended = [...simulatedFirestoreOps, op];
-  if ((op.kind === 'set' || op.kind === 'delete') && op.path) {
-    simulatedFirestoreOps = compactSimulatedOpsList(appended, op.path);
-  } else if (op.kind === 'batch' && op.batchOps?.length) {
-    simulatedFirestoreOps = compactSimulatedOpsList(
-      appended,
-      Array.from(new Set(op.batchOps.map((s) => s.path).filter(Boolean)))
-    );
-  } else if (op.kind === 'vault_delete') {
-    simulatedFirestoreOps = compactVaultOps(appended);
-  } else {
-    simulatedFirestoreOps = appended;
-  }
+  // Keep every queued user action as an independent step so any single edit
+  // (e.g. changing status on a locally-added product) can be undone cleanly without
+  // wiping earlier creation or unrelated changes on the same document.
+  // Path compaction is still applied automatically at flush/plan time via compactSimulatedOpsList.
+  simulatedFirestoreOps = [...simulatedFirestoreOps, op];
   persistAndEmitSimulatedOps();
 }
 
@@ -1277,63 +1285,140 @@ export function enqueueSimulatedVaultUpload(payload: {
   mimeType: string;
   size: number;
   ownerUid: string;
+  groupKey?: string;
+  groupSection?: string;
+  groupTitle?: string;
+  actionLabel?: string;
+  displayTitle?: string;
+  changedDetails?: string[];
 }): void {
   const estimatedOps = Math.max(2, Math.ceil((payload.size * 1.35) / 600_000) + 1);
   enqueueSimulatedOp({
     id: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     kind: 'vault_upload',
     createdAt: Date.now(),
-    section: 'Allegati Vault',
-    actionLabel: 'Caricamento allegato',
-    targetTitle: payload.fileName,
+    section: payload.groupSection || 'Allegati',
+    actionLabel: payload.actionLabel || 'File allegato',
+    targetTitle: payload.displayTitle || payload.fileName,
+    groupKey: payload.groupKey,
+    groupSection: payload.groupSection,
+    groupTitle: payload.groupTitle,
+    changedDetails: payload.changedDetails,
     writeCount: estimatedOps,
-    vaultUpload: payload,
+    vaultUpload: {
+      fileKey: payload.fileKey,
+      fileName: payload.fileName,
+      mimeType: payload.mimeType,
+      size: payload.size,
+      ownerUid: payload.ownerUid,
+    },
   });
 }
 
 export function enqueueSimulatedVaultDelete(payload: {
   keys: string[];
   ownerUid: string;
+  groupKey?: string;
+  groupSection?: string;
+  groupTitle?: string;
+  actionLabel?: string;
+  displayTitle?: string;
+  changedDetails?: string[];
 }): void {
   if (payload.keys.length === 0) return;
   enqueueSimulatedOp({
     id: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     kind: 'vault_delete',
     createdAt: Date.now(),
-    section: 'Allegati Vault',
-    actionLabel: 'Rimozione allegati',
+    section: payload.groupSection || 'Allegati',
+    actionLabel: payload.actionLabel || 'Rimozione allegati',
     targetTitle:
-      payload.keys.length === 1 ? payload.keys[0] : `${payload.keys.length} allegati`,
+      payload.displayTitle ||
+      (payload.keys.length === 1 ? payload.keys[0] : `${payload.keys.length} allegati`),
+    groupKey: payload.groupKey,
+    groupSection: payload.groupSection,
+    groupTitle: payload.groupTitle,
+    changedDetails: payload.changedDetails,
     writeCount: payload.keys.length * 2,
-    vaultDelete: payload,
+    vaultDelete: {
+      keys: payload.keys,
+      ownerUid: payload.ownerUid,
+    },
   });
 }
 
-export function discardSimulatedFirestoreOp(id: string): void {
-  const target = simulatedFirestoreOps.find((op) => op.id === id);
-  if (!target) return;
-  const isCancelledNewDoc =
-    target.kind === 'set' &&
-    !target.options?.merge &&
-    Boolean(target.path) &&
-    Boolean(target.changedFields?.includes('__new__'));
+function collectPairedVaultFileKeys(op: SimulatedFirestoreOp): string[] {
+  const keys: string[] = [];
+  if (op.kind === 'set' && op.data) {
+    if (typeof op.data.manualFileKey === 'string' && op.data.manualFileKey) {
+      keys.push(op.data.manualFileKey);
+    }
+    if (typeof op.data.pdfFileKey === 'string' && op.data.pdfFileKey) {
+      keys.push(op.data.pdfFileKey);
+    }
+    if (typeof op.data.specs === 'string') {
+      const m = op.data.specs.match(/(?:^|\|)KEY:([^|]+)/);
+      if (m?.[1]) keys.push(m[1]);
+    }
+  }
+  return keys;
+}
+
+export function discardSimulatedFirestoreOps(ids: string[]): void {
+  const idSet = new Set(ids.filter(Boolean));
+  if (idSet.size === 0) return;
+
+  const targets = simulatedFirestoreOps.filter((op) => idSet.has(op.id));
+  if (targets.length === 0) return;
+
+  const pairedVaultKeys = new Set<string>();
+  const cancelledNewPaths = new Map<string, number>();
+
+  for (const target of targets) {
+    const isLocalCreation =
+      target.kind === 'set' &&
+      !target.options?.merge &&
+      Boolean(target.path) &&
+      (Boolean(target.changedFields?.includes('__new__')) ||
+        !lookupRegisteredBaseDoc(target.path!).baseDoc);
+    if (isLocalCreation) {
+      cancelledNewPaths.set(target.path!, target.createdAt);
+    }
+    if (target.kind === 'set' && !target.options?.merge) {
+      for (const fk of collectPairedVaultFileKeys(target)) {
+        pairedVaultKeys.add(fk);
+      }
+    }
+  }
 
   const next = simulatedFirestoreOps.filter((op) => {
-    if (op.id === id) return false;
+    if (idSet.has(op.id)) return false;
     if (
-      isCancelledNewDoc &&
-      op.createdAt >= target.createdAt &&
       op.kind === 'set' &&
       op.options?.merge &&
-      op.path === target.path
+      op.path &&
+      cancelledNewPaths.has(op.path) &&
+      op.createdAt >= (cancelledNewPaths.get(op.path) ?? 0)
+    ) {
+      return false;
+    }
+    if (
+      op.kind === 'vault_upload' &&
+      op.vaultUpload?.fileKey &&
+      pairedVaultKeys.has(op.vaultUpload.fileKey)
     ) {
       return false;
     }
     return true;
   });
+
   if (next.length === simulatedFirestoreOps.length) return;
   simulatedFirestoreOps = next;
   persistAndEmitSimulatedOps();
+}
+
+export function discardSimulatedFirestoreOp(id: string): void {
+  discardSimulatedFirestoreOps([id]);
 }
 
 export function clearSimulatedFirestoreOps(): void {
@@ -1790,23 +1875,111 @@ let firestoreWriteStats: FirestoreWriteStats = {
 export const DAILY_FREE_WRITES_LIMIT = 20_000;
 export const DAILY_FREE_READS_LIMIT = 50_000;
 const DAILY_USAGE_STORAGE_KEY = 'myhome_firestore_daily_usage_v1';
+const TELEMETRY_IDB_NAME = 'myhome_firestore_telemetry_db';
+const TELEMETRY_IDB_STORE = 'telemetry_store';
+const TELEMETRY_IDB_KEY = 'daily_usage_history_v1';
 const MAX_DAILY_USAGE_DAYS = 30;
 
 export interface DailyFirestoreUsageEntry {
-  date: string; // YYYY-MM-DD local
+  date: string; // YYYY-MM-DD in America/Los_Angeles (matches Firebase daily reset at 00:00 PT / ~09:00 IT)
   writes: number;
   deletes: number;
   reads: number;
+  readUnits: number;
+  writeUnits: number;
   savedInTestMode: number;
   settingsWrites: number;
+  quotaHit?: boolean;
+  quotaHitAt?: number;
 }
 
-function getLocalTodayIsoDate(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
+export function getFirestoreQuotaDayIsoDate(nowMs = Date.now()): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Los_Angeles',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date(nowMs));
+    const y = parts.find((p) => p.type === 'year')?.value;
+    const m = parts.find((p) => p.type === 'month')?.value;
+    const d = parts.find((p) => p.type === 'day')?.value;
+    if (y && m && d) return `${y}-${m}-${d}`;
+  } catch {
+    // fallback below
+  }
+  const dt = new Date(nowMs - 8 * 60 * 60 * 1000);
+  const y = dt.getUTCFullYear();
+  const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(dt.getUTCDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+function sanitizeDailyUsageEntries(rawList: unknown): DailyFirestoreUsageEntry[] {
+  if (!Array.isArray(rawList)) return [];
+  return rawList
+    .filter((item): item is DailyFirestoreUsageEntry =>
+      Boolean(
+        item &&
+          typeof item === 'object' &&
+          /^\d{4}-\d{2}-\d{2}$/.test(String((item as { date?: unknown }).date || ''))
+      )
+    )
+    .map((item) => {
+      const writes = Math.max(0, Math.round(Number(item.writes || 0)));
+      const deletes = Math.max(0, Math.round(Number(item.deletes || 0)));
+      const reads = Math.max(0, Math.round(Number(item.reads || 0)));
+      const readUnits = Math.max(reads, Math.round(Number(item.readUnits || 0)));
+      const writeUnits = Math.max(writes + deletes, Math.round(Number(item.writeUnits || 0)));
+      const rawQuotaHitAt = Number(item.quotaHitAt || 0);
+      return {
+        date: String(item.date),
+        writes,
+        deletes,
+        reads,
+        readUnits,
+        writeUnits,
+        savedInTestMode: Math.max(0, Math.round(Number(item.savedInTestMode || 0))),
+        settingsWrites: Math.max(0, Math.round(Number(item.settingsWrites || 0))),
+        ...(item.quotaHit ? { quotaHit: true } : {}),
+        ...(Number.isFinite(rawQuotaHitAt) && rawQuotaHitAt > 0
+          ? { quotaHitAt: Math.round(rawQuotaHitAt) }
+          : {}),
+      };
+    })
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, MAX_DAILY_USAGE_DAYS);
+}
+
+function mergeDailyUsageLists(
+  primary: DailyFirestoreUsageEntry[],
+  secondary: DailyFirestoreUsageEntry[]
+): DailyFirestoreUsageEntry[] {
+  const byDate = new Map<string, DailyFirestoreUsageEntry>();
+  for (const entry of [...secondary, ...primary]) {
+    const existing = byDate.get(entry.date);
+    if (!existing) {
+      byDate.set(entry.date, { ...entry });
+    } else {
+      byDate.set(entry.date, {
+        date: entry.date,
+        writes: Math.max(existing.writes, entry.writes),
+        deletes: Math.max(existing.deletes, entry.deletes),
+        reads: Math.max(existing.reads, entry.reads),
+        readUnits: Math.max(existing.readUnits, entry.readUnits),
+        writeUnits: Math.max(existing.writeUnits, entry.writeUnits),
+        savedInTestMode: Math.max(existing.savedInTestMode, entry.savedInTestMode),
+        settingsWrites: Math.max(existing.settingsWrites, entry.settingsWrites),
+        ...(existing.quotaHit || entry.quotaHit ? { quotaHit: true } : {}),
+        ...(existing.quotaHitAt || entry.quotaHitAt
+          ? { quotaHitAt: Math.max(existing.quotaHitAt || 0, entry.quotaHitAt || 0) }
+          : {}),
+      });
+    }
+  }
+  return Array.from(byDate.values())
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, MAX_DAILY_USAGE_DAYS);
 }
 
 function loadDailyUsageHistory(): DailyFirestoreUsageEntry[] {
@@ -1814,29 +1987,82 @@ function loadDailyUsageHistory(): DailyFirestoreUsageEntry[] {
   try {
     const raw = window.localStorage.getItem(DAILY_USAGE_STORAGE_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((item): item is DailyFirestoreUsageEntry =>
-        Boolean(item && typeof item === 'object' && /^\d{4}-\d{2}-\d{2}$/.test(String((item as { date?: unknown }).date || '')))
-      )
-      .map((item) => ({
-        date: String(item.date),
-        writes: Math.max(0, Math.round(Number(item.writes || 0))),
-        deletes: Math.max(0, Math.round(Number(item.deletes || 0))),
-        reads: Math.max(0, Math.round(Number(item.reads || 0))),
-        savedInTestMode: Math.max(0, Math.round(Number(item.savedInTestMode || 0))),
-        settingsWrites: Math.max(0, Math.round(Number(item.settingsWrites || 0))),
-      }))
-      .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, MAX_DAILY_USAGE_DAYS);
+    return sanitizeDailyUsageEntries(JSON.parse(raw));
   } catch {
     return [];
   }
 }
 
+function openTelemetryIdb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined' || !window.indexedDB) {
+      reject(new Error('IndexedDB unavailable'));
+      return;
+    }
+    const req = window.indexedDB.open(TELEMETRY_IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const idb = req.result;
+      if (!idb.objectStoreNames.contains(TELEMETRY_IDB_STORE)) {
+        idb.createObjectStore(TELEMETRY_IDB_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('IndexedDB open error'));
+  });
+}
+
+async function readDailyUsageFromIdb(): Promise<DailyFirestoreUsageEntry[]> {
+  try {
+    const idb = await openTelemetryIdb();
+    const result = await new Promise<unknown>((resolve, reject) => {
+      const tx = idb.transaction(TELEMETRY_IDB_STORE, 'readonly');
+      const req = tx.objectStore(TELEMETRY_IDB_STORE).get(TELEMETRY_IDB_KEY);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    idb.close();
+    return sanitizeDailyUsageEntries(result);
+  } catch {
+    return [];
+  }
+}
+
+async function writeDailyUsageToIdb(entries: DailyFirestoreUsageEntry[]): Promise<void> {
+  try {
+    const idb = await openTelemetryIdb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = idb.transaction(TELEMETRY_IDB_STORE, 'readwrite');
+      tx.objectStore(TELEMETRY_IDB_STORE).put(entries, TELEMETRY_IDB_KEY);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    idb.close();
+  } catch {
+    // ignore IndexedDB errors
+  }
+}
+
 let dailyUsageHistory: DailyFirestoreUsageEntry[] = loadDailyUsageHistory();
+let dailyUsageClearedManually = false;
 const dailyUsageListeners = new Set<(entries: DailyFirestoreUsageEntry[]) => void>();
+
+// Hydrate from IndexedDB on boot so counts survive page reloads even if localStorage hits 5MB limit
+if (typeof window !== 'undefined') {
+  void readDailyUsageFromIdb().then((idbEntries) => {
+    if (dailyUsageClearedManually || idbEntries.length === 0) return;
+    const merged = mergeDailyUsageLists(dailyUsageHistory, idbEntries);
+    if (JSON.stringify(merged) !== JSON.stringify(dailyUsageHistory)) {
+      dailyUsageHistory = merged;
+      try {
+        window.localStorage.setItem(DAILY_USAGE_STORAGE_KEY, JSON.stringify(merged));
+      } catch {
+        // ignore localStorage quota errors; IndexedDB has the source of truth
+      }
+      const snapshot = merged.map((e) => ({ ...e }));
+      dailyUsageListeners.forEach((listener) => listener(snapshot));
+    }
+  });
+}
 
 function saveAndEmitDailyUsage(): void {
   const trimmed = [...dailyUsageHistory]
@@ -1847,8 +2073,9 @@ function saveAndEmitDailyUsage(): void {
     try {
       window.localStorage.setItem(DAILY_USAGE_STORAGE_KEY, JSON.stringify(trimmed));
     } catch {
-      // ignore localStorage quota errors
+      // ignore localStorage quota errors (IndexedDB still persists reliably)
     }
+    void writeDailyUsageToIdb(trimmed);
   }
   const snapshot = trimmed.map((e) => ({ ...e }));
   dailyUsageListeners.forEach((listener) => listener(snapshot));
@@ -1857,7 +2084,8 @@ function saveAndEmitDailyUsage(): void {
 function mutateTodayDailyUsage(
   updater: (entry: DailyFirestoreUsageEntry) => void
 ): void {
-  const today = getLocalTodayIsoDate();
+  dailyUsageClearedManually = false;
+  const today = getFirestoreQuotaDayIsoDate();
   const nextList = dailyUsageHistory.map((e) => ({ ...e }));
   let todayEntry = nextList.find((e) => e.date === today);
   if (!todayEntry) {
@@ -1866,6 +2094,8 @@ function mutateTodayDailyUsage(
       writes: 0,
       deletes: 0,
       reads: 0,
+      readUnits: 0,
+      writeUnits: 0,
       savedInTestMode: 0,
       settingsWrites: 0,
     };
@@ -1891,15 +2121,46 @@ export function subscribeDailyFirestoreUsage(
 }
 
 export function clearDailyFirestoreUsageHistory(): void {
+  dailyUsageClearedManually = true;
   dailyUsageHistory = [];
   saveAndEmitDailyUsage();
 }
 
-export function recordFirestoreReadsExecuted(count = 1): void {
+function estimatePayloadBytes(data: unknown): number {
+  if (!data || typeof data !== 'object') return 256;
+  try {
+    return Math.max(256, JSON.stringify(data).length + 64);
+  } catch {
+    return 512;
+  }
+}
+
+function bytesToReadUnits(bytes: number): number {
+  return Math.max(1, Math.ceil(bytes / 4096));
+}
+
+function bytesToWriteUnits(bytes: number): number {
+  return Math.max(1, Math.ceil(bytes / 1024));
+}
+
+function recordFirestoreQuotaExceededEvent(): void {
+  const now = Date.now();
+  mutateTodayDailyUsage((entry) => {
+    entry.quotaHit = true;
+    entry.quotaHitAt = now;
+  });
+}
+
+export function recordFirestoreReadsExecuted(count = 1, readUnits?: number): void {
   if (!Number.isFinite(count) || count <= 0) return;
   const cleanCount = Math.round(count);
+  const cleanUnits =
+    typeof readUnits === 'number' && Number.isFinite(readUnits) && readUnits > 0
+      ? Math.max(cleanCount, Math.round(readUnits))
+      : cleanCount;
   mutateTodayDailyUsage((entry) => {
     entry.reads += cleanCount;
+    entry.readUnits += cleanUnits;
   });
 }
 
@@ -1973,12 +2234,18 @@ export function recordFirestoreWritesSaved(count = 1, label?: string): void {
 export function recordFirestoreWritesExecuted(
   count = 1,
   label?: string,
-  options?: { deletes?: number; isSettingsWrite?: boolean }
+  options?: { deletes?: number; isSettingsWrite?: boolean; writeUnits?: number }
 ): void {
   if (count <= 0) return;
   const cleanCount = Math.round(count);
   const cleanDeletes = Math.max(0, Math.min(cleanCount, Math.round(options?.deletes || 0)));
   const cleanWrites = cleanCount - cleanDeletes;
+  const cleanUnits =
+    typeof options?.writeUnits === 'number' &&
+    Number.isFinite(options.writeUnits) &&
+    options.writeUnits > 0
+      ? Math.max(cleanCount, Math.round(options.writeUnits))
+      : cleanCount;
   firestoreWriteStats = {
     ...firestoreWriteStats,
     writesExecutedCount: firestoreWriteStats.writesExecutedCount + cleanCount,
@@ -1989,6 +2256,7 @@ export function recordFirestoreWritesExecuted(
   mutateTodayDailyUsage((entry) => {
     entry.writes += cleanWrites;
     entry.deletes += cleanDeletes;
+    entry.writeUnits += cleanUnits;
     if (options?.isSettingsWrite) {
       entry.settingsWrites += cleanCount;
     }
@@ -2000,7 +2268,8 @@ export async function trackedGetDoc<AppModelType = DocumentData, DbModelType ext
 ): Promise<DocumentSnapshot<AppModelType, DbModelType>> {
   const snap = await rawGetDoc(reference);
   if (!snap.metadata.fromCache) {
-    recordFirestoreReadsExecuted(1);
+    const units = snap.exists() ? bytesToReadUnits(estimatePayloadBytes(snap.data())) : 1;
+    recordFirestoreReadsExecuted(1, units);
   }
   return snap;
 }
@@ -2010,7 +2279,12 @@ export async function trackedGetDocs<AppModelType = DocumentData, DbModelType ex
 ): Promise<QuerySnapshot<AppModelType, DbModelType>> {
   const snap = await rawGetDocs(queryObj);
   if (!snap.metadata.fromCache) {
-    recordFirestoreReadsExecuted(Math.max(1, snap.size));
+    const docsCount = Math.max(1, snap.size);
+    const units =
+      snap.size > 0
+        ? snap.docs.reduce((sum, d) => sum + bytesToReadUnits(estimatePayloadBytes(d.data())), 0)
+        : 1;
+    recordFirestoreReadsExecuted(docsCount, units);
   }
   return snap;
 }
@@ -2043,27 +2317,42 @@ export function trackedOnSnapshot<AppModelType = DocumentData, DbModelType exten
       if ('docs' in snap) {
         if (!receivedServerSnap) {
           receivedServerSnap = true;
-          // With persistentLocalCache active, if cache emitted first, the server only bills for docs changed/returned in docChanges().
-          const serverReads = hadCacheSnapshotBefore
-            ? snap.docChanges().length
-            : Math.max(1, snap.size);
-          if (serverReads > 0) {
-            recordFirestoreReadsExecuted(serverReads);
+          if (hadCacheSnapshotBefore) {
+            const changes = snap.docChanges();
+            const changedUnits = changes.reduce(
+              (sum, c) => sum + bytesToReadUnits(estimatePayloadBytes(c.doc.data())),
+              0
+            );
+            // At least 1 query check read when connecting listener to server after cache hydration
+            recordFirestoreReadsExecuted(Math.max(1, changes.length), Math.max(1, changedUnits));
+          } else {
+            const serverReads = Math.max(1, snap.size);
+            const totalUnits =
+              snap.size > 0
+                ? snap.docs.reduce(
+                    (sum, d) => sum + bytesToReadUnits(estimatePayloadBytes(d.data())),
+                    0
+                  )
+                : 1;
+            recordFirestoreReadsExecuted(serverReads, totalUnits);
           }
         } else {
-          const changesCount = snap.docChanges().length;
-          if (changesCount > 0) {
-            recordFirestoreReadsExecuted(changesCount);
+          const changes = snap.docChanges();
+          if (changes.length > 0) {
+            const units = changes.reduce(
+              (sum, c) => sum + bytesToReadUnits(estimatePayloadBytes(c.doc.data())),
+              0
+            );
+            recordFirestoreReadsExecuted(changes.length, units);
           }
         }
       } else {
+        const docUnits = snap.exists() ? bytesToReadUnits(estimatePayloadBytes(snap.data())) : 1;
         if (!receivedServerSnap) {
           receivedServerSnap = true;
-          if (!hadCacheSnapshotBefore) {
-            recordFirestoreReadsExecuted(1);
-          }
+          recordFirestoreReadsExecuted(1, hadCacheSnapshotBefore ? 1 : docUnits);
         } else {
-          recordFirestoreReadsExecuted(1);
+          recordFirestoreReadsExecuted(1, docUnits);
         }
       }
     }
@@ -2106,6 +2395,9 @@ export const guardedSetDoc: typeof rawSetDoc = (async (...args: unknown[]) => {
         section: desc.section,
         actionLabel: resolvedAction,
         targetTitle: resolvedTitle,
+        groupKey: hint?.groupKey,
+        groupSection: hint?.groupSection,
+        groupTitle: hint?.groupTitle,
         writeCount: 1,
         changedFields:
           hint?.changedFields && hint.changedFields.length > 0 ? hint.changedFields : undefined,
@@ -2122,7 +2414,9 @@ export const guardedSetDoc: typeof rawSetDoc = (async (...args: unknown[]) => {
   await raceWithFirestoreQuotaAbort(
     (rawSetDoc as (...inner: unknown[]) => Promise<void>)(...args)
   );
-  recordFirestoreWritesExecuted(1, 'setDoc');
+  recordFirestoreWritesExecuted(1, 'setDoc', {
+    writeUnits: bytesToWriteUnits(estimatePayloadBytes(args[1])),
+  });
 }) as typeof rawSetDoc;
 
 export async function saveSystemStateDoc(
@@ -2130,7 +2424,10 @@ export async function saveSystemStateDoc(
   data: Record<string, unknown>
 ): Promise<void> {
   await raceWithFirestoreQuotaAbort(rawSetDoc(doc(db, path), data));
-  recordFirestoreWritesExecuted(1, 'Impostazioni app (cloud)', { isSettingsWrite: true });
+  recordFirestoreWritesExecuted(1, 'Impostazioni app (cloud)', {
+    isSettingsWrite: true,
+    writeUnits: bytesToWriteUnits(estimatePayloadBytes(data)),
+  });
 }
 
 export const guardedDeleteDoc: typeof rawDeleteDoc = (async (...args: unknown[]) => {
@@ -2148,6 +2445,9 @@ export const guardedDeleteDoc: typeof rawDeleteDoc = (async (...args: unknown[])
         section: desc.section,
         actionLabel: hint?.actionLabel || 'Eliminazione',
         targetTitle: resolvedTitle,
+        groupKey: hint?.groupKey,
+        groupSection: hint?.groupSection,
+        groupTitle: hint?.groupTitle,
         writeCount: 1,
         changedFields:
           hint?.changedFields && hint.changedFields.length > 0 ? hint.changedFields : undefined,
@@ -2162,13 +2462,14 @@ export const guardedDeleteDoc: typeof rawDeleteDoc = (async (...args: unknown[])
   await raceWithFirestoreQuotaAbort(
     (rawDeleteDoc as (...inner: unknown[]) => Promise<void>)(...args)
   );
-  recordFirestoreWritesExecuted(1, 'deleteDoc', { deletes: 1 });
+  recordFirestoreWritesExecuted(1, 'deleteDoc', { deletes: 1, writeUnits: 1 });
 }) as typeof rawDeleteDoc;
 
 export function guardedWriteBatch(firestore: Firestore): ReturnType<typeof rawWriteBatch> {
   const batch = rawWriteBatch(firestore);
   let opCount = 0;
   let deleteCount = 0;
+  let totalWriteUnits = 0;
   const recordedSubOps: SimulatedBatchSubOp[] = [];
 
   const origSet = batch.set.bind(batch);
@@ -2180,6 +2481,7 @@ export function guardedWriteBatch(firestore: Firestore): ReturnType<typeof rawWr
     opCount += 1;
     const docRef = args[0] as DocumentReference | undefined;
     const rawData = args[1];
+    totalWriteUnits += bytesToWriteUnits(estimatePayloadBytes(rawData));
     const rawOptions = args[2] as SetOptions | undefined;
     const mergeOpt =
       rawOptions && typeof rawOptions === 'object' && 'merge' in rawOptions
@@ -2209,6 +2511,7 @@ export function guardedWriteBatch(firestore: Firestore): ReturnType<typeof rawWr
       }
       updateObj = serializeFirestoreRecord(flat);
     }
+    totalWriteUnits += bytesToWriteUnits(estimatePayloadBytes(updateObj));
     if (docRef?.path) {
       recordedSubOps.push({
         op: 'update',
@@ -2222,6 +2525,7 @@ export function guardedWriteBatch(firestore: Firestore): ReturnType<typeof rawWr
   batch.delete = ((...args: unknown[]) => {
     opCount += 1;
     deleteCount += 1;
+    totalWriteUnits += 1;
     const docRef = args[0] as DocumentReference | undefined;
     if (docRef?.path) {
       recordedSubOps.push({
@@ -2254,6 +2558,7 @@ export function guardedWriteBatch(firestore: Firestore): ReturnType<typeof rawWr
       const mergedDetails = Array.from(
         new Set(batchHints.flatMap((h) => h.changedDetails || []))
       );
+      const firstGroupHint = batchHints.find((h) => h.groupKey);
       enqueueSimulatedOp({
         id: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         kind: 'batch',
@@ -2265,6 +2570,9 @@ export function guardedWriteBatch(firestore: Firestore): ReturnType<typeof rawWr
             ? 'Eliminazione multipla'
             : 'Salvataggio multiplo'),
         targetTitle: summaryTitle,
+        groupKey: firstGroupHint?.groupKey,
+        groupSection: firstGroupHint?.groupSection,
+        groupTitle: firstGroupHint?.groupTitle,
         writeCount: opCount,
         changedFields: mergedFields.length > 0 ? mergedFields : undefined,
         changedDetails: mergedDetails.length > 0 ? mergedDetails : undefined,
@@ -2274,7 +2582,10 @@ export function guardedWriteBatch(firestore: Firestore): ReturnType<typeof rawWr
       return;
     }
     await raceWithFirestoreQuotaAbort(origCommit());
-    recordFirestoreWritesExecuted(opCount, `batch (${opCount} op)`, { deletes: deleteCount });
+    recordFirestoreWritesExecuted(opCount, `batch (${opCount} op)`, {
+      deletes: deleteCount,
+      writeUnits: totalWriteUnits,
+    });
   };
 
   return batch;
@@ -2284,6 +2595,7 @@ export function directWriteBatch(firestore: Firestore): ReturnType<typeof rawWri
   const batch = rawWriteBatch(firestore);
   let opCount = 0;
   let deleteCount = 0;
+  let totalWriteUnits = 0;
 
   const origSet = batch.set.bind(batch);
   const origUpdate = batch.update.bind(batch);
@@ -2292,24 +2604,31 @@ export function directWriteBatch(firestore: Firestore): ReturnType<typeof rawWri
 
   batch.set = ((...args: unknown[]) => {
     opCount += 1;
+    totalWriteUnits += bytesToWriteUnits(estimatePayloadBytes(args[1]));
     return (origSet as (...inner: unknown[]) => ReturnType<typeof batch.set>)(...args);
   }) as typeof batch.set;
 
   batch.update = ((...args: unknown[]) => {
     opCount += 1;
+    const rawUpdate = args.length >= 2 && isPlainObject(args[1]) ? args[1] : undefined;
+    totalWriteUnits += bytesToWriteUnits(estimatePayloadBytes(rawUpdate));
     return (origUpdate as (...inner: unknown[]) => ReturnType<typeof batch.update>)(...args);
   }) as typeof batch.update;
 
   batch.delete = ((...args: unknown[]) => {
     opCount += 1;
     deleteCount += 1;
+    totalWriteUnits += 1;
     return (origDelete as (...inner: unknown[]) => ReturnType<typeof batch.delete>)(...args);
   }) as typeof batch.delete;
 
   batch.commit = async () => {
     if (opCount === 0) return;
     await raceWithFirestoreQuotaAbort(origCommit());
-    recordFirestoreWritesExecuted(opCount, `sync blocco (${opCount} op)`, { deletes: deleteCount });
+    recordFirestoreWritesExecuted(opCount, `sync blocco (${opCount} op)`, {
+      deletes: deleteCount,
+      writeUnits: totalWriteUnits,
+    });
   };
 
   return batch;

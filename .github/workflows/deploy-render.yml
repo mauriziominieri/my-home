@@ -1,0 +1,42 @@
+name: Deploy Backend su Render
+
+on:
+  push:
+    branches: ['main']
+    paths:
+      - 'server.ts'
+      - 'package.json'
+      - 'render.yaml'
+      - 'vite.config.ts'
+      - 'tsconfig.json'
+      - 'index.html'
+      - 'src/**'
+      - '.github/workflows/deploy-render.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: 'render-backend-deploy'
+  cancel-in-progress: false
+
+jobs:
+  trigger-render-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verifica e avvia Deploy Hook Render
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "::warning::Secret GitHub RENDER_DEPLOY_HOOK_URL non configurato. Se il servizio Render e collegato via GitHub (render.yaml con autoDeploy: true), Render effettua comunque il deploy automatico dal branch main; altrimenti aggiungi l'URL del Deploy Hook di Render nei Secrets del repository (RENDER_DEPLOY_HOOK_URL)."
+            exit 0
+          fi
+
+          echo "Invio richiesta di deploy al servizio Render..."
+          response_code=$(curl -sS -o /tmp/render_response.txt -w "%{http_code}" -X POST "$RENDER_DEPLOY_HOOK_URL")
+          cat /tmp/render_response.txt || true
+          echo ""
+          if [ "$response_code" -lt 200 ] || [ "$response_code" -ge 300 ]; then
+            echo "::error::Render Deploy Hook ha risposto con HTTP $response_code"
+            exit 1
+          fi
+          echo "Deploy su Render avviato con successo (HTTP $response_code)."

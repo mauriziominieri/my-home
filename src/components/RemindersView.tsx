@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Bell,
@@ -9,6 +9,8 @@ import {
   Clock,
   Copy,
   Gauge,
+  LayoutGrid,
+  List,
   Mail,
   MessageCircle,
   Pencil,
@@ -44,6 +46,7 @@ interface RemindersViewProps {
   notifyConfig: ReminderNotificationConfig;
   carProfile: CarProfile;
   todayIso: string;
+  ownerUid?: string | null;
   readOnly?: boolean;
   isGmailConnected: boolean;
   sendingEmail: boolean;
@@ -67,11 +70,107 @@ function buildWhatsAppUrl(phoneRaw: string | undefined, text: string): string {
   return digits ? `https://wa.me/${digits}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
 }
 
+function getBatteryCapacityMeta(capPct: number) {
+  const clamped = Math.max(0, Math.min(100, Math.round(capPct)));
+  if (clamped <= 40) {
+    return {
+      pct: clamped,
+      statusLabel: 'Critica · da sostituire',
+      shortLabel: 'Critica',
+      textClass: 'text-rose-600 dark:text-rose-400',
+      strokeClass: 'stroke-rose-500/75 dark:stroke-rose-400/75',
+      fillStart: '#f43f5e',
+      fillEnd: '#e11d48',
+      terminalClass: 'fill-rose-500',
+    };
+  }
+  if (clamped <= 65) {
+    return {
+      pct: clamped,
+      statusLabel: 'Usura media · monitorare',
+      shortLabel: 'Media',
+      textClass: 'text-amber-600 dark:text-amber-300',
+      strokeClass: 'stroke-amber-500/75 dark:stroke-amber-400/75',
+      fillStart: '#f59e0b',
+      fillEnd: '#d97706',
+      terminalClass: 'fill-amber-500',
+    };
+  }
+  return {
+    pct: clamped,
+    statusLabel: 'Salute buona',
+    shortLabel: 'Buona',
+    textClass: 'text-emerald-600 dark:text-emerald-300',
+    strokeClass: 'stroke-emerald-500/75 dark:stroke-emerald-400/75',
+    fillStart: '#10b981',
+    fillEnd: '#059669',
+    terminalClass: 'fill-emerald-500',
+  };
+}
+
+function BatteryCellVisual({
+  percent,
+  size = 'md',
+}: {
+  percent: number;
+  size?: 'sm' | 'md';
+}) {
+  const uid = useId();
+  const meta = getBatteryCapacityMeta(percent);
+  const chamberTop = 13;
+  const chamberHeight = 29;
+  const fillH = Math.max(meta.pct > 0 ? 3 : 0, (chamberHeight * meta.pct) / 100);
+  const fillY = chamberTop + chamberHeight - fillH;
+  const dims = size === 'sm' ? 'w-8 h-6' : 'w-13 h-10';
+
+  return (
+    <svg viewBox="0 0 64 48" className={`${dims} shrink-0 select-none`} aria-hidden="true">
+      <defs>
+        <linearGradient id={`${uid}-grad`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={meta.fillStart} stopOpacity="0.95" />
+          <stop offset="100%" stopColor={meta.fillEnd} stopOpacity="0.78" />
+        </linearGradient>
+        <clipPath id={`${uid}-clip`}>
+          <rect x="8" y="13" width="48" height="29" rx="3.5" />
+        </clipPath>
+      </defs>
+
+      {/* Top 12V battery terminals (− left, + right) */}
+      <rect x="14" y="5.5" width="9" height="5" rx="1.5" className="fill-slate-400 dark:fill-slate-500" />
+      <rect x="41" y="5.5" width="9" height="5" rx="1.5" className={meta.terminalClass} />
+
+      {/* Outer casing */}
+      <rect
+        x="6"
+        y="10.5"
+        width="52"
+        height="34"
+        rx="5"
+        className={`fill-slate-100 dark:fill-slate-950 ${meta.strokeClass}`}
+        strokeWidth="2"
+      />
+
+      {/* Internal liquid/charge level rising vertically */}
+      <g clipPath={`url(#${uid}-clip)`}>
+        <rect x="8" y={fillY} width="48" height={fillH + 2} fill={`url(#${uid}-grad)`} />
+        {meta.pct > 0 && meta.pct < 100 && (
+          <line x1="8" y1={fillY} x2="56" y2={fillY} stroke="#ffffff" strokeOpacity="0.6" strokeWidth="1.2" />
+        )}
+        {/* Subtle internal battery cell ribs */}
+        <line x1="20" y1="13" x2="20" y2="42" stroke="currentColor" strokeOpacity="0.14" strokeWidth="1" className="text-slate-900 dark:text-white" />
+        <line x1="32" y1="13" x2="32" y2="42" stroke="currentColor" strokeOpacity="0.14" strokeWidth="1" className="text-slate-900 dark:text-white" />
+        <line x1="44" y1="13" x2="44" y2="42" stroke="currentColor" strokeOpacity="0.14" strokeWidth="1" className="text-slate-900 dark:text-white" />
+      </g>
+    </svg>
+  );
+}
+
 export function RemindersView({
   reminders,
   notifyConfig,
   carProfile,
   todayIso,
+  ownerUid,
   readOnly = false,
   isGmailConnected,
   sendingEmail,
@@ -84,6 +183,22 @@ export function RemindersView({
   onMarkNotifiedToday,
 }: RemindersViewProps) {
   const [filterCategory, setFilterCategory] = useState<'all' | ReminderCategory | 'in_scadenza' | 'completati'>('all');
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
+    try {
+      const saved = window.localStorage.getItem('myhome_reminders_view_mode_v1');
+      if (saved === 'list' || saved === 'grid') return saved;
+    } catch {
+      // ignore storage issues
+    }
+    return 'list';
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('myhome_reminders_view_mode_v1', viewMode);
+    } catch {
+      // ignore storage issues
+    }
+  }, [viewMode]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -122,6 +237,8 @@ export function RemindersView({
   const [fNotifyEmail, setFNotifyEmail] = useState(true);
   const [fNotifyWhatsapp, setFNotifyWhatsapp] = useState(true);
   const [fRenewable, setFRenewable] = useState(true);
+  const [fCapacityPct, setFCapacityPct] = useState('');
+  const [fCapacityCheckedDate, setFCapacityCheckedDate] = useState('');
   const [fNotes, setFNotes] = useState('');
 
   const enrichedReminders = useMemo(() => {
@@ -188,6 +305,8 @@ export function RemindersView({
       setFNotifyEmail(built.notifyEmail);
       setFNotifyWhatsapp(built.notifyWhatsapp);
       setFRenewable(built.renewable);
+      setFCapacityPct(built.capacityPct !== undefined ? String(built.capacityPct) : '');
+      setFCapacityCheckedDate(built.capacityCheckedDate || '');
       setFNotes(built.notes || '');
     } else {
       setFTitle('');
@@ -206,12 +325,19 @@ export function RemindersView({
       setFNotifyEmail(true);
       setFNotifyWhatsapp(true);
       setFRenewable(true);
+      setFCapacityPct('');
+      setFCapacityCheckedDate('');
       setFNotes('');
     }
     setShowForm(true);
   }
 
   function openEditForm(item: HomeReminderRecord) {
+    const isBattery = /\bbatteria\b/i.test(item.title);
+    const fallbackCap = isBattery ? carProfile.batteryCapacityPct : undefined;
+    const fallbackCapDate = isBattery
+      ? normalizeReminderDateIso(carProfile.batteryCapacityDate)
+      : '';
     setEditingId(item.id);
     setFTitle(item.title);
     setFCategory(item.category);
@@ -229,6 +355,14 @@ export function RemindersView({
     setFNotifyEmail(item.notifyEmail);
     setFNotifyWhatsapp(item.notifyWhatsapp);
     setFRenewable(item.renewable);
+    setFCapacityPct(
+      item.capacityPct !== undefined
+        ? String(item.capacityPct)
+        : fallbackCap !== undefined
+          ? String(fallbackCap)
+          : ''
+    );
+    setFCapacityCheckedDate(item.capacityCheckedDate || fallbackCapDate || '');
     setFNotes(item.notes || '');
     setShowForm(true);
   }
@@ -271,6 +405,13 @@ export function RemindersView({
       completedDate: existing?.completedDate,
       renewalCount: existing?.renewalCount ?? 0,
       lastNotifiedDate: existing?.lastNotifiedDate,
+      capacityPct: (() => {
+        const clean = fCapacityPct.trim().replace(',', '.');
+        if (!clean) return undefined;
+        const n = Number(clean);
+        return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n * 10) / 10)) : undefined;
+      })(),
+      capacityCheckedDate: normalizeReminderDateIso(fCapacityCheckedDate) || undefined,
       notes: fNotes.trim() || undefined,
     };
 
@@ -298,6 +439,8 @@ export function RemindersView({
       completed: false,
       completedDate: undefined,
       lastNotifiedDate: undefined,
+      capacityPct: undefined,
+      capacityCheckedDate: undefined,
       renewalCount: (item.renewalCount || 0) + 1,
     });
     setNotice({
@@ -406,52 +549,282 @@ export function RemindersView({
   }
 
   const appsScriptSnippet = useMemo(() => {
-    const emailTarget = notifyConfig.defaultEmail || 'mauminieri@gmail.com';
-    const waPhone = notifyConfig.whatsappPhone.replace(/[^\d]/g, '') || '393XXXXXXXXX';
-    const waKey = (notifyConfig.callmebotApiKey || '').trim();
-    const listSummary = reminders
-      .filter((r) => r.notifyEnabled && !r.completed)
-      .map((r) => {
-        const lc = computeReminderLifecycle(r, todayIso, carProfile.currentKm);
-        return `  { title: ${JSON.stringify(r.title)}, due: "${lc.dueDateIso}", leadDays: ${(r.leadMonths || 0) * 30 + (r.leadDays || 0)}, email: ${r.notifyEmail}, whatsapp: ${r.notifyWhatsapp} }`;
-      })
-      .join(',\n');
-
+    const uidHint = ownerUid || '';
     return `/**
  * Trigger giornaliero 24/7 su Google Apps Script (es. ogni mattina alle 08:30).
- * Invia automaticamente una email (e opzionalmente WhatsApp via CallMeBot) finché non aggiorni la data nell'app.
+ * LEGGE LIVE i promemoria direttamente da Firestore (gen-lang-client-0721850501):
+ * qualsiasi modifica fatta su My Home (es. "Avvisa quanti mesi prima" da 3 a 1,
+ * durata, capacità batteria, completato o rinnovo) viene applicata AUTOMATICAMENTE.
+ *
+ * Configurazione su script.google.com -> Impostazioni progetto:
+ * 1) Proprietà script:
+ *    - CALLMEBOT_PHONE   = 393XXXXXXXXX (il tuo numero con prefisso)
+ *    - CALLMEBOT_API_KEY = la tua apikey ricevuta da CallMeBot
+ *    - REMINDERS_EMAIL_TO = tua email destinatario (opzionale se già salvata in Canali Avviso)
+ * 2) File manifest appsscript.json (Impostazioni progetto -> "Mostra file manifest"):
+ *    assicurati che "oauthScopes" includa:
+ *    "https://www.googleapis.com/auth/datastore"
+ *    "https://www.googleapis.com/auth/script.external_request"
+ *    "https://www.googleapis.com/auth/script.send_mail"
  */
 function checkMyHomeRemindersDaily() {
-  var EMAIL_TO = ${JSON.stringify(emailTarget)};
-  var WA_PHONE = ${JSON.stringify(waPhone)};
-  var CALLMEBOT_KEY = ${JSON.stringify(waKey)}; // Opzionale: chiave gratuita da @CallMeBot_txt
-  var reminders = [
-${listSummary || '  // Aggiungi qui i tuoi promemoria o esportali dall’app My Home'}
-  ];
+  var FIREBASE_PROJECT_ID = 'gen-lang-client-0721850501';
+  var FIRESTORE_DB_ID = 'ai-studio-30a168e3-8158-474f-b9f2-f717d7220314';
+  var BASE_DOCS_URL =
+    'https://firestore.googleapis.com/v1/projects/' +
+    FIREBASE_PROJECT_ID +
+    '/databases/' +
+    FIRESTORE_DB_ID +
+    '/documents';
 
-  var today = new Date();
-  today.setHours(0, 0, 0, 0);
-  var alerts = [];
+  var props = PropertiesService.getScriptProperties();
+  var ownerUid = (props.getProperty('FIREBASE_OWNER_UID') || ${JSON.stringify(uidHint)}).trim();
+  if (!ownerUid) {
+    var metaResp = UrlFetchApp.fetch(BASE_DOCS_URL + '/appMeta/owner', { muteHttpExceptions: true });
+    if (metaResp.getResponseCode() >= 200 && metaResp.getResponseCode() < 300) {
+      var metaJson = JSON.parse(metaResp.getContentText() || '{}');
+      ownerUid =
+        (metaJson.fields && metaJson.fields.ownerUid && metaJson.fields.ownerUid.stringValue) || '';
+    }
+  }
+  if (!ownerUid) {
+    throw new Error('Impossibile determinare FIREBASE_OWNER_UID da appMeta/owner.');
+  }
 
-  reminders.forEach(function (r) {
-    var parts = r.due.split('-');
-    var dueDate = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
-    var diffDays = Math.round((dueDate.getTime() - today.getTime()) / 86400000);
-    if (diffDays <= r.leadDays) {
-      alerts.push('• ' + r.title + ' — Scadenza: ' + r.due + (diffDays < 0 ? ' (SCADUTO da ' + Math.abs(diffDays) + ' gg)' : ' (mancano ' + diffDays + ' gg)'));
+  var oauthToken = ScriptApp.getOAuthToken();
+  var queryUrl = BASE_DOCS_URL + '/users/' + encodeURIComponent(ownerUid) + ':runQuery';
+  var queryPayload = {
+    structuredQuery: {
+      from: [{ collectionId: 'homeArticles' }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: 'room' },
+          op: 'IN',
+          value: {
+            arrayValue: {
+              values: [{ stringValue: '__promemoria__' }, { stringValue: '__macchina__' }]
+            }
+          }
+        }
+      }
+    }
+  };
+
+  var queryResp = UrlFetchApp.fetch(queryUrl, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + oauthToken },
+    payload: JSON.stringify(queryPayload),
+    muteHttpExceptions: true
+  });
+
+  var qCode = queryResp.getResponseCode();
+  if (qCode < 200 || qCode >= 300) {
+    throw new Error(
+      'Errore lettura Firestore HTTP ' +
+        qCode +
+        '. Verifica che appsscript.json abbia lo scope https://www.googleapis.com/auth/datastore. Dettagli: ' +
+        queryResp.getContentText()
+    );
+  }
+
+  var rows = JSON.parse(queryResp.getContentText() || '[]');
+  var liveReminders = [];
+  var firestoreEmail = '';
+  var firestorePhone = '';
+  var carCurrentKm = 0;
+  var carBatteryCapacityPct = null;
+
+  rows.forEach(function (row) {
+    var doc = row && row.document;
+    if (!doc || !doc.fields) return;
+    var parts = String(doc.name || '').split('/');
+    var docId = parts[parts.length - 1] || '';
+    var fields = doc.fields;
+    var room = (fields.room && fields.room.stringValue) || '';
+    var specs = (fields.specs && fields.specs.stringValue) || '';
+    var rawJson = (fields.manualExtractText && fields.manualExtractText.stringValue) || '';
+
+    if (docId === 'rem_notify_config') {
+      try {
+        var cfg = JSON.parse(rawJson || '{}');
+        if (cfg.defaultEmail) firestoreEmail = String(cfg.defaultEmail).trim();
+        if (cfg.whatsappPhone) firestorePhone = String(cfg.whatsappPhone).replace(/[^\\d]/g, '');
+      } catch (e) {}
+      return;
+    }
+
+    if (room === '__macchina__') {
+      var kmMatch = specs.match(/(?:^|\\|)KM:(\\d+)/);
+      if (kmMatch) {
+        var kmVal = Number(kmMatch[1]);
+        if (kmVal > carCurrentKm) carCurrentKm = kmVal;
+      }
+      if (docId === 'car_profile_ea218es' && rawJson) {
+        try {
+          var carExtra = JSON.parse(rawJson);
+          if (typeof carExtra.batteryCapacityPct === 'number') {
+            carBatteryCapacityPct = carExtra.batteryCapacityPct;
+          }
+        } catch (e) {}
+      }
+      return;
+    }
+
+    if (room === '__promemoria__') {
+      var parsed = null;
+      try {
+        parsed = rawJson ? JSON.parse(rawJson) : null;
+      } catch (e) {
+        parsed = null;
+      }
+      if (parsed && typeof parsed === 'object') {
+        if (!parsed.title && fields.name && fields.name.stringValue) {
+          parsed.title = fields.name.stringValue;
+        }
+        liveReminders.push(parsed);
+      }
     }
   });
 
-  if (alerts.length === 0) return;
+  var EMAIL_TO = (props.getProperty('REMINDERS_EMAIL_TO') || firestoreEmail || '').trim();
+  var WA_PHONE = (props.getProperty('CALLMEBOT_PHONE') || firestorePhone || '').replace(/[^\\d]/g, '');
+  var CALLMEBOT_KEY = (props.getProperty('CALLMEBOT_API_KEY') || '').trim();
 
-  var body = 'Promemoria giornalieri My Home:\\n\\n' + alerts.join('\\n') + '\\n\\nApri https://mauriziominieri.github.io/my-home/ per rinnovare o completare.';
-  MailApp.sendEmail(EMAIL_TO, '[My Home] ' + alerts.length + ' scadenze in corso', body);
+  var todayIso = Utilities.formatDate(new Date(), 'Europe/Rome', 'yyyy-MM-dd');
+  var todayParts = todayIso.split('-');
+  var todayUtc = Date.UTC(Number(todayParts[0]), Number(todayParts[1]) - 1, Number(todayParts[2]));
 
-  if (CALLMEBOT_KEY) {
-    UrlFetchApp.fetch('https://api.callmebot.com/whatsapp.php?phone=' + encodeURIComponent(WA_PHONE) + '&text=' + encodeURIComponent(body) + '&apikey=' + encodeURIComponent(CALLMEBOT_KEY));
+  var emailAlerts = [];
+  var whatsappAlerts = [];
+
+  liveReminders.forEach(function (r) {
+    if (!r || r.completed || r.notifyEnabled === false) return;
+    if (r.lastNotifiedDate === todayIso) return;
+
+    var startIso = normalizeIso_(r.startDate) || todayIso;
+    var dueIso =
+      normalizeIso_(r.customEndDate) ||
+      addDurationToIso_(startIso, Number(r.durationYears) || 0, Number(r.durationMonths) || 0, Number(r.durationDays) || 0);
+    var warningStartIso = addDurationToIso_(
+      dueIso,
+      0,
+      -(Number(r.leadMonths) || 0),
+      -(Number(r.leadDays) || 0)
+    );
+
+    var dueParts = dueIso.split('-');
+    var dueUtc = Date.UTC(Number(dueParts[0]), Number(dueParts[1]) - 1, Number(dueParts[2]));
+    var diffDays = Math.round((dueUtc - todayUtc) / 86400000);
+
+    var isKmWarning = false;
+    var isKmOverdue = false;
+    var kmNote = '';
+    if (r.trackKm && Number(r.intervalKm) > 0 && carCurrentKm > 0) {
+      var baseKm = typeof r.startKm === 'number' ? r.startKm : carCurrentKm;
+      var kmElapsed = Math.max(0, Math.round(carCurrentKm - baseKm));
+      var kmRemaining = Math.round(Number(r.intervalKm) - kmElapsed);
+      var kmPct = (kmElapsed / Number(r.intervalKm)) * 100;
+      isKmOverdue = kmRemaining <= 0;
+      isKmWarning = kmPct >= 85 || kmRemaining <= 1500;
+      kmNote = ' · ' + kmElapsed + '/' + r.intervalKm + ' km';
+    }
+
+    var isOverdue = diffDays < 0 || isKmOverdue;
+    var isInWarningWindow = todayIso >= warningStartIso || isKmWarning || isOverdue;
+    if (!isInWarningWindow) return;
+
+    var capPct =
+      typeof r.capacityPct === 'number'
+        ? r.capacityPct
+        : /batteria/i.test(String(r.title || '')) && carBatteryCapacityPct !== null
+          ? carBatteryCapacityPct
+          : null;
+    var capNote = capPct !== null ? ' · Capacità: ' + capPct + '%' : '';
+
+    var statusLabel =
+      diffDays < 0
+        ? 'SCADUTO da ' + Math.abs(diffDays) + ' gg'
+        : diffDays === 0
+          ? 'SCADE OGGI'
+          : 'mancano ' + diffDays + ' gg';
+    var line = '• ' + r.title + ' — ' + dueIso + ' (' + statusLabel + ')' + kmNote + capNote;
+
+    if (r.notifyEmail !== false) emailAlerts.push(line);
+    if (r.notifyWhatsapp === true) whatsappAlerts.push(line);
+  });
+
+  if (emailAlerts.length > 0 && EMAIL_TO) {
+    var emailBody =
+      'Promemoria giornalieri My Home (' +
+      todayIso +
+      '):\\n\\n' +
+      emailAlerts.join('\\n') +
+      '\\n\\nApri https://mauriziominieri.github.io/my-home/ per rinnovare o completare.';
+    MailApp.sendEmail(EMAIL_TO, '[My Home] ' + emailAlerts.length + ' scadenze in corso', emailBody);
   }
+
+  if (whatsappAlerts.length > 0 && WA_PHONE && CALLMEBOT_KEY) {
+    var waBody =
+      '*My Home — Promemoria (' +
+      todayIso +
+      ')*\\n\\n' +
+      whatsappAlerts.join('\\n') +
+      '\\n\\nhttps://mauriziominieri.github.io/my-home/';
+    if (waBody.length > 1400) {
+      waBody = waBody.slice(0, 1397) + '...';
+    }
+    var waUrl =
+      'https://api.callmebot.com/whatsapp.php?phone=' +
+      encodeURIComponent(WA_PHONE) +
+      '&text=' +
+      encodeURIComponent(waBody) +
+      '&apikey=' +
+      encodeURIComponent(CALLMEBOT_KEY);
+    var resp = UrlFetchApp.fetch(waUrl, { muteHttpExceptions: true });
+    var code = resp.getResponseCode();
+    if (code < 200 || code >= 300) {
+      Logger.log('Errore CallMeBot HTTP ' + code + ': ' + resp.getContentText());
+    }
+  }
+}
+
+function normalizeIso_(raw) {
+  if (!raw) return '';
+  var s = String(raw).trim();
+  var mIso = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
+  if (mIso) return mIso[1] + '-' + mIso[2] + '-' + mIso[3];
+  var mIt = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})$/);
+  if (mIt) {
+    var dd = mIt[1].length < 2 ? '0' + mIt[1] : mIt[1];
+    var mm = mIt[2].length < 2 ? '0' + mIt[2] : mIt[2];
+    return mIt[3] + '-' + mm + '-' + dd;
+  }
+  return '';
+}
+
+function addDurationToIso_(iso, years, months, days) {
+  var p = iso.split('-');
+  var dt = new Date(Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2])));
+  var totalMonths = Math.round((years || 0) * 12 + (months || 0));
+  if (totalMonths !== 0) {
+    var origDay = dt.getUTCDate();
+    dt.setUTCDate(1);
+    dt.setUTCMonth(dt.getUTCMonth() + totalMonths);
+    var maxDays = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 1, 0)).getUTCDate();
+    dt.setUTCDate(Math.min(origDay, maxDays));
+  }
+  if (days) {
+    dt.setUTCDate(dt.getUTCDate() + Math.round(days));
+  }
+  var y = dt.getUTCFullYear();
+  var m = String(dt.getUTCMonth() + 1);
+  if (m.length < 2) m = '0' + m;
+  var d = String(dt.getUTCDate());
+  if (d.length < 2) d = '0' + d;
+  return y + '-' + m + '-' + d;
 }`;
-  }, [reminders, notifyConfig, todayIso, carProfile.currentKm]);
+  }, [ownerUid]);
 
   function handleCopyAppsScript() {
     if (navigator.clipboard) {
@@ -672,10 +1045,12 @@ ${listSummary || '  // Aggiungi qui i tuoi promemoria o esportali dall’app My 
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-600 dark:text-slate-400">CallMeBot API Key (opzionale, gratis)</span>
+              <span className="text-slate-600 dark:text-slate-400">
+                CallMeBot API Key (opzionale, salvata sul tuo Firestore privato)
+              </span>
               <input
                 type="text"
-                placeholder="Per invio WhatsApp automatico"
+                placeholder="Es. 4355591 (solo uso privato)"
                 value={cfgCallmebotKey}
                 onChange={(e) => setCfgCallmebotKey(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100"
@@ -993,6 +1368,35 @@ ${listSummary || '  // Aggiungi qui i tuoi promemoria o esportali dall’app My 
                 </div>
               )}
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <label className="block space-y-1">
+                  <span className="text-slate-600 dark:text-slate-400">
+                    Capacità (% opz., es. batteria auto 36%)
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.5"
+                    placeholder="Es. 36"
+                    value={fCapacityPct}
+                    onChange={(e) => setFCapacityPct(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg font-mono text-slate-900 dark:text-slate-100"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-slate-600 dark:text-slate-400">
+                    Data misura capacità (opz.)
+                  </span>
+                  <input
+                    type="date"
+                    value={normalizeReminderDateIso(fCapacityCheckedDate)}
+                    onChange={(e) => setFCapacityCheckedDate(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg font-mono text-slate-900 dark:text-slate-100 dark:[color-scheme:dark]"
+                  />
+                </label>
+              </div>
+
               <label className="block space-y-1">
                 <span className="text-slate-600 dark:text-slate-400">Note (opz.)</span>
                 <input
@@ -1026,33 +1430,64 @@ ${listSummary || '  // Aggiungi qui i tuoi promemoria o esportali dall’app My 
         </form>
       )}
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-1.5 p-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg w-fit">
-        {[
-          { id: 'all', label: `Tutti (${reminders.length})` },
-          { id: 'in_scadenza', label: `In scadenza (${warningItems.length})` },
-          { id: 'auto_manutenzione', label: 'Manutenzione Auto' },
-          { id: 'auto_pagamento', label: 'Pagamenti Auto' },
-          { id: 'reso_garanzia', label: 'Resi / Garanzie' },
-          { id: 'casa_mutuo', label: 'Mutuo & Casa' },
-          { id: 'completati', label: `Completati (${reminders.filter((r) => r.completed).length})` },
-        ].map((tab) => (
+      {/* Filters + Elenco / Griglia switcher */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 p-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg w-fit">
+          {[
+            { id: 'all', label: `Tutti (${reminders.length})` },
+            { id: 'in_scadenza', label: `In scadenza (${warningItems.length})` },
+            { id: 'auto_manutenzione', label: 'Manutenzione Auto' },
+            { id: 'auto_pagamento', label: 'Pagamenti Auto' },
+            { id: 'reso_garanzia', label: 'Resi / Garanzie' },
+            { id: 'casa_mutuo', label: 'Mutuo & Casa' },
+            { id: 'completati', label: `Completati (${reminders.filter((r) => r.completed).length})` },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setFilterCategory(tab.id as typeof filterCategory)}
+              className={`px-2.5 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+                filterCategory === tab.id
+                  ? 'bg-brand-600 text-white dark:bg-brand-400 dark:text-slate-950'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="inline-flex self-start md:self-auto bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-0.5 gap-0.5 shrink-0">
           <button
-            key={tab.id}
             type="button"
-            onClick={() => setFilterCategory(tab.id as typeof filterCategory)}
-            className={`px-2.5 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              filterCategory === tab.id
-                ? 'bg-brand-600 text-white dark:bg-brand-400 dark:text-slate-950'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+            onClick={() => setViewMode('list')}
+            title="Vista a elenco compatto"
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+              viewMode === 'list'
+                ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
             }`}
           >
-            {tab.label}
+            <List className="w-3.5 h-3.5" />
+            <span>Elenco</span>
           </button>
-        ))}
+          <button
+            type="button"
+            onClick={() => setViewMode('grid')}
+            title="Vista a schede / griglia"
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+              viewMode === 'grid'
+                ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+            }`}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" />
+            <span>Griglia</span>
+          </button>
+        </div>
       </div>
 
-      {/* Reminder Cards Grid */}
+      {/* Reminders List or Grid */}
       {filteredItems.length === 0 ? (
         <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-8 text-center space-y-2">
           <Bell className="w-7 h-7 text-slate-400 mx-auto" />
@@ -1063,11 +1498,231 @@ ${listSummary || '  // Aggiungi qui i tuoi promemoria o esportali dall’app My 
             Usa i <strong className="text-slate-700 dark:text-slate-200">Modelli pronti</strong> qui sopra (es. Batteria Auto 26/11/2026, iPhone 2 anni, Mutuo 30 anni, Cambio Olio) oppure clicca <strong className="text-slate-700 dark:text-slate-200">Nuovo promemoria</strong>.
           </p>
         </div>
+      ) : viewMode === 'list' ? (
+        <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden divide-y divide-slate-200 dark:divide-slate-800">
+          {filteredItems.map(({ reminder, lifecycle }) => {
+            const catMeta = REMINDER_CATEGORY_META[reminder.category] || REMINDER_CATEGORY_META.altro;
+            const pctRounded = Math.round(lifecycle.effectiveProgressPct * 10) / 10;
+            const isBattery = /\bbatteria\b/i.test(reminder.title);
+            const capPct =
+              typeof reminder.capacityPct === 'number'
+                ? reminder.capacityPct
+                : isBattery && typeof carProfile.batteryCapacityPct === 'number'
+                  ? carProfile.batteryCapacityPct
+                  : undefined;
+            const capDate =
+              reminder.capacityCheckedDate ||
+              (isBattery ? normalizeReminderDateIso(carProfile.batteryCapacityDate) : '');
+            const capMeta = capPct !== undefined ? getBatteryCapacityMeta(capPct) : null;
+
+            const barColor = reminder.completed
+              ? 'bg-emerald-500'
+              : !reminder.notifyEnabled
+                ? 'bg-indigo-500'
+                : lifecycle.isOverdue
+                  ? 'bg-rose-500'
+                  : lifecycle.isInWarningWindow
+                    ? 'bg-amber-500'
+                    : 'bg-emerald-500';
+
+            const remainingColor = reminder.completed
+              ? 'text-emerald-700 dark:text-emerald-300'
+              : lifecycle.isOverdue
+                ? 'text-rose-600 dark:text-rose-300'
+                : lifecycle.isInWarningWindow
+                  ? 'text-amber-700 dark:text-amber-300'
+                  : 'text-slate-700 dark:text-slate-300';
+
+            return (
+              <div
+                key={reminder.id}
+                className={`px-4 py-3 flex flex-col lg:flex-row lg:items-center justify-between gap-3 hover:bg-slate-50/70 dark:hover:bg-slate-800/35 transition-colors ${
+                  reminder.completed ? 'opacity-75' : ''
+                }`}
+              >
+                {/* Left: Title + clean unboxed metadata */}
+                <div className="min-w-0 lg:flex-1 space-y-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                    <span className="font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-300">
+                      {catMeta.shortLabel}
+                    </span>
+                    <span>·</span>
+                    {reminder.notifyEnabled ? (
+                      <span className="inline-flex items-center gap-1 text-sky-700 dark:text-sky-300">
+                        <Bell className="w-3 h-3" />
+                        Avviso {reminder.leadMonths > 0 ? `${reminder.leadMonths}m` : ''}
+                        {reminder.leadMonths > 0 && reminder.leadDays > 0 ? ' ' : ''}
+                        {reminder.leadDays > 0 ? `${reminder.leadDays}g` : ''} prima
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-indigo-700 dark:text-indigo-300">
+                        <BellOff className="w-3 h-3" />
+                        Solo barra vita
+                      </span>
+                    )}
+                    {(reminder.renewalCount || 0) > 0 && (
+                      <>
+                        <span>·</span>
+                        <span className="font-mono tabular-nums">Rinnovato {reminder.renewalCount}x</span>
+                      </>
+                    )}
+                    {reminder.notifyEnabled && (reminder.notifyEmail || reminder.notifyWhatsapp) && (
+                      <>
+                        <span>·</span>
+                        <span className="inline-flex items-center gap-1.5">
+                          {reminder.notifyEmail && (
+                            <span className="inline-flex items-center gap-0.5">
+                              <Mail className="w-3 h-3 text-sky-600 dark:text-sky-400" />
+                              Email
+                            </span>
+                          )}
+                          {reminder.notifyWhatsapp && (
+                            <span className="inline-flex items-center gap-0.5">
+                              <MessageCircle className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                              WA
+                            </span>
+                          )}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
+                    {reminder.title}
+                  </h3>
+                  {reminder.notes && (
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                      {reminder.notes}
+                    </p>
+                  )}
+                </div>
+
+                {/* Middle: Battery visual (if set) or KM + Single Lifecycle bar */}
+                <div className="flex flex-wrap sm:flex-nowrap items-center gap-4 lg:gap-5 shrink-0">
+                  {capPct !== undefined && capMeta && (
+                    <div className="flex items-center gap-2 shrink-0 pr-1">
+                      <BatteryCellVisual percent={capPct} size="sm" />
+                      <div className="leading-tight tabular-nums">
+                        <div className="flex items-baseline gap-1.5">
+                          <span className={`font-mono font-bold text-sm ${capMeta.textClass}`}>
+                            {capPct}%
+                          </span>
+                          <span className={`text-[11px] font-semibold ${capMeta.textClass}`}>
+                            {capMeta.shortLabel}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+                          Capacità{capDate ? ` · ${formatIsoToItDate(capDate)}` : ''}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {lifecycle.kmProgressPct !== undefined && reminder.intervalKm && (
+                    <div className="flex items-center gap-1.5 text-[11px] font-mono tabular-nums text-slate-600 dark:text-slate-300 shrink-0">
+                      <Gauge className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                      <span>
+                        {lifecycle.kmElapsed?.toLocaleString('it-IT')}/{reminder.intervalKm.toLocaleString('it-IT')} km
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="w-full sm:w-56 space-y-1 tabular-nums">
+                    <div className="flex items-center justify-between text-[11px] gap-2">
+                      <span className={`font-semibold truncate ${remainingColor}`}>
+                        {lifecycle.remainingHumanLabel}
+                      </span>
+                      <span className="font-mono text-slate-500 dark:text-slate-400 shrink-0">
+                        {pctRounded.toFixed(0)}%
+                      </span>
+                    </div>
+                    <div className="h-2 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-300 ${barColor}`}
+                        style={{ width: `${Math.max(pctRounded > 0 ? 2 : 0, Math.min(100, pctRounded))}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                      <span>{formatIsoToItDate(lifecycle.startDateIso)}</span>
+                      <span>→ {formatIsoToItDate(lifecycle.dueDateIso)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right: Actions */}
+                {!readOnly && (
+                  <div className="flex items-center justify-end gap-1.5 shrink-0">
+                    {reminder.renewable && (
+                      <button
+                        type="button"
+                        onClick={() => void handleRenewCycle(reminder)}
+                        title="Segna effettuato oggi e avvia nuovo ciclo"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-white dark:text-slate-950 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:hover:bg-emerald-300 rounded-lg transition-colors whitespace-nowrap shrink-0"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        <span>Rinnovato oggi</span>
+                      </button>
+                    )}
+                    {(!reminder.renewable || reminder.completed) && (
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleCompleted(reminder)}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+                          reminder.completed
+                            ? 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
+                            : 'text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300'
+                        }`}
+                      >
+                        {reminder.completed ? (
+                          <>
+                            <RotateCcw className="w-3 h-3" />
+                            <span>Riapri</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>Completa</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => openEditForm(reminder)}
+                      className="p-1.5 text-slate-500 hover:text-sky-600 dark:hover:text-sky-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
+                      aria-label="Modifica promemoria"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPendingDelete(reminder)}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded"
+                      aria-label="Elimina promemoria"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {filteredItems.map(({ reminder, lifecycle }) => {
             const catMeta = REMINDER_CATEGORY_META[reminder.category] || REMINDER_CATEGORY_META.altro;
             const pctRounded = Math.round(lifecycle.effectiveProgressPct * 10) / 10;
+            const isBattery = /\bbatteria\b/i.test(reminder.title);
+            const capPct =
+              typeof reminder.capacityPct === 'number'
+                ? reminder.capacityPct
+                : isBattery && typeof carProfile.batteryCapacityPct === 'number'
+                  ? carProfile.batteryCapacityPct
+                  : undefined;
+            const capDate =
+              reminder.capacityCheckedDate ||
+              (isBattery ? normalizeReminderDateIso(carProfile.batteryCapacityDate) : '');
+            const capMeta = capPct !== undefined ? getBatteryCapacityMeta(capPct) : null;
 
             const barColor = reminder.completed
               ? 'bg-emerald-500'
@@ -1094,28 +1749,28 @@ ${listSummary || '  // Aggiungi qui i tuoi promemoria o esportali dall’app My 
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span
-                        className={`px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border rounded-md ${catMeta.badgeClass}`}
-                      >
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                      <span className="font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-300">
                         {catMeta.shortLabel}
                       </span>
+                      <span>·</span>
                       {reminder.notifyEnabled ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300">
+                        <span className="inline-flex items-center gap-1 text-sky-700 dark:text-sky-300 font-medium">
                           <Bell className="w-3 h-3" />
                           Avviso {reminder.leadMonths > 0 ? `${reminder.leadMonths} mesi` : ''}{' '}
                           {reminder.leadDays > 0 ? `${reminder.leadDays} gg` : ''} prima
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300">
+                        <span className="inline-flex items-center gap-1 text-indigo-700 dark:text-indigo-300 font-medium">
                           <BellOff className="w-3 h-3" />
                           Solo barra vita (no notifiche)
                         </span>
                       )}
                       {(reminder.renewalCount || 0) > 0 && (
-                        <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                          Rinnovato {reminder.renewalCount}x
-                        </span>
+                        <>
+                          <span>·</span>
+                          <span className="font-mono tabular-nums">Rinnovato {reminder.renewalCount}x</span>
+                        </>
                       )}
                     </div>
                     <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
@@ -1145,44 +1800,106 @@ ${listSummary || '  // Aggiungi qui i tuoi promemoria o esportali dall’app My 
                   )}
                 </div>
 
-                {/* Visual Life Progress Bar */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs tabular-nums">
-                    <span className="font-medium text-slate-700 dark:text-slate-300">
-                      Vita trascorsa: <strong className="font-mono">{pctRounded.toFixed(1).replace('.', ',')}%</strong>
-                    </span>
-                    <span
-                      className={`font-semibold ${
-                        reminder.completed
-                          ? 'text-emerald-700 dark:text-emerald-300'
-                          : lifecycle.isOverdue
-                            ? 'text-rose-600 dark:text-rose-300'
-                            : lifecycle.isInWarningWindow
-                              ? 'text-amber-700 dark:text-amber-300'
-                              : 'text-slate-600 dark:text-slate-300'
-                      }`}
-                    >
-                      {lifecycle.remainingHumanLabel}
-                    </span>
-                  </div>
+                {/* Battery 12V Cell Health Visual + Single Life Bar side-by-side when battery capacity is tracked */}
+                {capPct !== undefined && capMeta ? (
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-4 pt-1">
+                    {/* Left: Bespoke 12V Battery Cell SVG + tabular SoH readout */}
+                    <div className="flex items-center gap-3 sm:pr-4 sm:border-r sm:border-slate-200 dark:sm:border-slate-800 shrink-0">
+                      <BatteryCellVisual percent={capPct} size="md" />
+                      <div className="tabular-nums space-y-0.5">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                          Capacità residua
+                        </div>
+                        <div className="flex items-baseline gap-2">
+                          <span className={`text-xl font-bold font-mono leading-none ${capMeta.textClass}`}>
+                            {capPct}%
+                          </span>
+                          <span className={`text-[11px] font-semibold ${capMeta.textClass}`}>
+                            {capMeta.statusLabel}
+                          </span>
+                        </div>
+                        {capDate && (
+                          <div className="text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                            Misurata il {formatIsoToItDate(capDate)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
 
-                  <div className="h-3 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-                    <div
-                      className={`h-full transition-all duration-300 ${barColor}`}
-                      style={{ width: `${Math.max(pctRounded > 0 ? 2 : 0, Math.min(100, pctRounded))}%` }}
-                    />
-                  </div>
+                    {/* Right: Single Lifecycle Progress Bar */}
+                    <div className="flex-1 min-w-0 space-y-1.5">
+                      <div className="flex items-center justify-between text-xs tabular-nums gap-2">
+                        <span className="font-medium text-slate-700 dark:text-slate-300">
+                          Vita: <strong className="font-mono">{pctRounded.toFixed(1).replace('.', ',')}%</strong>
+                        </span>
+                        <span
+                          className={`font-semibold text-right ${
+                            reminder.completed
+                              ? 'text-emerald-700 dark:text-emerald-300'
+                              : lifecycle.isOverdue
+                                ? 'text-rose-600 dark:text-rose-300'
+                                : lifecycle.isInWarningWindow
+                                  ? 'text-amber-700 dark:text-amber-300'
+                                  : 'text-slate-600 dark:text-slate-300'
+                          }`}
+                        >
+                          {lifecycle.remainingHumanLabel}
+                        </span>
+                      </div>
 
-                  <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
-                    <span>Inizio: {formatIsoToItDate(lifecycle.startDateIso)}</span>
-                    <span>Durata: {lifecycle.durationLabel}</span>
-                    <span>Scadenza: {formatIsoToItDate(lifecycle.dueDateIso)}</span>
-                  </div>
-                </div>
+                      <div className="h-2.5 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                        <div
+                          className={`h-full transition-all duration-300 ${barColor}`}
+                          style={{ width: `${Math.max(pctRounded > 0 ? 2 : 0, Math.min(100, pctRounded))}%` }}
+                        />
+                      </div>
 
-                {/* Optional KM Progress Bar */}
+                      <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+                        <span>{formatIsoToItDate(lifecycle.startDateIso)}</span>
+                        <span>{lifecycle.durationLabel}</span>
+                        <span>{formatIsoToItDate(lifecycle.dueDateIso)}</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs tabular-nums">
+                      <span className="font-medium text-slate-700 dark:text-slate-300">
+                        Vita trascorsa: <strong className="font-mono">{pctRounded.toFixed(1).replace('.', ',')}%</strong>
+                      </span>
+                      <span
+                        className={`font-semibold ${
+                          reminder.completed
+                            ? 'text-emerald-700 dark:text-emerald-300'
+                            : lifecycle.isOverdue
+                              ? 'text-rose-600 dark:text-rose-300'
+                              : lifecycle.isInWarningWindow
+                                ? 'text-amber-700 dark:text-amber-300'
+                                : 'text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {lifecycle.remainingHumanLabel}
+                      </span>
+                    </div>
+
+                    <div className="h-3 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-300 ${barColor}`}
+                        style={{ width: `${Math.max(pctRounded > 0 ? 2 : 0, Math.min(100, pctRounded))}%` }}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+                      <span>Inizio: {formatIsoToItDate(lifecycle.startDateIso)}</span>
+                      <span>Durata: {lifecycle.durationLabel}</span>
+                      <span>Scadenza: {formatIsoToItDate(lifecycle.dueDateIso)}</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Optional KM Telemetry (clean borderless divider row, no nested box) */}
                 {lifecycle.kmProgressPct !== undefined && reminder.intervalKm && (
-                  <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-1">
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 space-y-1">
                     <div className="flex items-center justify-between text-[11px] tabular-nums">
                       <span className="inline-flex items-center gap-1 font-medium text-slate-700 dark:text-slate-300">
                         <Gauge className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
@@ -1192,7 +1909,7 @@ ${listSummary || '  // Aggiungi qui i tuoi promemoria o esportali dall’app My 
                         {lifecycle.kmElapsed?.toLocaleString('it-IT')} / {reminder.intervalKm.toLocaleString('it-IT')} km
                       </span>
                     </div>
-                    <div className="h-2 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                    <div className="h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
                       <div
                         className={`h-full ${lifecycle.kmProgressPct >= 90 ? 'bg-rose-500' : 'bg-sky-500'}`}
                         style={{ width: `${Math.min(100, lifecycle.kmProgressPct)}%` }}
@@ -1239,7 +1956,7 @@ ${listSummary || '  // Aggiungi qui i tuoi promemoria o esportali dall’app My 
                         <button
                           type="button"
                           onClick={() => void handleRenewCycle(reminder)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 font-semibold text-white dark:text-slate-950 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:hover:bg-emerald-300 rounded-lg transition-colors"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 font-semibold text-white dark:text-slate-950 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-400 dark:hover:bg-emerald-300 rounded-lg transition-colors whitespace-nowrap"
                         >
                           <RefreshCw className="w-3 h-3" />
                           Effettuato oggi (nuovo ciclo)
@@ -1249,7 +1966,7 @@ ${listSummary || '  // Aggiungi qui i tuoi promemoria o esportali dall’app My 
                         <button
                           type="button"
                           onClick={() => void handleToggleCompleted(reminder)}
-                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 font-semibold rounded-lg transition-colors ${
+                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 font-semibold rounded-lg transition-colors whitespace-nowrap ${
                             reminder.completed
                               ? 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200'
                               : 'text-white dark:text-slate-950 bg-sky-600 hover:bg-sky-700 dark:bg-sky-400 dark:hover:bg-sky-300'
@@ -1280,7 +1997,7 @@ ${listSummary || '  // Aggiungi qui i tuoi promemoria o esportali dall’app My 
       {/* Modal Automazione 24/7 Google Apps Script */}
       {showAppsScriptModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/70 backdrop-blur-sm p-4"
           onClick={() => setShowAppsScriptModal(false)}
         >
           <div
@@ -1302,7 +2019,7 @@ ${listSummary || '  // Aggiungi qui i tuoi promemoria o esportali dall’app My 
             </div>
             <div className="p-5 space-y-3 text-xs text-slate-600 dark:text-slate-300">
               <p className="leading-relaxed">
-                Poiché il sito su GitHub Pages gira solo quando apri il browser, per ricevere email/WhatsApp ogni mattina anche a telefono e PC spenti puoi incollare questo script gratuito nel tuo progetto{' '}
+                Poiché il sito su GitHub Pages gira solo quando apri il browser, per ricevere Email e WhatsApp (via CallMeBot) ogni mattina anche a telefono e PC spenti incolla questa funzione nel tuo progetto{' '}
                 <a
                   href={APPS_SCRIPT_PROJECT_URL}
                   target="_blank"
@@ -1311,8 +2028,19 @@ ${listSummary || '  // Aggiungi qui i tuoi promemoria o esportali dall’app My 
                 >
                   Google Apps Script
                 </a>{' '}
-                e impostare un attivatore giornaliero (es. 08:00–09:00).
+                e imposta un attivatore giornaliero su <code className="font-mono text-sky-700 dark:text-sky-300">checkMyHomeRemindersDaily</code> (es. 08:00–09:00).
               </p>
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 text-[11px] space-y-1.5">
+                <div className="font-semibold text-slate-800 dark:text-slate-200">
+                  Sincronizzazione automatica con My Home (Firestore live) &amp; sicurezza CallMeBot:
+                </div>
+                <p className="text-slate-600 dark:text-slate-400">
+                  1. Lo script legge in tempo reale tutti i promemoria dal tuo Firestore: se cambi <em>&quot;Avvisa quanti mesi prima&quot;</em> (es. da 3 a 1 mese), date, canali o stato nell&apos;app, gli avvisi Email e WhatsApp si aggiornano da soli senza ritoccare Apps Script.
+                </p>
+                <p className="text-slate-600 dark:text-slate-400">
+                  2. Su Google Apps Script apri <strong>Impostazioni progetto → Proprietà script</strong> e aggiungi <code className="font-mono">CALLMEBOT_PHONE</code> e <code className="font-mono">CALLMEBOT_API_KEY</code>; abilita inoltre <strong>Mostra file manifest &quot;appsscript.json&quot;</strong> e verifica che <code className="font-mono">oauthScopes</code> includa <code className="font-mono">https://www.googleapis.com/auth/datastore</code>.
+                </p>
+              </div>
               <div className="relative">
                 <pre className="p-3 rounded-xl bg-slate-950 text-slate-100 font-mono text-[11px] overflow-x-auto max-h-72 overflow-y-auto border border-slate-800">
                   {appsScriptSnippet}
@@ -1333,7 +2061,7 @@ ${listSummary || '  // Aggiungi qui i tuoi promemoria o esportali dall’app My 
 
       {/* Modal Elimina Promemoria */}
       {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/70 backdrop-blur-sm p-4">
           <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
             <div className="flex items-start gap-3">
               <div className="p-2 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-600 dark:text-rose-400 shrink-0">
