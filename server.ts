@@ -769,7 +769,7 @@ async function fetchFirestoreMonitoringQuota(
 
   const targetProjectId = cfgProjectId || creds.projectId;
   const now = Date.now();
-  if (now < billingRequiredCooldownUntil && !forceRefresh) {
+  if (now < billingRequiredCooldownUntil) {
     return buildFreeSparkQuotaPayload(
       uid,
       targetProjectId,
@@ -1376,7 +1376,8 @@ async function startServer() {
     const isAuthenticatedQuotaRoute =
       req.path === '/firestore/quota' ||
       req.path.startsWith('/firestore/quota/') ||
-      req.path === '/firestore/telemetry';
+      req.path === '/firestore/telemetry' ||
+      req.path.startsWith('/firestore/telemetry/');
     if (isAuthenticatedQuotaRoute) {
       const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
       const originAllowed = !origin || isAllowedAuthenticatedOrigin(origin, req);
@@ -1409,7 +1410,12 @@ async function startServer() {
   });
 
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, service: 'my-home', timestamp: Date.now() });
+    res.json({
+      ok: true,
+      service: 'my-home',
+      timestamp: Date.now(),
+      telemetrySync: true,
+    });
   });
 
   app.post('/api/articles/search', async (req, res) => {

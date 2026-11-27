@@ -68,8 +68,10 @@ import {
 } from '../utils/apiBase';
 import {
   BrowserTelemetryDevice,
+  checkRenderTelemetrySupport,
   entryToBrowserTelemetryDevice,
   getBrowserDeviceInfo,
+  invalidateRenderTelemetrySupportCache,
   mergeBrowserTelemetryDevices,
   parseBrowserTelemetryFromArticles,
 } from '../utils/telemetrySync';
@@ -278,8 +280,13 @@ export function SettingsView({
     setCloudQuotaError(null);
     try {
       const idToken = await currentUser.getIdToken();
+      const healthEndpoint = resolveApiUrl('/api/health');
+      if (forceRefresh && healthEndpoint) {
+        invalidateRenderTelemetrySupportCache(healthEndpoint);
+      }
+      const telemetrySupported = await checkRenderTelemetrySupport(healthEndpoint);
       const telemetryEndpoint = resolveApiUrl('/api/firestore/telemetry');
-      if (telemetryEndpoint) {
+      if (telemetrySupported && telemetryEndpoint) {
         await fetch(telemetryEndpoint, {
           method: 'POST',
           headers: {
@@ -325,7 +332,33 @@ export function SettingsView({
       if (!data || typeof data.ok !== 'boolean') {
         throw new Error(`Risposta JSON non valida (HTTP ${resp.status})`);
       }
-      setCloudQuota(data);
+
+      const rawQuotaErr = `${data.errorCode || ''} ${data.message || ''}`;
+      const isBillingErr = /requires billing|billing to be enabled|billing_required/i.test(
+        rawQuotaErr
+      );
+      if (data.ok === false && isBillingErr) {
+        setCloudQuota({
+          ok: true,
+          configured: true,
+          source: 'multi_browser_sync',
+          freeSparkFallbackReason: 'billing_required',
+          ptDate: todayUsage.date,
+          fetchedAt: Date.now(),
+        });
+        if (!telemetrySupported) {
+          setCloudQuotaError(
+            'Backend Render in attesa di aggiornamento di server.ts: intanto è attiva la sincronizzazione gratuita via Firestore.'
+          );
+        }
+      } else {
+        setCloudQuota(data);
+        if (!telemetrySupported && data.source !== 'cloud_monitoring') {
+          setCloudQuotaError(
+            'Backend Render in attesa di aggiornamento di server.ts: intanto è attiva la sincronizzazione gratuita via Firestore.'
+          );
+        }
+      }
     } catch (err) {
       const rawMsg = err instanceof Error ? err.message : '';
       const isNetworkOrCors =
@@ -917,7 +950,11 @@ export function SettingsView({
             </button>
           </div>
 
-          {cloudQuota?.source === 'cloud_monitoring' && cloudQuota.ok === false ? (
+          {cloudQuota?.source === 'cloud_monitoring' &&
+          cloudQuota.ok === false &&
+          !/requires billing|billing to be enabled|billing_required/i.test(
+            `${cloudQuota.errorCode || ''} ${cloudQuota.message || ''}`
+          ) ? (
             <div className="rounded-lg border border-rose-300 dark:border-rose-500/40 bg-rose-50/80 dark:bg-rose-950/30 px-3 py-2.5 text-xs text-rose-900 dark:text-rose-200 flex flex-wrap items-center justify-between gap-2">
               <span>{cloudQuota.message || 'Errore nella lettura di Google Cloud Monitoring.'}</span>
               {cloudQuota.errorCode === 'api_disabled' && (

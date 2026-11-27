@@ -586,6 +586,7 @@ import {
 import { resolveApiUrl } from './utils/apiBase';
 import {
   buildBrowserTelemetryArticlePayload,
+  checkRenderTelemetrySupport,
   getBrowserDeviceInfo,
   getTelemetryDocId,
   parseBrowserTelemetryFromArticles,
@@ -1280,10 +1281,13 @@ export default function App() {
       entry: NonNullable<typeof telemetrySyncStateRef.current.latestToday>
     ) => {
       const endpoint = resolveApiUrl('/api/firestore/telemetry');
-      if (!endpoint || !auth.currentUser) return;
+      const healthEndpoint = resolveApiUrl('/api/health');
+      if (!endpoint || !healthEndpoint || !auth.currentUser) return;
       const sig = `${entry.date}:${entry.readUnits}:${entry.writeUnits}:${entry.savedInTestMode}:${entry.reads}`;
       if (sig === telemetrySyncStateRef.current.lastRenderSignature) return;
       try {
+        const supported = await checkRenderTelemetrySupport(healthEndpoint);
+        if (!supported) return;
         const idToken = await auth.currentUser.getIdToken();
         const resp = await fetch(endpoint, {
           method: 'POST',

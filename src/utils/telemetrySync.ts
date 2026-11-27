@@ -210,3 +210,57 @@ export function mergeBrowserTelemetryDevices(
     (a, b) => b.readUnits + b.writeUnits - (a.readUnits + a.writeUnits)
   );
 }
+
+const renderTelemetrySupportCache = new Map<
+  string,
+  { supported: boolean; checkedAt: number }
+>();
+
+export function invalidateRenderTelemetrySupportCache(healthEndpoint?: string): void {
+  if (healthEndpoint) {
+    renderTelemetrySupportCache.delete(healthEndpoint);
+  } else {
+    renderTelemetrySupportCache.clear();
+  }
+}
+
+/**
+ * Checks GET /api/health (plain CORS request with zero preflight headers)
+ * before attempting POST /api/firestore/telemetry with Authorization.
+ * Avoids Chrome console CORS errors if an older backend build is running.
+ */
+export async function checkRenderTelemetrySupport(
+  healthEndpoint: string | null | undefined
+): Promise<boolean> {
+  if (!healthEndpoint) return false;
+  const now = Date.now();
+  const cached = renderTelemetrySupportCache.get(healthEndpoint);
+  if (cached) {
+    const ttlMs = cached.supported ? 10 * 60 * 1000 : 90 * 1000;
+    if (now - cached.checkedAt < ttlMs) {
+      return cached.supported;
+    }
+  }
+  try {
+    const resp = await fetch(healthEndpoint, {
+      method: 'GET',
+      mode: 'cors',
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!resp.ok) {
+      renderTelemetrySupportCache.set(healthEndpoint, { supported: false, checkedAt: now });
+      return false;
+    }
+    const json = (await resp.json().catch(() => null)) as {
+      ok?: boolean;
+      telemetrySync?: boolean;
+    } | null;
+    const supported = Boolean(json?.ok && json?.telemetrySync === true);
+    renderTelemetrySupportCache.set(healthEndpoint, { supported, checkedAt: now });
+    return supported;
+  } catch {
+    renderTelemetrySupportCache.set(healthEndpoint, { supported: false, checkedAt: now });
+    return false;
+  }
+}
+
