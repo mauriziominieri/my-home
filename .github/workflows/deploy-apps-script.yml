@@ -52,10 +52,36 @@ jobs:
         env:
           CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
         run: |
-          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+            const outPath = path.join(process.env.HOME, ".clasprc.json");
+            const raw = (process.env.CLASPRC_JSON || "").replace(/^\uFEFF/, "").trim();
+            let parsed;
+            try {
+              parsed = JSON.parse(raw);
+            } catch (e) {
+              console.error("::error::Il secret CLASPRC_JSON non contiene un JSON valido.");
+              process.exit(1);
+            }
+            if (parsed && parsed.tokens && !parsed.tokens.default) {
+              const keys = Object.keys(parsed.tokens).filter((k) => parsed.tokens[k]);
+              if (keys.length > 0) {
+                parsed.tokens.default = parsed.tokens[keys[0]];
+              }
+            }
+            const hasV3 = Boolean(parsed?.tokens?.default?.access_token || parsed?.tokens?.default?.refresh_token);
+            const hasV1Local = Boolean(parsed?.token?.access_token || parsed?.token?.refresh_token);
+            const hasV1Global = Boolean(parsed?.access_token || parsed?.refresh_token);
+            if (!hasV3 && !hasV1Local && !hasV1Global) {
+              console.error("::error::CLASPRC_JSON non contiene token OAuth validi di clasp. Riesegui \"npx @google/clasp login\" in locale e copia ~/.clasprc.json.");
+              process.exit(1);
+            }
+            fs.writeFileSync(outPath, JSON.stringify(parsed, null, 2), { mode: 0o600 });
+          '
           chmod 600 "$HOME/.clasprc.json"
           cd apps-script
-          npx --yes @google/clasp@2.4.2 push --force
+          npx --yes @google/clasp@3.4.1 push --force
 
       - name: Pulizia credenziali
         if: always()
