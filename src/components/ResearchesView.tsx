@@ -18,7 +18,6 @@ import {
   Link2,
   List,
   Loader2,
-  PackagePlus,
   Paperclip,
   Pencil,
   Pin,
@@ -27,6 +26,7 @@ import {
   RotateCcw,
   Search,
   Share2,
+  ShieldCheck,
   ShoppingBag,
   Sparkles,
   Store,
@@ -45,6 +45,7 @@ import {
 import {
   discardSimulatedFirestoreOps,
   getSimulatedFirestoreOps,
+  isFirestoreQuotaExceededActive,
   restoreSimulatedDeletedAttachment,
   SimulatedFirestoreOp,
   subscribeFirestoreQuotaExceeded,
@@ -56,18 +57,21 @@ import {
   buildDocumentSharePayload,
   downloadShareableItem,
   formatFileSize,
+  getLocalVaultFile,
   getVaultFile,
   MAX_CLOUD_FILE_BYTES,
   ShareableItemPayload,
 } from '../utils/documentVault';
 import {
   computeMissingLiveOptions,
+  EXTRA_FAMILY_COVERAGE_INFO,
   findColorImageUrl,
   findColorNameForHex,
   findSizePrice,
   getResearchRoomLabel,
   inferProductBrand,
   inferResearchRoom,
+  isDefaultExtraFamilyProduct,
   mergePreservedVariantOptions,
   normalizeBrandName,
   normalizeColorOptionKey,
@@ -78,6 +82,7 @@ import {
   RESEARCH_ROOMS,
   ResearchRoomId,
   resolveColorHex,
+  resolveEffectiveFamilyWarranty,
   sanitizeColorImagesMap,
   sanitizeSizePricesMap,
 } from '../utils/researchHelpers';
@@ -148,7 +153,6 @@ interface ResearchesViewProps {
     docType: ArticleAttachmentType
   ) => Promise<void>;
   onDeleteResearchDocument: (docId: string) => Promise<void>;
-  onMoveToArticles?: (item: ProductResearchRecord) => Promise<void>;
 }
 
 interface QueuedDraftAttachment {
@@ -790,7 +794,8 @@ function hasResearchPayloadChanges(
       normalizeStrArrForCompare(next.availableSizes) &&
     (existing.model || '').trim().slice(0, 80) === (next.model || '').trim().slice(0, 80) &&
     (existing.specs || '').trim().slice(0, 2000) === (next.specs || '').trim().slice(0, 2000) &&
-    (existing.notes || '').trim().slice(0, 400) === (next.notes || '').trim().slice(0, 400)
+    (existing.notes || '').trim().slice(0, 400) === (next.notes || '').trim().slice(0, 400) &&
+    resolveEffectiveFamilyWarranty(existing) === resolveEffectiveFamilyWarranty(next)
   );
 }
 
@@ -1361,7 +1366,6 @@ export function ResearchesView({
   onAddResearchDocumentLink,
   onUpdateResearchDocumentType,
   onDeleteResearchDocument,
-  onMoveToArticles,
 }: ResearchesViewProps) {
   const [linkInput, setLinkInput] = useState('');
   const [inspecting, setInspecting] = useState(false);
@@ -1404,6 +1408,25 @@ export function ResearchesView({
     });
   }
 
+  function clearOptionalOlderDocsForIds(...ids: Array<string | void>) {
+    const cleanIds = ids.filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (cleanIds.length === 0) return;
+    cleanIds.forEach((id) => {
+      pendingOptionalAttachedRef.current.delete(id);
+    });
+    setOptionalOlderDocsById((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const id of cleanIds) {
+        if (id in next) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }
+
   const allResearches = useMemo(
     () => [...pendingDraftItems, ...researches],
     [pendingDraftItems, researches]
@@ -1435,6 +1458,7 @@ export function ResearchesView({
   const [draftTechSpecs, setDraftTechSpecs] = useState('');
   const [draftInfoText, setDraftInfoText] = useState('');
   const [draftNotes, setDraftNotes] = useState('');
+  const [draftFamilyWarranty, setDraftFamilyWarranty] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<QueuedDraftAttachment[]>([]);
   const [draftFoundDocuments, setDraftFoundDocuments] = useState<InspectedDocumentLink[]>([]);
   const [draftAttachmentType, setDraftAttachmentType] =
@@ -1444,6 +1468,7 @@ export function ResearchesView({
   const [searchText, setSearchText] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | ProductResearchStatus>('all');
   const [categoryFilter, setCategoryFilter] = useState<'all' | ProductResearchCategory>('all');
+  const [onlyExtraFamily, setOnlyExtraFamily] = useState(false);
   const [selectedRooms, setSelectedRooms] = useState<Array<'none' | ResearchRoomId>>([]);
   const [roomMenuOpen, setRoomMenuOpen] = useState(false);
   const roomMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1488,6 +1513,7 @@ export function ResearchesView({
   const [editTechSpecs, setEditTechSpecs] = useState('');
   const [editInfoText, setEditInfoText] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  const [editFamilyWarranty, setEditFamilyWarranty] = useState(false);
   const [editSizePrices, setEditSizePrices] = useState<Record<string, number> | undefined>(
     undefined
   );
@@ -1508,6 +1534,7 @@ export function ResearchesView({
         room?: string | null;
         status?: ProductResearchStatus;
         paidPriceEur?: number | null;
+        familyWarranty?: boolean;
         docTypes?: Record<string, ArticleAttachmentType>;
       }
     >
@@ -1579,17 +1606,26 @@ export function ResearchesView({
   const [shareItem, setShareItem] = useState<ShareableItemPayload | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [listCopied, setListCopied] = useState(false);
-  const [movedArticleIds, setMovedArticleIds] = useState<Record<string, boolean>>({});
-  const [movingId, setMovingId] = useState<string | null>(null);
   const { settings: appSettings } = useAppSettings();
   const writesDisabled = appSettings.firestoreWritesDisabled;
+  const [quotaExceeded, setQuotaExceeded] = useState(() => isFirestoreQuotaExceededActive());
+  const localSaveActive = writesDisabled || quotaExceeded;
   const [simulatedOps, setSimulatedOps] = useState<SimulatedFirestoreOp[]>([]);
+  const prevSimulatedOpsCountRef = useRef(0);
   const [brokenImages, setBrokenImages] = useState<Record<string, string>>({});
   const [attachedThumbnails, setAttachedThumbnails] = useState<Record<string, string>>({});
 
   useEffect(() => {
     return subscribeSimulatedFirestoreOps(setSimulatedOps);
   }, []);
+
+  useEffect(() => {
+    if (prevSimulatedOpsCountRef.current > 0 && simulatedOps.length === 0) {
+      pendingOptionalAttachedRef.current.clear();
+      setOptionalOlderDocsById({});
+    }
+    prevSimulatedOpsCountRef.current = simulatedOps.length;
+  }, [simulatedOps.length]);
 
   const [pinnedToastTexts, setPinnedToastTexts] = useState<{
     feedback: string | null;
@@ -1898,6 +1934,7 @@ export function ResearchesView({
 
   useEffect(() => {
     return subscribeFirestoreQuotaExceeded((active) => {
+      setQuotaExceeded(active);
       if (!active) return;
       setRefreshingId(null);
       setSavingPendingId(null);
@@ -1907,7 +1944,6 @@ export function ResearchesView({
       setDeleting(false);
       setDeletingDocId(null);
       setUploadingResearchId(null);
-      setMovingId(null);
       setLazySizePriceLoadingIds({});
     });
   }, []);
@@ -1922,7 +1958,8 @@ export function ResearchesView({
         const isLinkOnlyDoc = !docItem.fileSize && Boolean(docItem.cloudUrl);
         if (isLinkOnlyDoc || !docItem.attachmentKey) continue;
         try {
-          const stored = await getVaultFile(docItem.attachmentKey);
+          // Local cache only during passive mount/list render -> 0 Firestore reads
+          const stored = await getLocalVaultFile(docItem.attachmentKey);
           if (cancelled || !stored?.blob) continue;
           const fileName = stored.fileName || docItem.fileName || docItem.title;
           const rawMime = (
@@ -2008,7 +2045,8 @@ export function ResearchesView({
         );
         if (!imgDoc?.attachmentKey) continue;
         try {
-          const stored = await getVaultFile(imgDoc.attachmentKey);
+          // Local cache only for product thumbnails -> 0 Firestore reads
+          const stored = await getLocalVaultFile(imgDoc.attachmentKey);
           if (cancelled || !stored?.blob) continue;
           const objUrl = URL.createObjectURL(stored.blob);
           createdUrls.push(objUrl);
@@ -2735,6 +2773,7 @@ export function ResearchesView({
           specs: inspected.specs,
           category: inspected.category,
         });
+      const resolvedFamilyWarranty = isDefaultExtraFamilyProduct(inspected);
       const candidatePayload: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'> = {
         url: inspected.url,
         title: inspected.title,
@@ -2754,6 +2793,7 @@ export function ResearchesView({
         model: inspected.model,
         specs: inspected.specs,
         notes: inspected.notes,
+        ...(resolvedFamilyWarranty ? { familyWarranty: true } : {}),
       };
 
       const candCanonUrl = canonicalUrlForCompare(candidatePayload.url);
@@ -2813,17 +2853,14 @@ export function ResearchesView({
             olderExcludedDocs.forEach((d) => {
               knownOlderDocUrlsRef.current.add(d.url.split('#')[0].toLowerCase());
             });
-            setOptionalOlderDocsById((prev) => ({
-              ...prev,
-              [createdId]: olderExcludedDocs,
-            }));
           }
-          if (selectedDocs.length > 0 || autoStats.downloaded > 0 || autoStats.linked > 0) {
+          if (autoStats.downloaded > 0 || autoStats.linked > 0) {
             setOpenAttachmentsIds((prev) => ({
               ...prev,
               [createdId]: true,
             }));
           }
+          clearOptionalOlderDocsForIds(createdId);
         }
         setLinkInput('');
         setDraftOpen(false);
@@ -2836,7 +2873,7 @@ export function ResearchesView({
           olderExcludedDocs.length > 0
             ? `${olderExcludedDocs.length} ${
                 olderExcludedDocs.length === 1 ? 'versione vecchia ignorata' : 'versioni vecchie ignorate'
-              } (apri Allegati per includerle)`
+              }`
             : '';
         const directBits = [
           typeof inspected.priceEur === 'number' ? `€ ${inspected.priceEur.toFixed(2)}` : '',
@@ -2991,6 +3028,7 @@ export function ResearchesView({
       setDraftTechSpecs('');
       setDraftInfoText('');
       setDraftNotes('');
+      setDraftFamilyWarranty(false);
       setDraftAttachments([]);
       setDraftFoundDocuments([]);
       setDraftOpen(true);
@@ -3028,6 +3066,7 @@ export function ResearchesView({
       setDraftTechSpecs(split.techSpecs);
       setDraftInfoText(split.infoText);
       setDraftNotes(inspected.notes || '');
+      setDraftFamilyWarranty(isDefaultExtraFamilyProduct(inspected));
       setDraftAttachments([]);
       setDraftFoundDocuments((inspected.documents || []).slice(0, 12));
       setDraftOpen(true);
@@ -3100,6 +3139,18 @@ export function ResearchesView({
         : undefined;
     const combinedSpecs = joinSpecsAndInfo(draftTechSpecs, draftInfoText);
 
+    const isDefaultFamilyProduct = isDefaultExtraFamilyProduct({
+      title: cleanTitle,
+      model: draftModel,
+      url: validUrl,
+      specs: combinedSpecs,
+    });
+    const resolvedDraftFamilyWarranty = draftFamilyWarranty
+      ? true
+      : isDefaultFamilyProduct
+        ? false
+        : undefined;
+
     setSavingNew(true);
     try {
       const createdId = await onAddResearch({
@@ -3121,6 +3172,9 @@ export function ResearchesView({
         model: draftModel.trim() ? draftModel.trim().slice(0, 80) : undefined,
         specs: combinedSpecs || undefined,
         notes: draftNotes.trim() ? draftNotes.trim().slice(0, 400) : undefined,
+        ...(typeof resolvedDraftFamilyWarranty === 'boolean'
+          ? { familyWarranty: resolvedDraftFamilyWarranty }
+          : {}),
       });
 
       let attachedTotal = 0;
@@ -3147,6 +3201,7 @@ export function ResearchesView({
         );
         attachedTotal += autoStats.downloaded + autoStats.linked;
       }
+      clearOptionalOlderDocsForIds(createdId);
 
       setLinkInput('');
       setDraftOpen(false);
@@ -3159,8 +3214,10 @@ export function ResearchesView({
       setDraftSizePrices(undefined);
       setDraftTechSpecs('');
       setDraftInfoText('');
+      setDraftFamilyWarranty(false);
       setDraftAttachments([]);
       setDraftFoundDocuments([]);
+      const quotaSaved = !writesDisabled && isFirestoreQuotaExceededActive();
       setFeedback(
         writesDisabled
           ? `Prodotto "${cleanTitle}" salvato in locale (in coda per Firestore)${
@@ -3168,11 +3225,17 @@ export function ResearchesView({
                 ? ` con ${attachedTotal} ${attachedTotal === 1 ? 'allegato' : 'allegati'}`
                 : ''
             }.`
-          : `Prodotto "${cleanTitle}" salvato su Firestore${
-              attachedTotal > 0
-                ? ` con ${attachedTotal} ${attachedTotal === 1 ? 'allegato' : 'allegati'}`
-                : ''
-            }.`
+          : quotaSaved
+            ? `Quota Firestore esaurita: prodotto "${cleanTitle}" salvato in locale${
+                attachedTotal > 0
+                  ? ` con ${attachedTotal} ${attachedTotal === 1 ? 'allegato' : 'allegati'}`
+                  : ''
+              } (verrà inviato automaticamente al ripristino).`
+            : `Prodotto "${cleanTitle}" salvato su Firestore${
+                attachedTotal > 0
+                  ? ` con ${attachedTotal} ${attachedTotal === 1 ? 'allegato' : 'allegati'}`
+                  : ''
+              }.`
       );
     } catch (err) {
       setLinkError(err instanceof Error ? err.message : 'Salvataggio non riuscito.');
@@ -3224,6 +3287,7 @@ export function ResearchesView({
     setEditTechSpecs(split.techSpecs);
     setEditInfoText(split.infoText);
     setEditNotes(effective.notes || '');
+    setEditFamilyWarranty(resolveEffectiveFamilyWarranty(effective));
   }
 
   function handleRequestSaveEdit(e: React.FormEvent, item: ProductResearchRecord) {
@@ -3271,6 +3335,18 @@ export function ResearchesView({
           })
         : undefined;
 
+    const resolvedEditFamilyWarranty = editFamilyWarranty
+      ? true
+      : typeof item.familyWarranty === 'boolean' ||
+          isDefaultExtraFamilyProduct({
+            title: cleanTitle,
+            model: editModel,
+            url: validUrl,
+            specs: combinedSpecs,
+          })
+        ? false
+        : undefined;
+
     const payload: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'> = {
       url: validUrl,
       title: cleanTitle.slice(0, 160),
@@ -3290,6 +3366,9 @@ export function ResearchesView({
       model: editModel.trim() ? editModel.trim().slice(0, 80) : undefined,
       specs: combinedSpecs || undefined,
       notes: editNotes.trim() ? editNotes.trim().slice(0, 400) : undefined,
+      ...(typeof resolvedEditFamilyWarranty === 'boolean'
+        ? { familyWarranty: resolvedEditFamilyWarranty }
+        : {}),
     };
 
     if (isLocalDraftId(item.id)) {
@@ -3370,15 +3449,21 @@ export function ResearchesView({
         setPendingEditSave(null);
         setEditingId((curr) => (curr === item.id ? null : curr));
         handleDiscardPendingCardEdit(item.id);
+        clearOptionalOlderDocsForIds(item.id, createdId);
         const totalDocs = docStats.downloaded + docStats.linked;
+        const quotaSaved = !writesDisabled && isFirestoreQuotaExceededActive();
         setFeedback(
           writesDisabled
             ? `Prodotto "${payload.title}" salvato in locale (in coda per Firestore)${
                 totalDocs > 0 ? ` con ${totalDocs} ${totalDocs === 1 ? 'allegato' : 'allegati'}` : ''
               }.`
-            : `Prodotto "${payload.title}" salvato su Firestore${
-                totalDocs > 0 ? ` con ${totalDocs} ${totalDocs === 1 ? 'allegato' : 'allegati'}` : ''
-              }.`
+            : quotaSaved
+              ? `Quota Firestore esaurita: prodotto "${payload.title}" salvato in locale${
+                  totalDocs > 0 ? ` con ${totalDocs} ${totalDocs === 1 ? 'allegato' : 'allegati'}` : ''
+                } (invio automatico al ripristino).`
+              : `Prodotto "${payload.title}" salvato su Firestore${
+                  totalDocs > 0 ? ` con ${totalDocs} ${totalDocs === 1 ? 'allegato' : 'allegati'}` : ''
+                }.`
         );
         return;
       }
@@ -3395,6 +3480,7 @@ export function ResearchesView({
       setPendingEditSave(null);
       setEditingId((curr) => (curr === item.id ? null : curr));
       handleDiscardPendingCardEdit(item.id);
+      clearOptionalOlderDocsForIds(item.id);
       if (actuallyChanged) {
         dismissSiteRefreshDiff(item.id);
       }
@@ -3408,19 +3494,24 @@ export function ResearchesView({
         setLinkNotice(
           `Nessuna modifica rilevata per "${payload.title}": nessuna operazione effettuata.`
         );
-      } else if (writesDisabled && !hasQueuedOpForResearch(item.id)) {
+      } else if (localSaveActive && !hasQueuedOpForResearch(item.id)) {
         setLinkNotice(
           `"${payload.title}" è tornato allo stato originale: modifiche locali annullate, nessuna operazione in coda per Firestore.`
         );
       } else {
+        const quotaSaved = !writesDisabled && isFirestoreQuotaExceededActive();
         setFeedback(
           !actuallyChanged && docTypeChanges && docTypeChanges.length > 0
             ? writesDisabled
               ? `Tipologia degli allegati per "${payload.title}" salvata in locale (in coda per Firestore).`
-              : `Tipologia degli allegati per "${payload.title}" salvata su Firestore.`
+              : quotaSaved
+                ? `Quota Firestore esaurita: tipologia allegati per "${payload.title}" salvata in locale (invio automatico al ripristino).`
+                : `Tipologia degli allegati per "${payload.title}" salvata su Firestore.`
             : writesDisabled
               ? `Modifiche a "${payload.title}" salvate in locale (in coda per Firestore).`
-              : `Prodotto "${payload.title}" aggiornato e salvato su Firestore.`
+              : quotaSaved
+                ? `Quota Firestore esaurita: modifiche a "${payload.title}" salvate in locale (invio automatico al ripristino).`
+                : `Prodotto "${payload.title}" aggiornato e salvato su Firestore.`
         );
       }
     } catch (err) {
@@ -3623,6 +3714,9 @@ export function ResearchesView({
           model: inspected.model || userBase.model,
           specs: nextSpecs,
           notes: userBase.notes || inspected.notes,
+          ...(typeof userBase.familyWarranty === 'boolean'
+            ? { familyWarranty: userBase.familyWarranty }
+            : {}),
         };
       };
 
@@ -4022,6 +4116,7 @@ export function ResearchesView({
       model: item.model,
       specs: item.specs,
       notes: item.notes,
+      familyWarranty: item.familyWarranty,
       ...overrides,
     };
     if (next.status !== 'acquistato') {
@@ -4072,6 +4167,8 @@ export function ResearchesView({
               ? undefined
               : pending.paidPriceEur
             : item.paidPriceEur,
+      familyWarranty:
+        pending?.familyWarranty !== undefined ? pending.familyWarranty : item.familyWarranty,
     };
   }
 
@@ -4086,6 +4183,7 @@ export function ResearchesView({
       room?: string | null;
       status?: ProductResearchStatus;
       paidPriceEur?: number | null;
+      familyWarranty?: boolean;
     }
   ): boolean {
     const nextTitle = merged.title !== undefined ? merged.title : item.title;
@@ -4111,6 +4209,10 @@ export function ResearchesView({
             ? undefined
             : merged.paidPriceEur
           : item.paidPriceEur;
+    const nextFamilyWarranty =
+      merged.familyWarranty !== undefined
+        ? merged.familyWarranty
+        : resolveEffectiveFamilyWarranty(item);
 
     return !(
       nextTitle === item.title &&
@@ -4120,7 +4222,8 @@ export function ResearchesView({
       nextPrice === item.priceEur &&
       nextRoom === normalizeResearchRoom(item.room) &&
       nextStatus === item.status &&
-      nextPaid === item.paidPriceEur
+      nextPaid === item.paidPriceEur &&
+      nextFamilyWarranty === resolveEffectiveFamilyWarranty(item)
     );
   }
 
@@ -4137,6 +4240,7 @@ export function ResearchesView({
       room?: string | null;
       status?: ProductResearchStatus;
       paidPriceEur?: number | null;
+      familyWarranty?: boolean;
     }
   ) {
     setFeedback(null);
@@ -4175,6 +4279,7 @@ export function ResearchesView({
       room?: string | null;
       status?: ProductResearchStatus;
       paidPriceEur?: number | null;
+      familyWarranty?: boolean;
     }
   ): Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'> | null {
     if (writesDisabled && !isLocalDraftId(item.id)) {
@@ -4200,6 +4305,7 @@ export function ResearchesView({
                 patch.paidPriceEur === null ? undefined : patch.paidPriceEur,
             }
           : {}),
+        ...(patch.familyWarranty !== undefined ? { familyWarranty: patch.familyWarranty } : {}),
       });
       void onUpdateResearch(item.id, nextPayload);
       return nextPayload;
@@ -4332,6 +4438,7 @@ export function ResearchesView({
         room: normalizeResearchRoom(effective.room),
         status: effective.status,
         paidPriceEur: effective.paidPriceEur,
+        familyWarranty: effective.familyWarranty,
       }),
     });
   }
@@ -4368,6 +4475,7 @@ export function ResearchesView({
         room: normalizeResearchRoom(effective.room),
         status: effective.status,
         paidPriceEur: effective.paidPriceEur,
+        familyWarranty: effective.familyWarranty,
       }),
     });
   }
@@ -4395,6 +4503,7 @@ export function ResearchesView({
             room: normalizeResearchRoom(effective.room),
             status: effective.status,
             paidPriceEur: effective.paidPriceEur,
+            familyWarranty: effective.familyWarranty,
           })
         );
       }
@@ -4409,15 +4518,19 @@ export function ResearchesView({
         delete next[item.id];
         return next;
       });
-      if (writesDisabled && !hasQueuedOpForResearch(item.id)) {
+      clearOptionalOlderDocsForIds(item.id);
+      if (localSaveActive && !hasQueuedOpForResearch(item.id)) {
         setLinkNotice(
           `"${effective.title}" è tornato allo stato originale: modifiche locali annullate, nessuna operazione in coda per Firestore.`
         );
       } else {
+        const quotaSaved = !writesDisabled && isFirestoreQuotaExceededActive();
         setFeedback(
           writesDisabled
             ? `Modifiche a "${effective.title}" salvate in locale (in coda per Firestore).`
-            : `Modifiche a "${effective.title}" salvate su Firestore.`
+            : quotaSaved
+              ? `Quota Firestore esaurita: modifiche a "${effective.title}" salvate in locale (invio automatico al ripristino).`
+              : `Modifiche a "${effective.title}" salvate su Firestore.`
         );
       }
     } catch (err) {
@@ -4448,6 +4561,12 @@ export function ResearchesView({
     if (readOnly) return;
     const normalized = normalizeResearchRoom(nextRoomRaw);
     applyQuickCardPatch(item, { room: normalized ?? null });
+  }
+
+  function handleQuickExtraFamilyToggle(item: ProductResearchRecord) {
+    if (readOnly) return;
+    const curr = resolveEffectiveFamilyWarranty(getEffectiveItem(item));
+    applyQuickCardPatch(item, { familyWarranty: !curr });
   }
 
   function handleQuickColorSelect(item: ProductResearchRecord, nextColor: string) {
@@ -4744,12 +4863,15 @@ export function ResearchesView({
         }
       }
       setOpenAttachmentsIds((prev) => ({ ...prev, [targetItem.id]: true }));
+      const quotaSaved = !writesDisabled && isFirestoreQuotaExceededActive();
       setFeedback(
         replaceLinkDoc
           ? `File "${file.name}" salvato nell'archivio al posto del link diretto.`
           : writesDisabled
             ? `File "${file.name}" allegato a "${targetItem.title}" in locale (in coda per Firestore).`
-            : `File "${file.name}" allegato a "${targetItem.title}" su Firestore.`
+            : quotaSaved
+              ? `Quota Firestore esaurita: file "${file.name}" salvato in locale per "${targetItem.title}" (invio automatico al ripristino).`
+              : `File "${file.name}" allegato a "${targetItem.title}" su Firestore.`
       );
     } catch (err) {
       setLinkError(
@@ -4928,10 +5050,15 @@ export function ResearchesView({
       setCardAttachLinkUrl((prev) => ({ ...prev, [item.id]: '' }));
       setCardLinkDrawerOpen((prev) => ({ ...prev, [item.id]: false }));
       setOpenAttachmentsIds((prev) => ({ ...prev, [item.id]: true }));
+      const quotaSaved = !writesDisabled && isFirestoreQuotaExceededActive();
       setFeedback(
-        binaryUploaded
-          ? `File dal link salvato in "${item.title}" e in Documenti → Prodotti.`
-          : `Link allegato a "${item.title}" e sincronizzato in Documenti → Prodotti.`
+        quotaSaved
+          ? binaryUploaded
+            ? `Quota Firestore esaurita: file dal link salvato in locale in "${item.title}" (invio automatico al ripristino).`
+            : `Quota Firestore esaurita: link allegato in locale a "${item.title}" (invio automatico al ripristino).`
+          : binaryUploaded
+            ? `File dal link salvato in "${item.title}" e in Documenti → Prodotti.`
+            : `Link allegato a "${item.title}" e sincronizzato in Documenti → Prodotti.`
       );
     } catch (err) {
       setLinkError(
@@ -4960,7 +5087,11 @@ export function ResearchesView({
     try {
       const stored = await getVaultFile(docItem.attachmentKey);
       if (!stored) {
-        setLinkError('File allegato non disponibile nel vault locale o su Firestore.');
+        setLinkError(
+          isFirestoreQuotaExceededActive()
+            ? 'File non ancora presente nella cache locale di questo dispositivo e quota lettura Firebase esaurita: usa "Scarica tutti offline" in Documenti quando la quota si resetta.'
+            : 'File allegato non disponibile nel vault locale o su Firestore.'
+        );
         return;
       }
       const fileName = stored.fileName || docItem.fileName || docItem.title;
@@ -4993,7 +5124,12 @@ export function ResearchesView({
     setDownloadingDocId(docItem.id);
     setLinkError(null);
     try {
-      await downloadShareableItem(buildDocumentSharePayload(docItem));
+      const outcome = await downloadShareableItem(buildDocumentSharePayload(docItem));
+      if (outcome === 'generated' && docItem.fileSize && isFirestoreQuotaExceededActive()) {
+        setLinkNotice(
+          'File PDF originale non ancora salvato nella cache locale di questo dispositivo e quota Firebase esaurita: scaricata la scheda riepilogativa HTML.'
+        );
+      }
     } catch (err) {
       setLinkError(err instanceof Error ? err.message : 'Impossibile scaricare il file allegato.');
     } finally {
@@ -5284,45 +5420,6 @@ export function ResearchesView({
     }
   }
 
-  async function handleMoveItemToArticles(item: ProductResearchRecord) {
-    if (!onMoveToArticles || readOnly) return;
-    setMovingId(item.id);
-    setLinkError(null);
-    try {
-      const effective = getEffectiveItem(item);
-      if (!isLocalDraftId(item.id) && pendingCardEdits[item.id]) {
-        await handleCommitPendingCardEdit(item);
-      }
-      await onMoveToArticles(effective);
-      if (isLocalDraftId(item.id)) {
-        setPendingDraftItems((prev) => prev.filter((d) => d.id !== item.id));
-        setPendingDraftFoundDocs((prev) => {
-          if (!prev[item.id]) return prev;
-          const next = { ...prev };
-          delete next[item.id];
-          return next;
-        });
-        handleDiscardPendingCardEdit(item.id);
-      } else {
-        setMovedArticleIds((prev) => ({ ...prev, [item.id]: true }));
-      }
-      const attachedCount = isLocalDraftId(item.id)
-        ? 0
-        : getDocumentsForResearch(researchDocuments, item.id).length;
-      setFeedback(
-        `"${effective.title}" aggiunto alla pagina Articoli${
-          attachedCount > 0 ? ` con ${attachedCount} file allegati` : ''
-        }.`
-      );
-    } catch (err) {
-      setLinkError(
-        err instanceof Error ? err.message : 'Errore durante il trasferimento in Articoli.'
-      );
-    } finally {
-      setMovingId(null);
-    }
-  }
-
   const matchedExistingForInput = useMemo(() => {
     const valid = normalizeUrlInput(linkInput);
     if (!valid) return undefined;
@@ -5383,13 +5480,21 @@ export function ResearchesView({
     };
   }, [allResearches]);
 
+  const extraFamilyCount = useMemo(
+    () =>
+      allResearches.filter((r) => resolveEffectiveFamilyWarranty(getEffectiveItem(r))).length,
+    [allResearches, pendingCardEdits]
+  );
+
   const filteredResearches = useMemo(() => {
     const q = searchText.trim().toLowerCase();
     const filtered = allResearches.filter((item) => {
+      const effectiveItem = getEffectiveItem(item);
       const effectiveBrand = inferProductBrand(item);
-      if (statusFilter !== 'all' && item.status !== statusFilter) return false;
+      if (statusFilter !== 'all' && effectiveItem.status !== statusFilter) return false;
       if (categoryFilter !== 'all' && item.category !== categoryFilter) return false;
       if (storeFilter !== 'all' && item.store !== storeFilter) return false;
+      if (onlyExtraFamily && !resolveEffectiveFamilyWarranty(effectiveItem)) return false;
       if (brandFilter === 'none' && effectiveBrand) return false;
       if (
         brandFilter !== 'all' &&
@@ -5399,7 +5504,7 @@ export function ResearchesView({
         return false;
       }
       if (selectedRooms.length > 0) {
-        const normalizedItemRoom = normalizeResearchRoom(item.room) || 'none';
+        const normalizedItemRoom = normalizeResearchRoom(effectiveItem.room) || 'none';
         if (!selectedRooms.includes(normalizedItemRoom)) return false;
       }
       if (!q) return true;
@@ -5484,9 +5589,11 @@ export function ResearchesView({
     categoryFilter,
     brandFilter,
     storeFilter,
+    onlyExtraFamily,
     selectedRooms,
     sortField,
     sortDirection,
+    pendingCardEdits,
   ]);
 
   const roomStats = useMemo(() => {
@@ -5672,9 +5779,49 @@ export function ResearchesView({
         unlockedFeatures={[
           'Incolla link per ottenere scheda completa con foto, prezzo, colore e specifiche',
           'Allega file PDF, link diretti, ricevute, garanzie o foto direttamente a ciascun prodotto',
-          'Sposta con 1 click prodotto e allegati nella pagina Articoli di casa',
+          'Segna e filtra i dispositivi coperti da Assicurazione Extra Family direttamente in elenco',
         ]}
       />
+
+      {/* Assicurazione Extra Family Banner & Filter */}
+      <section className="rounded-xl border border-emerald-200 bg-emerald-50/75 dark:border-emerald-500/35 dark:bg-emerald-950/20 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-start gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/35 flex items-center justify-center shrink-0 mt-0.5">
+            <ShieldCheck className="w-4 h-4" />
+          </div>
+          <div className="min-w-0 space-y-0.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-xs sm:text-sm font-semibold text-emerald-900 dark:text-emerald-200">
+                {EXTRA_FAMILY_COVERAGE_INFO.title}
+              </h3>
+              <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300/80 dark:bg-emerald-500/20 dark:text-emerald-200 dark:border-emerald-500/40 tabular-nums">
+                {extraFamilyCount} / {allResearches.length}{' '}
+                {extraFamilyCount === 1 ? 'prodotto assicurato' : 'prodotti assicurati'}
+              </span>
+            </div>
+            <p className="text-[11px] text-emerald-800/85 dark:text-emerald-200/80 leading-relaxed">
+              {EXTRA_FAMILY_COVERAGE_INFO.description}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setOnlyExtraFamily((prev) => !prev)}
+          aria-pressed={onlyExtraFamily}
+          className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors shrink-0 whitespace-nowrap ${
+            onlyExtraFamily
+              ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:text-slate-950 dark:border-emerald-500 dark:hover:bg-emerald-400'
+              : 'bg-white text-emerald-800 border-emerald-300 hover:bg-emerald-100/70 dark:bg-slate-900 dark:text-emerald-200 dark:border-emerald-500/40 dark:hover:bg-emerald-500/20'
+          }`}
+        >
+          <ShieldCheck className="w-3.5 h-3.5" />
+          <span>
+            {onlyExtraFamily
+              ? `Mostra tutti (${allResearches.length})`
+              : `Solo Extra Family (${extraFamilyCount})`}
+          </span>
+        </button>
+      </section>
 
       {/* Hero URL Command Bar */}
       <section className="relative overflow-hidden bg-gradient-to-br from-sky-50/90 via-white to-indigo-50/55 dark:from-slate-900 dark:via-slate-900 dark:to-sky-950/35 border-2 border-sky-300/85 dark:border-sky-500/40 rounded-2xl p-4 sm:p-6 space-y-4 shadow-md shadow-sky-950/5 dark:shadow-xl dark:shadow-black/30">
@@ -6138,6 +6285,23 @@ export function ResearchesView({
                   className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
                 />
               </div>
+
+              <div className="sm:col-span-2 lg:col-span-3 pt-1">
+                <label
+                  htmlFor="researchDraftFamilyWarranty"
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/35 dark:bg-emerald-950/20 text-emerald-900 dark:text-emerald-200 cursor-pointer select-none"
+                >
+                  <input
+                    id="researchDraftFamilyWarranty"
+                    type="checkbox"
+                    checked={draftFamilyWarranty}
+                    onChange={(e) => setDraftFamilyWarranty(e.target.checked)}
+                    className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
+                  />
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <span className="font-medium">Coperto da Assicurazione Extra Family</span>
+                </label>
+              </div>
             </div>
 
             {/* Draft Attachments Queue & Detected Official Documents */}
@@ -6331,7 +6495,8 @@ export function ResearchesView({
           (selectedRooms.length > 0 ? 1 : 0) +
           (categoryFilter !== 'all' ? 1 : 0) +
           (brandFilter !== 'all' ? 1 : 0) +
-          (storeFilter !== 'all' ? 1 : 0);
+          (storeFilter !== 'all' ? 1 : 0) +
+          (onlyExtraFamily ? 1 : 0);
         const hasActiveFilters = activeFilterCount > 0;
 
         const resetAllFilters = () => {
@@ -6341,6 +6506,7 @@ export function ResearchesView({
           setCategoryFilter('all');
           setBrandFilter('all');
           setStoreFilter('all');
+          setOnlyExtraFamily(false);
         };
 
         const activeChips: Array<{ key: string; label: string; onClear: () => void }> = [];
@@ -6386,6 +6552,13 @@ export function ResearchesView({
             key: 'status',
             label: `Stato: ${getStatusMeta(statusFilter).label}`,
             onClear: () => setStatusFilter('all'),
+          });
+        }
+        if (onlyExtraFamily) {
+          activeChips.push({
+            key: 'extraFamily',
+            label: 'Solo Assicurazione Extra Family',
+            onClear: () => setOnlyExtraFamily(false),
           });
         }
 
@@ -7078,6 +7251,8 @@ export function ResearchesView({
                   return pendingEdit.title !== undefined;
                 case 'imageUrl':
                   return pendingEdit.imageUrl !== undefined;
+                case 'familyWarranty':
+                  return pendingEdit.familyWarranty !== undefined;
                 case 'attachments':
                   return Boolean(
                     pendingEdit.docTypes && Object.keys(pendingEdit.docTypes).length > 0
@@ -7086,6 +7261,9 @@ export function ResearchesView({
                   return false;
               }
             };
+            const effectiveFamilyWarranty = resolveEffectiveFamilyWarranty(effectiveItem);
+            const isExtraFamilyChanged = isFieldQueued('familyWarranty');
+            const isExtraFamilyStaged = isFieldStaged('familyWarranty');
             const isRoomChanged = isFieldQueued('room');
             const isRoomStaged = isFieldStaged('room');
             const isColorChanged = isFieldQueued('color');
@@ -7271,7 +7449,8 @@ export function ResearchesView({
                 editImageUrl.trim() !== (item.imageUrl || '').trim() ||
                 editTechSpecs.trim() !== origSplit.techSpecs.trim() ||
                 editInfoText.trim() !== origSplit.infoText.trim() ||
-                editNotes.trim() !== (item.notes || '').trim();
+                editNotes.trim() !== (item.notes || '').trim() ||
+                editFamilyWarranty !== resolveEffectiveFamilyWarranty(item);
 
               return (
                 <form
@@ -7529,6 +7708,22 @@ export function ResearchesView({
                       onChange={(e) => setEditNotes(e.target.value)}
                       className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500 resize-y"
                     />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor={`researchEditFamilyWarranty_${item.id}`}
+                      className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/35 dark:bg-emerald-950/20 text-emerald-900 dark:text-emerald-200 cursor-pointer select-none"
+                    >
+                      <input
+                        id={`researchEditFamilyWarranty_${item.id}`}
+                        type="checkbox"
+                        checked={editFamilyWarranty}
+                        onChange={(e) => setEditFamilyWarranty(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-emerald-600 rounded cursor-pointer"
+                      />
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <span className="font-medium">Coperto da Assicurazione Extra Family</span>
+                    </label>
                   </div>
                   <div className="flex items-center justify-end gap-2 pt-1">
                     <button
@@ -7795,6 +7990,60 @@ export function ResearchesView({
                 </select>
               );
 
+            const renderExtraFamilyControl = (compact = false) =>
+              readOnly ? (
+                effectiveFamilyWarranty ? (
+                  <span
+                    title="Coperto da Assicurazione Extra Family"
+                    className={`inline-flex items-center gap-1 ${
+                      compact
+                        ? 'px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-[11px]'
+                        : 'px-2 py-0.5 text-[11px]'
+                    } font-semibold rounded-md border bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/35 whitespace-nowrap ${
+                      isExtraFamilyChanged ? 'ring-2 ring-amber-400/85 dark:ring-amber-400/80' : ''
+                    }`}
+                  >
+                    <ShieldCheck className="w-3 h-3 shrink-0" />
+                    <span>Extra Family</span>
+                  </span>
+                ) : null
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleQuickExtraFamilyToggle(item)}
+                  aria-pressed={effectiveFamilyWarranty}
+                  title={
+                    effectiveFamilyWarranty
+                      ? 'Assicurazione Extra Family attiva — clicca per disattivare'
+                      : 'Attiva Assicurazione Extra Family su questo prodotto'
+                  }
+                  className={`inline-flex items-center gap-1 ${
+                    compact
+                      ? 'px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-[11px]'
+                      : 'px-2 py-1 text-[11px]'
+                  } font-semibold rounded-md border transition-colors whitespace-nowrap ${
+                    effectiveFamilyWarranty
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-200 dark:border-emerald-500/45 dark:hover:bg-emerald-500/25'
+                      : 'bg-slate-50 text-slate-500 border-slate-200 hover:text-emerald-700 hover:border-emerald-300 dark:bg-slate-950/70 dark:text-slate-400 dark:border-slate-800 dark:hover:text-emerald-300 dark:hover:border-emerald-500/40'
+                  } ${
+                    isExtraFamilyChanged
+                      ? 'ring-2 ring-amber-400/85 dark:ring-amber-400/80'
+                      : isExtraFamilyStaged
+                        ? 'ring-2 ring-sky-400/85 dark:ring-sky-400/80'
+                        : ''
+                  }`}
+                >
+                  <ShieldCheck
+                    className={`w-3 h-3 shrink-0 ${
+                      effectiveFamilyWarranty
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-slate-400 dark:text-slate-500'
+                    }`}
+                  />
+                  <span>{effectiveFamilyWarranty ? 'Extra Family' : '+ Extra Family'}</span>
+                </button>
+              );
+
             const renderCardActionButtons = (inListFooter: boolean) => (
               <div
                 className={
@@ -7958,35 +8207,6 @@ export function ResearchesView({
                         }`}
                       />
                     </button>
-                    {onMoveToArticles && (
-                      <button
-                        type="button"
-                        disabled={movingId === item.id || movedArticleIds[item.id]}
-                        onClick={() => void handleMoveItemToArticles(item)}
-                        title="Copia questo prodotto (con dettagli e allegati) nella pagina Articoli di casa"
-                        className={`inline-flex items-center gap-1 px-1.5 py-1 sm:px-2 sm:py-1.5 text-[11px] font-medium rounded-lg border transition-colors whitespace-nowrap ${
-                          movedArticleIds[item.id]
-                            ? 'bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-500/15 dark:border-emerald-500/35 dark:text-emerald-300'
-                            : 'bg-slate-100 border-slate-300 text-slate-700 hover:text-emerald-700 hover:border-emerald-400 dark:bg-slate-800/80 dark:border-slate-700 dark:text-slate-300 dark:hover:text-emerald-300 dark:hover:border-emerald-500/40'
-                        }`}
-                      >
-                        <PackagePlus className="w-3 h-3" />
-                        {inListFooter ? (
-                          <>
-                            <span className="sm:hidden">
-                              {movedArticleIds[item.id] ? 'OK' : 'Articoli'}
-                            </span>
-                            <span className="hidden sm:inline">
-                              {movedArticleIds[item.id] ? 'In Articoli' : 'Ad Articoli'}
-                            </span>
-                          </>
-                        ) : (
-                          <span>
-                            {movedArticleIds[item.id] ? 'In Articoli' : 'Ad Articoli'}
-                          </span>
-                        )}
-                      </button>
-                    )}
                     <button
                       type="button"
                       onClick={() => startEditItem(item)}
@@ -8173,6 +8393,7 @@ export function ResearchesView({
                           <div className="flex flex-wrap items-center gap-1.5">
                             {renderRoomControl()}
                             {renderStatusControl(true)}
+                            {renderExtraFamilyControl(true)}
                           </div>
                         </div>
 
@@ -8426,7 +8647,10 @@ export function ResearchesView({
                     <div className="flex flex-wrap items-center justify-between gap-2 py-2.5 border-y border-slate-200 dark:border-slate-800/80">
                       {renderPriceBlock(false)}
 
-                      {renderStatusControl()}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {renderStatusControl()}
+                        {renderExtraFamilyControl()}
+                      </div>
                     </div>
                   )}
 
@@ -9461,21 +9685,22 @@ export function ResearchesView({
                     <span className="text-sky-800 dark:text-sky-200 font-medium inline-flex items-center gap-1.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-sky-500 dark:bg-sky-400 animate-pulse shrink-0" />
                       {isLocalDraft
-                        ? writesDisabled
-                          ? `Bozza in pagina${
-                              queuedDraftDocs.length > 0
-                                ? ` · ${queuedDraftDocs.length} ${
-                                    queuedDraftDocs.length === 1 ? 'allegato pronto' : 'allegati pronti'
+                        ? (() => {
+                            const selectedDraftDocsCount = queuedDraftDocs.filter(
+                              (d) => !d.excluded
+                            ).length;
+                            const suffix =
+                              selectedDraftDocsCount > 0
+                                ? ` · ${selectedDraftDocsCount} ${
+                                    selectedDraftDocsCount === 1
+                                      ? 'allegato pronto'
+                                      : 'allegati pronti'
                                   }`
-                                : ''
-                            } · Non ancora salvata in coda locale`
-                          : `Bozza in pagina${
-                              queuedDraftDocs.length > 0
-                                ? ` · ${queuedDraftDocs.length} ${
-                                    queuedDraftDocs.length === 1 ? 'allegato pronto' : 'allegati pronti'
-                                  }`
-                                : ''
-                            } · Non ancora salvata su Firestore`
+                                : '';
+                            return writesDisabled
+                              ? `Bozza in pagina${suffix} · Non ancora salvata in coda locale`
+                              : `Bozza in pagina${suffix} · Non ancora salvata su Firestore`;
+                          })()
                         : 'Modifiche non salvate'}
                     </span>
                     <div className="flex items-center gap-1.5 ml-auto">

@@ -827,4 +827,11 @@ export function resolveEffectiveFamilyWarranty(item: {
   return isDefaultExtraFamilyProduct(item);
 }
 
+export const EXTRA_FAMILY_COVERAGE_INFO = {
+  title: 'Assicurazione Extra Family',
+  description:
+    'Estensione assicurativa di protezione casa su grandi elettrodomestici e TV/elettronica (guasti elettrici, elettronici o meccanici oltre i 2 anni di garanzia legale). Tieni segnati qui i dispositivi assicurati per gestire subito eventuali sinistri o riparazioni.',
+};
+
+
 

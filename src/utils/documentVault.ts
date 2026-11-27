@@ -13,7 +13,10 @@ import {
   enqueueSimulatedVaultDelete,
   enqueueSimulatedVaultUpload,
   guardedWriteBatch as writeBatch,
+  isFirestoreQuotaError,
+  isFirestoreQuotaExceededActive,
   isFirestoreWritesDisabled,
+  notifyFirestoreQuotaExceeded,
   recordFirestoreWritesSaved,
   trackedGetDoc as getDoc,
   trackedGetDocs as getDocs,
@@ -348,9 +351,13 @@ export async function saveVaultFile(
     cloudTooLarge: false,
   };
 
-  if (isFirestoreWritesDisabled()) {
+  if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
+    const isQuotaFallback = !isFirestoreWritesDisabled() && isFirestoreQuotaExceededActive();
     const estimatedChunks = Math.max(1, Math.ceil((file.size * 1.35) / CHUNK_CHAR_SIZE));
-    recordFirestoreWritesSaved(estimatedChunks + 1, `Allegato (${safeFileName})`);
+    recordFirestoreWritesSaved(
+      estimatedChunks + 1,
+      isQuotaFallback ? `Allegato locale (quota esaurita): ${safeFileName}` : `Allegato (${safeFileName})`
+    );
     const localRecord: StoredVaultFile = {
       ...record,
       origin: 'local',
@@ -364,13 +371,23 @@ export async function saveVaultFile(
       mimeType: safeMime,
       size: file.size,
       ownerUid: uid,
+      queuedReason: isQuotaFallback ? 'quota_exceeded' : 'test_mode',
       ...simHint,
     });
     notifyVaultUpdated();
     return localRecord;
   }
 
-  return await uploadVaultBlobToFirestore(record, file, cleanKey, safeFileName, safeMime, uid);
+  return await uploadVaultBlobToFirestore(
+    record,
+    file,
+    cleanKey,
+    safeFileName,
+    safeMime,
+    uid,
+    false,
+    simHint
+  );
 }
 
 async function uploadVaultBlobToFirestore(
@@ -380,7 +397,8 @@ async function uploadVaultBlobToFirestore(
   safeFileName: string,
   safeMime: string,
   uid: string,
-  useDirectBatch = false
+  useDirectBatch = false,
+  simHint?: VaultSimulatedHint
 ): Promise<StoredVaultFile> {
   try {
     const base64 = await blobToBase64(file);
@@ -476,14 +494,39 @@ async function uploadVaultBlobToFirestore(
       err instanceof Error ? err.message : String(err)
     }`.toLowerCase();
     if (
+      isFirestoreQuotaError(err) ||
       errRaw.includes('resource-exhausted') ||
       (errRaw.includes('quota') && errRaw.includes('exceeded'))
     ) {
-      setVaultCloudStatus('error');
-      const { notifyFirestoreQuotaExceeded } = await import('../firebase');
       notifyFirestoreQuotaExceeded();
+      if (!useDirectBatch) {
+        const estimatedChunks = Math.max(1, Math.ceil((file.size * 1.35) / CHUNK_CHAR_SIZE));
+        recordFirestoreWritesSaved(
+          estimatedChunks + 1,
+          `Allegato locale (quota esaurita): ${safeFileName}`
+        );
+        const localRecord: StoredVaultFile = {
+          ...record,
+          origin: 'local',
+          cloudSynced: true,
+          cloudTooLarge: false,
+        };
+        await putLocalCache(localRecord);
+        enqueueSimulatedVaultUpload({
+          fileKey: cleanKey,
+          fileName: safeFileName,
+          mimeType: safeMime,
+          size: file.size,
+          ownerUid: uid,
+          queuedReason: 'quota_exceeded',
+          ...simHint,
+        });
+        notifyVaultUpdated();
+        return localRecord;
+      }
+      setVaultCloudStatus('error');
       throw new Error(
-        'Quota giornaliera gratuita di scrittura Firestore esaurita: impossibile caricare il file ora. Il limite si azzera automaticamente il giorno successivo.'
+        'Quota giornaliera gratuita di scrittura Firestore esaurita: sincronizzazione allegato rimandata automaticamente al ripristino.'
       );
     }
     setVaultCloudStatus('error');
@@ -521,81 +564,11 @@ export async function replayVaultUploadToFirestore(params: {
   );
 }
 
-export async function getVaultFile(key: string, ownerUid?: string): Promise<StoredVaultFile | null> {
+export async function getLocalVaultFile(key: string): Promise<StoredVaultFile | null> {
   if (!key) return null;
   const cleanKey = sanitizeVaultFileKey(key);
   const localRec = await getLocalCache(cleanKey);
-
-  const uid = getAuthenticatedUid(ownerUid);
-  if (uid) {
-    try {
-      let cloudMeta = cloudMetaCache.get(cleanKey);
-      // Batch-sync cloud metadata once per session instead of firing N separate getDoc calls on view mounts
-      if (!cloudMeta && syncedVaultMetaUid !== uid) {
-        await listVaultFileMetadata(uid);
-        cloudMeta = cloudMetaCache.get(cleanKey);
-      }
-      if (!cloudMeta && syncedVaultMetaUid !== uid) {
-        const metaSnap = await getDoc(doc(db, `users/${uid}/vaultFiles`, cleanKey));
-        if (metaSnap.exists()) {
-          const d = metaSnap.data();
-          cloudMeta = {
-            fileKey: String(d.fileKey || cleanKey),
-            fileName: String(d.fileName || 'documento.pdf'),
-            mimeType: String(d.mimeType || 'application/pdf'),
-            size: Number(d.size || 0),
-            chunkCount: Number(d.chunkCount || 0),
-            updatedAtMs: timestampToMs(d.updatedAt),
-          };
-          cloudMetaCache.set(cleanKey, cloudMeta);
-          setVaultCloudStatus('ok');
-        }
-      }
-
-      const localIsFresh =
-        localRec &&
-        cloudMeta &&
-        localRec.origin === 'firestore' &&
-        localRec.size === cloudMeta.size &&
-        localRec.updatedAt >= cloudMeta.updatedAtMs;
-
-      if (cloudMeta && cloudMeta.chunkCount > 0 && !localIsFresh) {
-        const indices = Array.from({ length: cloudMeta.chunkCount }, (_, i) => i);
-        const chunkSnaps = await Promise.all(
-          indices.map((idx) =>
-            getDoc(doc(db, `users/${uid}/vaultFileChunks`, `${cleanKey}_chunk_${idx}`))
-          )
-        );
-
-        const missing = chunkSnaps.some((s) => !s.exists());
-        if (!missing) {
-          const joinedBase64 = chunkSnaps.map((s) => String(s.data()?.data || '')).join('');
-          const blob = base64ToBlob(joinedBase64, cloudMeta.mimeType);
-          const hydrated: StoredVaultFile = {
-            key: cleanKey,
-            fileName: cloudMeta.fileName,
-            mimeType: cloudMeta.mimeType,
-            size: blob.size || cloudMeta.size,
-            updatedAt: cloudMeta.updatedAtMs,
-            blob,
-            origin: 'firestore',
-            cloudSynced: true,
-          };
-          await putLocalCache(hydrated);
-          setVaultCloudStatus('ok');
-          return hydrated;
-        }
-      }
-    } catch (err) {
-      if (isPermissionDeniedError(err)) {
-        setVaultCloudStatus('rules-required');
-      } else {
-        console.warn('Firestore vault download fallback:', err);
-      }
-    }
-  }
-
-  if (localRec) {
+  if (localRec?.blob && localRec.blob.size > 0) {
     return {
       ...localRec,
       origin: localRec.origin || 'local',
@@ -629,6 +602,135 @@ export async function getVaultFile(key: string, ownerUid?: string): Promise<Stor
       return null;
     }
   }
+  return null;
+}
+
+export async function getVaultFile(
+  key: string,
+  ownerUid?: string,
+  options?: { forceCloudRefresh?: boolean }
+): Promise<StoredVaultFile | null> {
+  if (!key) return null;
+  const cleanKey = sanitizeVaultFileKey(key);
+  const localRec = await getLocalCache(cleanKey);
+
+  // Cache-first: return immediately from IndexedDB (0 Firestore reads) unless explicit cloud refresh requested
+  if (localRec?.blob && localRec.blob.size > 0 && !options?.forceCloudRefresh) {
+    return {
+      ...localRec,
+      origin: localRec.origin || 'local',
+      cloudSynced: localRec.origin === 'firestore',
+    };
+  }
+
+  if (!localRec) {
+    const bundled = STATIC_BILL_PDF_ASSETS[key] || STATIC_BILL_PDF_ASSETS[cleanKey];
+    if (bundled && typeof fetch === 'function') {
+      try {
+        const res = await fetch(resolveStaticAssetUrl(bundled.relPath));
+        if (res.ok) {
+          const rawBlob = await res.blob();
+          const ct = rawBlob.type || bundled.mimeType;
+          const pdfBlob =
+            ct && ct !== 'application/octet-stream'
+              ? rawBlob
+              : new Blob([rawBlob], { type: bundled.mimeType });
+          return {
+            key: cleanKey,
+            fileName: bundled.fileName,
+            mimeType: bundled.mimeType,
+            size: pdfBlob.size,
+            updatedAt: 0,
+            blob: pdfBlob,
+            origin: 'bundled',
+            cloudSynced: true,
+          };
+        }
+      } catch {
+        // continue to cloud if needed
+      }
+    }
+  }
+
+  const uid = getAuthenticatedUid(ownerUid);
+  if (uid && !isFirestoreQuotaExceededActive()) {
+    try {
+      let cloudMeta = cloudMetaCache.get(cleanKey);
+      // Batch-sync cloud metadata once per session instead of firing N separate getDoc calls on view mounts
+      if (!cloudMeta && syncedVaultMetaUid !== uid) {
+        await listVaultFileMetadata(uid);
+        cloudMeta = cloudMetaCache.get(cleanKey);
+      }
+      if (!cloudMeta && syncedVaultMetaUid !== uid && !isFirestoreQuotaExceededActive()) {
+        const metaSnap = await getDoc(doc(db, `users/${uid}/vaultFiles`, cleanKey));
+        if (metaSnap.exists()) {
+          const d = metaSnap.data();
+          cloudMeta = {
+            fileKey: String(d.fileKey || cleanKey),
+            fileName: String(d.fileName || 'documento.pdf'),
+            mimeType: String(d.mimeType || 'application/pdf'),
+            size: Number(d.size || 0),
+            chunkCount: Number(d.chunkCount || 0),
+            updatedAtMs: timestampToMs(d.updatedAt),
+          };
+          cloudMetaCache.set(cleanKey, cloudMeta);
+          setVaultCloudStatus('ok');
+        }
+      }
+
+      // 120s tolerance eliminates serverTimestamp() vs Date.now() clock skew false stale re-downloads
+      const localIsFresh =
+        localRec &&
+        cloudMeta &&
+        localRec.origin === 'firestore' &&
+        localRec.size === cloudMeta.size &&
+        localRec.updatedAt + 120_000 >= cloudMeta.updatedAtMs;
+
+      if (cloudMeta && cloudMeta.chunkCount > 0 && !localIsFresh && !isFirestoreQuotaExceededActive()) {
+        const indices = Array.from({ length: cloudMeta.chunkCount }, (_, i) => i);
+        const chunkSnaps = await Promise.all(
+          indices.map((idx) =>
+            getDoc(doc(db, `users/${uid}/vaultFileChunks`, `${cleanKey}_chunk_${idx}`))
+          )
+        );
+
+        const missing = chunkSnaps.some((s) => !s.exists());
+        if (!missing) {
+          const joinedBase64 = chunkSnaps.map((s) => String(s.data()?.data || '')).join('');
+          const blob = base64ToBlob(joinedBase64, cloudMeta.mimeType);
+          const hydrated: StoredVaultFile = {
+            key: cleanKey,
+            fileName: cloudMeta.fileName,
+            mimeType: cloudMeta.mimeType,
+            size: blob.size || cloudMeta.size,
+            updatedAt: cloudMeta.updatedAtMs,
+            blob,
+            origin: 'firestore',
+            cloudSynced: true,
+          };
+          await putLocalCache(hydrated);
+          setVaultCloudStatus('ok');
+          return hydrated;
+        }
+      }
+    } catch (err) {
+      if (isPermissionDeniedError(err)) {
+        setVaultCloudStatus('rules-required');
+      } else if (isFirestoreQuotaError(err)) {
+        notifyFirestoreQuotaExceeded();
+      } else {
+        console.warn('Firestore vault download fallback:', err);
+      }
+    }
+  }
+
+  if (localRec) {
+    return {
+      ...localRec,
+      origin: localRec.origin || 'local',
+      cloudSynced: localRec.origin === 'firestore',
+    };
+  }
 
   return null;
 }
@@ -641,22 +743,26 @@ export async function deleteVaultFile(
   if (!key) return;
   const cleanKey = sanitizeVaultFileKey(key);
 
-  if (isFirestoreWritesDisabled()) {
-    recordFirestoreWritesSaved(1, `Rimozione allegato (${simHint?.displayTitle || cleanKey})`);
+  if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
+    const isQuotaFallback = !isFirestoreWritesDisabled() && isFirestoreQuotaExceededActive();
+    recordFirestoreWritesSaved(
+      1,
+      isQuotaFallback
+        ? `Rimozione allegato locale (quota esaurita): ${simHint?.displayTitle || cleanKey}`
+        : `Rimozione allegato (${simHint?.displayTitle || cleanKey})`
+    );
     const uid = getAuthenticatedUid(ownerUid);
     if (uid) {
       enqueueSimulatedVaultDelete({
         keys: [cleanKey],
         ownerUid: uid,
+        queuedReason: isQuotaFallback ? 'quota_exceeded' : 'test_mode',
         ...simHint,
       });
     }
     notifyVaultUpdated();
     return;
   }
-
-  await deleteLocalCache(cleanKey);
-  cloudMetaCache.delete(cleanKey);
 
   const uid = getAuthenticatedUid(ownerUid);
   if (uid) {
@@ -672,14 +778,29 @@ export async function deleteVaultFile(
         }
         await batch.commit();
       }
+      await deleteLocalCache(cleanKey);
+      cloudMetaCache.delete(cleanKey);
       setVaultCloudStatus('ok');
     } catch (err) {
       if (isPermissionDeniedError(err)) {
         setVaultCloudStatus('rules-required');
+      } else if (isFirestoreQuotaError(err) || isFirestoreQuotaExceededActive()) {
+        notifyFirestoreQuotaExceeded();
+        enqueueSimulatedVaultDelete({
+          keys: [cleanKey],
+          ownerUid: uid,
+          queuedReason: 'quota_exceeded',
+          ...simHint,
+        });
       } else {
+        await deleteLocalCache(cleanKey);
+        cloudMetaCache.delete(cleanKey);
         console.warn('Firestore vault delete warning:', err);
       }
     }
+  } else {
+    await deleteLocalCache(cleanKey);
+    cloudMetaCache.delete(cleanKey);
   }
 
   notifyVaultUpdated();
@@ -698,26 +819,44 @@ export async function deleteVaultFiles(
     throw new Error('È necessario autenticarsi per eliminare i PDF archiviati.');
   }
 
-  if (isFirestoreWritesDisabled()) {
+  if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
+    const isQuotaFallback = !isFirestoreWritesDisabled() && isFirestoreQuotaExceededActive();
     recordFirestoreWritesSaved(
       cleanKeys.length * 2,
-      `Rimozione allegati (${simHint?.displayTitle || cleanKeys.length})`
+      isQuotaFallback
+        ? `Rimozione allegati locale (quota esaurita): ${simHint?.displayTitle || cleanKeys.length}`
+        : `Rimozione allegati (${simHint?.displayTitle || cleanKeys.length})`
     );
     enqueueSimulatedVaultDelete({
       keys: cleanKeys,
       ownerUid: uid,
+      queuedReason: isQuotaFallback ? 'quota_exceeded' : 'test_mode',
       ...simHint,
     });
     notifyVaultUpdated();
     return;
   }
 
-  for (const key of cleanKeys) {
-    await deleteLocalCache(key);
-    cloudMetaCache.delete(key);
+  try {
+    await deleteVaultKeysFromFirestore(cleanKeys, uid);
+    for (const key of cleanKeys) {
+      await deleteLocalCache(key);
+      cloudMetaCache.delete(key);
+    }
+  } catch (err) {
+    if (isFirestoreQuotaError(err) || isFirestoreQuotaExceededActive()) {
+      notifyFirestoreQuotaExceeded();
+      enqueueSimulatedVaultDelete({
+        keys: cleanKeys,
+        ownerUid: uid,
+        queuedReason: 'quota_exceeded',
+        ...simHint,
+      });
+      notifyVaultUpdated();
+      return;
+    }
+    throw err;
   }
-
-  await deleteVaultKeysFromFirestore(cleanKeys, uid);
 }
 
 async function deleteVaultKeysFromFirestore(
@@ -743,6 +882,9 @@ async function deleteVaultKeysFromFirestore(
   } catch (error) {
     if (isPermissionDeniedError(error)) {
       setVaultCloudStatus('rules-required');
+    } else if (isFirestoreQuotaError(error)) {
+      notifyFirestoreQuotaExceeded();
+      setVaultCloudStatus('error');
     } else {
       setVaultCloudStatus('error');
     }
@@ -820,7 +962,8 @@ export async function listVaultFileMetadata(
   }
 
   const forceRefresh = Boolean(options?.forceRefresh);
-  const needsCloudSync = forceRefresh || syncedVaultMetaUid !== uid;
+  const needsCloudSync =
+    !isFirestoreQuotaExceededActive() && (forceRefresh || syncedVaultMetaUid !== uid);
 
   if (needsCloudSync) {
     if (inFlightVaultMetaSync && inFlightVaultMetaUid === uid) {
@@ -880,6 +1023,8 @@ export async function listVaultFileMetadata(
         } catch (err) {
           if (isPermissionDeniedError(err)) {
             setVaultCloudStatus('rules-required');
+          } else if (isFirestoreQuotaError(err)) {
+            notifyFirestoreQuotaExceeded();
           } else {
             console.warn('Firestore vault metadata list warning:', err);
           }
@@ -904,6 +1049,118 @@ export async function listVaultFileMetadata(
   }
 
   return map;
+}
+
+export async function listLocalCachedVaultKeys(): Promise<Set<string>> {
+  const keys = new Set<string>();
+  try {
+    const idb = await openVaultDb();
+    const records = await new Promise<StoredVaultFile[]>((resolve, reject) => {
+      const tx = idb.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).getAll();
+      req.onsuccess = () => resolve((req.result as StoredVaultFile[]) || []);
+      req.onerror = () => reject(req.error);
+    });
+    idb.close();
+    for (const rec of records) {
+      if (rec?.key && rec.blob && rec.blob.size > 0) {
+        keys.add(rec.key);
+      }
+    }
+  } catch {
+    // ignore IndexedDB errors
+  }
+  return keys;
+}
+
+export async function precacheAllCloudVaultFiles(
+  ownerUid?: string,
+  onProgress?: (progress: { completed: number; total: number; currentFileName: string }) => void
+): Promise<{
+  cached: number;
+  alreadyCached: number;
+  totalCloud: number;
+  quotaHit: boolean;
+  errors: number;
+}> {
+  const uid = getAuthenticatedUid(ownerUid);
+  if (!uid) {
+    return { cached: 0, alreadyCached: 0, totalCloud: 0, quotaHit: false, errors: 0 };
+  }
+  if (isFirestoreQuotaExceededActive()) {
+    return {
+      cached: 0,
+      alreadyCached: 0,
+      totalCloud: cloudMetaCache.size,
+      quotaHit: true,
+      errors: 0,
+    };
+  }
+
+  await listVaultFileMetadata(uid, { forceRefresh: true });
+  if (isFirestoreQuotaExceededActive()) {
+    return {
+      cached: 0,
+      alreadyCached: 0,
+      totalCloud: cloudMetaCache.size,
+      quotaHit: true,
+      errors: 0,
+    };
+  }
+
+  const localKeys = await listLocalCachedVaultKeys();
+  const entries = Array.from(cloudMetaCache.values()).filter((m) => m.chunkCount > 0);
+  const missing = entries.filter((m) => !localKeys.has(m.fileKey));
+  const alreadyCached = entries.length - missing.length;
+
+  let cached = 0;
+  let errors = 0;
+  let quotaHit = false;
+
+  for (let i = 0; i < missing.length; i += 1) {
+    const meta = missing[i];
+    if (isFirestoreQuotaExceededActive()) {
+      quotaHit = true;
+      break;
+    }
+    onProgress?.({
+      completed: i,
+      total: missing.length,
+      currentFileName: meta.fileName,
+    });
+    try {
+      const downloaded = await getVaultFile(meta.fileKey, uid, { forceCloudRefresh: true });
+      if (isFirestoreQuotaExceededActive()) {
+        quotaHit = true;
+        break;
+      }
+      if (downloaded?.blob && downloaded.blob.size > 0) {
+        cached += 1;
+      } else {
+        errors += 1;
+      }
+    } catch {
+      if (isFirestoreQuotaExceededActive()) {
+        quotaHit = true;
+        break;
+      }
+      errors += 1;
+    }
+  }
+
+  onProgress?.({
+    completed: missing.length,
+    total: missing.length,
+    currentFileName: '',
+  });
+  notifyVaultUpdated();
+  return {
+    cached,
+    alreadyCached,
+    totalCloud: entries.length,
+    quotaHit,
+    errors,
+  };
 }
 
 export function formatFileSize(bytes?: number): string {

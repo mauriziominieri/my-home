@@ -1066,7 +1066,7 @@ export function SettingsView({
                       minute: '2-digit',
                     })})`
                   : ''}
-                . Il database è Firestore Enterprise Free Tier (reset automatico alle 09:00 ora italiana).
+                . Il database Firestore Enterprise Free Tier prevede 50.000 Read Units (4 KB) e 20.000 Write Units (1 KB) al giorno (reset automatico alle 09:00 ora italiana): i nuovi salvataggi restano in coda locale sicura e si sincronizzano automaticamente al ripristino della quota.
               </span>
             </div>
             <a

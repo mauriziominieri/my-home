@@ -4,6 +4,7 @@ import {
   Building2,
   Car,
   CheckCircle2,
+  Database,
   Download,
   Droplets,
   ExternalLink,
@@ -43,6 +44,10 @@ import {
   TariBillRecord,
   WaterBillRecord,
 } from '../types/home';
+import {
+  isFirestoreQuotaExceededActive,
+  subscribeFirestoreQuotaExceeded,
+} from '../firebase';
 import { resolveApiUrl } from '../utils/apiBase';
 import {
   buildDocumentSharePayload,
@@ -60,10 +65,12 @@ import {
   getWaterBillFileKey,
   inferArticleAttachmentType,
   isOctopusContractRecord,
+  listLocalCachedVaultKeys,
   listVaultFileMetadata,
   matchResearchProductForDocument,
   MAX_CLOUD_FILE_BYTES,
   openVaultFileInNewTab,
+  precacheAllCloudVaultFiles,
   saveVaultFile,
   ShareableItemPayload,
   VAULT_UPDATED_EVENT,
@@ -372,6 +379,14 @@ export function DocumentsView({
   const [viewMode, setViewMode] = useState<ViewMode>(readInitialViewMode);
   const [searchQuery, setSearchQuery] = useState('');
   const [vaultMeta, setVaultMeta] = useState<Record<string, VaultFileMeta>>({});
+  const [localCachedKeys, setLocalCachedKeys] = useState<Set<string>>(() => new Set());
+  const [quotaExceeded, setQuotaExceeded] = useState(() => isFirestoreQuotaExceededActive());
+  const [precachingAll, setPrecachingAll] = useState(false);
+  const [precacheProgress, setPrecacheProgress] = useState<{
+    completed: number;
+    total: number;
+    currentFileName: string;
+  } | null>(null);
   const [openingAttachmentKey, setOpeningAttachmentKey] = useState<string | null>(null);
 
   // Add/Edit modal states
@@ -410,6 +425,10 @@ export function DocumentsView({
   const [attachingBillKey, setAttachingBillKey] = useState<string | null>(null);
 
   useEffect(() => {
+    return subscribeFirestoreQuotaExceeded(setQuotaExceeded);
+  }, []);
+
+  useEffect(() => {
     void reloadVaultMeta();
     const onVaultChange = () => {
       void reloadVaultMeta();
@@ -440,8 +459,49 @@ export function DocumentsView({
   }
 
   async function reloadVaultMeta() {
-    const meta = await listVaultFileMetadata();
+    const [meta, cached] = await Promise.all([
+      listVaultFileMetadata(),
+      listLocalCachedVaultKeys(),
+    ]);
     setVaultMeta(meta);
+    setLocalCachedKeys(cached);
+  }
+
+  async function handlePrecacheAllOffline() {
+    if (precachingAll) return;
+    if (isFirestoreQuotaExceededActive()) {
+      setStatusNotice(
+        'Quota lettura/scrittura Firebase attualmente esaurita: impossibile scaricare ora i file mancanti dal cloud. I file già in cache locale restano subito apribili; riprova dopo il reset alle 09:00 IT.'
+      );
+      return;
+    }
+    setPrecachingAll(true);
+    setStatusNotice(null);
+    setPrecacheProgress({ completed: 0, total: 0, currentFileName: 'Verifica archivio...' });
+    try {
+      const res = await precacheAllCloudVaultFiles(undefined, setPrecacheProgress);
+      await reloadVaultMeta();
+      if (res.quotaHit) {
+        setStatusNotice(
+          `Download offline interrotto per esaurimento quota Firebase (${res.cached} nuovi salvati in cache; totale locale ${res.alreadyCached + res.cached}/${res.totalCloud}). I rimanenti potranno essere scaricati al ripristino alle 09:00 IT.`
+        );
+      } else if (res.cached === 0 && res.errors === 0) {
+        setStatusNotice(
+          `Tutti i ${res.totalCloud} file presenti su cloud sono già salvati offline su questo dispositivo.`
+        );
+      } else {
+        setStatusNotice(
+          `Cache offline aggiornata: scaricati ${res.cached} nuovi file (disponibili offline ${res.alreadyCached + res.cached}/${res.totalCloud}${res.errors > 0 ? `, ${res.errors} non disponibili` : ''}).`
+        );
+      }
+    } catch (err) {
+      setStatusNotice(
+        err instanceof Error ? err.message : 'Errore durante il download offline dei documenti.'
+      );
+    } finally {
+      setPrecachingAll(false);
+      setPrecacheProgress(null);
+    }
   }
 
   function resetForm() {
@@ -528,7 +588,9 @@ export function DocumentsView({
         fileName = pendingFile.name;
         fileMime = pendingFile.type || 'application/octet-stream';
         fileSize = pendingFile.size;
-        cloudInfo = ' File salvato su Firestore (scaricabile da ogni dispositivo).';
+        cloudInfo = isFirestoreQuotaExceededActive()
+          ? ' File salvato in locale per quota Firestore esaurita (invio automatico al ripristino).'
+          : ' File salvato su Firestore (scaricabile da ogni dispositivo).';
       }
 
       const effectiveReferenceCode = linkedResearchId
@@ -555,10 +617,18 @@ export function DocumentsView({
 
       if (editingDoc) {
         await onUpdateDocument(editingDoc.id, payload);
-        setStatusNotice(`Documento "${payload.title}" aggiornato.${cloudInfo}`);
+        setStatusNotice(
+          isFirestoreQuotaExceededActive() && !cloudInfo
+            ? `Quota Firestore esaurita: "${payload.title}" aggiornato in locale (invio automatico al ripristino).`
+            : `Documento "${payload.title}" aggiornato.${cloudInfo}`
+        );
       } else {
         await onAddDocument(payload);
-        setStatusNotice(`Documento "${payload.title}" salvato nell'archivio.${cloudInfo}`);
+        setStatusNotice(
+          isFirestoreQuotaExceededActive() && !cloudInfo
+            ? `Quota Firestore esaurita: "${payload.title}" salvato in locale (invio automatico al ripristino).`
+            : `Documento "${payload.title}" salvato nell'archivio.${cloudInfo}`
+        );
       }
 
       await reloadVaultMeta();
@@ -583,7 +653,9 @@ export function DocumentsView({
       const opened = await openVaultFileInNewTab(attachmentKey, cloudUrl, fallbackName);
       if (!opened) {
         setStatusNotice(
-          'Allegato originale non disponibile in archivio: usa Scarica per generare il riepilogo HTML.'
+          attachmentKey && isFirestoreQuotaExceededActive()
+            ? 'Allegato non ancora presente nella cache locale di questo dispositivo e quota lettura Firebase esaurita: usa "Scarica tutti offline" quando la quota si resetta.'
+            : 'Allegato originale non disponibile in archivio: usa Scarica per generare il riepilogo HTML.'
         );
       }
     } catch (err) {
@@ -606,7 +678,11 @@ export function DocumentsView({
           await deleteVaultFile(target.attachmentKey);
         }
         await onDeleteDocument(target.id);
-        setStatusNotice(`Documento "${target.title}" eliminato definitivamente.`);
+        setStatusNotice(
+          isFirestoreQuotaExceededActive()
+            ? `Quota Firestore esaurita: "${target.title}" rimosso in locale (sincronizzazione eliminazione al ripristino).`
+            : `Documento "${target.title}" eliminato definitivamente.`
+        );
       } else {
         const item = pendingDelete.item;
         if (item.kind === 'luce' && item.electricityBill && onDeleteElectricityBill) {
@@ -652,7 +728,9 @@ export function DocumentsView({
         throw new Error(`Il file "${file.name}" non è stato salvato su Firestore.`);
       }
       setStatusNotice(
-        `File "${file.name}" salvato su Firestore: disponibile in Bollette e Documenti da qualsiasi dispositivo.`
+        isFirestoreQuotaExceededActive()
+          ? `Quota Firestore esaurita: file "${file.name}" salvato in locale (invio automatico su Firestore al ripristino).`
+          : `File "${file.name}" salvato su Firestore: disponibile in Bollette e Documenti da qualsiasi dispositivo.`
       );
       await reloadVaultMeta();
     } catch (err) {
@@ -2120,6 +2198,58 @@ export function DocumentsView({
           </div>
         </div>
       </div>
+
+      {/* Offline local cache readiness bar */}
+      {(() => {
+        const allVaultKeys = Object.keys(vaultMeta);
+        const totalFiles = allVaultKeys.length;
+        const cachedCount = allVaultKeys.filter((k) => localCachedKeys.has(k)).length;
+        const missingOffline = Math.max(0, totalFiles - cachedCount);
+        return (
+          <div className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-xs dark:shadow-none">
+            <div className="flex items-start sm:items-center gap-2.5 min-w-0">
+              <Database className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0 mt-0.5 sm:mt-0" />
+              <div className="text-xs text-slate-700 dark:text-slate-300 leading-snug">
+                <span className="font-semibold text-slate-900 dark:text-slate-100">
+                  Cache Offline su questo dispositivo:
+                </span>{' '}
+                <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300">
+                  {cachedCount} / {totalFiles}
+                </span>{' '}
+                file salvati in locale (i file in cache si aprono e scaricano sempre con{' '}
+                <strong>0 letture Firebase</strong> anche a quota esaurita).
+                {precacheProgress && precacheProgress.total > 0 && (
+                  <span className="block text-[11px] text-sky-700 dark:text-sky-300 mt-0.5">
+                    Scaricamento {precacheProgress.completed}/{precacheProgress.total}:{' '}
+                    {precacheProgress.currentFileName}
+                  </span>
+                )}
+              </div>
+            </div>
+            {!readOnly && totalFiles > 0 && (
+              <button
+                type="button"
+                disabled={precachingAll || (quotaExceeded && missingOffline > 0)}
+                onClick={() => void handlePrecacheAllOffline()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-sky-300 dark:border-sky-500/40 bg-sky-50 hover:bg-sky-100 text-sky-800 dark:bg-sky-500/15 dark:hover:bg-sky-500/25 dark:text-sky-200 transition-colors whitespace-nowrap shrink-0 disabled:opacity-55"
+              >
+                {precachingAll ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  {precachingAll
+                    ? 'Scaricamento...'
+                    : missingOffline === 0
+                      ? 'Tutti già offline'
+                      : `Scarica ${missingOffline} offline`}
+                </span>
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {importProgressLabel && (
         <div className="bg-sky-50 dark:bg-sky-500/10 border border-sky-200 dark:border-sky-500/30 rounded-xl px-4 py-2.5 text-xs text-sky-800 dark:text-sky-200 flex items-center gap-2">

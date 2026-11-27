@@ -36,6 +36,7 @@ interface DisplayQueueStep {
   subTarget?: string;
   details: string[];
   writeCount: number;
+  hasQuotaFallback: boolean;
 }
 
 interface DisplayQueueGroup {
@@ -44,6 +45,7 @@ interface DisplayQueueGroup {
   title: string;
   latestAt: number;
   totalWrites: number;
+  hasQuotaFallback: boolean;
   allOpIds: string[];
   steps: DisplayQueueStep[];
 }
@@ -457,6 +459,9 @@ function buildSimulatedOpGroups(
           subTarget: cleanSubTarget,
           details,
           writeCount: op.writeCount + pairedVault.writeCount,
+          hasQuotaFallback:
+            op.queuedReason === 'quota_exceeded' ||
+            pairedVault.queuedReason === 'quota_exceeded',
         });
         continue;
       }
@@ -481,6 +486,9 @@ function buildSimulatedOpGroups(
           subTarget: cleanSubTarget,
           details,
           writeCount: op.writeCount + extraWrites,
+          hasQuotaFallback:
+            op.queuedReason === 'quota_exceeded' ||
+            pairedDeletes.some((v) => v.queuedReason === 'quota_exceeded'),
         });
         continue;
       }
@@ -498,6 +506,7 @@ function buildSimulatedOpGroups(
         subTarget: cleanSubTarget,
         details: op.changedDetails || [],
         writeCount: op.writeCount,
+        hasQuotaFallback: op.queuedReason === 'quota_exceeded',
       });
     }
 
@@ -505,6 +514,7 @@ function buildSimulatedOpGroups(
 
     const latestAt = Math.max(...steps.map((s) => s.createdAt));
     const totalWrites = steps.reduce((sum, s) => sum + s.writeCount, 0);
+    const hasQuotaFallback = steps.some((s) => s.hasQuotaFallback);
     const allOpIds = Array.from(new Set(group.ops.map((o) => o.id)));
 
     result.push({
@@ -513,6 +523,7 @@ function buildSimulatedOpGroups(
       title: group.title,
       latestAt,
       totalWrites,
+      hasQuotaFallback,
       allOpIds,
       steps,
     });
@@ -643,6 +654,16 @@ export function SimulatedOpsQueueList({
                       </span>
                     </>
                   )}
+                  {step.hasQuotaFallback && (
+                    <>
+                      <span className="text-slate-400 dark:text-slate-600" aria-hidden="true">
+                        ·
+                      </span>
+                      <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-300 whitespace-nowrap">
+                        Locale · Sync auto a reset quota
+                      </span>
+                    </>
+                  )}
                 </div>
 
                 {step.details.length > 0 && (
@@ -694,6 +715,16 @@ export function SimulatedOpsQueueList({
                 <span className="text-[11px] text-slate-500 dark:text-slate-400 tabular-nums whitespace-nowrap">
                   {group.steps.length} operazioni collegate
                 </span>
+                {group.hasQuotaFallback && (
+                  <>
+                    <span className="text-slate-400 dark:text-slate-600" aria-hidden="true">
+                      ·
+                    </span>
+                    <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-300 whitespace-nowrap">
+                      Locale · Sync auto a reset quota
+                    </span>
+                  </>
+                )}
               </div>
 
               <div className="flex items-center gap-2 shrink-0">

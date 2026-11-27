@@ -176,9 +176,83 @@ export function subscribeFirestoreQuotaExceeded(
   };
 }
 
+const QUOTA_RETRY_STORAGE_KEY = 'myhome_quota_retry_v1';
+
+export interface QuotaRetryState {
+  quotaHitDayPt: string;
+  lastAttemptAt: number;
+}
+
+function loadQuotaRetryState(): QuotaRetryState | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(QUOTA_RETRY_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<QuotaRetryState>;
+    if (!parsed || typeof parsed.quotaHitDayPt !== 'string' || !parsed.quotaHitDayPt) {
+      return null;
+    }
+    return {
+      quotaHitDayPt: parsed.quotaHitDayPt,
+      lastAttemptAt: Number(parsed.lastAttemptAt || 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+let quotaRetryState: QuotaRetryState | null = loadQuotaRetryState();
+
+function persistQuotaRetryState(next: QuotaRetryState | null): void {
+  quotaRetryState = next;
+  if (typeof window === 'undefined') return;
+  try {
+    if (!next) {
+      window.localStorage.removeItem(QUOTA_RETRY_STORAGE_KEY);
+    } else {
+      window.localStorage.setItem(QUOTA_RETRY_STORAGE_KEY, JSON.stringify(next));
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function getQuotaRetryState(): QuotaRetryState | null {
+  return quotaRetryState ? { ...quotaRetryState } : null;
+}
+
+export function recordQuotaRetryHit(): void {
+  const todayPt = getFirestoreQuotaDayIsoDate();
+  const prevSameDay = quotaRetryState?.quotaHitDayPt === todayPt;
+  persistQuotaRetryState({
+    quotaHitDayPt: todayPt,
+    lastAttemptAt: prevSameDay ? quotaRetryState?.lastAttemptAt || 0 : 0,
+  });
+}
+
+export function recordQuotaRetryAttempt(): void {
+  const todayPt = getFirestoreQuotaDayIsoDate();
+  persistQuotaRetryState({
+    quotaHitDayPt: quotaRetryState?.quotaHitDayPt || todayPt,
+    lastAttemptAt: Date.now(),
+  });
+}
+
+export function clearQuotaRetryState(): void {
+  persistQuotaRetryState(null);
+}
+
+export function hasQuotaHitToday(): boolean {
+  if (quotaExceededActive) return true;
+  const todayPt = getFirestoreQuotaDayIsoDate();
+  if (quotaRetryState?.quotaHitDayPt === todayPt) return true;
+  return dailyUsageHistory.some((e) => e.date === todayPt && Boolean(e.quotaHit));
+}
+
 export function notifyFirestoreQuotaExceeded(): void {
   quotaExceededObserved = true;
   recordFirestoreQuotaExceededEvent();
+  recordQuotaRetryHit();
   if (!quotaExceededActive) {
     quotaExceededActive = true;
     quotaExceededListeners.forEach((listener) => listener(true));
@@ -201,6 +275,7 @@ export interface FirestoreWriteStats {
 }
 
 export type SimulatedFirestoreOpKind = 'set' | 'delete' | 'batch' | 'vault_upload' | 'vault_delete';
+export type SimulatedOpReason = 'test_mode' | 'quota_exceeded';
 
 export interface SimulatedBatchSubOp {
   op: 'set' | 'update' | 'delete';
@@ -212,6 +287,7 @@ export interface SimulatedBatchSubOp {
 export interface SimulatedFirestoreOp {
   id: string;
   kind: SimulatedFirestoreOpKind;
+  queuedReason?: SimulatedOpReason;
   createdAt: number;
   section: string;
   actionLabel: string;
@@ -586,7 +662,7 @@ function describePathSectionAndTitle(
                 ? 'Documenti'
                 : room === '__macchina__' || docId.startsWith('car_')
                   ? 'Macchina'
-                  : 'Articoli';
+                  : 'Archivio';
     const title = String(data?.name || hintedTitle || docId);
     return { section, targetTitle: title };
   }
@@ -890,6 +966,7 @@ function finalizeUpdatedBatchOp(
         actionLabel: 'Eliminazione',
         targetTitle: desc.targetTitle,
         writeCount: 1,
+        queuedReason: origBatch.queuedReason,
         path: sole.path,
       };
     }
@@ -907,6 +984,7 @@ function finalizeUpdatedBatchOp(
             : 'Salvataggio',
         targetTitle: desc.targetTitle,
         writeCount: 1,
+        queuedReason: origBatch.queuedReason,
         path: sole.path,
         data: sole.data,
         options: sole.options,
@@ -1782,6 +1860,10 @@ function foldOrEnqueueSimulatedOp(
 
             const foldedOp: SimulatedFirestoreOp = {
               ...cand,
+              queuedReason:
+                incoming.queuedReason === 'quota_exceeded' || cand.queuedReason === 'quota_exceeded'
+                  ? 'quota_exceeded'
+                  : incoming.queuedReason || cand.queuedReason,
               createdAt: incoming.createdAt,
               targetTitle: incoming.targetTitle || cand.targetTitle || desc.targetTitle,
               actionLabel: isDocTypeMergeOp(cleanPath, incoming)
@@ -1830,12 +1912,14 @@ export function enqueueSimulatedVaultUpload(payload: {
   actionLabel?: string;
   displayTitle?: string;
   changedDetails?: string[];
+  queuedReason?: SimulatedOpReason;
 }): void {
   localOnlyVaultUploadKeys.add(payload.fileKey);
   const estimatedOps = Math.max(2, Math.ceil((payload.size * 1.35) / 600_000) + 1);
   enqueueSimulatedOp({
     id: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     kind: 'vault_upload',
+    queuedReason: payload.queuedReason || 'test_mode',
     createdAt: Date.now(),
     section: payload.groupSection || 'Allegati',
     actionLabel: payload.actionLabel || 'File allegato',
@@ -1864,11 +1948,13 @@ export function enqueueSimulatedVaultDelete(payload: {
   actionLabel?: string;
   displayTitle?: string;
   changedDetails?: string[];
+  queuedReason?: SimulatedOpReason;
 }): void {
   if (payload.keys.length === 0) return;
   enqueueSimulatedOp({
     id: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     kind: 'vault_delete',
+    queuedReason: payload.queuedReason || 'test_mode',
     createdAt: Date.now(),
     section: payload.groupSection || 'Allegati',
     actionLabel: payload.actionLabel || 'Rimozione allegati',
@@ -2361,7 +2447,27 @@ export function getSimulatedBatchPlan(
   };
 }
 
-export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult> {
+export function hasQuotaPendingSyncOps(): boolean {
+  return simulatedFirestoreOps.some((op) => op.queuedReason === 'quota_exceeded');
+}
+
+export function shouldAutoFlushQuotaQueue(nowMs = Date.now()): boolean {
+  if (!auth.currentUser || firestoreWriteStats.writesDisabled || activeFlushPromise) {
+    return false;
+  }
+  if (!hasQuotaPendingSyncOps()) return false;
+  const todayPt = getFirestoreQuotaDayIsoDate(nowMs);
+  if (quotaRetryState && quotaRetryState.quotaHitDayPt !== todayPt) {
+    // New PT quota window: probe once per minute until sync succeeds
+    return nowMs - (quotaRetryState.lastAttemptAt || 0) >= 60_000;
+  }
+  // Same exhausted PT day: back off for 15 minutes between silent recovery probes
+  return nowMs - (quotaRetryState?.lastAttemptAt || 0) >= 15 * 60 * 1000;
+}
+
+export async function flushSimulatedFirestoreOps(options?: {
+  silentQuotaProbe?: boolean;
+}): Promise<SimulatedFlushResult> {
   if (activeFlushPromise) return activeFlushPromise;
 
   const compactedBeforeFlush = compactSimulatedOpsList(simulatedFirestoreOps);
@@ -2375,6 +2481,10 @@ export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult
 
   const snapshot = [...simulatedFirestoreOps];
   if (snapshot.length === 0) {
+    if (!options?.silentQuotaProbe) {
+      dismissFirestoreQuotaExceeded();
+      clearQuotaRetryState();
+    }
     return { total: 0, flushed: 0, failed: 0, docWrites: 0, batchCommits: 0, at: Date.now() };
   }
 
@@ -2386,17 +2496,26 @@ export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult
       docWrites: 0,
       batchCommits: 0,
       errorMessage:
-        'Accedi con il tuo account Google per inviare a Firestore le operazioni simulate in locale.',
+        'Accedi con il tuo account Google per inviare a Firestore le operazioni salvate in locale.',
       at: Date.now(),
     };
-    simulatedFlushState = { flushing: false, lastResult: res };
-    emitSimulatedFlushState();
+    if (!options?.silentQuotaProbe) {
+      simulatedFlushState = { flushing: false, lastResult: res };
+      emitSimulatedFlushState();
+    }
     return res;
   }
 
   activeFlushPromise = (async (): Promise<SimulatedFlushResult> => {
-    simulatedFlushState = { flushing: true, lastResult: null };
-    emitSimulatedFlushState();
+    const silentProbe = Boolean(options?.silentQuotaProbe);
+    // Allow a clean live probe (e.g. right after PT daily quota reset) without early 1.5s abort
+    quotaExceededObserved = false;
+    recordQuotaRetryAttempt();
+
+    if (!silentProbe) {
+      simulatedFlushState = { flushing: true, lastResult: null };
+      emitSimulatedFlushState();
+    }
 
     const plan = getSimulatedBatchPlan(snapshot);
     let flushed = 0;
@@ -2404,6 +2523,7 @@ export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult
     let docWrites = 0;
     let batchCommits = 0;
     let errorMessage: string | undefined;
+    let hitQuotaDuringFlush = false;
 
     // 1. Replay queued binary vault uploads first (chunked internally for 10MB payload limits)
     for (const op of plan.vaultUploadOps) {
@@ -2416,6 +2536,7 @@ export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult
         simulatedFirestoreOps = simulatedFirestoreOps.filter((item) => item.id !== op.id);
         persistAndEmitSimulatedOps();
       } catch (err) {
+        if (isFirestoreQuotaError(err)) hitQuotaDuringFlush = true;
         failed += 1;
         errorMessage =
           err instanceof Error
@@ -2447,6 +2568,7 @@ export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult
           batchCommits += 1;
           docWrites += chunk.length;
         } catch (err) {
+          if (isFirestoreQuotaError(err)) hitQuotaDuringFlush = true;
           allDocChunksCommitted = false;
           failed += plan.docSourceOps.length;
           errorMessage =
@@ -2481,12 +2603,21 @@ export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult
         simulatedFirestoreOps = simulatedFirestoreOps.filter((item) => item.id !== op.id);
         persistAndEmitSimulatedOps();
       } catch (err) {
+        if (isFirestoreQuotaError(err)) hitQuotaDuringFlush = true;
         failed += 1;
         errorMessage =
           err instanceof Error
             ? err.message
             : 'Errore durante la rimozione degli allegati su Firestore.';
       }
+    }
+
+    if (failed === 0) {
+      quotaExceededObserved = false;
+      dismissFirestoreQuotaExceeded();
+      clearQuotaRetryState();
+    } else if (hitQuotaDuringFlush) {
+      notifyFirestoreQuotaExceeded();
     }
 
     const finalRes: SimulatedFlushResult = {
@@ -2498,11 +2629,19 @@ export async function flushSimulatedFirestoreOps(): Promise<SimulatedFlushResult
       errorMessage,
       at: Date.now(),
     };
-    simulatedFlushState = {
-      flushing: false,
-      lastResult: finalRes,
-    };
-    emitSimulatedFlushState();
+    if (!silentProbe || failed === 0) {
+      simulatedFlushState = {
+        flushing: false,
+        lastResult: finalRes,
+      };
+      emitSimulatedFlushState();
+    } else {
+      simulatedFlushState = {
+        ...simulatedFlushState,
+        flushing: false,
+      };
+      emitSimulatedFlushState();
+    }
     return finalRes;
   })();
 
@@ -3035,100 +3174,222 @@ export function trackedOnSnapshot<AppModelType = DocumentData, DbModelType exten
   );
 }
 
+function queueLocalFallbackSetDoc(
+  path: string,
+  serializedData: Record<string, unknown>,
+  mergeOpt: boolean,
+  hint: SimulatedOpDetailHint | undefined,
+  reason: SimulatedOpReason
+): void {
+  const desc = describePathSectionAndTitle(path, serializedData);
+  const resolvedTitle = hint?.title || desc.targetTitle;
+  const resolvedAction = hint?.actionLabel || (mergeOpt ? 'Modifica' : 'Salvataggio');
+  if (path) {
+    enqueueSimulatedOp({
+      id: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      kind: 'set',
+      queuedReason: reason,
+      createdAt: Date.now(),
+      section: desc.section,
+      actionLabel: resolvedAction,
+      targetTitle: resolvedTitle,
+      groupKey: hint?.groupKey,
+      groupSection: hint?.groupSection,
+      groupTitle: hint?.groupTitle,
+      writeCount: 1,
+      changedFields:
+        hint?.changedFields && hint.changedFields.length > 0 ? hint.changedFields : undefined,
+      changedDetails:
+        hint?.changedDetails && hint.changedDetails.length > 0 ? hint.changedDetails : undefined,
+      path,
+      data: serializedData,
+      options: mergeOpt ? { merge: true } : undefined,
+      ...(hint?.sourceCloudUrl ? { sourceCloudUrl: hint.sourceCloudUrl } : {}),
+      ...(hint?.replacesDocPath ? { replacesDocPath: hint.replacesDocPath } : {}),
+    });
+  }
+  recordFirestoreWritesSaved(
+    1,
+    reason === 'quota_exceeded'
+      ? `${resolvedAction} locale (quota esaurita): ${resolvedTitle}`
+      : `${resolvedAction} locale: ${resolvedTitle}`
+  );
+}
+
+function queueLocalFallbackDeleteDoc(
+  path: string,
+  hint: SimulatedOpDetailHint | undefined,
+  reason: SimulatedOpReason
+): void {
+  const desc = describePathSectionAndTitle(path);
+  const resolvedTitle = hint?.title || desc.targetTitle;
+  if (path) {
+    enqueueSimulatedOp({
+      id: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      kind: 'delete',
+      queuedReason: reason,
+      createdAt: Date.now(),
+      section: desc.section,
+      actionLabel: hint?.actionLabel || 'Eliminazione',
+      targetTitle: resolvedTitle,
+      groupKey: hint?.groupKey,
+      groupSection: hint?.groupSection,
+      groupTitle: hint?.groupTitle,
+      writeCount: 1,
+      changedFields:
+        hint?.changedFields && hint.changedFields.length > 0 ? hint.changedFields : undefined,
+      changedDetails:
+        hint?.changedDetails && hint.changedDetails.length > 0 ? hint.changedDetails : undefined,
+      path,
+      ...(hint?.sourceCloudUrl ? { sourceCloudUrl: hint.sourceCloudUrl } : {}),
+    });
+  }
+  recordFirestoreWritesSaved(
+    1,
+    reason === 'quota_exceeded'
+      ? `Eliminazione locale (quota esaurita): ${resolvedTitle}`
+      : `Eliminazione locale: ${resolvedTitle}`
+  );
+}
+
+function queueLocalFallbackBatchOps(
+  recordedSubOps: SimulatedBatchSubOp[],
+  batchHints: SimulatedOpDetailHint[],
+  opCount: number,
+  reason: SimulatedOpReason
+): void {
+  const firstOp = recordedSubOps[0];
+  const desc = firstOp
+    ? describePathSectionAndTitle(firstOp.path, firstOp.data)
+    : { section: 'Batch', targetTitle: `${opCount} operazioni` };
+  const firstHintTitle = batchHints.find((h) => h.title)?.title;
+  const baseTitle = firstHintTitle || desc.targetTitle;
+  const summaryTitle =
+    recordedSubOps.length === 1
+      ? baseTitle
+      : `${baseTitle} (+${recordedSubOps.length - 1})`;
+  const mergedFields = Array.from(new Set(batchHints.flatMap((h) => h.changedFields || [])));
+  const mergedDetails = Array.from(new Set(batchHints.flatMap((h) => h.changedDetails || [])));
+  const firstGroupHint = batchHints.find((h) => h.groupKey);
+  enqueueSimulatedOp({
+    id: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    kind: 'batch',
+    queuedReason: reason,
+    createdAt: Date.now(),
+    section: desc.section,
+    actionLabel:
+      batchHints.find((h) => h.actionLabel)?.actionLabel ||
+      (recordedSubOps.every((s) => s.op === 'delete')
+        ? 'Eliminazione multipla'
+        : 'Salvataggio multiplo'),
+    targetTitle: summaryTitle,
+    groupKey: firstGroupHint?.groupKey,
+    groupSection: firstGroupHint?.groupSection,
+    groupTitle: firstGroupHint?.groupTitle,
+    writeCount: opCount,
+    changedFields: mergedFields.length > 0 ? mergedFields : undefined,
+    changedDetails: mergedDetails.length > 0 ? mergedDetails : undefined,
+    batchOps: recordedSubOps,
+  });
+  recordFirestoreWritesSaved(
+    opCount,
+    reason === 'quota_exceeded'
+      ? `Batch (${opCount} op) locale (quota esaurita): ${summaryTitle}`
+      : `Batch (${opCount} op) locale: ${summaryTitle}`
+  );
+}
+
 export const guardedSetDoc: typeof rawSetDoc = (async (...args: unknown[]) => {
   const docRef = args[0] as DocumentReference | undefined;
   const path = docRef?.path || '';
   const hint = consumeSimulatedOpHint(path);
+  const rawData = args[1];
+  const rawOptions = args[2] as SetOptions | undefined;
+  const serializedData = serializeFirestoreRecord(rawData);
+  const mergeOpt =
+    rawOptions && typeof rawOptions === 'object' && 'merge' in rawOptions
+      ? Boolean((rawOptions as { merge?: boolean }).merge)
+      : false;
+
   if (firestoreWriteStats.writesDisabled) {
-    const rawData = args[1];
-    const rawOptions = args[2] as SetOptions | undefined;
-    const serializedData = serializeFirestoreRecord(rawData);
-    const mergeOpt =
-      rawOptions && typeof rawOptions === 'object' && 'merge' in rawOptions
-        ? Boolean((rawOptions as { merge?: boolean }).merge)
-        : false;
-    const desc = describePathSectionAndTitle(path, serializedData);
-    const resolvedTitle = hint?.title || desc.targetTitle;
-    const resolvedAction = hint?.actionLabel || (mergeOpt ? 'Modifica' : 'Salvataggio');
-    if (path) {
-      enqueueSimulatedOp({
-        id: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        kind: 'set',
-        createdAt: Date.now(),
-        section: desc.section,
-        actionLabel: resolvedAction,
-        targetTitle: resolvedTitle,
-        groupKey: hint?.groupKey,
-        groupSection: hint?.groupSection,
-        groupTitle: hint?.groupTitle,
-        writeCount: 1,
-        changedFields:
-          hint?.changedFields && hint.changedFields.length > 0 ? hint.changedFields : undefined,
-        changedDetails:
-          hint?.changedDetails && hint.changedDetails.length > 0 ? hint.changedDetails : undefined,
-        path,
-        data: serializedData,
-        options: mergeOpt ? { merge: true } : undefined,
-        ...(hint?.sourceCloudUrl ? { sourceCloudUrl: hint.sourceCloudUrl } : {}),
-        ...(hint?.replacesDocPath ? { replacesDocPath: hint.replacesDocPath } : {}),
-      });
-    }
-    recordFirestoreWritesSaved(1, `${resolvedAction} locale: ${resolvedTitle}`);
+    queueLocalFallbackSetDoc(path, serializedData, mergeOpt, hint, 'test_mode');
     return;
   }
-  await raceWithFirestoreQuotaAbort(
-    (rawSetDoc as (...inner: unknown[]) => Promise<void>)(...args)
-  );
-  recordFirestoreWritesExecuted(1, 'setDoc', {
-    writeUnits: bytesToWriteUnits(estimatePayloadBytes(args[1])),
-  });
+
+  if (quotaExceededActive) {
+    notifyFirestoreQuotaExceeded();
+    queueLocalFallbackSetDoc(path, serializedData, mergeOpt, hint, 'quota_exceeded');
+    return;
+  }
+
+  try {
+    await raceWithFirestoreQuotaAbort(
+      (rawSetDoc as (...inner: unknown[]) => Promise<void>)(...args)
+    );
+    recordFirestoreWritesExecuted(1, 'setDoc', {
+      writeUnits: bytesToWriteUnits(estimatePayloadBytes(args[1])),
+    });
+  } catch (err) {
+    if (isFirestoreQuotaError(err) || quotaExceededActive) {
+      notifyFirestoreQuotaExceeded();
+      queueLocalFallbackSetDoc(path, serializedData, mergeOpt, hint, 'quota_exceeded');
+      return;
+    }
+    throw err;
+  }
 }) as typeof rawSetDoc;
 
 export async function saveSystemStateDoc(
   path: string,
   data: Record<string, unknown>
 ): Promise<void> {
-  await raceWithFirestoreQuotaAbort(rawSetDoc(doc(db, path), data));
-  recordFirestoreWritesExecuted(1, 'Impostazioni app (cloud)', {
-    isSettingsWrite: true,
-    writeUnits: bytesToWriteUnits(estimatePayloadBytes(data)),
-  });
+  if (firestoreWriteStats.writesDisabled || quotaExceededActive) {
+    return;
+  }
+  try {
+    await raceWithFirestoreQuotaAbort(rawSetDoc(doc(db, path), data));
+    recordFirestoreWritesExecuted(1, 'Impostazioni app (cloud)', {
+      isSettingsWrite: true,
+      writeUnits: bytesToWriteUnits(estimatePayloadBytes(data)),
+    });
+  } catch (err) {
+    if (isFirestoreQuotaError(err) || quotaExceededActive) {
+      notifyFirestoreQuotaExceeded();
+      return;
+    }
+    throw err;
+  }
 }
 
 export const guardedDeleteDoc: typeof rawDeleteDoc = (async (...args: unknown[]) => {
   const docRef = args[0] as DocumentReference | undefined;
   const path = docRef?.path || '';
   const hint = consumeSimulatedOpHint(path);
+
   if (firestoreWriteStats.writesDisabled) {
-    const desc = describePathSectionAndTitle(path);
-    const resolvedTitle = hint?.title || desc.targetTitle;
-    if (path) {
-      enqueueSimulatedOp({
-        id: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        kind: 'delete',
-        createdAt: Date.now(),
-        section: desc.section,
-        actionLabel: hint?.actionLabel || 'Eliminazione',
-        targetTitle: resolvedTitle,
-        groupKey: hint?.groupKey,
-        groupSection: hint?.groupSection,
-        groupTitle: hint?.groupTitle,
-        writeCount: 1,
-        changedFields:
-          hint?.changedFields && hint.changedFields.length > 0 ? hint.changedFields : undefined,
-        changedDetails:
-          hint?.changedDetails && hint.changedDetails.length > 0 ? hint.changedDetails : undefined,
-        path,
-        ...(hint?.sourceCloudUrl ? { sourceCloudUrl: hint.sourceCloudUrl } : {}),
-      });
-    }
-    recordFirestoreWritesSaved(1, `Eliminazione locale: ${resolvedTitle}`);
+    queueLocalFallbackDeleteDoc(path, hint, 'test_mode');
     return;
   }
-  await raceWithFirestoreQuotaAbort(
-    (rawDeleteDoc as (...inner: unknown[]) => Promise<void>)(...args)
-  );
-  recordFirestoreWritesExecuted(1, 'deleteDoc', { deletes: 1, writeUnits: 1 });
+
+  if (quotaExceededActive) {
+    notifyFirestoreQuotaExceeded();
+    queueLocalFallbackDeleteDoc(path, hint, 'quota_exceeded');
+    return;
+  }
+
+  try {
+    await raceWithFirestoreQuotaAbort(
+      (rawDeleteDoc as (...inner: unknown[]) => Promise<void>)(...args)
+    );
+    recordFirestoreWritesExecuted(1, 'deleteDoc', { deletes: 1, writeUnits: 1 });
+  } catch (err) {
+    if (isFirestoreQuotaError(err) || quotaExceededActive) {
+      notifyFirestoreQuotaExceeded();
+      queueLocalFallbackDeleteDoc(path, hint, 'quota_exceeded');
+      return;
+    }
+    throw err;
+  }
 }) as typeof rawDeleteDoc;
 
 export function guardedWriteBatch(firestore: Firestore): ReturnType<typeof rawWriteBatch> {
@@ -3207,51 +3468,32 @@ export function guardedWriteBatch(firestore: Firestore): ReturnType<typeof rawWr
     const batchHints = recordedSubOps
       .map((s) => consumeSimulatedOpHint(s.path))
       .filter((h): h is SimulatedOpDetailHint => Boolean(h));
+
     if (firestoreWriteStats.writesDisabled) {
-      const firstOp = recordedSubOps[0];
-      const desc = firstOp
-        ? describePathSectionAndTitle(firstOp.path, firstOp.data)
-        : { section: 'Batch', targetTitle: `${opCount} operazioni` };
-      const firstHintTitle = batchHints.find((h) => h.title)?.title;
-      const baseTitle = firstHintTitle || desc.targetTitle;
-      const summaryTitle =
-        recordedSubOps.length === 1
-          ? baseTitle
-          : `${baseTitle} (+${recordedSubOps.length - 1})`;
-      const mergedFields = Array.from(
-        new Set(batchHints.flatMap((h) => h.changedFields || []))
-      );
-      const mergedDetails = Array.from(
-        new Set(batchHints.flatMap((h) => h.changedDetails || []))
-      );
-      const firstGroupHint = batchHints.find((h) => h.groupKey);
-      enqueueSimulatedOp({
-        id: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        kind: 'batch',
-        createdAt: Date.now(),
-        section: desc.section,
-        actionLabel:
-          batchHints.find((h) => h.actionLabel)?.actionLabel ||
-          (recordedSubOps.every((s) => s.op === 'delete')
-            ? 'Eliminazione multipla'
-            : 'Salvataggio multiplo'),
-        targetTitle: summaryTitle,
-        groupKey: firstGroupHint?.groupKey,
-        groupSection: firstGroupHint?.groupSection,
-        groupTitle: firstGroupHint?.groupTitle,
-        writeCount: opCount,
-        changedFields: mergedFields.length > 0 ? mergedFields : undefined,
-        changedDetails: mergedDetails.length > 0 ? mergedDetails : undefined,
-        batchOps: recordedSubOps,
-      });
-      recordFirestoreWritesSaved(opCount, `Batch (${opCount} op) locale: ${summaryTitle}`);
+      queueLocalFallbackBatchOps(recordedSubOps, batchHints, opCount, 'test_mode');
       return;
     }
-    await raceWithFirestoreQuotaAbort(origCommit());
-    recordFirestoreWritesExecuted(opCount, `batch (${opCount} op)`, {
-      deletes: deleteCount,
-      writeUnits: totalWriteUnits,
-    });
+
+    if (quotaExceededActive) {
+      notifyFirestoreQuotaExceeded();
+      queueLocalFallbackBatchOps(recordedSubOps, batchHints, opCount, 'quota_exceeded');
+      return;
+    }
+
+    try {
+      await raceWithFirestoreQuotaAbort(origCommit());
+      recordFirestoreWritesExecuted(opCount, `batch (${opCount} op)`, {
+        deletes: deleteCount,
+        writeUnits: totalWriteUnits,
+      });
+    } catch (err) {
+      if (isFirestoreQuotaError(err) || quotaExceededActive) {
+        notifyFirestoreQuotaExceeded();
+        queueLocalFallbackBatchOps(recordedSubOps, batchHints, opCount, 'quota_exceeded');
+        return;
+      }
+      throw err;
+    }
   };
 
   return batch;
@@ -3305,6 +3547,7 @@ export function raceWithFirestoreQuotaAbort<T>(promise: Promise<T>): Promise<T> 
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const observedAtStart = quotaExceededObserved;
+    const hitTodayAtStart = hasQuotaHitToday();
     let unsubscribe = () => {};
 
     const cleanup = () => {
@@ -3334,13 +3577,13 @@ export function raceWithFirestoreQuotaAbort<T>(promise: Promise<T>): Promise<T> 
       }
     });
 
-    // If quota was already hit earlier in this session and SDK suppresses duplicate backoff logs,
-    // abort after a brief window so spinners never keep spinning.
-    if (observedAtStart) {
+    // If quota was already hit earlier today and SDK suppresses duplicate backoff logs,
+    // abort after a brief window so saves switch to local queue instead of hanging.
+    if (observedAtStart || hitTodayAtStart) {
       timer = setTimeout(() => {
         notifyFirestoreQuotaExceeded();
         abortForQuota();
-      }, 1500);
+      }, observedAtStart ? 1500 : 3500);
     }
 
     promise.then(

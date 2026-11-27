@@ -4712,6 +4712,206 @@ async function startServer() {
     }
   }
 
+  async function fetchViaJinaReader(targetUrl: string, timeoutMs = 6500): Promise<string> {
+    try {
+      const u = new URL(targetUrl);
+      if ((u.protocol !== 'https:' && u.protocol !== 'http:') || isPrivateOrLocalHostname(u.hostname)) {
+        return '';
+      }
+      const jinaUrl = `https://r.jina.ai/${u.toString()}`;
+      const resp = await fetch(jinaUrl, {
+        method: 'GET',
+        signal: AbortSignal.timeout(Math.max(1500, timeoutMs)),
+        headers: {
+          Accept: 'text/plain, text/markdown;q=0.9',
+          'User-Agent': 'MyHomeProductInspector/1.0',
+        },
+      });
+      if (!resp.ok) return '';
+      const text = (await resp.text()).slice(0, 500_000);
+      if (!text || text.length < 80) return '';
+      const low = text.slice(0, 2000).toLowerCase();
+      if (
+        low.includes('403 forbidden') ||
+        low.includes('access denied') ||
+        low.includes('just a moment') ||
+        low.includes('attention required')
+      ) {
+        return '';
+      }
+      return text;
+    } catch {
+      return '';
+    }
+  }
+
+  function extractDetailsFromJinaMarkdown(
+    markdown: string,
+    store: string
+  ): {
+    title?: string;
+    brand?: string;
+    model?: string;
+    imageUrl?: string;
+    specsList: string[];
+    documents: InspectedDocumentDto[];
+  } {
+    const cleanMd = markdown.replace(/\r\n?/g, '\n');
+    const titleLineM = cleanMd.match(/^Title:\s*(.+)$/m);
+    const rawPageTitle = titleLineM?.[1] ? titleLineM[1].replace(/\s+URL Source:.*$/i, '').trim() : '';
+
+    const genericTitles = new Set([
+      'il mio prodotto',
+      'my product',
+      'support',
+      'assistenza',
+      'home',
+      'ricambi',
+      'manuali utenti',
+      'user manuals',
+    ]);
+
+    const bodyStartIdx = cleanMd.indexOf('Markdown Content:');
+    const body = bodyStartIdx !== -1 ? cleanMd.slice(bodyStartIdx + 17) : cleanMd;
+
+    const pncM = body.match(/Codice prodotto\s+([0-9][0-9\s]{5,18})/i);
+    const cleanPnc = pncM?.[1] ? pncM[1].replace(/\s+/g, '').trim() : '';
+    const modelLineM = body.match(/Numero modello\s+([A-Z0-9][A-Z0-9\-_/]{2,30})/i);
+    const serialLineM = body.match(/Numero seriale\s+([A-Z0-9\-_]{2,30})/i);
+    const mlLineM = body.match(/Codice ML\s+([A-Z0-9\-_]{1,12})/i);
+
+    let extractedModel = modelLineM?.[1]?.trim() || '';
+    if (!extractedModel) {
+      const preMasterM = body.match(/([A-Z0-9]{5,18})\s*#\s*Padroneggiare/i);
+      if (preMasterM?.[1]) extractedModel = preMasterM[1].trim();
+    }
+
+    const infoHeaderM = body.match(/##\s*Informazioni sul prodotto\s*\n+([^\n#*[\]]{3,120})/i);
+    const preInfoNameM = body.match(/([0-9]{3,4}\s+[A-Za-z0-9®™+.\- ]{3,80}?)\s+Informazioni sul prodotto/i);
+    const seriesName = (infoHeaderM?.[1] || preInfoNameM?.[1] || '').replace(/\s+/g, ' ').trim();
+
+    const productSliceStart = Math.max(
+      0,
+      body.search(/(?:Padroneggiare l'elettrodomestico|services\/eml\/transform|##\s*Informazioni sul prodotto)/i) - 400
+    );
+    const productSliceEnd = body.search(/##\s*Crea un account|##\s*Questo sito utilizza cookies/i);
+    const productSlice =
+      productSliceEnd > productSliceStart
+        ? body.slice(productSliceStart, productSliceEnd)
+        : body.slice(productSliceStart, productSliceStart + 5000);
+
+    let applianceTypeHint: string | undefined;
+    if (/(?:before-first-use-wm--wd|washing[-_ ]?machine|lavatric|prosteam)/i.test(productSlice)) {
+      applianceTypeHint = 'Lavatrice';
+    } else if (/(?:lavasciuga|washer[-_ ]?dryer)/i.test(productSlice)) {
+      applianceTypeHint = 'Lavasciuga';
+    } else if (/(?:asciugatric|heat-pump-dryer|tumble[-_ ]?dryer)/i.test(productSlice)) {
+      applianceTypeHint = 'Asciugatrice';
+    } else if (/(?:lavastoviglie|dishwasher)/i.test(productSlice)) {
+      applianceTypeHint = 'Lavastoviglie';
+    } else if (/(?:frigorifer|frigocongelator|fridge|refrigerator)/i.test(productSlice)) {
+      applianceTypeHint = 'Frigorifero';
+    } else if (/(?:induzione|induction-hob|piano\s+cottura)/i.test(productSlice)) {
+      applianceTypeHint = 'Piano cottura';
+    } else if (/(?:forno|ovens?\b)/i.test(productSlice)) {
+      applianceTypeHint = 'Forno';
+    }
+
+    let title = '';
+    if (seriesName && extractedModel) {
+      const typePrefix =
+        applianceTypeHint && !seriesName.toLowerCase().includes(applianceTypeHint.toLowerCase())
+          ? `${applianceTypeHint} `
+          : '';
+      const brandPrefix =
+        store && !seriesName.toLowerCase().includes(store.toLowerCase()) ? `${store} ` : '';
+      title = `${typePrefix}${brandPrefix}${seriesName} ${extractedModel}`
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 160);
+    } else if (seriesName) {
+      title = seriesName.slice(0, 160);
+    } else if (rawPageTitle && !genericTitles.has(rawPageTitle.toLowerCase()) && !isBlockedPageTitle(rawPageTitle)) {
+      title = rawPageTitle.slice(0, 160);
+    } else {
+      const h1M = productSlice.match(/^#\s+([^\n]{4,140})$/m);
+      if (
+        h1M?.[1] &&
+        !/^(?:menu|padroneggiare l'elettrodomestico|trova il manuale)/i.test(h1M[1].trim())
+      ) {
+        title = h1M[1].trim().slice(0, 160);
+      }
+    }
+
+    let bestImg: string | undefined;
+    let bestImgScore = -1;
+    for (const imgM of body.matchAll(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/gi)) {
+      const alt = (imgM[1] || '').trim();
+      const rawUrl = (imgM[2] || '').trim();
+      if (!rawUrl || /\.(?:svg|ico)(?:[?#]|$)/i.test(rawUrl)) continue;
+      if (
+        /(?:visa-logo|mastercard|americanexpress|maestro|discover|diners|paypal|geodis|cookielaw|electrolux-logo|aeg-logo|before-first-use|favicon|sprite|spacer|pixel)/i.test(
+          rawUrl
+        )
+      ) {
+        continue;
+      }
+      let score = 0;
+      if (/\/services\/eml\/transform\/WS_ZO\//i.test(rawUrl)) score += 12;
+      else if (/\/services\/eml\/transform\/WS_TN\//i.test(rawUrl)) score += 5;
+      if (/\/(?:media|products?|prodotti|catalog|images?|img|upload|globalassets)\//i.test(rawUrl)) {
+        score += 3;
+      }
+      if (extractedModel && `${alt} ${rawUrl}`.toLowerCase().includes(extractedModel.toLowerCase())) {
+        score += 6;
+      }
+      if (score > bestImgScore) {
+        bestImgScore = score;
+        bestImg = rawUrl.slice(0, 1000);
+      }
+    }
+
+    const specsList: string[] = [];
+    if (extractedModel) specsList.push(`Numero modello: ${extractedModel}`);
+    if (cleanPnc) specsList.push(`Codice PNC: ${cleanPnc}`);
+    if (serialLineM?.[1]) specsList.push(`Matricola / Machine No.: ${serialLineM[1].trim()}`);
+    if (mlLineM?.[1]) specsList.push(`ELC: ${mlLineM[1].trim()}`);
+    if (applianceTypeHint) specsList.push(`Tipo prodotto: ${applianceTypeHint}`);
+
+    const documents: InspectedDocumentDto[] = [];
+    const seenDocUrls = new Set<string>();
+    for (const linkM of body.matchAll(/\[([^\]]{2,100})\]\((https?:\/\/[^\s)]+)\)/gi)) {
+      if (documents.length >= 6) break;
+      const linkLabel = linkM[1].replace(/\s+/g, ' ').trim();
+      const linkUrl = linkM[2].trim();
+      if (!/\.(?:pdf|zip|dwg|dxf|rfa|ifc|step|stp)(?:[?#]|$)/i.test(linkUrl)) continue;
+      if (
+        /(?:urldefense\.com|protezione\.extra|riparazioni\.a\.prezzo\.fisso|polizza|privacy|cookie|termini|condizioni|terms|policy|newsletter)/i.test(
+          `${linkLabel} ${linkUrl}`
+        )
+      ) {
+        continue;
+      }
+      const norm = linkUrl.split('#')[0].toLowerCase();
+      if (seenDocUrls.has(norm)) continue;
+      seenDocUrls.add(norm);
+      documents.push({
+        title: linkLabel.slice(0, 80) || 'Documento prodotto',
+        url: linkUrl.slice(0, 1000),
+        kind: inferDocumentKind(linkLabel, linkUrl),
+      });
+    }
+
+    return {
+      title: title || undefined,
+      brand: store || undefined,
+      model: extractedModel || cleanPnc || undefined,
+      imageUrl: bestImgScore >= 3 ? bestImg : undefined,
+      specsList,
+      documents,
+    };
+  }
+
   app.post('/api/researches/inspect', async (req, res) => {
     const rawInput = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
     if (!rawInput || rawInput.length > 1000) {
@@ -4739,7 +4939,7 @@ async function startServer() {
     const finalUrl = parsedUrl.toString().slice(0, 1000);
     const cacheKey = canonicalInspectCacheKey(parsedUrl);
     const forceRefresh = Boolean(req.body?.refresh);
-    const inspectDeadlineMs = Date.now() + 25_000;
+    const inspectDeadlineMs = Date.now() + 26_500;
     const remainingBudgetMs = () => Math.max(0, inspectDeadlineMs - Date.now());
     const withStepTimeout = <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
       new Promise<T>((resolve, reject) => {
@@ -4788,6 +4988,7 @@ async function startServer() {
     let documents: InspectedDocumentDto[] = [];
     let extractedFrom: 'page-meta' | 'url-slug' = 'url-slug';
     let blockedBySite = false;
+    let directSiteHtmlFetched = false;
 
     const resolvePageImageUrl = (rawImg?: string): string | undefined => {
       const trimmed = (rawImg || '').trim();
@@ -5048,7 +5249,8 @@ async function startServer() {
     };
 
     try {
-      const fetchRes = await fetchPageHtml(finalUrl);
+      const isKnownSlowSpaSupport = /\/support\/go\b/i.test(parsedUrl.pathname);
+      const fetchRes = await fetchPageHtml(finalUrl, undefined, isKnownSlowSpaSupport ? 4000 : 5500);
       if (fetchRes.blocked) blockedBySite = true;
       let html = fetchRes.html;
 
@@ -5082,23 +5284,51 @@ async function startServer() {
             // ignore individual strategy failures
           }
         }
-      } else if (!amazonAsin && (blockedBySite || !hasUsableProductHtml(html)) && remainingBudgetMs() >= 4500) {
-        // Non-Amazon site WAF-blocked datacenter IP (e.g. AWS ELB 403 on manufacturer sites): try Wayback snapshot
-        const wbUrl = await resolveWaybackSnapshotUrl(finalUrl);
-        if (wbUrl && remainingBudgetMs() >= 2500) {
-          try {
-            const wbRes = await fetchPageHtml(wbUrl, undefined, 6500);
-            if (hasUsableProductHtml(wbRes.html)) {
-              html = wbRes.html;
+      } else if (!amazonAsin && (blockedBySite || !hasUsableProductHtml(html))) {
+        if (remainingBudgetMs() >= 4500) {
+          const jinaMd = await fetchViaJinaReader(
+            finalUrl,
+            Math.min(6500, Math.max(3000, remainingBudgetMs() - 8000))
+          );
+          if (jinaMd) {
+            const jinaData = extractDetailsFromJinaMarkdown(jinaMd, store);
+            if (jinaData.title) {
+              title = jinaData.title;
+              extractedFrom = 'page-meta';
+            }
+            if (jinaData.brand && !brand) brand = jinaData.brand.slice(0, 60);
+            if (jinaData.model) model = jinaData.model.slice(0, 80);
+            if (jinaData.imageUrl) imageUrl = jinaData.imageUrl;
+            if (jinaData.specsList.length > 0) {
+              specs = buildBoundedSpecsText(jinaData.specsList, [], 1850);
+            }
+            if (jinaData.documents.length > 0) {
+              documents = jinaData.documents;
+            }
+            if (jinaData.title || jinaData.model || jinaData.imageUrl) {
               blockedBySite = false;
             }
-          } catch {
-            // ignore Wayback HTML fetch failures
+          }
+        }
+
+        if (!title && !imageUrl && remainingBudgetMs() >= 4500) {
+          const wbUrl = await resolveWaybackSnapshotUrl(finalUrl);
+          if (wbUrl && remainingBudgetMs() >= 2500) {
+            try {
+              const wbRes = await fetchPageHtml(wbUrl, undefined, 5500);
+              if (hasUsableProductHtml(wbRes.html)) {
+                html = wbRes.html;
+                blockedBySite = false;
+              }
+            } catch {
+              // ignore Wayback HTML fetch failures
+            }
           }
         }
       }
 
       if (html) {
+        directSiteHtmlFetched = true;
         const ld = extractProductFromJsonLd(html);
         const ogTitle =
           extractMetaContent(html, 'property', 'og:title') ||
@@ -5463,7 +5693,21 @@ async function startServer() {
 
     let aiSuggestedRoom: ResearchRoomIdServer | undefined;
 
-    let specsLookSparse = !specs || (!specs.includes('\n') && specs.length < 130);
+    const computeSpecsLookSparse = (candidateSpecs: string): boolean => {
+      const nonIdLines = (candidateSpecs || '')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(
+          (l) =>
+            Boolean(l) &&
+            !/^(?:numero\s+modello|codice\s+(?:prodotto|pnc|articolo|ml)|matricola(?:\s*\/\s*machine\s*no\.)?|elc|numero\s+di\s+serie|tipo\s+prodotto)\s*:/i.test(
+              l
+            )
+        );
+      return !candidateSpecs || (!candidateSpecs.includes('\n') && candidateSpecs.length < 130) || nonIdLines.length < 2;
+    };
+
+    let specsLookSparse = computeSpecsLookSparse(specs);
 
     // Public Open Icecat catalog lookup when site is blocked or specs/image/docs are missing
     if (
@@ -5508,12 +5752,16 @@ async function startServer() {
             blockedBySite = false;
           }
         }
-        if (documents.length === 0 && icecatHit.documents?.length) {
-          documents = icecatHit.documents;
+        if (icecatHit.documents?.length) {
+          const seenIce = new Set(documents.map((d) => d.url.split('#')[0].toLowerCase()));
+          const mergedIce = [...icecatHit.documents.filter((d) => !seenIce.has(d.url.split('#')[0].toLowerCase())), ...documents];
+          documents = mergedIce.slice(0, 8);
         }
-        specsLookSparse = !specs || (!specs.includes('\n') && specs.length < 130);
+        specsLookSparse = computeSpecsLookSparse(specs);
       }
     }
+
+    const directHtmlUnavailable = blockedBySite || !directSiteHtmlFetched;
 
     // Online grounding fallback via Gemini when page blocked / JS-rendered / sparse specs / missing docs
     if (
@@ -5565,35 +5813,49 @@ async function startServer() {
             .join('\n');
 
           let aiRes: { text?: string } | undefined;
-          const comboTimeoutMs = Math.min(12_000, remainingBudgetMs());
+          const comboTimeoutMs = Math.min(10_500, remainingBudgetMs());
           if (comboTimeoutMs >= 3000) {
-            try {
+            if (directHtmlUnavailable) {
               aiRes = await withStepTimeout(
                 ai.models.generateContent({
                   model: 'gemini-4-hydrogen',
                   contents: searchPrompt,
                   config: {
-                    tools: [{ googleSearch: {} }, { urlContext: {} }],
+                    tools: [{ googleSearch: {} }],
                   },
                 }),
                 comboTimeoutMs,
-                'gemini inspect combo'
+                'gemini inspect search direct'
               );
-            } catch (comboErr) {
-              if (isQuotaOrRateError(comboErr)) throw comboErr;
-              const searchTimeoutMs = Math.min(9000, remainingBudgetMs());
-              if (searchTimeoutMs >= 3000) {
+            } else {
+              try {
                 aiRes = await withStepTimeout(
                   ai.models.generateContent({
                     model: 'gemini-4-hydrogen',
                     contents: searchPrompt,
                     config: {
-                      tools: [{ googleSearch: {} }],
+                      tools: [{ googleSearch: {} }, { urlContext: {} }],
                     },
                   }),
-                  searchTimeoutMs,
-                  'gemini inspect search'
+                  comboTimeoutMs,
+                  'gemini inspect combo'
                 );
+              } catch (comboErr) {
+                if (isQuotaOrRateError(comboErr)) throw comboErr;
+                const searchTimeoutMs = Math.min(8500, remainingBudgetMs());
+                if (searchTimeoutMs >= 2500) {
+                  aiRes = await withStepTimeout(
+                    ai.models.generateContent({
+                      model: 'gemini-4-hydrogen',
+                      contents: searchPrompt,
+                      config: {
+                        tools: [{ googleSearch: {} }],
+                      },
+                    }),
+                    searchTimeoutMs,
+                    'gemini inspect search'
+                  );
+                }
               }
             }
           }
@@ -5615,9 +5877,16 @@ async function startServer() {
           }>(aiRes?.text || '');
 
           if (enriched) {
-            if (!title && typeof enriched.title === 'string' && enriched.title.trim()) {
-              title = enriched.title.trim().slice(0, 160);
-              extractedFrom = 'page-meta';
+            if (typeof enriched.title === 'string' && enriched.title.trim()) {
+              const aiTitle = enriched.title.trim().slice(0, 160);
+              if (
+                !title ||
+                (aiTitle.length > title.length &&
+                  (!model || aiTitle.toLowerCase().includes(model.toLowerCase())))
+              ) {
+                title = aiTitle;
+                extractedFrom = 'page-meta';
+              }
             }
             if (!brand && typeof enriched.brand === 'string' && enriched.brand.trim()) {
               brand = enriched.brand.trim().slice(0, 60);
@@ -5650,14 +5919,40 @@ async function startServer() {
               }
             }
             if (typeof enriched.specs === 'string' && enriched.specs.trim()) {
-              const aiSpecs = truncateAtWordBoundary(enriched.specs.trim(), 1850);
-              if (!specs || (specsLookSparse && aiSpecs.length > specs.length)) {
-                specs = aiSpecs;
+              const existingIdLines = (specs || '')
+                .split('\n')
+                .map((l) => l.trim())
+                .filter((l) =>
+                  /^(?:numero\s+modello|codice\s+(?:prodotto|pnc|ml)|matricola(?:\s*\/\s*machine\s*no\.)?|elc|numero\s+di\s+serie)\s*:/i.test(
+                    l
+                  )
+                );
+              const aiLines = enriched.specs
+                .trim()
+                .split('\n')
+                .map((l) => l.trim())
+                .filter(Boolean);
+              const mergedLines = [...existingIdLines];
+              for (const al of aiLines) {
+                const lbl = al.split(':')[0]?.trim().toLowerCase();
+                if (
+                  lbl &&
+                  mergedLines.some((ml) => ml.split(':')[0]?.trim().toLowerCase() === lbl)
+                ) {
+                  continue;
+                }
+                mergedLines.push(al);
+              }
+              const mergedSpecs = truncateAtWordBoundary(mergedLines.join('\n'), 1850);
+              if (!specs || (specsLookSparse && mergedSpecs.length > specs.length)) {
+                specs = mergedSpecs;
                 if (title) extractedFrom = 'page-meta';
               }
             }
-            if (documents.length === 0 && Array.isArray(enriched.documents)) {
-              const seenDocUrls = new Set<string>();
+            if (documents.length < 6 && Array.isArray(enriched.documents)) {
+              const seenDocUrls = new Set<string>(
+                documents.map((doc) => doc.url.split('#')[0].toLowerCase())
+              );
               const validAiDocs: InspectedDocumentDto[] = [];
               for (const d of enriched.documents) {
                 if (!d || typeof d.url !== 'string') continue;
@@ -5666,7 +5961,7 @@ async function startServer() {
                   if (u.protocol !== 'https:' && u.protocol !== 'http:') continue;
                   if (isPrivateOrLocalHostname(u.hostname)) continue;
                   const cleanDocUrl = u.toString().slice(0, 1000);
-                  const low = cleanDocUrl.toLowerCase();
+                  const low = cleanDocUrl.split('#')[0].toLowerCase();
                   if (seenDocUrls.has(low)) continue;
                   seenDocUrls.add(low);
                   const docTitle =
@@ -5681,13 +5976,13 @@ async function startServer() {
                       ? d.kind
                       : inferDocumentKind(docTitle, cleanDocUrl);
                   validAiDocs.push({ title: docTitle, url: cleanDocUrl, kind });
-                  if (validAiDocs.length >= 6) break;
+                  if (documents.length + validAiDocs.length >= 6) break;
                 } catch {
                   // skip invalid document URL
                 }
               }
               if (validAiDocs.length > 0) {
-                documents = validAiDocs;
+                documents = [...validAiDocs, ...documents].slice(0, 8);
               }
             }
             if (typeof enriched.room === 'string' && enriched.room.trim()) {

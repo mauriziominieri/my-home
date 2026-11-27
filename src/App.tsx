@@ -25,7 +25,6 @@ import {
   Loader2,
   LogOut,
   Menu,
-  Package,
   Receipt,
   RefreshCw,
   Settings,
@@ -67,6 +66,7 @@ import {
   saveSystemStateDoc,
   setSimulatedOpDetailHint,
   setSimulatedOpTitleHint,
+  shouldAutoFlushQuotaQueue,
   signInPrimaryOwner,
   SimulatedFirestoreOp,
   SimulatedFlushState,
@@ -168,6 +168,7 @@ function diffProductResearchFields(
       next.color?.trim() ? `Colore: ${next.color.trim()}` : '',
       next.size?.trim() ? `Taglia: ${next.size.trim()}` : '',
       typeof nextPrice === 'number' ? `Prezzo: ${formatSimulatedEuro(nextPrice)}` : '',
+      resolveEffectiveFamilyWarranty(next) ? 'Assicurazione Extra Family: Attiva' : '',
       `Stato: ${RESEARCH_STATUS_LABELS[nextStatus]}`,
     ].filter(Boolean);
     return {
@@ -311,6 +312,17 @@ function diffProductResearchFields(
   if (JSON.stringify(prev.colorImages || {}) !== JSON.stringify(next.colorImages || {})) {
     changedFields.push('colorImages');
     changedDetails.push('Foto per variante aggiornate');
+  }
+
+  const prevFamilyWarranty = resolveEffectiveFamilyWarranty(prev);
+  const nextFamilyWarranty = resolveEffectiveFamilyWarranty(next);
+  if (prevFamilyWarranty !== nextFamilyWarranty) {
+    changedFields.push('familyWarranty');
+    changedDetails.push(
+      nextFamilyWarranty
+        ? 'Extra Family: Attivata'
+        : 'Extra Family: Disattivata'
+    );
   }
 
   return { changedFields, changedDetails };
@@ -484,7 +496,6 @@ import {
   articleToCarLog,
   articleToCarProfile,
   articleToGroceryProduct,
-  buildArticleDocumentRef,
   buildResearchDocumentRef,
   CAR_POLICY_ID,
   CAR_PROFILE_ID,
@@ -506,6 +517,7 @@ import {
   deleteVaultFiles,
   deleteVaultFile,
   getElectricityBillFileKey,
+  getLocalVaultFile,
   getVaultFile,
   getTariBillFileKey,
   getWaterBillFileKey,
@@ -545,9 +557,10 @@ import {
 } from './utils/legacyMigration';
 import {
   getResearchRoomLabel,
-  inferProductBrand,
+  isDefaultExtraFamilyProduct,
   normalizeResearchRoom,
   ResearchRoomId,
+  resolveEffectiveFamilyWarranty,
   sanitizeColorImagesMap,
 } from './utils/researchHelpers';
 import {
@@ -589,7 +602,6 @@ import { OverviewView } from './components/OverviewView';
 import { DomoticsView } from './components/DomoticsView';
 import { EnergyDatabaseView } from './components/EnergyDatabaseView';
 import { BillsView } from './components/BillsView';
-import { ArticlesView } from './components/ArticlesView';
 import { ResearchesView } from './components/ResearchesView';
 import { CarView } from './components/CarView';
 import { GroceryView } from './components/GroceryView';
@@ -677,7 +689,6 @@ const NAV_ITEMS: { id: NavSection; label: string; icon: typeof LayoutDashboard }
   { id: 'consumi', label: 'Consumi Annuali', icon: Database },
   { id: 'domotica', label: 'Clima & Domotica', icon: Thermometer },
   { id: 'bollette', label: 'Bollette', icon: Receipt },
-  { id: 'articoli', label: 'Articoli', icon: Package },
   { id: 'ricerche', label: 'Prodotti', icon: ShoppingBag },
   { id: 'documenti', label: 'Documenti', icon: FolderOpen },
   { id: 'macchina', label: 'Macchina', icon: Car },
@@ -1003,6 +1014,9 @@ function mapRawProductResearches(
         model: data.model ? String(data.model) : undefined,
         specs: data.specs ? String(data.specs) : undefined,
         notes: data.notes ? String(data.notes) : undefined,
+        ...(typeof data.familyWarranty === 'boolean'
+          ? { familyWarranty: data.familyWarranty }
+          : {}),
         createdAtMs:
           typeof createdTs?.toMillis === 'function'
             ? createdTs.toMillis()
@@ -1073,6 +1087,11 @@ export default function App() {
   useEffect(() => {
     return subscribeSimulatedFlushState(setFlushState);
   }, []);
+
+  const quotaPendingOpsCount = useMemo(
+    () => simulatedOps.filter((op) => op.queuedReason === 'quota_exceeded').length,
+    [simulatedOps]
+  );
 
   const navigateToSection = useCallback((section: NavSection) => {
     setActiveNav(section);
@@ -1206,6 +1225,27 @@ export default function App() {
 
   const activeUid = user?.uid ?? null;
   const canEdit = Boolean(user);
+
+  // Automatically flush queued quota-fallback ops once Firestore quota resets (00:00 PT / 09:00 IT)
+  useEffect(() => {
+    if (!authReady || !user || !canEdit || appSettings.firestoreWritesDisabled) return;
+
+    const tryAutoFlush = () => {
+      if (shouldAutoFlushQuotaQueue()) {
+        void flushSimulatedFirestoreOps({ silentQuotaProbe: true });
+      }
+    };
+
+    tryAutoFlush();
+    const timer = window.setInterval(tryAutoFlush, 60_000);
+    window.addEventListener('focus', tryAutoFlush);
+    window.addEventListener('online', tryAutoFlush);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', tryAutoFlush);
+      window.removeEventListener('online', tryAutoFlush);
+    };
+  }, [authReady, user, canEdit, appSettings.firestoreWritesDisabled, quotaPendingOpsCount]);
 
   const cloudSettingsSeededRef = useRef<string | null>(null);
   const [vaultRevision, setVaultRevision] = useState(0);
@@ -1351,7 +1391,7 @@ export default function App() {
       minWriteDelta: number,
       minIntervalMs: number
     ) => {
-      if (isFirestoreWritesDisabled()) return;
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) return;
       const now = Date.now();
       const st = telemetrySyncStateRef.current;
       if (st.lastCloudDate !== entry.date) {
@@ -1400,14 +1440,14 @@ export default function App() {
         void pushToRender(todayEntry);
       }, 4_000);
 
-      void pushToFirestoreIfNeeded(todayEntry, 40, 5, 5 * 60 * 1000);
+      void pushToFirestoreIfNeeded(todayEntry, 600, 25, 30 * 60 * 1000);
     });
 
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden' && telemetrySyncStateRef.current.latestToday) {
         const latest = telemetrySyncStateRef.current.latestToday;
         void pushToRender(latest);
-        void pushToFirestoreIfNeeded(latest, 15, 2, 60 * 1000);
+        void pushToFirestoreIfNeeded(latest, 400, 10, 15 * 60 * 1000);
       }
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
@@ -1430,6 +1470,20 @@ export default function App() {
       setDetectedBillPod(null);
       return;
     }
+    const cacheKey = 'myhome_bill_pod_cache_v1';
+    try {
+      const cachedRaw = localStorage.getItem(cacheKey);
+      if (cachedRaw) {
+        const parsed = JSON.parse(cachedRaw) as { invoiceNumber?: string; podCode?: string };
+        if (parsed.invoiceNumber === latestBill.invoiceNumber && parsed.podCode) {
+          setDetectedBillPod({ invoiceNumber: latestBill.invoiceNumber, podCode: parsed.podCode });
+          return;
+        }
+      }
+    } catch {
+      // ignore localStorage read errors
+    }
+
     const fileKey =
       latestBill.pdfFileKey || getElectricityBillFileKey(latestBill.invoiceNumber);
     if (!fileKey) {
@@ -1437,7 +1491,14 @@ export default function App() {
       return;
     }
     let cancelled = false;
-    void getVaultFile(fileKey, activeUid || undefined)
+    void getLocalVaultFile(fileKey)
+      .then((localStored) =>
+        localStored
+          ? localStored
+          : !isFirestoreQuotaExceededActive()
+            ? getVaultFile(fileKey, activeUid || undefined)
+            : null
+      )
       .then(async (stored) => {
         if (cancelled || !stored) return null;
         const buf = await stored.blob.arrayBuffer();
@@ -1446,9 +1507,19 @@ export default function App() {
       })
       .then((pod) => {
         if (cancelled) return;
-        setDetectedBillPod(
-          pod ? { invoiceNumber: latestBill.invoiceNumber, podCode: pod } : null
-        );
+        if (pod) {
+          try {
+            localStorage.setItem(
+              cacheKey,
+              JSON.stringify({ invoiceNumber: latestBill.invoiceNumber, podCode: pod })
+            );
+          } catch {
+            // ignore cache write error
+          }
+          setDetectedBillPod({ invoiceNumber: latestBill.invoiceNumber, podCode: pod });
+        } else {
+          setDetectedBillPod(null);
+        }
       })
       .catch(() => {
         if (!cancelled) setDetectedBillPod(null);
@@ -2462,6 +2533,9 @@ export default function App() {
               model: data.model ? String(data.model) : undefined,
               specs: data.specs ? String(data.specs) : undefined,
               notes: data.notes ? String(data.notes) : undefined,
+              ...(typeof data.familyWarranty === 'boolean'
+                ? { familyWarranty: data.familyWarranty }
+                : {}),
               createdAtMs: typeof createdTs?.toMillis === 'function' ? createdTs.toMillis() : 0,
             };
           })
@@ -2546,7 +2620,7 @@ export default function App() {
         }
         await batch.commit();
       }
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setFirestoreReadings((prev) => {
           const map = new Map(prev.map((r) => [r.date, r]));
           for (const item of items) {
@@ -2586,7 +2660,7 @@ export default function App() {
         }
         await batch.commit();
       }
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setFirestoreReadings([]);
       }
     } catch (error) {
@@ -2890,7 +2964,7 @@ export default function App() {
             ? ` (ignorati ${scan.ignoredReadingsCount} giorni già salvati fino al ${maxExistingDate})`
             : '';
 
-        if (isFirestoreWritesDisabled()) {
+        if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
           if (scan.readings.length > 0) {
             setFirestoreReadings((prev) => {
               const map = new Map(prev.map((r) => [r.date, r]));
@@ -3229,7 +3303,7 @@ export default function App() {
         await setDoc(doc(db, basePath, docId), payload);
       }
 
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setClimateLogs((prev) =>
           prev.some((l) => l.id === docId) ? prev : [...prev, newSessionObj]
         );
@@ -3354,7 +3428,7 @@ export default function App() {
         await setDoc(doc(db, path), payload, { merge: true });
       }
 
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setClimateLogs((prev) =>
           prev.map((log) => (log.id === id ? { ...log, ...session } : log))
         );
@@ -3403,8 +3477,9 @@ export default function App() {
     const baseVmcEnabled = Boolean(baseVmcData?.enabled);
 
     const otherHasVmc = otherLogsOnDate.some((l) => Boolean(l.vmcMax));
+    const localVmcFallback = isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive();
     const shouldDeleteLocalVmc = Boolean(
-      isFirestoreWritesDisabled() &&
+      localVmcFallback &&
         existingLog &&
         !otherHasVmc &&
         currentVmcEntry &&
@@ -3412,7 +3487,7 @@ export default function App() {
         Boolean(existingLog.vmcMax)
     );
     const shouldRestoreBaseVmc = Boolean(
-      isFirestoreWritesDisabled() &&
+      localVmcFallback &&
         existingLog &&
         !otherHasVmc &&
         currentVmcEntry &&
@@ -3448,7 +3523,7 @@ export default function App() {
         await deleteDoc(doc(db, path));
       }
 
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setClimateLogs((prev) => prev.filter((l) => l.id !== id));
         if (shouldDeleteLocalVmc && existingLog) {
           setVmcDays((prev) => prev.filter((v) => v.date !== existingLog.date));
@@ -3514,7 +3589,7 @@ export default function App() {
         batch.set(doc(db, coupled.statePath), coupled.statePayload);
       }
       await batch.commit();
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         const dateSet = new Set(validDates);
         setVmcDays((prev) => {
           const kept = prev.filter((v) => !dateSet.has(v.date));
@@ -3627,6 +3702,13 @@ export default function App() {
     if (item.notes && item.notes.trim()) {
       payload.notes = item.notes.trim().slice(0, 400);
     }
+    const resolvedFamilyWarranty =
+      typeof item.familyWarranty === 'boolean'
+        ? item.familyWarranty
+        : isDefaultExtraFamilyProduct(item);
+    if (typeof item.familyWarranty === 'boolean' || resolvedFamilyWarranty) {
+      payload.familyWarranty = resolvedFamilyWarranty;
+    }
     try {
       const newDiff = diffProductResearchFields(undefined, {
         ...item,
@@ -3648,6 +3730,8 @@ export default function App() {
         model: typeof payload.model === 'string' ? payload.model : undefined,
         specs: typeof payload.specs === 'string' ? payload.specs : undefined,
         notes: typeof payload.notes === 'string' ? payload.notes : undefined,
+        familyWarranty:
+          typeof payload.familyWarranty === 'boolean' ? payload.familyWarranty : undefined,
       });
       setSimulatedOpDetailHint(`${basePath}/${docId}`, {
         title: String(payload.title),
@@ -3659,7 +3743,7 @@ export default function App() {
         changedDetails: newDiff.changedDetails,
       });
       await setDoc(doc(db, basePath, docId), payload);
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         const newResearch: ProductResearchRecord = {
           id: docId,
           ownerId: user.uid,
@@ -3682,6 +3766,9 @@ export default function App() {
           model: typeof payload.model === 'string' ? payload.model : undefined,
           specs: typeof payload.specs === 'string' ? payload.specs : undefined,
           notes: typeof payload.notes === 'string' ? payload.notes : undefined,
+          ...(typeof payload.familyWarranty === 'boolean'
+            ? { familyWarranty: payload.familyWarranty }
+            : {}),
           createdAtMs: Date.now(),
         };
         setProductResearches((prev) =>
@@ -3777,6 +3864,9 @@ export default function App() {
       model: item.model && item.model.trim() ? item.model.trim().slice(0, 80) : deleteField(),
       specs: item.specs && item.specs.trim() ? item.specs.trim().slice(0, 2000) : deleteField(),
       notes: item.notes && item.notes.trim() ? item.notes.trim().slice(0, 400) : deleteField(),
+      ...(typeof item.familyWarranty === 'boolean'
+        ? { familyWarranty: item.familyWarranty }
+        : {}),
     };
     const prevResearch = productResearches.find((r) => r.id === id);
     const nextSnapshotForDiff: Omit<ProductResearchRecord, 'id' | 'ownerId' | 'createdAtMs'> = {
@@ -3798,6 +3888,10 @@ export default function App() {
       model: typeof payload.model === 'string' ? payload.model : undefined,
       specs: typeof payload.specs === 'string' ? payload.specs : undefined,
       notes: typeof payload.notes === 'string' ? payload.notes : undefined,
+      familyWarranty:
+        typeof item.familyWarranty === 'boolean'
+          ? item.familyWarranty
+          : prevResearch?.familyWarranty,
     };
     const updateDiff = diffProductResearchFields(prevResearch, nextSnapshotForDiff);
     const changedKeys = new Set(updateDiff.changedFields);
@@ -3846,7 +3940,7 @@ export default function App() {
         changedDetails: queueDiff.changedDetails,
       });
       await setDoc(doc(db, path), writePayload, { merge: true });
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setProductResearches((prev) =>
           prev.map((r) =>
             r.id === id
@@ -3871,6 +3965,9 @@ export default function App() {
                   model: typeof payload.model === 'string' ? payload.model : undefined,
                   specs: typeof payload.specs === 'string' ? payload.specs : undefined,
                   notes: typeof payload.notes === 'string' ? payload.notes : undefined,
+                  ...(typeof payload.familyWarranty === 'boolean'
+                    ? { familyWarranty: payload.familyWarranty }
+                    : {}),
                 }
               : r
           )
@@ -3959,7 +4056,7 @@ export default function App() {
               : `${removedFileNames.length || keysToDelete.length} file allegati`,
         });
       }
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setProductResearches((prev) => prev.filter((r) => r.id !== id));
         if (linkedDocs.length > 0) {
           const linkedIds = new Set(linkedDocs.map((d) => d.id));
@@ -4041,7 +4138,9 @@ export default function App() {
       return;
     }
     const baseConfig =
-      isFirestoreWritesDisabled() && configExistsInBase && rawSnapshotsRef.current.homeConfig
+      (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) &&
+      configExistsInBase &&
+      rawSnapshotsRef.current.homeConfig
         ? mapRawHomeConfig(rawSnapshotsRef.current.homeConfig, user.uid)
         : homeConfig;
     const queueCfgFields: string[] = [];
@@ -4175,7 +4274,7 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, basePath, docId), payload);
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setElectricityBills((prev) =>
           prev.some((b) => b.invoiceNumber === bill.invoiceNumber)
             ? prev
@@ -4192,7 +4291,16 @@ export default function App() {
   async function handleDeleteElectricityBill(bill: BillRecord) {
     if (!user) return;
     const fileKey = getElectricityBillFileKey(bill.invoiceNumber);
-    if (isFirestoreWritesDisabled()) {
+    if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
+      const basePath = `users/${user.uid}/electricityBills`;
+      const cachedDocs = (rawSnapshotsRef.current.electricityBills || []).filter(
+        (entry) => String(entry.data.invoiceNumber || '') === bill.invoiceNumber
+      );
+      for (const entry of cachedDocs) {
+        if (/^[a-zA-Z0-9_-]+$/.test(entry.id)) {
+          await deleteDoc(doc(db, basePath, entry.id));
+        }
+      }
       await deleteVaultFile(fileKey, user.uid);
       setElectricityBills((prev) =>
         prev.filter((b) => b.invoiceNumber !== bill.invoiceNumber)
@@ -4364,7 +4472,7 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, basePath, docId), payload);
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setWaterBills((prev) => [...prev, { ...bill, id: docId, pdfFileKey }]);
       }
     } catch (error) {
@@ -4377,7 +4485,10 @@ export default function App() {
   async function handleDeleteWaterBill(bill: WaterBillRecord) {
     if (!user) return;
     const fileKey = bill.pdfFileKey || getWaterBillFileKey(bill.invoiceNumber);
-    if (isFirestoreWritesDisabled()) {
+    if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
+      if (bill.id && /^[a-zA-Z0-9_-]+$/.test(bill.id)) {
+        await deleteDoc(doc(db, `users/${user.uid}/waterBills`, bill.id));
+      }
       await deleteVaultFile(fileKey, user.uid);
       setWaterBills((prev) =>
         prev.filter((b) => b.id !== bill.id && b.invoiceNumber !== bill.invoiceNumber)
@@ -4446,7 +4557,7 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, basePath, docId), payload);
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setTariBills((prev) => [...prev, { ...bill, id: docId, pdfFileKey }]);
       }
     } catch (error) {
@@ -4489,7 +4600,7 @@ export default function App() {
         changedDetails: [`Stato TARI: ${bill.paid ? 'Pagata → Da pagare' : 'Da pagare → Pagata'}`],
       });
       await setDoc(doc(db, basePath, docId), payload);
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setTariBills((prev) =>
           prev.map((t) =>
             t.id === bill.id || t.noticeNumber === bill.noticeNumber ? { ...t, paid: !t.paid } : t
@@ -4516,7 +4627,7 @@ export default function App() {
           user.uid
         );
       }
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setTariBills((prev) => prev.filter((t) => t.id !== id));
       }
     } catch (error) {
@@ -4552,7 +4663,7 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, basePath, docId), payload);
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setGsePayments((prev) => [...prev, { ...payment, id: docId }]);
       }
     } catch (error) {
@@ -4588,7 +4699,7 @@ export default function App() {
     }
     try {
       await setDoc(doc(db, path), payload);
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setGsePayments((prev) =>
           prev.map((p) => (p.id === id ? { ...payment, id } : p))
         );
@@ -4611,38 +4722,13 @@ export default function App() {
       if (payment?.attachmentFileKey) {
         await deleteVaultFiles([payment.attachmentFileKey], user.uid);
       }
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setGsePayments((prev) => prev.filter((p) => p.id !== id));
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
       throw error;
     }
-  }
-
-  async function saveArticleManual(
-    file: File,
-    articleId: string,
-    articleTitle?: string
-  ): Promise<{ key: string; fileName: string }> {
-    if (!user) throw new Error('Accedi per archiviare il manuale su Firebase.');
-    if (file.size > MAX_CLOUD_FILE_BYTES) {
-      throw new Error(`Il manuale supera il limite di ${Math.floor(MAX_CLOUD_FILE_BYTES / 1_000_000)} MB.`);
-    }
-
-    const key = `article_manual_${articleId}_${Date.now()}`;
-    const stored = await saveVaultFile(key, file, file.name, 'application/pdf', user.uid, {
-      groupKey: `article:${articleId}`,
-      groupSection: 'Articoli',
-      groupTitle: articleTitle || 'Articolo',
-      actionLabel: 'Manuale PDF caricato',
-      displayTitle: file.name,
-    });
-    if (!stored.cloudSynced) {
-      await deleteVaultFile(key, user.uid);
-      throw new Error('Il manuale non è stato salvato su Firebase. Verifica la connessione e le regole del vault.');
-    }
-    return { key, fileName: stored.fileName };
   }
 
   function resolveArticleQueueLinkMeta(
@@ -4669,15 +4755,15 @@ export default function App() {
       const parentArt = homeArticles.find((a) => a.id === artRef.articleId);
       return {
         groupKey: `article:${artRef.articleId}`,
-        groupSection: 'Articoli',
-        groupTitle: parentArt?.name || 'Articolo',
+        groupSection: 'Archivio',
+        groupTitle: parentArt?.name || 'Documento collegato',
         actionOverride: 'Link documento collegato',
       };
     }
     if (!article.room.startsWith('__') && !docId.startsWith('car_')) {
       return {
         groupKey: `article:${docId}`,
-        groupSection: 'Articoli',
+        groupSection: 'Archivio',
         groupTitle: article.name.slice(0, 80),
       };
     }
@@ -4687,16 +4773,13 @@ export default function App() {
   async function handleAddArticle(
     article: Omit<HomeArticleRecord, 'id'>,
     customPrefix = 'art',
-    manualFile?: File,
+    _manualFile?: File,
     docQueueOptions?: { isOlderVersion?: boolean }
   ): Promise<string | undefined> {
     if (!user) return undefined;
     const basePath = `users/${user.uid}/homeArticles`;
     const safePrefix = customPrefix.replace(/[^a-zA-Z0-9_-]/g, '') || 'art';
     const docId = `${safePrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const uploadedManual = manualFile
-      ? await saveArticleManual(manualFile, docId, article.name.slice(0, 80))
-      : undefined;
     const payload: Record<string, unknown> = {
       ownerId: user.uid,
       name: article.name.slice(0, 80),
@@ -4732,10 +4815,7 @@ export default function App() {
     if (article.notes && article.notes.trim()) {
       payload.notes = article.notes.trim().slice(0, 240);
     }
-    if (uploadedManual) {
-      payload.manualFileKey = uploadedManual.key;
-      payload.manualFileName = uploadedManual.fileName;
-    } else if (article.manualFileKey) {
+    if (article.manualFileKey) {
       payload.manualFileKey = article.manualFileKey;
       if (article.manualFileName) payload.manualFileName = article.manualFileName;
     }
@@ -4762,7 +4842,7 @@ export default function App() {
         changedDetails: resolvedChangedDetails,
       });
       await setDoc(doc(db, basePath, docId), payload);
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setHomeArticles((prev) =>
           prev.some((a) => a.id === docId)
             ? prev
@@ -4771,17 +4851,14 @@ export default function App() {
                 {
                   ...article,
                   id: docId,
-                  manualFileKey: uploadedManual?.key ?? article.manualFileKey,
-                  manualFileName: uploadedManual?.fileName ?? article.manualFileName,
+                  manualFileKey: article.manualFileKey,
+                  manualFileName: article.manualFileName,
                 },
               ]
         );
       }
       return docId;
     } catch (error) {
-      if (uploadedManual) {
-        await deleteVaultFile(uploadedManual.key, user.uid);
-      }
       handleFirestoreError(error, OperationType.CREATE, `${basePath}/${docId}`);
       throw error;
     }
@@ -4874,8 +4951,8 @@ export default function App() {
       : artRef
         ? {
             groupKey: `article:${artRef.articleId}`,
-            groupSection: 'Articoli',
-            groupTitle: parentArt?.name || 'Articolo',
+            groupSection: 'Archivio',
+            groupTitle: parentArt?.name || 'Documento collegato',
           }
         : undefined;
 
@@ -4943,7 +5020,7 @@ export default function App() {
         ...(options?.replacesDocId ? { replacesDocPath: `${basePath}/${options.replacesDocId}` } : {}),
       });
       await setDoc(doc(db, basePath, docId), payload);
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setHomeArticles((prev) =>
           prev.some((a) => a.id === docId)
             ? prev
@@ -4963,27 +5040,6 @@ export default function App() {
     }
   }
 
-  async function handleUploadArticleDocument(
-    articleId: string,
-    docType: ArticleAttachmentType,
-    title: string,
-    provider: string,
-    file: File
-  ) {
-    const todayIt = new Date().toLocaleDateString('it-IT');
-    await handleUploadLinkedDocument(
-      {
-        title: title.slice(0, 80),
-        category: docType === 'garanzia_extra_family' ? 'Assicurazioni' : 'Altro',
-        provider: (provider || 'Casa').slice(0, 80),
-        referenceCode: buildArticleDocumentRef(articleId, docType),
-        issueDate: todayIt,
-        pinned: docType === 'garanzia_extra_family' || docType === 'scontrino_fattura',
-        notes: `Documento associato ad articolo casa (${docType})`,
-      },
-      file
-    );
-  }
 
   async function handleUploadResearchDocument(
     researchId: string,
@@ -5055,45 +5111,8 @@ export default function App() {
     });
   }
 
-  async function handleUpdateArticleDocumentType(
-    docId: string,
-    articleId: string,
-    docType: ArticleAttachmentType
-  ) {
-    if (!user || !/^[a-zA-Z0-9_-]+$/.test(docId)) return;
-    const existingDoc = homeDocuments.find((d) => d.id === docId);
-    if (!existingDoc) return;
-    const { id: _ignoredId, ...rest } = existingDoc;
-    const isLinkOnlyDoc = !existingDoc.fileSize && Boolean(existingDoc.cloudUrl);
-    await handleUpdateDocument(docId, {
-      ...rest,
-      attachmentKey: isLinkOnlyDoc ? undefined : existingDoc.attachmentKey,
-      category: docType === 'garanzia_extra_family' ? 'Assicurazioni' : 'Altro',
-      referenceCode: buildArticleDocumentRef(articleId, docType),
-      pinned: docType === 'garanzia_extra_family' || docType === 'scontrino_fattura',
-    });
-  }
-
   const migrationCompleted = useMemo(
     () => homeArticles.some((a) => a.id === MIGRATION_DONE_DOC_ID),
-    [homeArticles]
-  );
-
-  const visibleHomeArticles = useMemo(
-    () =>
-      homeArticles.filter(
-        (a) =>
-          a.room !== SYSTEM_ROOM_CAR &&
-          a.room !== SYSTEM_ROOM_GROCERY &&
-          a.room !== SYSTEM_ROOM_GROCERY_META &&
-          a.room !== SYSTEM_ROOM_DOCUMENTS &&
-          a.room !== SYSTEM_ROOM_CLIMATE_AUTO &&
-          a.room !== SYSTEM_ROOM_MIGRATION_META &&
-          a.room !== SYSTEM_ROOM_APP_SETTINGS &&
-          a.room !== SYSTEM_ROOM_REMINDERS &&
-          a.room !== SYSTEM_ROOM_VINTED &&
-          a.room !== SYSTEM_ROOM_TELEMETRY
-      ),
     [homeArticles]
   );
 
@@ -5344,11 +5363,6 @@ export default function App() {
     [homeDocuments]
   );
 
-  const articleDocuments = useMemo(
-    () => homeDocuments.filter((d) => Boolean(parseArticleDocumentRef(d.referenceCode))),
-    [homeDocuments]
-  );
-
   const researchDocuments = useMemo(
     () => homeDocuments.filter((d) => Boolean(parseResearchDocumentRef(d.referenceCode))),
     [homeDocuments]
@@ -5540,7 +5554,7 @@ export default function App() {
     try {
       lastAutopilotSyncKeyRef.current = `${user.uid}:${todayIso}:${nextCfg.startDate}:${nextCfg.mode}:${slotsKey}:${nextCfg.vmcMax ? 1 : 0}:${nextCfg.targetTemp}`;
       await batch.commit();
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setHomeArticles((prev) => {
           const rest = prev.filter((a) => a.id !== CLIMATE_AUTOPILOT_DOC_ID);
           return [...rest, { ...artPayload, id: CLIMATE_AUTOPILOT_DOC_ID }];
@@ -5600,7 +5614,7 @@ export default function App() {
 
     try {
       await batch.commit();
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setHomeArticles((prev) => {
           const rest = prev.filter((a) => a.id !== CLIMATE_AUTOPILOT_DOC_ID);
           return [...rest, { ...artPayload, id: CLIMATE_AUTOPILOT_DOC_ID, familyWarranty: false }];
@@ -5619,7 +5633,7 @@ export default function App() {
   // Automatic daily propagation of the active climate combination across subsequent days
   useEffect(() => {
     if (!user || !climateAutopilot || !climateAutopilot.active) return;
-    if (isFirestoreWritesDisabled()) return;
+    if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) return;
     if (climateAutopilot.startDate > todayIso) return;
     if (autopilotSyncInFlightRef.current) return;
 
@@ -5696,16 +5710,12 @@ export default function App() {
 
   async function handleUpdateArticle(
     id: string,
-    article: Omit<HomeArticleRecord, 'id'>,
-    manualFile?: File
+    article: Omit<HomeArticleRecord, 'id'>
   ) {
     if (!user || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
     const path = `users/${user.uid}/homeArticles/${id}`;
     const existingArticle = homeArticles.find((entry) => entry.id === id);
     const existingManualKey = existingArticle?.manualFileKey;
-    const uploadedManual = manualFile
-      ? await saveArticleManual(manualFile, id, article.name.slice(0, 80))
-      : undefined;
     const payload: Record<string, unknown> = {
       ownerId: user.uid,
       name: article.name.slice(0, 80),
@@ -5741,10 +5751,7 @@ export default function App() {
     if (article.notes && article.notes.trim()) {
       payload.notes = article.notes.trim().slice(0, 240);
     }
-    if (uploadedManual) {
-      payload.manualFileKey = uploadedManual.key;
-      payload.manualFileName = uploadedManual.fileName;
-    } else if (article.manualFileKey) {
+    if (article.manualFileKey) {
       payload.manualFileKey = article.manualFileKey;
       if (article.manualFileName) payload.manualFileName = article.manualFileName;
     }
@@ -5755,7 +5762,7 @@ export default function App() {
     const artUpdateDiff = diffHomeArticleFields(prevArticle, article, id);
     const changedArticleKeys = new Set(artUpdateDiff.changedFields);
     if (prevArticle) {
-      if ((prevArticle.manualFileName || '') !== (uploadedManual?.fileName || article.manualFileName || '')) {
+      if ((prevArticle.manualFileName || '') !== (article.manualFileName || '')) {
         changedArticleKeys.add('manualFileKey');
         changedArticleKeys.add('manualFileName');
       }
@@ -5774,7 +5781,7 @@ export default function App() {
       'manualFileName',
       'manualExtractText',
     ];
-    if (prevArticle && changedArticleKeys.size === 0 && !manualFile) {
+    if (prevArticle && changedArticleKeys.size === 0) {
       return;
     }
     const queueArtDiff = artUpdateDiff;
@@ -5816,14 +5823,14 @@ export default function App() {
       } else {
         await setDoc(doc(db, path), articleWritePayload);
       }
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setHomeArticles((prev) => {
           const exists = prev.some((entry) => entry.id === id);
           const updated: HomeArticleRecord = {
             ...article,
             id,
-            manualFileKey: uploadedManual?.key ?? article.manualFileKey,
-            manualFileName: uploadedManual?.fileName ?? article.manualFileName,
+            manualFileKey: article.manualFileKey,
+            manualFileName: article.manualFileName,
           };
           return exists
             ? prev.map((entry) => (entry.id === id ? updated : entry))
@@ -5831,17 +5838,14 @@ export default function App() {
         });
       }
     } catch (error) {
-      if (uploadedManual) {
-        await deleteVaultFile(uploadedManual.key, user.uid);
-      }
       handleFirestoreError(error, OperationType.UPDATE, path);
       throw error;
     }
-    const newManualKey = uploadedManual?.key || article.manualFileKey;
+    const newManualKey = article.manualFileKey;
     if (existingManualKey && existingManualKey !== newManualKey) {
       await deleteVaultFiles([existingManualKey], user.uid, {
         groupKey: `article:${id}`,
-        groupSection: 'Articoli',
+        groupSection: 'Archivio',
         groupTitle: article.name.slice(0, 80),
         actionLabel: 'Vecchio manuale rimosso',
         displayTitle: existingArticle?.manualFileName || 'Manuale precedente',
@@ -5870,8 +5874,8 @@ export default function App() {
       : artRef
         ? {
             groupKey: `article:${artRef.articleId}`,
-            groupSection: 'Articoli',
-            groupTitle: parentArt?.name || 'Articolo',
+            groupSection: 'Archivio',
+            groupTitle: parentArt?.name || 'Documento collegato',
           }
         : undefined;
     if (targetDoc) {
@@ -5892,7 +5896,7 @@ export default function App() {
           displayTitle: targetDoc.fileName || targetDoc.title || 'Allegato',
         });
       }
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         setHomeArticles((prev) => prev.filter((a) => a.id !== docId));
       }
     } catch (error) {
@@ -5914,13 +5918,13 @@ export default function App() {
         ...(isRegularArt
           ? {
               groupKey: `article:${id}`,
-              groupSection: 'Articoli',
+              groupSection: 'Archivio',
               groupTitle: articleTitle,
             }
           : {}),
       });
     }
-    const linkedDocs = articleDocuments.filter(
+    const linkedDocs = homeDocuments.filter(
       (d) => parseArticleDocumentRef(d.referenceCode)?.articleId === id
     );
     try {
@@ -5938,7 +5942,7 @@ export default function App() {
             title: linked.title || linked.fileName || linked.id,
             actionLabel: 'Allegato rimosso',
             groupKey: `article:${id}`,
-            groupSection: 'Articoli',
+            groupSection: 'Archivio',
             groupTitle: articleTitle,
           });
           await deleteDoc(doc(db, linkedPath));
@@ -5955,7 +5959,7 @@ export default function App() {
           ...(isRegularArt
             ? {
                 groupKey: `article:${id}`,
-                groupSection: 'Articoli',
+                groupSection: 'Archivio',
                 groupTitle: articleTitle,
               }
             : {}),
@@ -5966,7 +5970,7 @@ export default function App() {
               : `${fileNamesToDelete.length || keysToDelete.length} file allegati`,
         });
       }
-      if (isFirestoreWritesDisabled()) {
+      if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
         const deletedIds = new Set([id, ...linkedDocs.map((d) => d.id)]);
         setHomeArticles((prev) => prev.filter((a) => !deletedIds.has(a.id)));
       }
@@ -5974,21 +5978,6 @@ export default function App() {
       handleFirestoreError(error, OperationType.DELETE, path);
       throw error;
     }
-  }
-
-  async function handleDownloadArticleManual(fileKey: string): Promise<void> {
-    if (!user) throw new Error('Accedi per scaricare il manuale archiviato.');
-    const stored = await getVaultFile(fileKey, user.uid);
-    if (!stored) throw new Error('Il manuale non è stato trovato nel vault Firebase.');
-
-    const downloadUrl = URL.createObjectURL(stored.blob);
-    const link = document.createElement('a');
-    link.href = downloadUrl;
-    link.download = stored.fileName || 'manuale.pdf';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1_000);
   }
 
   function handleExportFullBackup() {
@@ -6004,7 +5993,6 @@ export default function App() {
       waterBills,
       tariBills,
       gsePayments,
-      articles: visibleHomeArticles,
       researches: productResearches,
       documents: homeDocuments,
       carProfile,
@@ -6400,11 +6388,23 @@ export default function App() {
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <Clock className="w-3.5 h-3.5 text-sky-600 dark:text-sky-300 shrink-0" />
                   <span className="truncate">
-                    <strong>Operazioni simulate in attesa:</strong>{' '}
-                    {simulatedOps.length}{' '}
-                    {simulatedOps.length === 1
-                      ? 'operazione salvata in locale non è ancora su Firestore.'
-                      : 'operazioni salvate in locale non sono ancora su Firestore.'}
+                    {quotaPendingOpsCount > 0 ? (
+                      <>
+                        <strong>Salvataggi in attesa (quota esaurita):</strong>{' '}
+                        {simulatedOps.length}{' '}
+                        {simulatedOps.length === 1
+                          ? 'operazione salvata in locale — invio automatico su Firestore al ripristino quota (09:00 IT).'
+                          : 'operazioni salvate in locale — invio automatico su Firestore al ripristino quota (09:00 IT).'}
+                      </>
+                    ) : (
+                      <>
+                        <strong>Operazioni simulate in attesa:</strong>{' '}
+                        {simulatedOps.length}{' '}
+                        {simulatedOps.length === 1
+                          ? 'operazione salvata in locale non è ancora su Firestore.'
+                          : 'operazioni salvate in locale non sono ancora su Firestore.'}
+                      </>
+                    )}
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 whitespace-nowrap">
@@ -6438,7 +6438,7 @@ export default function App() {
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-500 dark:hover:bg-sky-400 dark:text-slate-950 transition-colors whitespace-nowrap disabled:opacity-50"
                   >
                     <CloudUpload className="w-3 h-3" />
-                    <span>Invia ora su Firestore</span>
+                    <span>{quotaPendingOpsCount > 0 ? 'Riprova invio ora' : 'Invia ora su Firestore'}</span>
                   </button>
                 </div>
               </div>
@@ -6566,7 +6566,7 @@ export default function App() {
                     <strong className="font-semibold text-amber-900 dark:text-amber-200">
                       Quota gratuita giornaliera Firestore esaurita:
                     </strong>{' '}
-                    i nuovi salvataggi e il caricamento file su cloud sono bloccati fino al reset (ore 09:00 ora italiana / 00:00 Pacifico).{' '}
+                    le nuove modifiche e i nuovi file vengono salvati automaticamente in locale e inviati su Firestore al reset (ore 09:00 ora italiana / 00:00 Pacifico). I documenti già in cache restano sempre visibili e scaricabili.{' '}
                     <a
                       href={`https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/firestore/databases/${FIRESTORE_DATABASE_ID}/usage`}
                       target="_blank"
@@ -6845,22 +6845,6 @@ export default function App() {
             />
           )}
 
-          {activeNav === 'articoli' && (
-            <ArticlesView
-              articles={visibleHomeArticles}
-              articleDocuments={articleDocuments}
-              readOnly={!canEdit}
-              onSignIn={handleSignIn}
-              onAddArticle={(art, manualFile) => handleAddArticle(art, 'art', manualFile)}
-              onUpdateArticle={handleUpdateArticle}
-              onDeleteArticle={handleDeleteArticle}
-              onDownloadManual={handleDownloadArticleManual}
-              onUploadArticleDocument={handleUploadArticleDocument}
-              onUpdateArticleDocumentType={handleUpdateArticleDocumentType}
-              onDeleteArticleDocument={handleDeleteLinkedDocument}
-            />
-          )}
-
           {activeNav === 'ricerche' && (
             <ResearchesView
               researches={productResearches}
@@ -6874,84 +6858,6 @@ export default function App() {
               onAddResearchDocumentLink={handleAddResearchDocumentLink}
               onUpdateResearchDocumentType={handleUpdateResearchDocumentType}
               onDeleteResearchDocument={handleDeleteLinkedDocument}
-              onMoveToArticles={async (item) => {
-                const resolvedBrand = (inferProductBrand(item) || item.store).slice(0, 60);
-                const mappedCategory: HomeArticleCategory =
-                  item.category === 'elettrodomestici' || item.category === 'elettronica'
-                    ? item.category
-                    : 'altro';
-                const effectivePaidEur =
-                  item.status === 'acquistato' && typeof item.paidPriceEur === 'number'
-                    ? item.paidPriceEur
-                    : undefined;
-                const effectivePaidPrice =
-                  typeof effectivePaidEur === 'number' ? effectivePaidEur : item.priceEur;
-                const specsParts = [
-                  typeof effectivePaidEur === 'number'
-                    ? `Pagato: € ${effectivePaidEur.toFixed(2)}`
-                    : typeof item.priceEur === 'number'
-                      ? `Prezzo: € ${item.priceEur.toFixed(2)}`
-                      : '',
-                  item.color ? `Colore: ${item.color}` : '',
-                  item.size ? `Taglia / Capacità: ${item.size}` : '',
-                  item.specs ? item.specs.replace(/\n+/g, ' · ') : '',
-                  `Negozio: ${item.store}`,
-                ].filter(Boolean);
-                const newArticleId = await handleAddArticle(
-                  {
-                    name: item.title.slice(0, 80),
-                    brand: resolvedBrand,
-                    model: (item.model || item.store).slice(0, 80),
-                    category: mappedCategory,
-                    room: getResearchRoomLabel(item.room),
-                    purchasePriceEur: effectivePaidPrice,
-                    familyWarranty: false,
-                    specs: specsParts.join(' · ').slice(0, 240),
-                    notes: (item.notes || item.url).slice(0, 240),
-                    manualExtractText: item.specs ? `${item.specs}\nFonte: ${item.url}`.slice(0, 12_000) : undefined,
-                  },
-                  'art'
-                );
-                if (newArticleId && user) {
-                  const linkedDocs = getDocumentsForResearch(researchDocuments, item.id);
-                  for (const linkedDoc of linkedDocs) {
-                    const parsedRef = parseResearchDocumentRef(linkedDoc.referenceCode);
-                    const stored =
-                      linkedDoc.attachmentKey && linkedDoc.fileSize
-                        ? await getVaultFile(linkedDoc.attachmentKey, user.uid)
-                        : null;
-                    if (stored) {
-                      const fileCopy = new File([stored.blob], stored.fileName, {
-                        type: stored.mimeType || 'application/octet-stream',
-                      });
-                      await handleUploadArticleDocument(
-                        newArticleId,
-                        parsedRef?.docType || 'altro',
-                        linkedDoc.title,
-                        resolvedBrand,
-                        fileCopy
-                      );
-                    } else if (linkedDoc.cloudUrl) {
-                      await handleAddDocument({
-                        title: linkedDoc.title.slice(0, 80),
-                        category:
-                          parsedRef?.docType === 'garanzia_extra_family'
-                            ? 'Assicurazioni'
-                            : 'Altro',
-                        provider: resolvedBrand.slice(0, 80),
-                        referenceCode: buildArticleDocumentRef(
-                          newArticleId,
-                          parsedRef?.docType || 'manuale'
-                        ),
-                        issueDate: linkedDoc.issueDate || new Date().toLocaleDateString('it-IT'),
-                        pinned: Boolean(linkedDoc.pinned),
-                        cloudUrl: linkedDoc.cloudUrl,
-                        notes: linkedDoc.notes,
-                      });
-                    }
-                  }
-                }
-              }}
             />
           )}
 
@@ -6962,7 +6868,6 @@ export default function App() {
               waterBills={waterBills}
               tariBills={tariBills}
               gsePayments={gsePayments}
-              articles={visibleHomeArticles}
               researches={productResearches}
               carPlate={carProfile.plate}
               readOnly={!canEdit}
@@ -7077,7 +6982,6 @@ export default function App() {
                 waterBills: waterBills.length,
                 tariBills: tariBills.length,
                 gsePayments: gsePayments.length,
-                articles: visibleHomeArticles.length,
                 researches: productResearches.length,
                 documents: homeDocuments.length,
                 carLogs: carLogs.length,
