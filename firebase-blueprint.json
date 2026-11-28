@@ -272,7 +272,7 @@
     },
     "VaultFile": {
       "title": "VaultFile",
-      "description": "Metadati di un PDF o documento archiviato su Firestore per sincronizzazione multi-dispositivo.",
+      "description": "Metadati di un PDF o documento archiviato su Firestore o Backblaze B2 (chunkCount = 0 quando salvato su Backblaze B2 / S3).",
       "type": "object",
       "properties": {
         "ownerId": { "type": "string", "maxLength": 128 },
@@ -281,6 +281,7 @@
         "mimeType": { "type": "string", "maxLength": 80 },
         "size": { "type": "number" },
         "chunkCount": { "type": "number" },
+        "storageBackend": { "type": "string", "enum": ["firestore", "s3"], "maxLength": 16 },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["ownerId", "fileKey", "fileName", "mimeType", "size", "chunkCount", "updatedAt"]

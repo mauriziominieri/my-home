@@ -436,12 +436,34 @@ def main() -> None:
             + (f"{c['rateEurKwh']:.4f} €/kWh + {c['fixedEurMonth']:.2f} €/m -> {c['estAnnualEur']:.2f} €/anno" if c["status"] == "ok" else "non disponibile")
         )
 
+    prev_snapshot = json.dumps(
+        {
+            "myLockedRate": state.get("myLockedRate"),
+            "myFixedEurMonth": state.get("myFixedEurMonth"),
+            "currentRate": state.get("currentRate"),
+            "competitors": state.get("competitors"),
+            "bestCompetitor": state.get("bestCompetitor"),
+            "lastAlertedRate": state.get("lastAlertedRate"),
+            "lastAlertedKey": state.get("lastAlertedKey"),
+            "lastAlertedWhatsappKey": state.get("lastAlertedWhatsappKey"),
+        },
+        sort_keys=True,
+    )
+    prev_updated_raw = str(state.get("updatedAt") or "")
+    prev_updated_recent = False
+    if prev_updated_raw:
+        try:
+            prev_dt = datetime.fromisoformat(prev_updated_raw.replace("Z", "+00:00"))
+            age_hours = (datetime.now(timezone.utc) - prev_dt).total_seconds() / 3600.0
+            prev_updated_recent = age_hours < 23.5
+        except Exception:
+            prev_updated_recent = False
+
     state["myLockedRate"] = MY_LOCKED_RATE
     state["myFixedEurMonth"] = MY_FIXED_EUR_MONTH
     state["currentRate"] = current_rate
     state["competitors"] = competitors
     state["bestCompetitor"] = best_offer
-    state["updatedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     if best_offer and (my_annual - float(best_offer["estAnnualEur"])) >= MIN_ANNUAL_SAVING_EUR:
         alert_key = f"{best_offer['supplier']}|{best_offer['rateEurKwh']}|{best_offer['fixedEurMonth']}"
@@ -461,9 +483,27 @@ def main() -> None:
     else:
         print("Nessun fornitore batte sensibilmente la tua Octopus Fissa 24M attuale.")
 
+    next_snapshot = json.dumps(
+        {
+            "myLockedRate": state.get("myLockedRate"),
+            "myFixedEurMonth": state.get("myFixedEurMonth"),
+            "currentRate": state.get("currentRate"),
+            "competitors": state.get("competitors"),
+            "bestCompetitor": state.get("bestCompetitor"),
+            "lastAlertedRate": state.get("lastAlertedRate"),
+            "lastAlertedKey": state.get("lastAlertedKey"),
+            "lastAlertedWhatsappKey": state.get("lastAlertedWhatsappKey"),
+        },
+        sort_keys=True,
+    )
+
     if db_client is not None:
-        db_client.collection("appMeta").document("octopusTariff").set(state)
-        print("Stato tariffe mercato salvato su Firestore (appMeta/octopusTariff).")
+        if prev_snapshot == next_snapshot and prev_updated_recent:
+            print("Tariffe invariate rispetto all'ultimo controllo (< 24h): 0 scritture Firestore.")
+        else:
+            state["updatedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            db_client.collection("appMeta").document("octopusTariff").set(state)
+            print("Stato tariffe mercato salvato su Firestore (appMeta/octopusTariff).")
     else:
         print("FIREBASE_SERVICE_ACCOUNT non impostato: salto scrittura appMeta/octopusTariff.")
 

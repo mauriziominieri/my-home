@@ -1492,13 +1492,7 @@ export default function App() {
     }
     let cancelled = false;
     void getLocalVaultFile(fileKey)
-      .then((localStored) =>
-        localStored
-          ? localStored
-          : !isFirestoreQuotaExceededActive()
-            ? getVaultFile(fileKey, activeUid || undefined)
-            : null
-      )
+      .then((localStored) => localStored)
       .then(async (stored) => {
         if (cancelled || !stored) return null;
         const buf = await stored.blob.arrayBuffer();

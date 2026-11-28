@@ -1460,22 +1460,28 @@ function buildFallbackManualPayload(
 
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '12mb' }));
+  app.use(express.json({ limit: '18mb' }));
 
   app.use('/api', (req, res, next) => {
-    const isAuthenticatedQuotaRoute =
+    const isAuthenticatedApiRoute =
       req.path === '/firestore/quota' ||
       req.path.startsWith('/firestore/quota/') ||
       req.path === '/firestore/telemetry' ||
-      req.path.startsWith('/firestore/telemetry/');
-    if (isAuthenticatedQuotaRoute) {
+      req.path.startsWith('/firestore/telemetry/') ||
+      req.path === '/vault' ||
+      req.path.startsWith('/vault/');
+    if (isAuthenticatedApiRoute) {
       const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
       const originAllowed = !origin || isAllowedAuthenticatedOrigin(origin, req);
       if (origin && originAllowed) {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Vary', 'Origin');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
+        res.setHeader(
+          'Access-Control-Expose-Headers',
+          'X-Document-Filename, Content-Disposition, X-Vault-Backend'
+        );
       }
       if (req.method === 'OPTIONS') {
         res.status(originAllowed ? 204 : 403).end();
@@ -7083,6 +7089,371 @@ async function startServer() {
         buildFreeSparkQuotaPayload(verified.uid, projectId, databaseId, 'billing_required')
       );
     }
+  });
+
+  type DedicatedVaultBackend = 's3';
+
+  interface DedicatedVaultConfig {
+    configured: boolean;
+    backend: DedicatedVaultBackend | 'firestore';
+    providerLabel: string;
+    freeQuotaLabel: string;
+    s3?: {
+      endpoint: string;
+      region: string;
+      bucket: string;
+      accessKeyId: string;
+      secretAccessKey: string;
+    };
+  }
+
+  function sanitizeVaultObjectKeyPart(raw: string): string {
+    const clean = String(raw || '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+    return clean || 'file_unknown';
+  }
+
+  function sanitizeVaultMimeType(raw: unknown): string {
+    const clean = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    if (!clean || clean.length > 80 || !/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/.test(clean)) {
+      return 'application/octet-stream';
+    }
+    return clean;
+  }
+
+  function getDedicatedVaultConfig(): DedicatedVaultConfig {
+    const s3EndpointRaw = (process.env.S3_ENDPOINT || '').trim().replace(/\/+$/, '');
+    const s3Endpoint = s3EndpointRaw
+      ? (/^https?:\/\//i.test(s3EndpointRaw) ? s3EndpointRaw : `https://${s3EndpointRaw}`)
+      : '';
+    const rawRegion = (process.env.S3_REGION || '').trim();
+    let s3Region = rawRegion || 'auto';
+    if (s3Endpoint) {
+      try {
+        const epHost = new URL(s3Endpoint).hostname.toLowerCase();
+        const b2Match = epHost.match(/^s3\.([a-z0-9-]+)\.backblazeb2\.com$/);
+        if (b2Match && (!rawRegion || rawRegion.toLowerCase() === 'auto')) {
+          s3Region = b2Match[1];
+        }
+      } catch {
+        // Ignora errori di parsing qui: verranno gestiti in requestS3Signed
+      }
+    }
+    const s3Bucket = (process.env.S3_BUCKET || '').trim();
+    const s3AccessKeyId = (process.env.S3_ACCESS_KEY_ID || '').trim();
+    const s3SecretAccessKey = (process.env.S3_SECRET_ACCESS_KEY || '').trim();
+
+    if (s3Endpoint && s3Bucket && s3AccessKeyId && s3SecretAccessKey) {
+      const lowerEp = s3Endpoint.toLowerCase();
+      const isBackblaze = lowerEp.includes('backblazeb2.com');
+      return {
+        configured: true,
+        backend: 's3',
+        providerLabel: isBackblaze ? 'Backblaze B2' : 'Storage S3 dedicato',
+        freeQuotaLabel: isBackblaze
+          ? '10 GB gratis per sempre · Download 3x/mese'
+          : 'Storage S3 dedicato attivo',
+        s3: {
+          endpoint: s3Endpoint,
+          region: s3Region,
+          bucket: s3Bucket,
+          accessKeyId: s3AccessKeyId,
+          secretAccessKey: s3SecretAccessKey,
+        },
+      };
+    }
+
+    return {
+      configured: false,
+      backend: 'firestore',
+      providerLabel: 'Firestore Vault',
+      freeQuotaLabel: '1 GB condiviso (Base64 compresso)',
+    };
+  }
+
+  function hmacSha256(key: Buffer | string, data: string): Buffer {
+    return crypto.createHmac('sha256', key).update(data, 'utf8').digest();
+  }
+
+  async function requestS3Signed(
+    s3Cfg: NonNullable<DedicatedVaultConfig['s3']>,
+    method: 'PUT' | 'GET' | 'DELETE',
+    objectKey: string,
+    body?: Buffer,
+    contentType?: string
+  ): Promise<globalThis.Response> {
+    const parsedEndpoint = new URL(s3Cfg.endpoint);
+    const host = parsedEndpoint.host;
+    const basePath = parsedEndpoint.pathname.replace(/\/+$/, '');
+    const encodedKey = objectKey
+      .split('/')
+      .map((seg) => encodeURIComponent(seg))
+      .join('/');
+    const canonicalUri = `${basePath}/${encodeURIComponent(s3Cfg.bucket)}/${encodedKey}`.replace(/\/+/g, '/');
+
+    const now = new Date();
+    const pad2 = (n: number) => String(n).padStart(2, '0');
+    const dateStamp = `${now.getUTCFullYear()}${pad2(now.getUTCMonth() + 1)}${pad2(now.getUTCDate())}`;
+    const amzDate = `${dateStamp}T${pad2(now.getUTCHours())}${pad2(now.getUTCMinutes())}${pad2(now.getUTCSeconds())}Z`;
+    const payloadHash = crypto
+      .createHash('sha256')
+      .update(body ?? Buffer.alloc(0))
+      .digest('hex');
+
+    const headersMap: Record<string, string> = {
+      host,
+      'x-amz-content-sha256': payloadHash,
+      'x-amz-date': amzDate,
+    };
+    if (contentType && method === 'PUT') {
+      headersMap['content-type'] = contentType;
+    }
+
+    const sortedKeys = Object.keys(headersMap).sort();
+    const canonicalHeaders = sortedKeys.map((k) => `${k}:${headersMap[k]}\n`).join('');
+    const signedHeaders = sortedKeys.join(';');
+    const canonicalRequest = [
+      method,
+      canonicalUri,
+      '',
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash,
+    ].join('\n');
+
+    const credentialScope = `${dateStamp}/${s3Cfg.region}/s3/aws4_request`;
+    const stringToSign = [
+      'AWS4-HMAC-SHA256',
+      amzDate,
+      credentialScope,
+      crypto.createHash('sha256').update(canonicalRequest, 'utf8').digest('hex'),
+    ].join('\n');
+
+    const kDate = hmacSha256(`AWS4${s3Cfg.secretAccessKey}`, dateStamp);
+    const kRegion = hmacSha256(kDate, s3Cfg.region);
+    const kService = hmacSha256(kRegion, 's3');
+    const kSigning = hmacSha256(kService, 'aws4_request');
+    const signature = hmacSha256(kSigning, stringToSign).toString('hex');
+
+    const authorization = `AWS4-HMAC-SHA256 Credential=${s3Cfg.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+    const targetUrl = `${parsedEndpoint.protocol}//${host}${canonicalUri}`;
+
+    return fetch(targetUrl, {
+      method,
+      headers: {
+        ...headersMap,
+        Authorization: authorization,
+      },
+      body: method === 'PUT' && body ? new Uint8Array(body) : undefined,
+      signal: AbortSignal.timeout(30_000),
+    });
+  }
+
+  app.get('/api/vault/status', async (req, res) => {
+    const { projectId } = readAppletFirebaseConfig();
+    try {
+      await verifyFirebaseIdToken(req.headers.authorization, projectId);
+    } catch (authErr) {
+      const code = authErr instanceof Error ? authErr.message : 'unauthorized';
+      res.status(code === 'forbidden_email' ? 403 : 401).json({
+        ok: false,
+        errorCode: code,
+      });
+      return;
+    }
+    const cfg = getDedicatedVaultConfig();
+    res.json({
+      ok: true,
+      configured: cfg.configured,
+      backend: cfg.backend,
+      providerLabel: cfg.providerLabel,
+      freeQuotaLabel: cfg.freeQuotaLabel,
+      maxFileBytes: cfg.configured ? 12_000_000 : 6_000_000,
+    });
+  });
+
+  app.post('/api/vault/upload', async (req, res) => {
+    const { projectId } = readAppletFirebaseConfig();
+    let verified: { uid: string; email: string };
+    try {
+      verified = await verifyFirebaseIdToken(req.headers.authorization, projectId);
+    } catch (authErr) {
+      const code = authErr instanceof Error ? authErr.message : 'unauthorized';
+      res.status(code === 'forbidden_email' ? 403 : 401).json({ ok: false, errorCode: code });
+      return;
+    }
+
+    const cfg = getDedicatedVaultConfig();
+    if (!cfg.configured || !cfg.s3) {
+      res.status(503).json({
+        ok: false,
+        errorCode: 'vault_storage_not_configured',
+        message: 'Nessuno storage Backblaze B2 / S3 configurato sul server.',
+      });
+      return;
+    }
+
+    const body = (req.body || {}) as Record<string, unknown>;
+    const cleanKey = sanitizeVaultObjectKeyPart(String(body.fileKey || ''));
+    const mimeType = sanitizeVaultMimeType(body.mimeType);
+    const dataBase64 = typeof body.dataBase64 === 'string' ? body.dataBase64.trim() : '';
+    if (!dataBase64) {
+      res.status(400).json({ ok: false, message: 'Contenuto file mancante.' });
+      return;
+    }
+
+    const rawBytes = Buffer.from(dataBase64, 'base64');
+    if (rawBytes.length <= 0 || rawBytes.length > 12_000_000) {
+      res.status(400).json({ ok: false, message: 'Dimensione file non valida (max 12 MB).' });
+      return;
+    }
+
+    const objectKey = `users/${verified.uid}/${cleanKey}`;
+    try {
+      const upstream = await requestS3Signed(cfg.s3, 'PUT', objectKey, rawBytes, mimeType);
+      if (!upstream || !upstream.ok) {
+        const errText = upstream ? await upstream.text().catch(() => '') : '';
+        res.status(502).json({
+          ok: false,
+          message: `Errore upload storage ${cfg.providerLabel}: HTTP ${upstream?.status || 500}`,
+          details: errText.slice(0, 180),
+        });
+        return;
+      }
+      res.json({
+        ok: true,
+        backend: cfg.backend,
+        providerLabel: cfg.providerLabel,
+        fileKey: cleanKey,
+        size: rawBytes.length,
+      });
+    } catch (err) {
+      res.status(502).json({
+        ok: false,
+        message: err instanceof Error ? err.message : 'Errore upload storage esterno.',
+      });
+    }
+  });
+
+  app.get('/api/vault/file/:key', async (req, res) => {
+    const { projectId } = readAppletFirebaseConfig();
+    let verified: { uid: string; email: string };
+    try {
+      verified = await verifyFirebaseIdToken(req.headers.authorization, projectId);
+    } catch (authErr) {
+      const code = authErr instanceof Error ? authErr.message : 'unauthorized';
+      res.status(code === 'forbidden_email' ? 403 : 401).json({ ok: false, errorCode: code });
+      return;
+    }
+
+    const cfg = getDedicatedVaultConfig();
+    if (!cfg.configured) {
+      res.status(404).json({ ok: false, errorCode: 'vault_storage_not_configured' });
+      return;
+    }
+
+    const cleanKey = sanitizeVaultObjectKeyPart(req.params.key || '');
+    const objectKey = `users/${verified.uid}/${cleanKey}`;
+    try {
+      const upstream = cfg.s3 ? await requestS3Signed(cfg.s3, 'GET', objectKey) : null;
+      if (!upstream) {
+        res.status(404).json({ ok: false });
+        return;
+      }
+      if (upstream.status === 404 || upstream.status === 400) {
+        res.status(404).json({ ok: false });
+        return;
+      }
+      if (!upstream.ok) {
+        res.status(502).json({ ok: false, message: `Errore download storage: HTTP ${upstream.status}` });
+        return;
+      }
+      const arrBuf = await upstream.arrayBuffer();
+      const ct = upstream.headers.get('content-type') || 'application/octet-stream';
+      res.setHeader('Content-Type', sanitizeVaultMimeType(ct));
+      res.setHeader('X-Vault-Backend', cfg.backend);
+      res.send(Buffer.from(arrBuf));
+    } catch (err) {
+      res.status(502).json({
+        ok: false,
+        message: err instanceof Error ? err.message : 'Errore lettura storage esterno.',
+      });
+    }
+  });
+
+  app.delete('/api/vault/file/:key', async (req, res) => {
+    const { projectId } = readAppletFirebaseConfig();
+    let verified: { uid: string; email: string };
+    try {
+      verified = await verifyFirebaseIdToken(req.headers.authorization, projectId);
+    } catch (authErr) {
+      const code = authErr instanceof Error ? authErr.message : 'unauthorized';
+      res.status(code === 'forbidden_email' ? 403 : 401).json({ ok: false, errorCode: code });
+      return;
+    }
+
+    const cfg = getDedicatedVaultConfig();
+    if (!cfg.configured) {
+      res.json({ ok: true, skipped: true });
+      return;
+    }
+
+    const cleanKey = sanitizeVaultObjectKeyPart(req.params.key || '');
+    const objectKey = `users/${verified.uid}/${cleanKey}`;
+    try {
+      if (cfg.s3) {
+        await requestS3Signed(cfg.s3, 'DELETE', objectKey);
+      }
+      res.json({ ok: true, deleted: cleanKey });
+    } catch (err) {
+      res.status(502).json({
+        ok: false,
+        message: err instanceof Error ? err.message : 'Errore eliminazione storage esterno.',
+      });
+    }
+  });
+
+  app.post('/api/vault/delete-batch', async (req, res) => {
+    const { projectId } = readAppletFirebaseConfig();
+    let verified: { uid: string; email: string };
+    try {
+      verified = await verifyFirebaseIdToken(req.headers.authorization, projectId);
+    } catch (authErr) {
+      const code = authErr instanceof Error ? authErr.message : 'unauthorized';
+      res.status(code === 'forbidden_email' ? 403 : 401).json({ ok: false, errorCode: code });
+      return;
+    }
+
+    const cfg = getDedicatedVaultConfig();
+    if (!cfg.configured) {
+      res.json({ ok: true, skipped: true, deletedCount: 0 });
+      return;
+    }
+
+    const rawKeys = Array.isArray((req.body as Record<string, unknown>)?.keys)
+      ? ((req.body as Record<string, unknown>).keys as unknown[])
+      : [];
+    const cleanKeys = Array.from(
+      new Set(rawKeys.slice(0, 100).map((k) => sanitizeVaultObjectKeyPart(String(k || ''))))
+    ).filter(Boolean);
+
+    let deletedCount = 0;
+    for (let i = 0; i < cleanKeys.length; i += 8) {
+      const slice = cleanKeys.slice(i, i + 8);
+      await Promise.all(
+        slice.map(async (cleanKey) => {
+          const objectKey = `users/${verified.uid}/${cleanKey}`;
+          try {
+            if (cfg.s3) {
+              const r = await requestS3Signed(cfg.s3, 'DELETE', objectKey);
+              if (r.ok || r.status === 404) deletedCount++;
+            }
+          } catch {
+            // best effort delete
+          }
+        })
+      );
+    }
+    res.json({ ok: true, deletedCount });
   });
 
   const httpServer = http.createServer(app);

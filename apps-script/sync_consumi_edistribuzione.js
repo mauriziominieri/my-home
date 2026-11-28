@@ -39,9 +39,12 @@
 const FIREBASE_PROJECT_ID = 'gen-lang-client-0721850501';
 const FIRESTORE_DATABASE_ID = 'ai-studio-30a168e3-8158-474f-b9f2-f717d7220314';
 const GCP_PROJECT_NUMBER = '902318210670';
-const SYNC_INTERVAL_MINUTES = 10; // Valori supportati da Apps Script: 5, 10, 15, 30, 60
+const SYNC_INTERVAL_MINUTES = 30; // Valori supportati da Apps Script: 5, 10, 15, 30, 60 (30 min riduce il carico mantenendo sync 24/7)
 const DEFAULT_TARIFF_EUR_PER_KWH = 0.1595;
 const HANDLER_FN_NAME = 'syncMyHomeGmail24x7';
+const CACHE_OWNER_TTL_MS = 24 * 60 * 60 * 1000;
+const CACHE_TARIFF_TTL_MS = 6 * 60 * 60 * 1000;
+const CACHE_LATEST_DATE_TTL_MS = 12 * 60 * 60 * 1000;
 
 const FIRESTORE_DOCS_BASE =
   'https://firestore.googleapis.com/v1/projects/' +
@@ -66,7 +69,7 @@ function attivaControlloAutomatico() {
     builder.everyHours(1).create();
   } else {
     var allowed = [5, 10, 15, 30];
-    var mins = allowed.indexOf(SYNC_INTERVAL_MINUTES) !== -1 ? SYNC_INTERVAL_MINUTES : 10;
+    var mins = allowed.indexOf(SYNC_INTERVAL_MINUTES) !== -1 ? SYNC_INTERVAL_MINUTES : 30;
     builder.everyMinutes(mins).create();
   }
 
@@ -96,25 +99,21 @@ function disattivaControlloAutomatico() {
 }
 
 /**
- * Funzione principale eseguita automaticamente ogni tot minuti da Google.
+ * Funzione principale eseguita automaticamente ogni 30 minuti da Google.
+ * Controlla PRIMA Gmail INBOX: se non ci sono email, esce subito con 0 letture Firestore.
  */
 function syncMyHomeGmail24x7() {
-  var token = getFirestoreAccessToken_();
-  var ownerUid = resolveOwnerUid_(token);
-  var tariff = resolveTariff_(token, ownerUid);
-  var latestDbDate = resolveLatestReadingDate_(token, ownerUid);
-
-  // Scansiona SOLO la INBOX (mai Cestino/Spam) per le email di curve di carico e-distribuzione
+  // 1) Scansiona SOLO la INBOX (mai Cestino/Spam) prima di qualunque chiamata Firestore
   var query =
     'in:inbox -in:trash -in:spam (from:notifichemailped@enel.com OR from:e-distribuzione.it OR from:e-distribuzione.com OR subject:"Dettaglio curve di carico")';
   var threads = GmailApp.search(query, 0, 20);
   if (!threads || threads.length === 0) {
-    Logger.log('INBOX controllata: nessuna nuova email e-distribuzione trovata.');
+    Logger.log('INBOX controllata: nessuna nuova email e-distribuzione (0 letture Firestore).');
     return;
   }
 
-  var readingsByDate = {};
-  var skippedExisting = 0;
+  // 2) Estrai i CSV/ZIP prima di interrogare Firestore
+  var parsedEntries = [];
   var messagesToTrash = [];
 
   for (var t = 0; t < threads.length; t++) {
@@ -151,17 +150,32 @@ function syncMyHomeGmail24x7() {
       }
 
       if (msgReadings.length > 0) {
-        for (var r = 0; r < msgReadings.length; r++) {
-          var item = msgReadings[r];
-          if (latestDbDate && item.date <= latestDbDate) {
-            skippedExisting++;
-            continue;
-          }
-          readingsByDate[item.date] = item;
-        }
+        parsedEntries = parsedEntries.concat(msgReadings);
         messagesToTrash.push(msg);
       }
     }
+  }
+
+  if (parsedEntries.length === 0) {
+    Logger.log('Email trovate ma nessun allegato CSV valido (0 letture Firestore).');
+    return;
+  }
+
+  // 3) Solo ora che ci sono letture valide da importare interroghiamo/scriviamo Firestore (usando cache locale ScriptProperties)
+  var token = getFirestoreAccessToken_();
+  var ownerUid = resolveOwnerUid_(token);
+  var tariff = resolveTariff_(token, ownerUid);
+  var latestDbDate = resolveLatestReadingDate_(token, ownerUid);
+
+  var readingsByDate = {};
+  var skippedExisting = 0;
+  for (var r = 0; r < parsedEntries.length; r++) {
+    var item = parsedEntries[r];
+    if (latestDbDate && item.date <= latestDbDate) {
+      skippedExisting++;
+      continue;
+    }
+    readingsByDate[item.date] = item;
   }
 
   var dates = Object.keys(readingsByDate).sort();
@@ -171,6 +185,7 @@ function syncMyHomeGmail24x7() {
       docs.push(readingsByDate[dates[i]]);
     }
     writeReadingsBatch_(token, ownerUid, tariff, docs);
+    cachePropertyValue_('CACHED_LATEST_READING_DATE_V1', dates[dates.length - 1]);
     Logger.log('Salvate ' + docs.length + ' nuove giornate su Firestore.');
   } else if (skippedExisting > 0) {
     Logger.log(
@@ -261,13 +276,40 @@ function firestoreRequest_(method, url, token, payload) {
   throw new Error('Firestore HTTP ' + code + ': ' + body.slice(0, 300));
 }
 
+function readCachedProperty_(key, maxAgeMs) {
+  try {
+    var raw = PropertiesService.getScriptProperties().getProperty(key);
+    if (!raw) return null;
+    var parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.ts !== 'number') return null;
+    if (Date.now() - parsed.ts > maxAgeMs) return null;
+    return parsed.value !== undefined ? parsed.value : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function cachePropertyValue_(key, value) {
+  try {
+    PropertiesService.getScriptProperties().setProperty(
+      key,
+      JSON.stringify({ ts: Date.now(), value: value })
+    );
+  } catch (e) {}
+}
+
 function resolveOwnerUid_(token) {
   var customUid = PropertiesService.getScriptProperties().getProperty('OWNER_UID');
   if (customUid && customUid.trim()) return customUid.trim();
 
+  var cachedUid = readCachedProperty_('CACHED_OWNER_UID_V1', CACHE_OWNER_TTL_MS);
+  if (cachedUid && typeof cachedUid === 'string') return cachedUid;
+
   var meta = firestoreRequest_('get', FIRESTORE_DOCS_BASE + '/appMeta/owner', token);
   if (meta && meta.fields && meta.fields.ownerUid && meta.fields.ownerUid.stringValue) {
-    return meta.fields.ownerUid.stringValue;
+    var uid = meta.fields.ownerUid.stringValue;
+    cachePropertyValue_('CACHED_OWNER_UID_V1', uid);
+    return uid;
   }
   throw new Error(
     'appMeta/owner non trovato su Firestore: accedi almeno una volta all’app web con il tuo account Google.'
@@ -275,6 +317,11 @@ function resolveOwnerUid_(token) {
 }
 
 function resolveTariff_(token, ownerUid) {
+  var cachedTariff = readCachedProperty_('CACHED_TARIFF_V1', CACHE_TARIFF_TTL_MS);
+  if (typeof cachedTariff === 'number' && isFinite(cachedTariff) && cachedTariff >= 0.05 && cachedTariff <= 2.0) {
+    return cachedTariff;
+  }
+
   var cfg = firestoreRequest_(
     'get',
     FIRESTORE_DOCS_BASE + '/users/' + encodeURIComponent(ownerUid) + '/homeConfig/main',
@@ -285,12 +332,20 @@ function resolveTariff_(token, ownerUid) {
       cfg.fields.tariffEurPerKwh.doubleValue !== undefined
         ? Number(cfg.fields.tariffEurPerKwh.doubleValue)
         : Number(cfg.fields.tariffEurPerKwh.integerValue);
-    if (isFinite(raw) && raw >= 0.05 && raw <= 2.0) return raw;
+    if (isFinite(raw) && raw >= 0.05 && raw <= 2.0) {
+      cachePropertyValue_('CACHED_TARIFF_V1', raw);
+      return raw;
+    }
   }
   return DEFAULT_TARIFF_EUR_PER_KWH;
 }
 
 function resolveLatestReadingDate_(token, ownerUid) {
+  var cachedDate = readCachedProperty_('CACHED_LATEST_READING_DATE_V1', CACHE_LATEST_DATE_TTL_MS);
+  if (typeof cachedDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(cachedDate)) {
+    return cachedDate;
+  }
+
   var rows = firestoreRequest_(
     'post',
     FIRESTORE_DOCS_BASE + '/users/' + encodeURIComponent(ownerUid) + ':runQuery',
@@ -304,7 +359,9 @@ function resolveLatestReadingDate_(token, ownerUid) {
     }
   );
   if (rows && rows.length > 0 && rows[0].document && rows[0].document.fields && rows[0].document.fields.date) {
-    return rows[0].document.fields.date.stringValue || null;
+    var d = rows[0].document.fields.date.stringValue || null;
+    if (d) cachePropertyValue_('CACHED_LATEST_READING_DATE_V1', d);
+    return d;
   }
   return null;
 }

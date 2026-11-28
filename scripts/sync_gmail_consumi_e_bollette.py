@@ -39,8 +39,12 @@ COSA FA QUESTO SCRIPT:
      su repository GitHub pubblico i minuti di GitHub Actions sono gratuiti e illimitati).
 """
 
+import base64
 import csv
 import email
+import gzip
+import hashlib
+import hmac
 import html as html_lib
 import imaplib
 import io
@@ -449,29 +453,12 @@ def imap_search_union(
     return ordered[-max_results:]
 
 
-def extract_csvs_from_gmail() -> Tuple[Dict[bytes, List[Dict[str, Any]]], Optional[imaplib.IMAP4_SSL]]:
-    gmail_user = os.environ.get("GMAIL_USER", "").strip()
-    gmail_pass = os.environ.get("GMAIL_APP_PASSWORD", "").strip().replace(" ", "")
-    if not gmail_user or not gmail_pass:
-        raise RuntimeError("Secrets GMAIL_USER o GMAIL_APP_PASSWORD mancanti su GitHub.")
-
-    mail = imaplib.IMAP4_SSL("imap.gmail.com", 993)
-    mail.login(gmail_user, gmail_pass)
-    mail.select("INBOX")
-
-    msg_ids = imap_search_union(
-        mail,
-        [
-            'FROM "notifichemailped@enel.com"',
-            'FROM "e-distribuzione.it"',
-            'FROM "e-distribuzione.com"',
-            'SUBJECT "Dettaglio curve di carico"',
-        ],
-        max_results=20,
-    )
+def parse_csv_messages(
+    mail: imaplib.IMAP4_SSL, msg_ids: List[bytes]
+) -> Dict[bytes, List[Dict[str, Any]]]:
     if not msg_ids:
         print("Nessuna email 'Dettaglio curve di carico' trovata nella INBOX.")
-        return {}, mail
+        return {}
 
     print(f"Trovate {len(msg_ids)} email di e-distribuzione / Enel.")
     readings_by_msg: Dict[bytes, List[Dict[str, Any]]] = {}
@@ -511,7 +498,7 @@ def extract_csvs_from_gmail() -> Tuple[Dict[bytes, List[Dict[str, Any]]], Option
         if msg_readings:
             readings_by_msg[msg_id] = msg_readings
 
-    return readings_by_msg, mail
+    return readings_by_msg
 
 
 def delete_processed_emails(mail: Optional[imaplib.IMAP4_SSL], msg_ids: List[bytes]) -> None:
@@ -1293,21 +1280,45 @@ def _materialize_bill_pdf(
     return pdf_bytes, f"{base_name}_riepilogo.pdf"
 
 
-def extract_bills_from_gmail(
+def _peek_email_headers(
+    mail: imaplib.IMAP4_SSL, msg_ids: List[bytes]
+) -> List[Tuple[bytes, str, str, str]]:
+    """Fetch only MESSAGE-ID, SUBJECT and FROM without downloading body/PDF attachments."""
+    results: List[Tuple[bytes, str, str, str]] = []
+    for mid in msg_ids:
+        try:
+            status, hdr_data = mail.fetch(
+                mid, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID SUBJECT FROM)])"
+            )
+            if status != "OK" or not hdr_data or not isinstance(hdr_data[0], tuple):
+                continue
+            hdr_msg = email.message_from_bytes(hdr_data[0][1])
+            message_id = (hdr_msg.get("Message-ID") or "").strip()[:240]
+            subj = decode_mime_header(hdr_msg.get("Subject"))
+            frm = decode_mime_header(hdr_msg.get("From"))
+            results.append((mid, message_id, subj, frm))
+        except Exception as exc:
+            print(f"Avviso lettura header email: {exc}")
+    return results
+
+
+def discover_inbox_candidates(
     mail: Optional[imaplib.IMAP4_SSL],
-) -> Tuple[
-    List[Tuple[Dict[str, Any], bytes, str]],
-    List[Tuple[Dict[str, Any], bytes, str]],
-    List[Tuple[Dict[str, Any], bytes, str]],
-]:
+) -> Dict[str, List[Tuple[bytes, str, str, str]]]:
     if not mail:
-        return [], [], []
+        return {"csv": [], "elec": [], "water": [], "tari": []}
 
-    elec_items: List[Tuple[Dict[str, Any], bytes, str]] = []
-    water_items: List[Tuple[Dict[str, Any], bytes, str]] = []
-    tari_items: List[Tuple[Dict[str, Any], bytes, str]] = []
-
-    elec_msg_ids = imap_search_union(
+    csv_ids = imap_search_union(
+        mail,
+        [
+            'FROM "notifichemailped@enel.com"',
+            'FROM "e-distribuzione.it"',
+            'FROM "e-distribuzione.com"',
+            'SUBJECT "curve di carico"',
+        ],
+        max_results=20,
+    )
+    elec_ids = imap_search_union(
         mail,
         [
             'FROM "edisonenergia.it"',
@@ -1323,8 +1334,60 @@ def extract_bills_from_gmail(
         ],
         max_results=20,
     )
-    print(f"Email candidate bolletta Luce in INBOX: {len(elec_msg_ids)}")
-    for mid in elec_msg_ids:
+    water_ids = imap_search_union(
+        mail,
+        [
+            'FROM "acegasapsamga.it"',
+            'SUBJECT "servizio idrico"',
+            'SUBJECT "bolletta acqua"',
+            'SUBJECT "fattura acqua"',
+        ],
+        max_results=20,
+    )
+    tari_ids = imap_search_union(
+        mail,
+        [
+            'FROM "tassa_rifiuti@acegasapsamga.it"',
+            'SUBJECT "TARI"',
+            'SUBJECT "tassa rifiuti"',
+            'SUBJECT "Avviso di pagamento"',
+        ],
+        max_results=20,
+    )
+
+    return {
+        "csv": _peek_email_headers(mail, csv_ids),
+        "elec": _peek_email_headers(mail, elec_ids),
+        "water": _peek_email_headers(mail, water_ids),
+        "tari": _peek_email_headers(mail, tari_ids),
+    }
+
+
+def extract_bills_from_candidates(
+    mail: Optional[imaplib.IMAP4_SSL],
+    candidates: Dict[str, List[Tuple[bytes, str, str, str]]],
+    seen_message_ids: set[str],
+) -> Tuple[
+    List[Tuple[Dict[str, Any], bytes, str, str]],
+    List[Tuple[Dict[str, Any], bytes, str, str]],
+    List[Tuple[Dict[str, Any], bytes, str, str]],
+]:
+    if not mail:
+        return [], [], []
+
+    elec_items: List[Tuple[Dict[str, Any], bytes, str, str]] = []
+    water_items: List[Tuple[Dict[str, Any], bytes, str, str]] = []
+    tari_items: List[Tuple[Dict[str, Any], bytes, str, str]] = []
+
+    elec_candidates = [
+        item
+        for item in candidates.get("elec", [])
+        if (not item[1] or item[1] not in seen_message_ids)
+        and "curve di carico" not in item[2].lower()
+        and "notifichemailped@enel.com" not in item[3].lower()
+    ]
+    print(f"Email nuove candidate bolletta Luce in INBOX: {len(elec_candidates)} (su {len(candidates.get('elec', []))} totali)")
+    for mid, message_id, _, _ in elec_candidates:
         try:
             _, msg_data = mail.fetch(mid, "(RFC822)")
             if not msg_data or not isinstance(msg_data[0], tuple):
@@ -1333,8 +1396,6 @@ def extract_bills_from_gmail(
             subj = decode_mime_header(msg.get("Subject"))
             frm = decode_mime_header(msg.get("From"))
             mdate = decode_mime_header(msg.get("Date"))
-            if "curve di carico" in subj.lower() or "notifichemailped@enel.com" in frm.lower():
-                continue
 
             for src in collect_bill_sources_from_email(msg):
                 parsed = parse_electricity_bill_text(
@@ -1354,23 +1415,20 @@ def extract_bills_from_gmail(
                         ],
                         "bolletta_luce.pdf",
                     )
-                    elec_items.append((parsed, pdf_bytes, out_name))
+                    elec_items.append((parsed, pdf_bytes, out_name, message_id))
                     break
         except Exception as exc:
             print(f"Email Luce ignorata senza errori: {exc}")
 
-    water_msg_ids = imap_search_union(
-        mail,
-        [
-            'FROM "acegasapsamga.it"',
-            'SUBJECT "servizio idrico"',
-            'SUBJECT "bolletta acqua"',
-            'SUBJECT "fattura acqua"',
-        ],
-        max_results=20,
-    )
-    print(f"Email candidate bolletta Acqua in INBOX: {len(water_msg_ids)}")
-    for mid in water_msg_ids:
+    water_candidates = [
+        item
+        for item in candidates.get("water", [])
+        if (not item[1] or item[1] not in seen_message_ids)
+        and "tari" not in item[2].lower()
+        and "rifiuti" not in item[2].lower()
+    ]
+    print(f"Email nuove candidate bolletta Acqua in INBOX: {len(water_candidates)} (su {len(candidates.get('water', []))} totali)")
+    for mid, message_id, _, _ in water_candidates:
         try:
             _, msg_data = mail.fetch(mid, "(RFC822)")
             if not msg_data or not isinstance(msg_data[0], tuple):
@@ -1379,8 +1437,6 @@ def extract_bills_from_gmail(
             subj = decode_mime_header(msg.get("Subject"))
             frm = decode_mime_header(msg.get("From"))
             mdate = decode_mime_header(msg.get("Date"))
-            if "tari" in subj.lower() or "rifiuti" in subj.lower():
-                continue
 
             for src in collect_bill_sources_from_email(msg):
                 parsed = parse_water_bill_text(src["text"], src["file_name"], src["format"], subj, mdate)
@@ -1397,23 +1453,18 @@ def extract_bills_from_gmail(
                         ],
                         "bolletta_acqua.pdf",
                     )
-                    water_items.append((parsed, pdf_bytes, out_name))
+                    water_items.append((parsed, pdf_bytes, out_name, message_id))
                     break
         except Exception as exc:
             print(f"Email Acqua ignorata senza errori: {exc}")
 
-    tari_msg_ids = imap_search_union(
-        mail,
-        [
-            'FROM "tassa_rifiuti@acegasapsamga.it"',
-            'SUBJECT "TARI"',
-            'SUBJECT "tassa rifiuti"',
-            'SUBJECT "Avviso di pagamento"',
-        ],
-        max_results=20,
-    )
-    print(f"Email candidate avvisi TARI in INBOX: {len(tari_msg_ids)}")
-    for mid in tari_msg_ids:
+    tari_candidates = [
+        item
+        for item in candidates.get("tari", [])
+        if not item[1] or item[1] not in seen_message_ids
+    ]
+    print(f"Email nuove candidate avvisi TARI in INBOX: {len(tari_candidates)} (su {len(candidates.get('tari', []))} totali)")
+    for mid, message_id, _, _ in tari_candidates:
         try:
             _, msg_data = mail.fetch(mid, "(RFC822)")
             if not msg_data or not isinstance(msg_data[0], tuple):
@@ -1439,7 +1490,7 @@ def extract_bills_from_gmail(
                         ],
                         "avviso_tari.pdf",
                     )
-                    tari_items.append((parsed, pdf_bytes, out_name))
+                    tari_items.append((parsed, pdf_bytes, out_name, message_id))
                     break
         except Exception as exc:
             print(f"Email TARI ignorata senza errori: {exc}")
@@ -1447,7 +1498,7 @@ def extract_bills_from_gmail(
     return elec_items, water_items, tari_items
 
 
-def init_firestore_admin():
+def init_firestore_admin() -> Tuple[Any, Any, str, Dict[str, Any]]:
     import firebase_admin
     from firebase_admin import auth as fb_auth
     from firebase_admin import credentials, firestore
@@ -1469,7 +1520,18 @@ def init_firestore_admin():
     ).strip()
     db_client = firestore.client(database_id=db_id)
 
-    owner_uid = os.environ.get("OWNER_UID", "").strip()
+    sync_state: Dict[str, Any] = {}
+    try:
+        state_snap = db_client.collection("appMeta").document("gmailSyncState").get()
+        if state_snap.exists:
+            sync_state = dict(state_snap.to_dict() or {})
+    except Exception as exc:
+        print(f"Nota lettura appMeta/gmailSyncState: {exc}")
+
+    owner_uid = (
+        os.environ.get("OWNER_UID", "").strip()
+        or str(sync_state.get("ownerUid", "")).strip()
+    )
     if not owner_uid:
         meta_snap = db_client.collection("appMeta").document("owner").get()
         if meta_snap.exists:
@@ -1490,7 +1552,99 @@ def init_firestore_admin():
                 f"(accedi almeno una volta in app con {owner_email}): {exc}"
             ) from exc
 
-    return db_client, firestore, owner_uid
+    return db_client, firestore, owner_uid, sync_state
+
+
+def _get_external_storage_backend() -> Optional[str]:
+    if (
+        os.environ.get("S3_ENDPOINT", "").strip()
+        and os.environ.get("S3_BUCKET", "").strip()
+        and os.environ.get("S3_ACCESS_KEY_ID", "").strip()
+        and os.environ.get("S3_SECRET_ACCESS_KEY", "").strip()
+    ):
+        return "s3"
+    return None
+
+
+def _upload_binary_to_s3(object_key: str, data: bytes, mime_type: str) -> None:
+    endpoint = os.environ.get("S3_ENDPOINT", "").strip().rstrip("/")
+    if endpoint and not re.match(r"^https?://", endpoint, re.IGNORECASE):
+        endpoint = f"https://{endpoint}"
+    region = os.environ.get("S3_REGION", "").strip() or "auto"
+    bucket = os.environ.get("S3_BUCKET", "").strip()
+    access_key = os.environ.get("S3_ACCESS_KEY_ID", "").strip()
+    secret_key = os.environ.get("S3_SECRET_ACCESS_KEY", "").strip()
+
+    parsed = urllib.parse.urlparse(endpoint)
+    host = parsed.netloc
+    hostname = (parsed.hostname or "").lower()
+    b2_match = re.match(r"^s3\.([a-z0-9-]+)\.backblazeb2\.com$", hostname)
+    if b2_match and (not region or region.lower() == "auto"):
+        region = b2_match.group(1)
+
+    base_path = parsed.path.rstrip("/")
+    canonical_uri = (
+        f"{base_path}/{urllib.parse.quote(bucket, safe='')}/"
+        f"{urllib.parse.quote(object_key, safe='/')}"
+    )
+    if not canonical_uri.startswith("/"):
+        canonical_uri = "/" + canonical_uri
+
+    now = datetime.now(timezone.utc)
+    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+    date_stamp = now.strftime("%Y%m%d")
+    payload_hash = hashlib.sha256(data).hexdigest()
+
+    canonical_headers = (
+        f"content-type:{mime_type}\n"
+        f"host:{host}\n"
+        f"x-amz-content-sha256:{payload_hash}\n"
+        f"x-amz-date:{amz_date}\n"
+    )
+    signed_headers = "content-type;host;x-amz-content-sha256;x-amz-date"
+    canonical_request = "\n".join(
+        ["PUT", canonical_uri, "", canonical_headers, signed_headers, payload_hash]
+    )
+    credential_scope = f"{date_stamp}/{region}/s3/aws4_request"
+    string_to_sign = "\n".join(
+        [
+            "AWS4-HMAC-SHA256",
+            amz_date,
+            credential_scope,
+            hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+        ]
+    )
+
+    def _sign(key: bytes, msg: str) -> bytes:
+        return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
+
+    k_date = _sign(("AWS4" + secret_key).encode("utf-8"), date_stamp)
+    k_region = _sign(k_date, region)
+    k_service = _sign(k_region, "s3")
+    k_signing = _sign(k_service, "aws4_request")
+    signature = hmac.new(k_signing, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    auth_header = (
+        f"AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, "
+        f"SignedHeaders={signed_headers}, Signature={signature}"
+    )
+
+    url = f"{parsed.scheme}://{host}{canonical_uri}"
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method="PUT",
+        headers={
+            "Content-Type": mime_type,
+            "Host": host,
+            "x-amz-content-sha256": payload_hash,
+            "x-amz-date": amz_date,
+            "Authorization": auth_header,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        if resp.status < 200 or resp.status >= 300:
+            raise RuntimeError(f"S3 upload HTTP {resp.status}")
 
 
 def save_pdf_to_vault_firestore(
@@ -1501,23 +1655,52 @@ def save_pdf_to_vault_firestore(
     file_name: str,
     pdf_bytes: bytes,
 ) -> bool:
-    import base64
-
-    MAX_BYTES = 6_000_000
-    CHUNK_CHAR_SIZE = 600_000
     clean_key = re.sub(r"[^a-zA-Z0-9_-]", "_", file_key)[:80] or "file_unknown"
-    if not pdf_bytes or len(pdf_bytes) > MAX_BYTES:
-        print(f"PDF {clean_key} saltato ({len(pdf_bytes)} bytes > limite 6 MB).")
-        return False
-
-    b64 = base64.b64encode(pdf_bytes).decode("ascii")
-    chunks = [b64[i : i + CHUNK_CHAR_SIZE] for i in range(0, len(b64), CHUNK_CHAR_SIZE)]
-    if not chunks or len(chunks) > 16:
+    ext_backend = _get_external_storage_backend()
+    max_allowed = 12_000_000 if ext_backend else 6_000_000
+    if not pdf_bytes or len(pdf_bytes) > max_allowed:
+        print(f"PDF {clean_key} saltato ({len(pdf_bytes)} bytes > limite {max_allowed}).")
         return False
 
     user_ref = db_client.collection("users").document(owner_uid)
     files_col = user_ref.collection("vaultFiles")
     chunks_col = user_ref.collection("vaultFileChunks")
+
+    if ext_backend == "s3":
+        try:
+            object_key = f"users/{owner_uid}/{clean_key}"
+            _upload_binary_to_s3(object_key, pdf_bytes, "application/pdf")
+
+            files_col.document(clean_key).set(
+                {
+                    "ownerId": owner_uid,
+                    "fileKey": clean_key,
+                    "fileName": file_name.strip()[:140] or "bolletta.pdf",
+                    "mimeType": "application/pdf",
+                    "size": len(pdf_bytes),
+                    "chunkCount": 0,
+                    "storageBackend": ext_backend,
+                    "updatedAt": fb_firestore.SERVER_TIMESTAMP,
+                }
+            )
+            print(
+                f"Archiviato PDF su Storage dedicato ({ext_backend.upper()}) + 1 doc metadati Firestore: "
+                f"{clean_key} ({len(pdf_bytes)} bytes, 0 chunk Base64)"
+            )
+            return True
+        except Exception as exc:
+            print(f"Avviso upload storage esterno ({ext_backend}) fallito, fallback su Firestore compresso: {exc}")
+
+    CHUNK_CHAR_SIZE = 600_000
+    compressed_bytes = gzip.compress(pdf_bytes, compresslevel=9)
+    if len(compressed_bytes) + 3 < len(pdf_bytes):
+        payload_b64 = "GZ:" + base64.b64encode(compressed_bytes).decode("ascii")
+    else:
+        payload_b64 = base64.b64encode(pdf_bytes).decode("ascii")
+
+    chunks = [payload_b64[i : i + CHUNK_CHAR_SIZE] for i in range(0, len(payload_b64), CHUNK_CHAR_SIZE)]
+    if not chunks or len(chunks) > 16:
+        return False
 
     meta_snap = files_col.document(clean_key).get()
     prev_chunks = int((meta_snap.to_dict() or {}).get("chunkCount", 0)) if meta_snap.exists else 0
@@ -1549,6 +1732,7 @@ def save_pdf_to_vault_firestore(
             "mimeType": "application/pdf",
             "size": len(pdf_bytes),
             "chunkCount": len(chunks),
+            "storageBackend": "firestore",
             "updatedAt": fb_firestore.SERVER_TIMESTAMP,
         },
     )
@@ -1670,49 +1854,105 @@ def _load_existing_bill_keys(col_ref: Any, id_field: str) -> set[str]:
 
 
 def main() -> None:
-    db_client, fb_firestore, owner_id = init_firestore_admin()
+    mail = open_gmail_inbox_imap()
+    if not mail:
+        print("Controllo Gmail terminato: credenziali IMAP assenti (0 operazioni Firestore).")
+        return
 
-    tariff = TARIFF_EUR_PER_KWH
     try:
-        cfg_snap = (
-            db_client.collection("users")
-            .document(owner_id)
-            .collection("homeConfig")
-            .document("main")
-            .get()
+        candidates = discover_inbox_candidates(mail)
+        csv_headers = candidates.get("csv", [])
+        bill_headers = (
+            candidates.get("elec", [])
+            + candidates.get("water", [])
+            + candidates.get("tari", [])
         )
-        if cfg_snap.exists:
-            raw_tariff = float((cfg_snap.to_dict() or {}).get("tariffEurPerKwh", tariff))
-            if 0.05 <= raw_tariff <= 2.0:
-                tariff = raw_tariff
-    except Exception:
-        pass
 
-    print(f"Controllo Gmail (solo INBOX) -> Firestore diretto (POD {POD_CODE}, uid {owner_id})...")
-    readings_by_msg, mail = extract_csvs_from_gmail()
-    newly_imported_bills: List[Dict[str, str]] = []
+        if not csv_headers and not bill_headers:
+            print("Gmail INBOX: nessun CSV e nessuna bolletta candidata -> 0 letture e 0 scritture Firestore.")
+            try:
+                mail.logout()
+            except Exception:
+                pass
+            return
 
-    try:
-        elec_items, water_items, tari_items = extract_bills_from_gmail(mail)
+        db_client, fb_firestore, owner_id, sync_state = init_firestore_admin()
+        seen_bill_msg_ids = set(
+            str(m).strip()
+            for m in (sync_state.get("processedBillMessageIds") or [])
+            if str(m).strip()
+        )
+
+        unseen_bills = [
+            item
+            for item in bill_headers
+            if not item[1] or item[1] not in seen_bill_msg_ids
+        ]
+
+        if not csv_headers and not unseen_bills:
+            print(
+                f"Gmail INBOX: {len(bill_headers)} bollette in INBOX già verificate via Message-ID "
+                "(1 lettura appMeta/gmailSyncState, 0 download PDF/query Firestore)."
+            )
+            try:
+                mail.logout()
+            except Exception:
+                pass
+            return
+
+        readings_by_msg = (
+            parse_csv_messages(mail, [item[0] for item in csv_headers])
+            if csv_headers
+            else {}
+        )
+        elec_items, water_items, tari_items = extract_bills_from_candidates(
+            mail, candidates, seen_bill_msg_ids
+        )
+
+        tariff = TARIFF_EUR_PER_KWH
+        cached_tariff = sync_state.get("tariffEurPerKwh")
+        if isinstance(cached_tariff, (int, float)) and 0.05 <= float(cached_tariff) <= 2.0:
+            tariff = float(cached_tariff)
+        else:
+            try:
+                cfg_snap = (
+                    db_client.collection("users")
+                    .document(owner_id)
+                    .collection("homeConfig")
+                    .document("main")
+                    .get()
+                )
+                if cfg_snap.exists:
+                    raw_tariff = float((cfg_snap.to_dict() or {}).get("tariffEurPerKwh", tariff))
+                    if 0.05 <= raw_tariff <= 2.0:
+                        tariff = raw_tariff
+            except Exception:
+                pass
+
+        newly_imported_bills: List[Dict[str, str]] = []
         verified_msgs_to_delete: List[bytes] = []
         user_ref = db_client.collection("users").document(owner_id)
 
-        # 1. Consumi e-distribuzione -> Firestore energyReadings (ignora i giorni già presenti su DB)
+        # 1. Consumi e-distribuzione -> Firestore energyReadings (usa ultima data memorizzata se disponibile)
         readings_col = user_ref.collection("energyReadings")
         latest_db_date: Optional[str] = None
         if readings_by_msg:
-            try:
-                latest_docs = list(
-                    readings_col.order_by("date", direction=fb_firestore.Query.DESCENDING)
-                    .limit(1)
-                    .stream()
-                )
-                if latest_docs:
-                    raw_latest = str((latest_docs[0].to_dict() or {}).get("date", "")).strip()
-                    if re.match(r"^\d{4}-\d{2}-\d{2}$", raw_latest):
-                        latest_db_date = raw_latest
-            except Exception as exc:
-                print(f"Avviso controllo ultima data consumi su Firestore: {exc}")
+            cached_latest = str(sync_state.get("latestReadingDate", "")).strip()
+            if re.match(r"^\d{4}-\d{2}-\d{2}$", cached_latest):
+                latest_db_date = cached_latest
+            else:
+                try:
+                    latest_docs = list(
+                        readings_col.order_by("date", direction=fb_firestore.Query.DESCENDING)
+                        .limit(1)
+                        .stream()
+                    )
+                    if latest_docs:
+                        raw_latest = str((latest_docs[0].to_dict() or {}).get("date", "")).strip()
+                        if re.match(r"^\d{4}-\d{2}-\d{2}$", raw_latest):
+                            latest_db_date = raw_latest
+                except Exception as exc:
+                    print(f"Avviso controllo ultima data consumi su Firestore: {exc}")
             if latest_db_date:
                 print(
                     f"Consumi già presenti su Firestore fino al {latest_db_date}: "
@@ -1735,8 +1975,11 @@ def main() -> None:
                 pending_readings_by_date[date_str] = r
             verified_msgs_to_delete.append(msg_id)
 
+        new_latest_reading_date = latest_db_date or ""
         if pending_readings_by_date:
-            items_to_save = [pending_readings_by_date[d] for d in sorted(pending_readings_by_date.keys())]
+            sorted_dates = sorted(pending_readings_by_date.keys())
+            new_latest_reading_date = max(new_latest_reading_date, sorted_dates[-1])
+            items_to_save = [pending_readings_by_date[d] for d in sorted_dates]
             for i in range(0, len(items_to_save), 350):
                 batch = db_client.batch()
                 for r in items_to_save[i : i + 350]:
@@ -1767,12 +2010,27 @@ def main() -> None:
             )
 
         vault_files_col = user_ref.collection("vaultFiles")
+        processed_msg_ids_list = [
+            str(m).strip() for m in (sync_state.get("processedBillMessageIds") or []) if str(m).strip()
+        ]
+        state_dirty = (
+            str(sync_state.get("ownerUid", "")).strip() != owner_id
+            or sync_state.get("tariffEurPerKwh") != tariff
+            or (new_latest_reading_date and new_latest_reading_date != sync_state.get("latestReadingDate"))
+        )
+
+        def _remember_msg_id(mid_str: str) -> None:
+            nonlocal state_dirty
+            if mid_str and mid_str not in seen_bill_msg_ids:
+                seen_bill_msg_ids.add(mid_str)
+                processed_msg_ids_list.append(mid_str)
+                state_dirty = True
 
         # 2. Bollette Luce -> Firestore electricityBills + Vault PDF
         if elec_items:
             elec_col = user_ref.collection("electricityBills")
             existing_elec = _load_existing_bill_keys(elec_col, "invoiceNumber")
-            for b, pdf_bytes, file_name in elec_items:
+            for b, pdf_bytes, file_name, message_id in elec_items:
                 inv = str(b.get("invoiceNumber", "")).strip()
                 if not inv:
                     continue
@@ -1787,7 +2045,8 @@ def main() -> None:
                     or file_key in existing_elec
                     or (elec_col.document(doc_id).get().exists and vault_files_col.document(file_key).get().exists)
                 ):
-                    print(f"Bolletta Luce {inv} già presente su Firestore: salto.")
+                    print(f"Bolletta Luce {inv} già presente su Firestore: salto e memorizzo Message-ID.")
+                    _remember_msg_id(message_id)
                     continue
 
                 if not save_pdf_to_vault_firestore(db_client, fb_firestore, owner_id, file_key, file_name, pdf_bytes):
@@ -1816,6 +2075,7 @@ def main() -> None:
                 elec_col.document(doc_id).set(payload)
                 existing_elec.add(normalize_bill_identity(inv))
                 existing_elec.add(file_key)
+                _remember_msg_id(message_id)
                 newly_imported_bills.append(
                     {
                         "kind": "Bolletta Luce",
@@ -1828,7 +2088,7 @@ def main() -> None:
         if water_items:
             water_col = user_ref.collection("waterBills")
             existing_water = _load_existing_bill_keys(water_col, "invoiceNumber")
-            for w, pdf_bytes, file_name in water_items:
+            for w, pdf_bytes, file_name, message_id in water_items:
                 inv = str(w.get("invoiceNumber", "")).strip()
                 if not inv:
                     continue
@@ -1841,7 +2101,8 @@ def main() -> None:
                     or file_key in existing_water
                     or (water_col.document(doc_id).get().exists and vault_files_col.document(file_key).get().exists)
                 ):
-                    print(f"Bolletta Acqua {inv} già presente su Firestore: salto.")
+                    print(f"Bolletta Acqua {inv} già presente su Firestore: salto e memorizzo Message-ID.")
+                    _remember_msg_id(message_id)
                     continue
 
                 if not save_pdf_to_vault_firestore(db_client, fb_firestore, owner_id, file_key, file_name, pdf_bytes):
@@ -1864,6 +2125,7 @@ def main() -> None:
                 )
                 existing_water.add(normalize_bill_identity(inv))
                 existing_water.add(file_key)
+                _remember_msg_id(message_id)
                 newly_imported_bills.append(
                     {
                         "kind": "Bolletta Acqua",
@@ -1876,7 +2138,7 @@ def main() -> None:
         if tari_items:
             tari_col = user_ref.collection("tariBills")
             existing_tari = _load_existing_bill_keys(tari_col, "noticeNumber")
-            for t, pdf_bytes, file_name in tari_items:
+            for t, pdf_bytes, file_name, message_id in tari_items:
                 notice = str(t.get("noticeNumber", "")).strip()
                 if not notice:
                     continue
@@ -1889,7 +2151,8 @@ def main() -> None:
                     or file_key in existing_tari
                     or (tari_col.document(doc_id).get().exists and vault_files_col.document(file_key).get().exists)
                 ):
-                    print(f"Avviso TARI {notice} già presente su Firestore: salto.")
+                    print(f"Avviso TARI {notice} già presente su Firestore: salto e memorizzo Message-ID.")
+                    _remember_msg_id(message_id)
                     continue
 
                 if not save_pdf_to_vault_firestore(db_client, fb_firestore, owner_id, file_key, file_name, pdf_bytes):
@@ -1914,6 +2177,7 @@ def main() -> None:
                 )
                 existing_tari.add(normalize_bill_identity(notice))
                 existing_tari.add(file_key)
+                _remember_msg_id(message_id)
                 newly_imported_bills.append(
                     {
                         "kind": "TARI",
@@ -1921,6 +2185,21 @@ def main() -> None:
                     }
                 )
                 print(f"Avviso TARI {notice} salvato su Firestore (email conservata in INBOX).")
+
+        # Memorizza anche eventuali Message-ID scartati perché duplicati o non-bolletta per evitare ri-scansioni future
+        for item in unseen_bills:
+            _remember_msg_id(item[1])
+
+        if state_dirty:
+            db_client.collection("appMeta").document("gmailSyncState").set(
+                {
+                    "ownerUid": owner_id,
+                    "tariffEurPerKwh": tariff,
+                    "latestReadingDate": new_latest_reading_date,
+                    "processedBillMessageIds": processed_msg_ids_list[-120:],
+                    "updatedAt": fb_firestore.SERVER_TIMESTAMP,
+                }
+            )
 
         # 5. Invia avviso Email + WhatsApp SOLO per le nuove bollette appena importate
         if newly_imported_bills:

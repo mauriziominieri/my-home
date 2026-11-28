@@ -578,18 +578,22 @@ service cloud.firestore {
     }
 
     function isValidVaultFile(data, userId) {
+      let usesExternalBackend = 'storageBackend' in data && data.storageBackend == 's3';
       return data.keys().hasAll([
           'ownerId', 'fileKey', 'fileName', 'mimeType', 'size', 'chunkCount', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'ownerId', 'fileKey', 'fileName', 'mimeType', 'size', 'chunkCount', 'updatedAt'
+          'ownerId', 'fileKey', 'fileName', 'mimeType', 'size', 'chunkCount', 'storageBackend', 'updatedAt'
         ])
         && data.ownerId is string && data.ownerId == userId && data.ownerId.size() <= 128
         && data.fileKey is string && data.fileKey.size() >= 1 && data.fileKey.size() <= 80 && data.fileKey.matches('^[a-zA-Z0-9_\\-]+$')
         && data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 140
         && data.mimeType is string && data.mimeType.size() >= 1 && data.mimeType.size() <= 80
-        && data.size is number && data.size >= 1 && data.size <= 6500000
-        && data.chunkCount is number && data.chunkCount >= 1 && data.chunkCount <= 16
+        && data.size is number && data.size >= 1 && data.size <= (usesExternalBackend ? 12500000 : 6500000)
+        && data.chunkCount is number
+        && ((usesExternalBackend && data.chunkCount == 0)
+          || (!usesExternalBackend && data.chunkCount >= 1 && data.chunkCount <= 16))
+        && (!('storageBackend' in data) || (data.storageBackend is string && data.storageBackend in ['firestore', 's3']))
         && data.updatedAt is timestamp;
     }
 
@@ -607,7 +611,7 @@ service cloud.firestore {
         && incoming().fileKey == existing().fileKey
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly([
-          'fileName', 'mimeType', 'size', 'chunkCount', 'updatedAt'
+          'fileName', 'mimeType', 'size', 'chunkCount', 'storageBackend', 'updatedAt'
         ]);
       allow delete: if isOwner(userId) && isValidId(fileId);
     }

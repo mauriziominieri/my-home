@@ -9,14 +9,11 @@ import {
 import {
   auth,
   db,
-  directWriteBatch,
   enqueueSimulatedVaultDelete,
   enqueueSimulatedVaultUpload,
   guardedWriteBatch as writeBatch,
-  isFirestoreQuotaError,
   isFirestoreQuotaExceededActive,
   isFirestoreWritesDisabled,
-  notifyFirestoreQuotaExceeded,
   recordFirestoreWritesSaved,
   trackedGetDoc as getDoc,
   trackedGetDocs as getDocs,
@@ -142,13 +139,45 @@ export interface BundledPdfAsset {
 
 export const STATIC_BILL_PDF_ASSETS: Record<string, BundledPdfAsset> = {};
 
-// ---------- Binary vault: Firestore cross-device chunked storage + IndexedDB cache ----------
+// ---------- Binary vault: Dedicated Backblaze B2 (S3) storage + compressed Firestore fallback + IndexedDB cache ----------
 
 const IDB_NAME = 'myhome_vault_files_v1';
 const IDB_STORE = 'files';
 const IDB_VERSION = 1;
+const META_CACHE_TTL_MS = 10 * 60 * 1000;
+const META_CACHE_LS_PREFIX = 'myhome_vault_meta_cache_v1_';
+const STORAGE_STATUS_TTL_MS = 2 * 60 * 1000;
 
 export type VaultOrigin = 'firestore' | 'local' | 'bundled';
+export type DedicatedVaultStorageBackend = 's3' | 'firestore';
+
+export interface DedicatedVaultStorageStatus {
+  configured: boolean;
+  backend: DedicatedVaultStorageBackend;
+  providerLabel: string;
+  freeQuotaLabel: string;
+  maxFileBytes: number;
+  checkedAt: number;
+}
+
+export interface VaultOpAuditHint {
+  groupKey?: string;
+  groupSection?: string;
+  groupTitle?: string;
+  actionLabel?: string;
+  displayTitle?: string;
+  changedDetails?: string[];
+  storageMode?: 'auto' | 'local';
+}
+
+export interface VaultDeleteAuditHint {
+  groupKey?: string;
+  groupSection?: string;
+  groupTitle?: string;
+  actionLabel?: string;
+  displayTitle?: string;
+  changedDetails?: string[];
+}
 
 export interface StoredVaultFile {
   key: string;
@@ -158,8 +187,10 @@ export interface StoredVaultFile {
   updatedAt: number;
   blob: Blob;
   origin?: VaultOrigin;
+  storageBackend?: DedicatedVaultStorageBackend;
   cloudSynced?: boolean;
   cloudTooLarge?: boolean;
+  savedLocallyOnly?: boolean;
 }
 
 export interface VaultFileMeta {
@@ -169,6 +200,7 @@ export interface VaultFileMeta {
   updatedAt: number;
   origin: VaultOrigin;
   chunkCount?: number;
+  storageBackend?: DedicatedVaultStorageBackend;
 }
 
 interface CloudVaultDocMeta {
@@ -177,13 +209,14 @@ interface CloudVaultDocMeta {
   mimeType: string;
   size: number;
   chunkCount: number;
+  storageBackend?: DedicatedVaultStorageBackend;
   updatedAtMs: number;
 }
 
 const cloudMetaCache = new Map<string, CloudVaultDocMeta>();
-let syncedVaultMetaUid: string | null = null;
-let inFlightVaultMetaSync: Promise<void> | null = null;
-let inFlightVaultMetaUid: string | null = null;
+let cachedStorageStatus: DedicatedVaultStorageStatus | null = null;
+let inFlightStatusPromise: Promise<DedicatedVaultStorageStatus> | null = null;
+const inFlightMetaListByUid = new Map<string, Promise<Record<string, VaultFileMeta>>>();
 
 export function sanitizeVaultFileKey(key: string): string {
   const clean = (key || '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
@@ -200,16 +233,19 @@ function isPermissionDeniedError(err: unknown): boolean {
 
 function timestampToMs(val: unknown): number {
   if (val instanceof Timestamp) return val.toMillis();
-  if (val && typeof val === 'object' && 'toMillis' in val && typeof (val as { toMillis: () => number }).toMillis === 'function') {
+  if (
+    val &&
+    typeof val === 'object' &&
+    'toMillis' in val &&
+    typeof (val as { toMillis: () => number }).toMillis === 'function'
+  ) {
     return (val as { toMillis: () => number }).toMillis();
   }
   if (typeof val === 'number' && Number.isFinite(val)) return val;
   return Date.now();
 }
 
-async function blobToBase64(blob: Blob): Promise<string> {
-  const buffer = await blob.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
+function uint8ArrayToBase64(bytes: Uint8Array): string {
   const parts: string[] = [];
   const sliceSize = 0x8000;
   for (let i = 0; i < bytes.length; i += sliceSize) {
@@ -219,14 +255,251 @@ async function blobToBase64(blob: Blob): Promise<string> {
   return btoa(parts.join(''));
 }
 
-function base64ToBlob(base64: string, mimeType: string): Blob {
+function base64ToUint8Array(base64: string): Uint8Array {
   const binary = atob(base64);
   const len = binary.length;
   const bytes = new Uint8Array(len);
   for (let i = 0; i < len; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
-  return new Blob([bytes], { type: mimeType || 'application/octet-stream' });
+  return bytes;
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const buffer = await blob.arrayBuffer();
+  return uint8ArrayToBase64(new Uint8Array(buffer));
+}
+
+async function gzipBlobToPayload(blob: Blob): Promise<string> {
+  const rawBytes = new Uint8Array(await blob.arrayBuffer());
+  if (typeof CompressionStream !== 'undefined' && rawBytes.length > 512) {
+    try {
+      const cs = new CompressionStream('gzip');
+      const stream = new Blob([rawBytes]).stream().pipeThrough(cs);
+      const compressedBuf = await new Response(stream).arrayBuffer();
+      const gzBytes = new Uint8Array(compressedBuf);
+      if (gzBytes.length + 4 < rawBytes.length) {
+        return `GZ:${uint8ArrayToBase64(gzBytes)}`;
+      }
+    } catch {
+      // fallback to plain base64 if browser CompressionStream fails
+    }
+  }
+  return uint8ArrayToBase64(rawBytes);
+}
+
+async function payloadToBlob(payload: string, mimeType: string): Promise<Blob> {
+  if (payload.startsWith('GZ:')) {
+    const gzBytes = base64ToUint8Array(payload.slice(3));
+    if (typeof DecompressionStream !== 'undefined') {
+      try {
+        const ds = new DecompressionStream('gzip');
+        const stream = new Blob([new Uint8Array(gzBytes)]).stream().pipeThrough(ds);
+        const rawBuf = await new Response(stream).arrayBuffer();
+        return new Blob([rawBuf], { type: mimeType || 'application/octet-stream' });
+      } catch {
+        // fallback if somehow malformed
+      }
+    }
+  }
+  const bytes = base64ToUint8Array(payload);
+  return new Blob([new Uint8Array(bytes)], { type: mimeType || 'application/octet-stream' });
+}
+
+async function optimizeVaultImageBlob(
+  file: Blob,
+  fileName: string,
+  mimeType: string
+): Promise<{ blob: Blob; fileName: string; mimeType: string }> {
+  const lowerMime = mimeType.toLowerCase();
+  const compressible =
+    lowerMime === 'image/jpeg' || lowerMime === 'image/png' || lowerMime === 'image/webp';
+  if (!compressible || file.size <= 140_000 || typeof document === 'undefined') {
+    return { blob: file, fileName, mimeType };
+  }
+  try {
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error('Image decode error'));
+        el.src = objectUrl;
+      });
+      const maxDim = 1600;
+      const scale = Math.min(1, maxDim / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+      const targetW = Math.max(1, Math.round((img.naturalWidth || 1) * scale));
+      const targetH = Math.max(1, Math.round((img.naturalHeight || 1) * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return { blob: file, fileName, mimeType };
+      ctx.drawImage(img, 0, 0, targetW, targetH);
+
+      const targetMime = lowerMime === 'image/png' ? 'image/webp' : 'image/jpeg';
+      const converted = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob((res) => resolve(res), targetMime, 0.82)
+      );
+      if (converted && converted.size > 0 && converted.size < file.size * 0.9) {
+        const nextExt = targetMime === 'image/webp' ? '.webp' : '.jpg';
+        const nextName = fileName.replace(/\.[a-z0-9]{2,5}$/i, nextExt);
+        return {
+          blob: converted,
+          fileName: nextName === fileName && !fileName.endsWith(nextExt) ? `${fileName}${nextExt}` : nextName,
+          mimeType: targetMime,
+        };
+      }
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  } catch {
+    // keep original blob if canvas optimization isn't possible
+  }
+  return { blob: file, fileName, mimeType };
+}
+
+function getApiBaseOrigin(): string {
+  if (typeof window === 'undefined') return '';
+  if (window.location.hostname.endsWith('github.io')) {
+    return (import.meta.env.VITE_API_ORIGIN as string | undefined)?.trim().replace(/\/+$/, '') || '';
+  }
+  return '';
+}
+
+function buildVaultApiUrl(path: string): string | null {
+  const base = getApiBaseOrigin();
+  if (typeof window !== 'undefined' && window.location.hostname.endsWith('github.io') && !base) {
+    return null;
+  }
+  return `${base}${path}`;
+}
+
+async function getFirebaseAuthToken(): Promise<string | null> {
+  const user = auth.currentUser;
+  if (!user) return null;
+  try {
+    return await user.getIdToken();
+  } catch {
+    return null;
+  }
+}
+
+export async function getDedicatedVaultStorageStatus(
+  forceRefresh = false
+): Promise<DedicatedVaultStorageStatus> {
+  const fallback: DedicatedVaultStorageStatus = {
+    configured: false,
+    backend: 'firestore',
+    providerLabel: 'Firestore Vault',
+    freeQuotaLabel: '1 GB condiviso (compresso)',
+    maxFileBytes: MAX_CLOUD_FILE_BYTES,
+    checkedAt: Date.now(),
+  };
+
+  if (
+    !forceRefresh &&
+    cachedStorageStatus &&
+    Date.now() - cachedStorageStatus.checkedAt < STORAGE_STATUS_TTL_MS
+  ) {
+    return cachedStorageStatus;
+  }
+  if (!forceRefresh && inFlightStatusPromise) {
+    return inFlightStatusPromise;
+  }
+
+  const endpoint = buildVaultApiUrl('/api/vault/status');
+  const token = await getFirebaseAuthToken();
+  if (!endpoint || !token) {
+    cachedStorageStatus = fallback;
+    return fallback;
+  }
+
+  inFlightStatusPromise = (async () => {
+    try {
+      const resp = await fetch(endpoint, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      });
+      if (!resp.ok) {
+        cachedStorageStatus = fallback;
+        return fallback;
+      }
+      const json = (await resp.json()) as Partial<DedicatedVaultStorageStatus>;
+      const next: DedicatedVaultStorageStatus = {
+        configured: Boolean(json.configured),
+        backend: json.backend === 's3' ? 's3' : 'firestore',
+        providerLabel: String(json.providerLabel || fallback.providerLabel),
+        freeQuotaLabel: String(json.freeQuotaLabel || fallback.freeQuotaLabel),
+        maxFileBytes:
+          typeof json.maxFileBytes === 'number' && json.maxFileBytes > 0
+            ? json.maxFileBytes
+            : json.configured
+              ? 12_000_000
+              : MAX_CLOUD_FILE_BYTES,
+        checkedAt: Date.now(),
+      };
+      cachedStorageStatus = next;
+      return next;
+    } catch {
+      cachedStorageStatus = fallback;
+      return fallback;
+    } finally {
+      inFlightStatusPromise = null;
+    }
+  })();
+
+  return inFlightStatusPromise;
+}
+
+function readPersistedMetaCache(uid: string): Record<string, VaultFileMeta> | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(`${META_CACHE_LS_PREFIX}${uid}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { savedAt?: number; items?: Record<string, VaultFileMeta> };
+    if (
+      !parsed ||
+      typeof parsed.savedAt !== 'number' ||
+      Date.now() - parsed.savedAt > META_CACHE_TTL_MS ||
+      !parsed.items
+    ) {
+      return null;
+    }
+    return parsed.items;
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedMetaCache(uid: string, items: Record<string, VaultFileMeta>): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(
+      `${META_CACHE_LS_PREFIX}${uid}`,
+      JSON.stringify({ savedAt: Date.now(), items })
+    );
+  } catch {
+    // ignore storage full
+  }
+}
+
+function invalidatePersistedMetaCache(uid?: string | null): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (uid) {
+      localStorage.removeItem(`${META_CACHE_LS_PREFIX}${uid}`);
+      return;
+    }
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(META_CACHE_LS_PREFIX)) {
+        localStorage.removeItem(k);
+      }
+    }
+  } catch {
+    // ignore
+  }
 }
 
 function openVaultDb(): Promise<IDBDatabase> {
@@ -258,7 +531,7 @@ async function putLocalCache(record: StoredVaultFile): Promise<void> {
     });
     idb.close();
   } catch {
-    // ignore IndexedDB cache failures if Firestore succeeded
+    // ignore IndexedDB cache failures if cloud succeeded
   }
 }
 
@@ -293,20 +566,36 @@ async function deleteLocalCache(key: string): Promise<void> {
   }
 }
 
+export async function getLocalVaultFile(key: string): Promise<StoredVaultFile | null> {
+  if (!key) return null;
+  return getLocalCache(sanitizeVaultFileKey(key));
+}
+
+export async function listLocalCachedVaultKeys(): Promise<Set<string>> {
+  const keys = new Set<string>();
+  try {
+    const idb = await openVaultDb();
+    const allKeys = await new Promise<IDBValidKey[]>((resolve, reject) => {
+      const tx = idb.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).getAllKeys();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+    idb.close();
+    for (const k of allKeys) {
+      if (typeof k === 'string' && k) keys.add(k);
+    }
+  } catch {
+    // ignore
+  }
+  return keys;
+}
+
 function getAuthenticatedUid(preferredUid?: string): string | null {
   const currentUid = auth.currentUser?.uid || null;
   if (!currentUid) return null;
   if (preferredUid && preferredUid !== currentUid) return null;
   return currentUid;
-}
-
-export interface VaultSimulatedHint {
-  groupKey?: string;
-  groupSection?: string;
-  groupTitle?: string;
-  actionLabel?: string;
-  displayTitle?: string;
-  changedDetails?: string[];
 }
 
 export async function saveVaultFile(
@@ -315,27 +604,50 @@ export async function saveVaultFile(
   fileName: string,
   mimeType?: string,
   ownerUid?: string,
-  simHint?: VaultSimulatedHint
+  options?: VaultOpAuditHint
 ): Promise<StoredVaultFile> {
   if (file.size <= 0) {
     throw new Error('Il file selezionato è vuoto (0 byte).');
   }
 
   const cleanKey = sanitizeVaultFileKey(key);
-  const safeFileName = (fileName || 'documento.pdf').trim().slice(0, 140) || 'documento.pdf';
-  const safeMime = (mimeType || file.type || 'application/octet-stream').trim().slice(0, 80);
+  const initialFileName = (fileName || 'documento.pdf').trim().slice(0, 140) || 'documento.pdf';
+  const initialMime = (mimeType || file.type || 'application/octet-stream').trim().slice(0, 80);
+  const optimized = await optimizeVaultImageBlob(file, initialFileName, initialMime);
+  const safeFileName = optimized.fileName.slice(0, 140);
+  const safeMime = optimized.mimeType.slice(0, 80);
+  const blobToStore = optimized.blob;
   const nowMs = Date.now();
+
+  if (options?.storageMode === 'local') {
+    const localOnlyRecord: StoredVaultFile = {
+      key: cleanKey,
+      fileName: safeFileName,
+      mimeType: safeMime,
+      size: blobToStore.size,
+      updatedAt: nowMs,
+      blob: blobToStore,
+      origin: 'local',
+      storageBackend: undefined,
+      cloudSynced: false,
+      cloudTooLarge: false,
+      savedLocallyOnly: true,
+    };
+    await putLocalCache(localOnlyRecord);
+    notifyVaultUpdated();
+    return localOnlyRecord;
+  }
 
   const uid = getAuthenticatedUid(ownerUid);
   if (!uid) {
-    throw new Error('Devi accedere con il tuo account Google per salvare i file su Firestore.');
+    throw new Error('Devi accedere con il tuo account Google per salvare i file in archivio cloud.');
   }
 
-  if (file.size > MAX_CLOUD_FILE_BYTES) {
+  const storageStatus = await getDedicatedVaultStorageStatus();
+  const maxAllowed = storageStatus.configured ? storageStatus.maxFileBytes : MAX_CLOUD_FILE_BYTES;
+  if (blobToStore.size > maxAllowed) {
     throw new Error(
-      `Il file "${safeFileName}" supera il limite di ${Math.floor(
-        MAX_CLOUD_FILE_BYTES / 1_000_000
-      )} MB supportato su Firestore.`
+      `Il file "${safeFileName}" supera il limite di ${Math.floor(maxAllowed / 1_000_000)} MB.`
     );
   }
 
@@ -343,21 +655,20 @@ export async function saveVaultFile(
     key: cleanKey,
     fileName: safeFileName,
     mimeType: safeMime,
-    size: file.size,
+    size: blobToStore.size,
     updatedAt: nowMs,
-    blob: file,
+    blob: blobToStore,
     origin: 'firestore',
+    storageBackend: storageStatus.backend,
     cloudSynced: false,
     cloudTooLarge: false,
   };
 
-  if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
-    const isQuotaFallback = !isFirestoreWritesDisabled() && isFirestoreQuotaExceededActive();
-    const estimatedChunks = Math.max(1, Math.ceil((file.size * 1.35) / CHUNK_CHAR_SIZE));
-    recordFirestoreWritesSaved(
-      estimatedChunks + 1,
-      isQuotaFallback ? `Allegato locale (quota esaurita): ${safeFileName}` : `Allegato (${safeFileName})`
-    );
+  if (isFirestoreWritesDisabled()) {
+    const estimatedChunks = storageStatus.configured
+      ? 1
+      : Math.max(1, Math.ceil((blobToStore.size * 1.15) / CHUNK_CHAR_SIZE)) + 1;
+    recordFirestoreWritesSaved(estimatedChunks, `Allegato vault (${safeFileName})`);
     const localRecord: StoredVaultFile = {
       ...record,
       origin: 'local',
@@ -369,25 +680,130 @@ export async function saveVaultFile(
       fileKey: cleanKey,
       fileName: safeFileName,
       mimeType: safeMime,
-      size: file.size,
+      size: blobToStore.size,
       ownerUid: uid,
-      queuedReason: isQuotaFallback ? 'quota_exceeded' : 'test_mode',
-      ...simHint,
+      groupKey: options?.groupKey,
+      groupSection: options?.groupSection,
+      groupTitle: options?.groupTitle,
+      actionLabel: options?.actionLabel,
+      displayTitle: options?.displayTitle,
+      changedDetails: options?.changedDetails,
     });
     notifyVaultUpdated();
     return localRecord;
   }
 
-  return await uploadVaultBlobToFirestore(
-    record,
-    file,
-    cleanKey,
-    safeFileName,
-    safeMime,
-    uid,
-    false,
-    simHint
-  );
+  invalidatePersistedMetaCache(uid);
+
+  if (storageStatus.configured && storageStatus.backend === 's3') {
+    const uploadedExternal = await tryUploadVaultBlobExternal(
+      record,
+      blobToStore,
+      cleanKey,
+      safeFileName,
+      safeMime,
+      uid,
+      's3'
+    );
+    if (uploadedExternal) {
+      return uploadedExternal;
+    }
+  }
+
+  return await uploadVaultBlobToFirestore(record, blobToStore, cleanKey, safeFileName, safeMime, uid);
+}
+
+async function tryUploadVaultBlobExternal(
+  record: StoredVaultFile,
+  file: Blob,
+  cleanKey: string,
+  safeFileName: string,
+  safeMime: string,
+  uid: string,
+  backend: 's3'
+): Promise<StoredVaultFile | null> {
+  const endpoint = buildVaultApiUrl('/api/vault/upload');
+  const token = await getFirebaseAuthToken();
+  if (!endpoint || !token) return null;
+
+  try {
+    const dataBase64 = await blobToBase64(file);
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        fileKey: cleanKey,
+        fileName: safeFileName,
+        mimeType: safeMime,
+        dataBase64,
+      }),
+    });
+    if (!resp.ok) {
+      return null;
+    }
+
+    const filesColPath = `users/${uid}/vaultFiles`;
+    const chunksColPath = `users/${uid}/vaultFileChunks`;
+    const metaRef = doc(db, filesColPath, cleanKey);
+
+    let prevChunkCount = cloudMetaCache.get(cleanKey)?.chunkCount || 0;
+    try {
+      const prevSnap = await getDoc(metaRef);
+      if (prevSnap.exists()) {
+        const rawCount = Number(prevSnap.data()?.chunkCount || 0);
+        if (Number.isFinite(rawCount)) prevChunkCount = rawCount;
+      }
+    } catch {
+      // ignore pre-check errors
+    }
+
+    const batch = writeBatch(db);
+    batch.set(metaRef, {
+      ownerId: uid,
+      fileKey: cleanKey,
+      fileName: safeFileName,
+      mimeType: safeMime,
+      size: file.size,
+      chunkCount: 0,
+      storageBackend: backend,
+      updatedAt: serverTimestamp(),
+    });
+    for (let idx = 0; idx < Math.min(16, prevChunkCount); idx++) {
+      batch.delete(doc(db, chunksColPath, `${cleanKey}_chunk_${idx}`));
+    }
+    await batch.commit();
+
+    const syncedAtMs = Date.now();
+    cloudMetaCache.set(cleanKey, {
+      fileKey: cleanKey,
+      fileName: safeFileName,
+      mimeType: safeMime,
+      size: file.size,
+      chunkCount: 0,
+      storageBackend: backend,
+      updatedAtMs: syncedAtMs,
+    });
+    invalidatePersistedMetaCache(uid);
+    setVaultCloudStatus('ok');
+
+    const syncedRecord: StoredVaultFile = {
+      ...record,
+      updatedAt: syncedAtMs,
+      origin: 'firestore',
+      storageBackend: backend,
+      cloudSynced: true,
+      cloudTooLarge: false,
+    };
+    await putLocalCache(syncedRecord);
+    notifyVaultUpdated();
+    return syncedRecord;
+  } catch (err) {
+    console.warn(`Upload storage esterno (${backend}) non riuscito, uso fallback Firestore:`, err);
+    return null;
+  }
 }
 
 async function uploadVaultBlobToFirestore(
@@ -396,15 +812,13 @@ async function uploadVaultBlobToFirestore(
   cleanKey: string,
   safeFileName: string,
   safeMime: string,
-  uid: string,
-  useDirectBatch = false,
-  simHint?: VaultSimulatedHint
+  uid: string
 ): Promise<StoredVaultFile> {
   try {
-    const base64 = await blobToBase64(file);
+    const payloadStr = await gzipBlobToPayload(file);
     const chunks: string[] = [];
-    for (let i = 0; i < base64.length; i += CHUNK_CHAR_SIZE) {
-      chunks.push(base64.slice(i, i + CHUNK_CHAR_SIZE));
+    for (let i = 0; i < payloadStr.length; i += CHUNK_CHAR_SIZE) {
+      chunks.push(payloadStr.slice(i, i + CHUNK_CHAR_SIZE));
     }
 
     if (chunks.length === 0 || chunks.length > 16) {
@@ -427,11 +841,10 @@ async function uploadVaultBlobToFirestore(
     }
 
     // Write chunks in <= 4-op batches (~2.4 MB base64 max per commit)
-    const batchFactory = useDirectBatch ? directWriteBatch : writeBatch;
     const CHUNKS_PER_BATCH = 4;
     for (let start = 0; start < chunks.length; start += CHUNKS_PER_BATCH) {
       const slice = chunks.slice(start, start + CHUNKS_PER_BATCH);
-      const batch = batchFactory(db);
+      const batch = writeBatch(db);
       slice.forEach((chunkData, offset) => {
         const idx = start + offset;
         const chunkId = `${cleanKey}_chunk_${idx}`;
@@ -447,7 +860,7 @@ async function uploadVaultBlobToFirestore(
     }
 
     // Finalize metadata doc + clean any shrinking surplus chunks
-    const finalBatch = batchFactory(db);
+    const finalBatch = writeBatch(db);
     finalBatch.set(metaRef, {
       ownerId: uid,
       fileKey: cleanKey,
@@ -455,6 +868,7 @@ async function uploadVaultBlobToFirestore(
       mimeType: safeMime,
       size: file.size,
       chunkCount: chunks.length,
+      storageBackend: 'firestore',
       updatedAt: serverTimestamp(),
     });
     for (let idx = chunks.length; idx < prevChunkCount; idx++) {
@@ -469,14 +883,17 @@ async function uploadVaultBlobToFirestore(
       mimeType: safeMime,
       size: file.size,
       chunkCount: chunks.length,
+      storageBackend: 'firestore',
       updatedAtMs: syncedAtMs,
     });
+    invalidatePersistedMetaCache(uid);
     setVaultCloudStatus('ok');
 
     const syncedRecord: StoredVaultFile = {
       ...record,
       updatedAt: syncedAtMs,
       origin: 'firestore',
+      storageBackend: 'firestore',
       cloudSynced: true,
       cloudTooLarge: false,
     };
@@ -494,39 +911,14 @@ async function uploadVaultBlobToFirestore(
       err instanceof Error ? err.message : String(err)
     }`.toLowerCase();
     if (
-      isFirestoreQuotaError(err) ||
       errRaw.includes('resource-exhausted') ||
       (errRaw.includes('quota') && errRaw.includes('exceeded'))
     ) {
-      notifyFirestoreQuotaExceeded();
-      if (!useDirectBatch) {
-        const estimatedChunks = Math.max(1, Math.ceil((file.size * 1.35) / CHUNK_CHAR_SIZE));
-        recordFirestoreWritesSaved(
-          estimatedChunks + 1,
-          `Allegato locale (quota esaurita): ${safeFileName}`
-        );
-        const localRecord: StoredVaultFile = {
-          ...record,
-          origin: 'local',
-          cloudSynced: true,
-          cloudTooLarge: false,
-        };
-        await putLocalCache(localRecord);
-        enqueueSimulatedVaultUpload({
-          fileKey: cleanKey,
-          fileName: safeFileName,
-          mimeType: safeMime,
-          size: file.size,
-          ownerUid: uid,
-          queuedReason: 'quota_exceeded',
-          ...simHint,
-        });
-        notifyVaultUpdated();
-        return localRecord;
-      }
       setVaultCloudStatus('error');
+      const { notifyFirestoreQuotaExceeded } = await import('../firebase');
+      notifyFirestoreQuotaExceeded();
       throw new Error(
-        'Quota giornaliera gratuita di scrittura Firestore esaurita: sincronizzazione allegato rimandata automaticamente al ripristino.'
+        'Quota giornaliera gratuita di scrittura Firestore esaurita: impossibile caricare il file ora. Il limite si azzera automaticamente il giorno successivo.'
       );
     }
     setVaultCloudStatus('error');
@@ -546,12 +938,24 @@ export async function replayVaultUploadToFirestore(params: {
   const cleanKey = sanitizeVaultFileKey(params.fileKey);
   const uid = getAuthenticatedUid(params.ownerUid);
   if (!uid) {
-    throw new Error('Autenticazione richiesta per sincronizzare gli allegati su Firestore.');
+    throw new Error('Autenticazione richiesta per sincronizzare gli allegati.');
   }
   const localRec = await getLocalCache(cleanKey);
   if (!localRec || !localRec.blob || localRec.blob.size <= 0) {
-    // Already deleted locally before flush
     return;
+  }
+  const status = await getDedicatedVaultStorageStatus();
+  if (status.configured && status.backend === 's3') {
+    const ext = await tryUploadVaultBlobExternal(
+      localRec,
+      localRec.blob,
+      cleanKey,
+      params.fileName || localRec.fileName,
+      params.mimeType || localRec.mimeType,
+      uid,
+      's3'
+    );
+    if (ext) return;
   }
   await uploadVaultBlobToFirestore(
     localRec,
@@ -559,20 +963,132 @@ export async function replayVaultUploadToFirestore(params: {
     cleanKey,
     params.fileName || localRec.fileName,
     params.mimeType || localRec.mimeType,
-    uid,
-    true
+    uid
   );
 }
 
-export async function getLocalVaultFile(key: string): Promise<StoredVaultFile | null> {
+async function fetchExternalVaultBlob(
+  cleanKey: string,
+  expectedMime: string
+): Promise<Blob | null> {
+  const endpoint = buildVaultApiUrl(`/api/vault/file/${encodeURIComponent(cleanKey)}`);
+  const token = await getFirebaseAuthToken();
+  if (!endpoint || !token) return null;
+  try {
+    const resp = await fetch(endpoint, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!resp.ok) return null;
+    const rawBlob = await resp.blob();
+    const mime = expectedMime || rawBlob.type || 'application/octet-stream';
+    return rawBlob.type === mime ? rawBlob : new Blob([rawBlob], { type: mime });
+  } catch {
+    return null;
+  }
+}
+
+export async function getVaultFile(key: string, ownerUid?: string): Promise<StoredVaultFile | null> {
   if (!key) return null;
   const cleanKey = sanitizeVaultFileKey(key);
   const localRec = await getLocalCache(cleanKey);
-  if (localRec?.blob && localRec.blob.size > 0) {
+
+  const uid = getAuthenticatedUid(ownerUid);
+  if (uid) {
+    try {
+      let cloudMeta = cloudMetaCache.get(cleanKey);
+      if (!cloudMeta) {
+        const metaSnap = await getDoc(doc(db, `users/${uid}/vaultFiles`, cleanKey));
+        if (metaSnap.exists()) {
+          const d = metaSnap.data();
+          const rawBackend = String(d.storageBackend || '').trim();
+          cloudMeta = {
+            fileKey: String(d.fileKey || cleanKey),
+            fileName: String(d.fileName || 'documento.pdf'),
+            mimeType: String(d.mimeType || 'application/pdf'),
+            size: Number(d.size || 0),
+            chunkCount: Number(d.chunkCount || 0),
+            storageBackend: rawBackend === 's3' ? 's3' : 'firestore',
+            updatedAtMs: timestampToMs(d.updatedAt),
+          };
+          cloudMetaCache.set(cleanKey, cloudMeta);
+          setVaultCloudStatus('ok');
+        }
+      }
+
+      const localIsFresh =
+        localRec &&
+        cloudMeta &&
+        localRec.origin === 'firestore' &&
+        localRec.size === cloudMeta.size &&
+        localRec.updatedAt >= cloudMeta.updatedAtMs;
+
+      if (cloudMeta && !localIsFresh) {
+        const isExternal = cloudMeta.storageBackend === 's3' || cloudMeta.chunkCount === 0;
+        if (isExternal) {
+          const extBlob = await fetchExternalVaultBlob(cleanKey, cloudMeta.mimeType);
+          if (extBlob) {
+            const hydrated: StoredVaultFile = {
+              key: cleanKey,
+              fileName: cloudMeta.fileName,
+              mimeType: cloudMeta.mimeType,
+              size: extBlob.size || cloudMeta.size,
+              updatedAt: cloudMeta.updatedAtMs,
+              blob: extBlob,
+              origin: 'firestore',
+              storageBackend: cloudMeta.storageBackend || 's3',
+              cloudSynced: true,
+            };
+            await putLocalCache(hydrated);
+            setVaultCloudStatus('ok');
+            return hydrated;
+          }
+        }
+
+        if (cloudMeta.chunkCount > 0) {
+          const indices = Array.from({ length: cloudMeta.chunkCount }, (_, i) => i);
+          const chunkSnaps = await Promise.all(
+            indices.map((idx) =>
+              getDoc(doc(db, `users/${uid}/vaultFileChunks`, `${cleanKey}_chunk_${idx}`))
+            )
+          );
+
+          const missing = chunkSnaps.some((s) => !s.exists());
+          if (!missing) {
+            const joinedPayload = chunkSnaps.map((s) => String(s.data()?.data || '')).join('');
+            const blob = await payloadToBlob(joinedPayload, cloudMeta.mimeType);
+            const hydrated: StoredVaultFile = {
+              key: cleanKey,
+              fileName: cloudMeta.fileName,
+              mimeType: cloudMeta.mimeType,
+              size: blob.size || cloudMeta.size,
+              updatedAt: cloudMeta.updatedAtMs,
+              blob,
+              origin: 'firestore',
+              storageBackend: 'firestore',
+              cloudSynced: true,
+            };
+            await putLocalCache(hydrated);
+            setVaultCloudStatus('ok');
+            return hydrated;
+          }
+        }
+      }
+    } catch (err) {
+      if (isPermissionDeniedError(err)) {
+        setVaultCloudStatus('rules-required');
+      } else {
+        console.warn('Firestore vault download fallback:', err);
+      }
+    }
+  }
+
+  if (localRec) {
     return {
       ...localRec,
       origin: localRec.origin || 'local',
       cloudSynced: localRec.origin === 'firestore',
+      savedLocallyOnly: localRec.origin === 'local',
     };
   }
 
@@ -602,162 +1118,62 @@ export async function getLocalVaultFile(key: string): Promise<StoredVaultFile | 
       return null;
     }
   }
+
   return null;
 }
 
-export async function getVaultFile(
-  key: string,
-  ownerUid?: string,
-  options?: { forceCloudRefresh?: boolean }
-): Promise<StoredVaultFile | null> {
-  if (!key) return null;
-  const cleanKey = sanitizeVaultFileKey(key);
-  const localRec = await getLocalCache(cleanKey);
-
-  // Cache-first: return immediately from IndexedDB (0 Firestore reads) unless explicit cloud refresh requested
-  if (localRec?.blob && localRec.blob.size > 0 && !options?.forceCloudRefresh) {
-    return {
-      ...localRec,
-      origin: localRec.origin || 'local',
-      cloudSynced: localRec.origin === 'firestore',
-    };
-  }
-
-  if (!localRec) {
-    const bundled = STATIC_BILL_PDF_ASSETS[key] || STATIC_BILL_PDF_ASSETS[cleanKey];
-    if (bundled && typeof fetch === 'function') {
-      try {
-        const res = await fetch(resolveStaticAssetUrl(bundled.relPath));
-        if (res.ok) {
-          const rawBlob = await res.blob();
-          const ct = rawBlob.type || bundled.mimeType;
-          const pdfBlob =
-            ct && ct !== 'application/octet-stream'
-              ? rawBlob
-              : new Blob([rawBlob], { type: bundled.mimeType });
-          return {
-            key: cleanKey,
-            fileName: bundled.fileName,
-            mimeType: bundled.mimeType,
-            size: pdfBlob.size,
-            updatedAt: 0,
-            blob: pdfBlob,
-            origin: 'bundled',
-            cloudSynced: true,
-          };
-        }
-      } catch {
-        // continue to cloud if needed
+async function deleteExternalVaultKeys(cleanKeys: string[]): Promise<void> {
+  if (cleanKeys.length === 0) return;
+  const token = await getFirebaseAuthToken();
+  if (!token) return;
+  try {
+    if (cleanKeys.length === 1) {
+      const ep = buildVaultApiUrl(`/api/vault/file/${encodeURIComponent(cleanKeys[0])}`);
+      if (ep) {
+        await fetch(ep, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
       }
+      return;
     }
-  }
-
-  const uid = getAuthenticatedUid(ownerUid);
-  if (uid && !isFirestoreQuotaExceededActive()) {
-    try {
-      let cloudMeta = cloudMetaCache.get(cleanKey);
-      // Batch-sync cloud metadata once per session instead of firing N separate getDoc calls on view mounts
-      if (!cloudMeta && syncedVaultMetaUid !== uid) {
-        await listVaultFileMetadata(uid);
-        cloudMeta = cloudMetaCache.get(cleanKey);
-      }
-      if (!cloudMeta && syncedVaultMetaUid !== uid && !isFirestoreQuotaExceededActive()) {
-        const metaSnap = await getDoc(doc(db, `users/${uid}/vaultFiles`, cleanKey));
-        if (metaSnap.exists()) {
-          const d = metaSnap.data();
-          cloudMeta = {
-            fileKey: String(d.fileKey || cleanKey),
-            fileName: String(d.fileName || 'documento.pdf'),
-            mimeType: String(d.mimeType || 'application/pdf'),
-            size: Number(d.size || 0),
-            chunkCount: Number(d.chunkCount || 0),
-            updatedAtMs: timestampToMs(d.updatedAt),
-          };
-          cloudMetaCache.set(cleanKey, cloudMeta);
-          setVaultCloudStatus('ok');
-        }
-      }
-
-      // 120s tolerance eliminates serverTimestamp() vs Date.now() clock skew false stale re-downloads
-      const localIsFresh =
-        localRec &&
-        cloudMeta &&
-        localRec.origin === 'firestore' &&
-        localRec.size === cloudMeta.size &&
-        localRec.updatedAt + 120_000 >= cloudMeta.updatedAtMs;
-
-      if (cloudMeta && cloudMeta.chunkCount > 0 && !localIsFresh && !isFirestoreQuotaExceededActive()) {
-        const indices = Array.from({ length: cloudMeta.chunkCount }, (_, i) => i);
-        const chunkSnaps = await Promise.all(
-          indices.map((idx) =>
-            getDoc(doc(db, `users/${uid}/vaultFileChunks`, `${cleanKey}_chunk_${idx}`))
-          )
-        );
-
-        const missing = chunkSnaps.some((s) => !s.exists());
-        if (!missing) {
-          const joinedBase64 = chunkSnaps.map((s) => String(s.data()?.data || '')).join('');
-          const blob = base64ToBlob(joinedBase64, cloudMeta.mimeType);
-          const hydrated: StoredVaultFile = {
-            key: cleanKey,
-            fileName: cloudMeta.fileName,
-            mimeType: cloudMeta.mimeType,
-            size: blob.size || cloudMeta.size,
-            updatedAt: cloudMeta.updatedAtMs,
-            blob,
-            origin: 'firestore',
-            cloudSynced: true,
-          };
-          await putLocalCache(hydrated);
-          setVaultCloudStatus('ok');
-          return hydrated;
-        }
-      }
-    } catch (err) {
-      if (isPermissionDeniedError(err)) {
-        setVaultCloudStatus('rules-required');
-      } else if (isFirestoreQuotaError(err)) {
-        notifyFirestoreQuotaExceeded();
-      } else {
-        console.warn('Firestore vault download fallback:', err);
-      }
+    const batchEp = buildVaultApiUrl('/api/vault/delete-batch');
+    if (batchEp) {
+      await fetch(batchEp, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ keys: cleanKeys }),
+      });
     }
+  } catch {
+    // best-effort external binary cleanup
   }
-
-  if (localRec) {
-    return {
-      ...localRec,
-      origin: localRec.origin || 'local',
-      cloudSynced: localRec.origin === 'firestore',
-    };
-  }
-
-  return null;
 }
 
 export async function deleteVaultFile(
   key: string,
   ownerUid?: string,
-  simHint?: VaultSimulatedHint
+  auditHint?: VaultDeleteAuditHint
 ): Promise<void> {
   if (!key) return;
   const cleanKey = sanitizeVaultFileKey(key);
 
-  if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
-    const isQuotaFallback = !isFirestoreWritesDisabled() && isFirestoreQuotaExceededActive();
-    recordFirestoreWritesSaved(
-      1,
-      isQuotaFallback
-        ? `Rimozione allegato locale (quota esaurita): ${simHint?.displayTitle || cleanKey}`
-        : `Rimozione allegato (${simHint?.displayTitle || cleanKey})`
-    );
+  await deleteLocalCache(cleanKey);
+  cloudMetaCache.delete(cleanKey);
+
+  if (isFirestoreWritesDisabled()) {
+    recordFirestoreWritesSaved(1, `Eliminazione allegato vault (${cleanKey})`);
     const uid = getAuthenticatedUid(ownerUid);
     if (uid) {
       enqueueSimulatedVaultDelete({
         keys: [cleanKey],
         ownerUid: uid,
-        queuedReason: isQuotaFallback ? 'quota_exceeded' : 'test_mode',
-        ...simHint,
+        groupKey: auditHint?.groupKey,
+        groupSection: auditHint?.groupSection,
+        groupTitle: auditHint?.groupTitle,
+        actionLabel: auditHint?.actionLabel,
+        displayTitle: auditHint?.displayTitle,
+        changedDetails: auditHint?.changedDetails,
       });
     }
     notifyVaultUpdated();
@@ -766,6 +1182,8 @@ export async function deleteVaultFile(
 
   const uid = getAuthenticatedUid(ownerUid);
   if (uid) {
+    invalidatePersistedMetaCache(uid);
+    await deleteExternalVaultKeys([cleanKey]);
     try {
       const metaRef = doc(db, `users/${uid}/vaultFiles`, cleanKey);
       const metaSnap = await getDoc(metaRef);
@@ -778,29 +1196,14 @@ export async function deleteVaultFile(
         }
         await batch.commit();
       }
-      await deleteLocalCache(cleanKey);
-      cloudMetaCache.delete(cleanKey);
       setVaultCloudStatus('ok');
     } catch (err) {
       if (isPermissionDeniedError(err)) {
         setVaultCloudStatus('rules-required');
-      } else if (isFirestoreQuotaError(err) || isFirestoreQuotaExceededActive()) {
-        notifyFirestoreQuotaExceeded();
-        enqueueSimulatedVaultDelete({
-          keys: [cleanKey],
-          ownerUid: uid,
-          queuedReason: 'quota_exceeded',
-          ...simHint,
-        });
       } else {
-        await deleteLocalCache(cleanKey);
-        cloudMetaCache.delete(cleanKey);
         console.warn('Firestore vault delete warning:', err);
       }
     }
-  } else {
-    await deleteLocalCache(cleanKey);
-    cloudMetaCache.delete(cleanKey);
   }
 
   notifyVaultUpdated();
@@ -809,7 +1212,7 @@ export async function deleteVaultFile(
 export async function deleteVaultFiles(
   keys: string[],
   ownerUid?: string,
-  simHint?: VaultSimulatedHint
+  auditHint?: VaultDeleteAuditHint
 ): Promise<void> {
   const cleanKeys = Array.from(new Set(keys.map(sanitizeVaultFileKey)));
   if (cleanKeys.length === 0) return;
@@ -819,62 +1222,41 @@ export async function deleteVaultFiles(
     throw new Error('È necessario autenticarsi per eliminare i PDF archiviati.');
   }
 
-  if (isFirestoreWritesDisabled() || isFirestoreQuotaExceededActive()) {
-    const isQuotaFallback = !isFirestoreWritesDisabled() && isFirestoreQuotaExceededActive();
-    recordFirestoreWritesSaved(
-      cleanKeys.length * 2,
-      isQuotaFallback
-        ? `Rimozione allegati locale (quota esaurita): ${simHint?.displayTitle || cleanKeys.length}`
-        : `Rimozione allegati (${simHint?.displayTitle || cleanKeys.length})`
-    );
+  for (const key of cleanKeys) {
+    await deleteLocalCache(key);
+    cloudMetaCache.delete(key);
+  }
+  invalidatePersistedMetaCache(uid);
+
+  if (isFirestoreWritesDisabled()) {
+    recordFirestoreWritesSaved(cleanKeys.length * 2, 'Eliminazione allegati vault (test)');
     enqueueSimulatedVaultDelete({
       keys: cleanKeys,
       ownerUid: uid,
-      queuedReason: isQuotaFallback ? 'quota_exceeded' : 'test_mode',
-      ...simHint,
+      groupKey: auditHint?.groupKey,
+      groupSection: auditHint?.groupSection,
+      groupTitle: auditHint?.groupTitle,
+      actionLabel: auditHint?.actionLabel,
+      displayTitle: auditHint?.displayTitle,
+      changedDetails: auditHint?.changedDetails,
     });
     notifyVaultUpdated();
     return;
   }
 
-  try {
-    await deleteVaultKeysFromFirestore(cleanKeys, uid);
-    for (const key of cleanKeys) {
-      await deleteLocalCache(key);
-      cloudMetaCache.delete(key);
-    }
-  } catch (err) {
-    if (isFirestoreQuotaError(err) || isFirestoreQuotaExceededActive()) {
-      notifyFirestoreQuotaExceeded();
-      enqueueSimulatedVaultDelete({
-        keys: cleanKeys,
-        ownerUid: uid,
-        queuedReason: 'quota_exceeded',
-        ...simHint,
-      });
-      notifyVaultUpdated();
-      return;
-    }
-    throw err;
-  }
+  await deleteExternalVaultKeys(cleanKeys);
+  await deleteVaultKeysFromFirestore(cleanKeys, uid);
 }
 
-async function deleteVaultKeysFromFirestore(
-  cleanKeys: string[],
-  uid: string,
-  useDirectBatch = false
-): Promise<void> {
+async function deleteVaultKeysFromFirestore(cleanKeys: string[], uid: string): Promise<void> {
   const keysPerBatch = 23;
-  const batchFactory = useDirectBatch ? directWriteBatch : writeBatch;
   try {
     for (let start = 0; start < cleanKeys.length; start += keysPerBatch) {
-      const batch = batchFactory(db);
+      const batch = writeBatch(db);
       for (const key of cleanKeys.slice(start, start + keysPerBatch)) {
         batch.delete(doc(db, `users/${uid}/vaultFiles`, key));
         for (let index = 0; index < 16; index++) {
-          batch.delete(
-            doc(db, `users/${uid}/vaultFileChunks`, `${key}_chunk_${index}`)
-          );
+          batch.delete(doc(db, `users/${uid}/vaultFileChunks`, `${key}_chunk_${index}`));
         }
       }
       await batch.commit();
@@ -882,9 +1264,6 @@ async function deleteVaultKeysFromFirestore(
   } catch (error) {
     if (isPermissionDeniedError(error)) {
       setVaultCloudStatus('rules-required');
-    } else if (isFirestoreQuotaError(error)) {
-      notifyFirestoreQuotaExceeded();
-      setVaultCloudStatus('error');
     } else {
       setVaultCloudStatus('error');
     }
@@ -905,11 +1284,8 @@ export async function replayVaultDeleteToFirestore(params: {
   if (!uid) {
     throw new Error('Autenticazione richiesta per sincronizzare le eliminazioni vault.');
   }
-  await deleteVaultKeysFromFirestore(cleanKeys, uid, true);
-  for (const key of cleanKeys) {
-    await deleteLocalCache(key);
-    cloudMetaCache.delete(key);
-  }
+  await deleteExternalVaultKeys(cleanKeys);
+  await deleteVaultKeysFromFirestore(cleanKeys, uid);
 }
 
 export async function listVaultFileMetadata(
@@ -948,6 +1324,7 @@ export async function listVaultFileMetadata(
         size: r.size,
         updatedAt: r.updatedAt,
         origin: r.origin || 'local',
+        storageBackend: r.storageBackend,
       };
     }
   } catch {
@@ -956,211 +1333,238 @@ export async function listVaultFileMetadata(
 
   const uid = getAuthenticatedUid(ownerUid);
   if (!uid) {
-    syncedVaultMetaUid = null;
-    cloudMetaCache.clear();
     return map;
   }
 
-  const forceRefresh = Boolean(options?.forceRefresh);
-  const needsCloudSync =
-    !isFirestoreQuotaExceededActive() && (forceRefresh || syncedVaultMetaUid !== uid);
+  const cachedCloud = !options?.forceRefresh ? readPersistedMetaCache(uid) : null;
+  if (cachedCloud) {
+    for (const [fileKey, meta] of Object.entries(cachedCloud)) {
+      cloudMetaCache.set(fileKey, {
+        fileKey,
+        fileName: meta.fileName,
+        mimeType: meta.mimeType,
+        size: meta.size,
+        chunkCount: meta.chunkCount || 0,
+        storageBackend: meta.storageBackend,
+        updatedAtMs: meta.updatedAt,
+      });
+      map[fileKey] = meta;
+    }
+    return map;
+  }
 
-  if (needsCloudSync) {
-    if (inFlightVaultMetaSync && inFlightVaultMetaUid === uid) {
-      await inFlightVaultMetaSync;
-    } else {
-      inFlightVaultMetaUid = uid;
-      inFlightVaultMetaSync = (async () => {
-        try {
-          const q = query(
-            collection(db, `users/${uid}/vaultFiles`),
-            where('ownerId', '==', uid)
-          );
-          const snap = await getDocs(q);
-          const seenCloudKeys = new Set<string>();
-          cloudMetaCache.clear();
+  const existingInFlight = inFlightMetaListByUid.get(uid);
+  if (existingInFlight && !options?.forceRefresh) {
+    return existingInFlight;
+  }
 
-          snap.forEach((docSnap) => {
-            const d = docSnap.data();
-            const fileKey = String(d.fileKey || docSnap.id);
-            const fileName = String(d.fileName || 'documento.pdf');
-            const mimeType = String(d.mimeType || 'application/pdf');
-            const size = Number(d.size || 0);
-            const chunkCount = Number(d.chunkCount || 0);
-            const updatedAtMs = timestampToMs(d.updatedAt);
+  const fetchPromise = (async () => {
+    try {
+      const q = query(collection(db, `users/${uid}/vaultFiles`), where('ownerId', '==', uid));
+      const snap = await getDocs(q);
+      const seenCloudKeys = new Set<string>();
+      const cloudOnlyMap: Record<string, VaultFileMeta> = {};
+      cloudMetaCache.clear();
 
-            seenCloudKeys.add(fileKey);
-            cloudMetaCache.set(fileKey, {
-              fileKey,
-              fileName,
-              mimeType,
-              size,
-              chunkCount,
-              updatedAtMs,
-            });
-          });
+      snap.forEach((docSnap) => {
+        const d = docSnap.data();
+        const fileKey = String(d.fileKey || docSnap.id);
+        const fileName = String(d.fileName || 'documento.pdf');
+        const mimeType = String(d.mimeType || 'application/pdf');
+        const size = Number(d.size || 0);
+        const chunkCount = Number(d.chunkCount || 0);
+        const rawBackend = String(d.storageBackend || '').trim();
+        const storageBackend: DedicatedVaultStorageBackend =
+          rawBackend === 's3' ? 's3' : 'firestore';
+        const updatedAtMs = timestampToMs(d.updatedAt);
 
-          // Prune cached cloud files that were deleted from another device
-          for (const cachedKey of localSyncedKeysToCheck) {
-            if (!seenCloudKeys.has(cachedKey)) {
-              await deleteLocalCache(cachedKey);
-              if (STATIC_BILL_PDF_ASSETS[cachedKey]) {
-                map[cachedKey] = {
-                  fileName: STATIC_BILL_PDF_ASSETS[cachedKey].fileName,
-                  mimeType: STATIC_BILL_PDF_ASSETS[cachedKey].mimeType,
-                  size: 0,
-                  updatedAt: 0,
-                  origin: 'bundled',
-                };
-              } else {
-                delete map[cachedKey];
-              }
-            }
-          }
+        seenCloudKeys.add(fileKey);
+        cloudMetaCache.set(fileKey, {
+          fileKey,
+          fileName,
+          mimeType,
+          size,
+          chunkCount,
+          storageBackend,
+          updatedAtMs,
+        });
 
-          syncedVaultMetaUid = uid;
-          setVaultCloudStatus('ok');
-        } catch (err) {
-          if (isPermissionDeniedError(err)) {
-            setVaultCloudStatus('rules-required');
-          } else if (isFirestoreQuotaError(err)) {
-            notifyFirestoreQuotaExceeded();
+        const entry: VaultFileMeta = {
+          fileName,
+          mimeType,
+          size,
+          updatedAt: updatedAtMs,
+          origin: 'firestore',
+          chunkCount,
+          storageBackend,
+        };
+        cloudOnlyMap[fileKey] = entry;
+        map[fileKey] = entry;
+      });
+
+      writePersistedMetaCache(uid, cloudOnlyMap);
+
+      // Prune cached cloud files that were deleted from another device
+      for (const cachedKey of localSyncedKeysToCheck) {
+        if (!seenCloudKeys.has(cachedKey)) {
+          await deleteLocalCache(cachedKey);
+          if (STATIC_BILL_PDF_ASSETS[cachedKey]) {
+            map[cachedKey] = {
+              fileName: STATIC_BILL_PDF_ASSETS[cachedKey].fileName,
+              mimeType: STATIC_BILL_PDF_ASSETS[cachedKey].mimeType,
+              size: 0,
+              updatedAt: 0,
+              origin: 'bundled',
+            };
           } else {
-            console.warn('Firestore vault metadata list warning:', err);
+            delete map[cachedKey];
           }
-        } finally {
-          inFlightVaultMetaSync = null;
-          inFlightVaultMetaUid = null;
         }
-      })();
-      await inFlightVaultMetaSync;
-    }
-  }
-
-  for (const [fileKey, cloudMeta] of cloudMetaCache.entries()) {
-    map[fileKey] = {
-      fileName: cloudMeta.fileName,
-      mimeType: cloudMeta.mimeType,
-      size: cloudMeta.size,
-      updatedAt: cloudMeta.updatedAtMs,
-      origin: 'firestore',
-      chunkCount: cloudMeta.chunkCount,
-    };
-  }
-
-  return map;
-}
-
-export async function listLocalCachedVaultKeys(): Promise<Set<string>> {
-  const keys = new Set<string>();
-  try {
-    const idb = await openVaultDb();
-    const records = await new Promise<StoredVaultFile[]>((resolve, reject) => {
-      const tx = idb.transaction(IDB_STORE, 'readonly');
-      const req = tx.objectStore(IDB_STORE).getAll();
-      req.onsuccess = () => resolve((req.result as StoredVaultFile[]) || []);
-      req.onerror = () => reject(req.error);
-    });
-    idb.close();
-    for (const rec of records) {
-      if (rec?.key && rec.blob && rec.blob.size > 0) {
-        keys.add(rec.key);
       }
+
+      setVaultCloudStatus('ok');
+    } catch (err) {
+      if (isPermissionDeniedError(err)) {
+        setVaultCloudStatus('rules-required');
+      } else {
+        console.warn('Firestore vault metadata list warning:', err);
+      }
+    } finally {
+      inFlightMetaListByUid.delete(uid);
     }
-  } catch {
-    // ignore IndexedDB errors
-  }
-  return keys;
+
+    return map;
+  })();
+
+  inFlightMetaListByUid.set(uid, fetchPromise);
+  return fetchPromise;
 }
 
 export async function precacheAllCloudVaultFiles(
   ownerUid?: string,
-  onProgress?: (progress: { completed: number; total: number; currentFileName: string }) => void
+  onProgress?: (progress: {
+    completed: number;
+    total: number;
+    currentFileName: string;
+  }) => void
 ): Promise<{
-  cached: number;
-  alreadyCached: number;
   totalCloud: number;
-  quotaHit: boolean;
+  alreadyCached: number;
+  cached: number;
   errors: number;
+  quotaHit: boolean;
 }> {
   const uid = getAuthenticatedUid(ownerUid);
-  if (!uid) {
-    return { cached: 0, alreadyCached: 0, totalCloud: 0, quotaHit: false, errors: 0 };
-  }
-  if (isFirestoreQuotaExceededActive()) {
-    return {
-      cached: 0,
-      alreadyCached: 0,
-      totalCloud: cloudMetaCache.size,
-      quotaHit: true,
-      errors: 0,
-    };
-  }
-
-  await listVaultFileMetadata(uid, { forceRefresh: true });
-  if (isFirestoreQuotaExceededActive()) {
-    return {
-      cached: 0,
-      alreadyCached: 0,
-      totalCloud: cloudMetaCache.size,
-      quotaHit: true,
-      errors: 0,
-    };
-  }
-
+  const metaMap = await listVaultFileMetadata(uid || undefined, { forceRefresh: true });
   const localKeys = await listLocalCachedVaultKeys();
-  const entries = Array.from(cloudMetaCache.values()).filter((m) => m.chunkCount > 0);
-  const missing = entries.filter((m) => !localKeys.has(m.fileKey));
-  const alreadyCached = entries.length - missing.length;
+  const cloudEntries = Object.entries(metaMap).filter(([, meta]) => meta.origin === 'firestore');
 
+  let completed = 0;
   let cached = 0;
+  let alreadyCached = 0;
   let errors = 0;
   let quotaHit = false;
+  const totalCloud = cloudEntries.length;
 
-  for (let i = 0; i < missing.length; i += 1) {
-    const meta = missing[i];
-    if (isFirestoreQuotaExceededActive()) {
+  onProgress?.({ completed: 0, total: totalCloud, currentFileName: '' });
+
+  for (const [key, meta] of cloudEntries) {
+    if (localKeys.has(key)) {
+      alreadyCached++;
+      completed++;
+      onProgress?.({ completed, total: totalCloud, currentFileName: meta.fileName || key });
+      continue;
+    }
+
+    const usesFirestoreChunks =
+      meta.storageBackend !== 's3' && (meta.chunkCount || 0) > 0;
+    if (usesFirestoreChunks && isFirestoreQuotaExceededActive()) {
       quotaHit = true;
       break;
     }
-    onProgress?.({
-      completed: i,
-      total: missing.length,
-      currentFileName: meta.fileName,
-    });
+
+    onProgress?.({ completed, total: totalCloud, currentFileName: meta.fileName || key });
     try {
-      const downloaded = await getVaultFile(meta.fileKey, uid, { forceCloudRefresh: true });
-      if (isFirestoreQuotaExceededActive()) {
-        quotaHit = true;
-        break;
-      }
-      if (downloaded?.blob && downloaded.blob.size > 0) {
-        cached += 1;
+      const file = await getVaultFile(key, uid || undefined);
+      if (file) {
+        cached++;
       } else {
-        errors += 1;
+        errors++;
+        if (usesFirestoreChunks && isFirestoreQuotaExceededActive()) {
+          quotaHit = true;
+          break;
+        }
       }
     } catch {
-      if (isFirestoreQuotaExceededActive()) {
+      errors++;
+      if (usesFirestoreChunks && isFirestoreQuotaExceededActive()) {
         quotaHit = true;
         break;
       }
-      errors += 1;
     }
+    completed++;
+    onProgress?.({ completed, total: totalCloud, currentFileName: meta.fileName || key });
   }
 
-  onProgress?.({
-    completed: missing.length,
-    total: missing.length,
-    currentFileName: '',
-  });
+  return { totalCloud, alreadyCached, cached, errors, quotaHit };
+}
+
+export async function migrateFirestoreVaultToDedicatedStorage(
+  onProgress?: (done: number, total: number) => void
+): Promise<{ migrated: number; failed: number; providerLabel: string }> {
+  const uid = getAuthenticatedUid();
+  if (!uid) {
+    throw new Error('Autenticazione richiesta per migrare gli allegati.');
+  }
+  const status = await getDedicatedVaultStorageStatus(true);
+  if (!status.configured || status.backend !== 's3') {
+    throw new Error('Configura prima Backblaze B2 (variabili S3_ENDPOINT / S3_BUCKET) sul server.');
+  }
+
+  const metaMap = await listVaultFileMetadata(uid, { forceRefresh: true });
+  const legacyKeys = Object.entries(metaMap)
+    .filter(
+      ([, meta]) =>
+        meta.origin === 'firestore' &&
+        (meta.chunkCount || 0) > 0 &&
+        meta.storageBackend !== 's3'
+    )
+    .map(([key]) => key);
+
+  let done = 0;
+  let migrated = 0;
+  let failed = 0;
+  const total = legacyKeys.length;
+  onProgress?.(0, total);
+
+  for (const key of legacyKeys) {
+    try {
+      const loaded = await getVaultFile(key, uid);
+      if (!loaded) {
+        failed++;
+      } else {
+        const ext = await tryUploadVaultBlobExternal(
+          loaded,
+          loaded.blob,
+          key,
+          loaded.fileName,
+          loaded.mimeType,
+          uid,
+          's3'
+        );
+        if (ext) migrated++;
+        else failed++;
+      }
+    } catch {
+      failed++;
+    }
+    done++;
+    onProgress?.(done, total);
+  }
+
+  invalidatePersistedMetaCache(uid);
   notifyVaultUpdated();
-  return {
-    cached,
-    alreadyCached,
-    totalCloud: entries.length,
-    quotaHit,
-    errors,
-  };
+  return { migrated, failed, providerLabel: status.providerLabel };
 }
 
 export function formatFileSize(bytes?: number): string {

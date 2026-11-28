@@ -4,6 +4,8 @@ import {
   Building2,
   Car,
   CheckCircle2,
+  ChevronDown,
+  Cloud,
   Database,
   Download,
   Droplets,
@@ -12,11 +14,13 @@ import {
   FileText,
   FileUp,
   FolderOpen,
+  HardDrive,
   Layers,
   LayoutGrid,
   Link2,
   List,
   Loader2,
+  MoreHorizontal,
   Paperclip,
   Pencil,
   Plus,
@@ -25,6 +29,7 @@ import {
   Share2,
   Shield,
   ShoppingBag,
+  SlidersHorizontal,
   Sparkles,
   Star,
   Sun,
@@ -54,12 +59,14 @@ import {
   buildElectricityBillSharePayload,
   buildTariBillSharePayload,
   buildWaterBillSharePayload,
+  DedicatedVaultStorageStatus,
   deleteVaultFile,
   DOCUMENT_CATEGORIES,
   DOCUMENT_STARTER_TEMPLATES,
   DocumentStarterTemplate,
   downloadShareableItem,
   formatFileSize,
+  getDedicatedVaultStorageStatus,
   getElectricityBillFileKey,
   getTariBillFileKey,
   getWaterBillFileKey,
@@ -69,6 +76,7 @@ import {
   listVaultFileMetadata,
   matchResearchProductForDocument,
   MAX_CLOUD_FILE_BYTES,
+  migrateFirestoreVaultToDedicatedStorage,
   openVaultFileInNewTab,
   precacheAllCloudVaultFiles,
   saveVaultFile,
@@ -381,6 +389,9 @@ export function DocumentsView({
   const [vaultMeta, setVaultMeta] = useState<Record<string, VaultFileMeta>>({});
   const [localCachedKeys, setLocalCachedKeys] = useState<Set<string>>(() => new Set());
   const [quotaExceeded, setQuotaExceeded] = useState(() => isFirestoreQuotaExceededActive());
+  const [vaultStorageStatus, setVaultStorageStatus] = useState<DedicatedVaultStorageStatus | null>(null);
+  const [migratingStorage, setMigratingStorage] = useState(false);
+  const [migrationProgress, setMigrationProgress] = useState<{ done: number; total: number } | null>(null);
   const [precachingAll, setPrecachingAll] = useState(false);
   const [precacheProgress, setPrecacheProgress] = useState<{
     completed: number;
@@ -388,6 +399,15 @@ export function DocumentsView({
     currentFileName: string;
   } | null>(null);
   const [openingAttachmentKey, setOpeningAttachmentKey] = useState<string | null>(null);
+
+  // Mobile UX states (< 768px)
+  const [showMobileUtilities, setShowMobileUtilities] = useState(false);
+  const [mobileFilterSheetOpen, setMobileFilterSheetOpen] = useState(false);
+  const [mobileActionTarget, setMobileActionTarget] = useState<
+    | { kind: 'doc'; row: UnifiedDocumentRow }
+    | { kind: 'bill'; bill: UnifiedBillShareItem }
+    | null
+  >(null);
 
   // Add/Edit modal states
   const [showForm, setShowForm] = useState(false);
@@ -403,6 +423,7 @@ export function DocumentsView({
   const [cloudUrl, setCloudUrl] = useState('');
   const [notes, setNotes] = useState('');
   const [pinned, setPinned] = useState(false);
+  const [localOnlySave, setLocalOnlySave] = useState(false);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
@@ -427,6 +448,24 @@ export function DocumentsView({
   useEffect(() => {
     return subscribeFirestoreQuotaExceeded(setQuotaExceeded);
   }, []);
+
+  useEffect(() => {
+    if (readOnly) {
+      setVaultStorageStatus(null);
+      return;
+    }
+    let active = true;
+    void getDedicatedVaultStorageStatus()
+      .then((status) => {
+        if (active) setVaultStorageStatus(status);
+      })
+      .catch(() => {
+        // fallback cleanly
+      });
+    return () => {
+      active = false;
+    };
+  }, [readOnly]);
 
   useEffect(() => {
     void reloadVaultMeta();
@@ -465,6 +504,29 @@ export function DocumentsView({
     ]);
     setVaultMeta(meta);
     setLocalCachedKeys(cached);
+  }
+
+  async function handleMigrateLegacyStorage() {
+    if (migratingStorage || readOnly) return;
+    setMigratingStorage(true);
+    setStatusNotice(null);
+    setMigrationProgress({ done: 0, total: 0 });
+    try {
+      const res = await migrateFirestoreVaultToDedicatedStorage((done, total) => {
+        setMigrationProgress({ done, total });
+      });
+      await reloadVaultMeta();
+      setStatusNotice(
+        `Migrazione verso ${res.providerLabel} completata: ${res.migrated} file trasferiti da Firestore (${res.failed} errori). Ora puoi risparmiare spazio e quota su Firebase!`
+      );
+    } catch (err) {
+      setStatusNotice(
+        err instanceof Error ? err.message : 'Errore durante la migrazione verso storage esterno.'
+      );
+    } finally {
+      setMigratingStorage(false);
+      setMigrationProgress(null);
+    }
   }
 
   async function handlePrecacheAllOffline() {
@@ -517,6 +579,7 @@ export function DocumentsView({
     setCloudUrl('');
     setNotes('');
     setPinned(false);
+    setLocalOnlySave(false);
     setPendingFile(null);
   }
 
@@ -554,6 +617,7 @@ export function DocumentsView({
     setCloudUrl(doc.cloudUrl || '');
     setNotes(doc.notes || '');
     setPinned(Boolean(doc.pinned));
+    setLocalOnlySave(false);
     setPendingFile(null);
     setShowForm(true);
   }
@@ -578,19 +642,27 @@ export function DocumentsView({
           attachmentKey,
           pendingFile,
           pendingFile.name,
-          pendingFile.type
+          pendingFile.type,
+          undefined,
+          localOnlySave ? { storageMode: 'local' } : undefined
         );
-        if (!stored.cloudSynced) {
+        if (!localOnlySave && !stored.cloudSynced) {
           throw new Error(
-            'Il file allegato non è stato salvato su Firestore. Nessuna modifica salvata.'
+            'Il file allegato non è stato salvato sul cloud. Nessuna modifica salvata.'
           );
         }
-        fileName = pendingFile.name;
-        fileMime = pendingFile.type || 'application/octet-stream';
-        fileSize = pendingFile.size;
-        cloudInfo = isFirestoreQuotaExceededActive()
-          ? ' File salvato in locale per quota Firestore esaurita (invio automatico al ripristino).'
-          : ' File salvato su Firestore (scaricabile da ogni dispositivo).';
+        fileName = stored.fileName;
+        fileMime = stored.mimeType || 'application/octet-stream';
+        fileSize = stored.size;
+        if (localOnlySave) {
+          cloudInfo = ' File salvato SOLO in locale su questo dispositivo (0 operazioni Firestore).';
+        } else if (stored.storageBackend === 's3') {
+          cloudInfo = ` File salvato su ${vaultStorageStatus?.providerLabel || 'Backblaze B2'} (0 MB su Firestore).`;
+        } else {
+          cloudInfo = isFirestoreQuotaExceededActive()
+            ? ' File salvato in locale per quota Firestore esaurita (invio automatico al ripristino).'
+            : ' File salvato e compresso sul cloud (scaricabile da ogni dispositivo).';
+        }
       }
 
       const effectiveReferenceCode = linkedResearchId
@@ -1063,11 +1135,16 @@ export function DocumentsView({
           `Analisi e archiviazione (${idx + 1}/${selectedFiles.length}): ${file.name}`
         );
 
-        if (file.size > MAX_CLOUD_FILE_BYTES) {
+        const maxImportBytes = vaultStorageStatus?.configured
+          ? vaultStorageStatus.maxFileBytes
+          : MAX_CLOUD_FILE_BYTES;
+        if (file.size > maxImportBytes) {
           summary.push({
             fileName: file.name,
             destination: 'Non importato',
-            detail: `Supera il limite di ${Math.floor(MAX_CLOUD_FILE_BYTES / 1_000_000)} MB su Firestore.`,
+            detail: `Supera il limite di ${Math.floor(maxImportBytes / 1_000_000)} MB su ${
+              vaultStorageStatus?.configured ? vaultStorageStatus.providerLabel : 'Firestore'
+            }.`,
             status: 'error',
           });
           continue;
@@ -1337,7 +1414,10 @@ export function DocumentsView({
         const dlCt = (dlResp.headers.get('content-type') || '').toLowerCase();
         if (dlResp.ok && !dlCt.includes('application/json') && !dlCt.includes('text/html')) {
           const blob = await dlResp.blob();
-          if (blob.size > 0 && blob.size <= MAX_CLOUD_FILE_BYTES) {
+          const maxImportBytes = vaultStorageStatus?.configured
+            ? vaultStorageStatus.maxFileBytes
+            : MAX_CLOUD_FILE_BYTES;
+          if (blob.size > 0 && blob.size <= maxImportBytes) {
             const rawHeaderName =
               dlResp.headers.get('x-document-filename') ||
               dlResp.headers.get('content-disposition')?.match(
@@ -2016,10 +2096,102 @@ export function DocumentsView({
     return false;
   }
 
+  const vaultStats = useMemo(() => {
+    const entries = Object.entries(vaultMeta);
+    const totalFiles = entries.length;
+    const cachedCount = entries.filter(([k]) => localCachedKeys.has(k)).length;
+    const missingOffline = Math.max(0, totalFiles - cachedCount);
+    const legacyFirestoreCount = entries.filter(
+      ([, meta]) =>
+        meta.origin === 'firestore' &&
+        (meta.chunkCount || 0) > 0 &&
+        meta.storageBackend !== 's3'
+    ).length;
+    const externalCount = entries.filter(
+      ([, meta]) => meta.storageBackend === 's3'
+    ).length;
+    return { totalFiles, cachedCount, missingOffline, legacyFirestoreCount, externalCount };
+  }, [vaultMeta, localCachedKeys]);
+
+  const activeMobileFilterCount =
+    (activeTab !== 'all' ? 1 : 0) +
+    (originFilter !== 'all' && originFilter !== activeTab ? 1 : 0) +
+    (productFilter !== 'all' ? 1 : 0);
+
+  function formatStorageBadgeText(localFile?: VaultFileMeta): string {
+    if (!localFile) return '';
+    const sizeText = formatFileSize(localFile.size);
+    if (localFile.storageBackend === 's3') return sizeText ? `Backblaze B2 · ${sizeText}` : 'Backblaze B2';
+    if (localFile.origin === 'firestore') return sizeText ? `Cloud · ${sizeText}` : 'Cloud';
+    if (localFile.origin === 'bundled') return sizeText ? `PDF · ${sizeText}` : 'PDF';
+    return sizeText ? `Locale · ${sizeText}` : 'Locale';
+  }
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <div className="space-y-4 md:space-y-6 pb-8 md:pb-0">
+      {/* Mobile Header (<768px) */}
+      <div className="md:hidden space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <h1 className="text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <FolderOpen className="w-5 h-5 text-brand-600 dark:text-brand-400 shrink-0" />
+              <span className="truncate">Documenti</span>
+            </h1>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 tabular-nums">
+              {allUnifiedDocumentRows.length + totalShareableBillsCount} elementi ·{' '}
+              {vaultStats.cachedCount}/{vaultStats.totalFiles} offline
+            </p>
+          </div>
+          {vaultStorageStatus?.configured && (
+            <span className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold rounded-md bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 shrink-0">
+              <Cloud className="w-3.5 h-3.5" />
+              {vaultStorageStatus.providerLabel}
+            </span>
+          )}
+        </div>
+
+        {!readOnly && (
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              type="button"
+              disabled={autoImporting}
+              onClick={() => smartImportInputRef.current?.click()}
+              className="min-h-[44px] inline-flex items-center justify-center gap-1.5 px-2.5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 dark:text-slate-950 dark:bg-emerald-400 dark:hover:bg-emerald-300 rounded-xl transition-colors disabled:opacity-60"
+            >
+              {autoImporting ? (
+                <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+              ) : (
+                <Sparkles className="w-4 h-4 shrink-0" />
+              )}
+              <span>{autoImporting ? 'Carico...' : 'Auto'}</span>
+            </button>
+            <button
+              type="button"
+              disabled={autoImporting}
+              onClick={() => setLinkImportOpen((prev) => !prev)}
+              className={`min-h-[44px] inline-flex items-center justify-center gap-1.5 px-2.5 py-2 text-xs font-semibold rounded-xl border transition-colors disabled:opacity-60 ${
+                linkImportOpen
+                  ? 'bg-indigo-600 text-white border-indigo-600 dark:bg-indigo-400 dark:text-slate-950 dark:border-indigo-400'
+                  : 'text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-500/15 border-indigo-200 dark:border-indigo-500/35'
+              }`}
+            >
+              <Link2 className="w-4 h-4 shrink-0" />
+              <span>Da Link</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => openNewForm()}
+              className="min-h-[44px] inline-flex items-center justify-center gap-1.5 px-2.5 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl transition-colors"
+            >
+              <Plus className="w-4 h-4 shrink-0" />
+              <span>Nuovo</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Desktop Header (>=768px) */}
+      <div className="hidden md:flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
             <FolderOpen className="w-5 h-5 text-brand-600 dark:text-brand-400" />
@@ -2078,40 +2250,52 @@ export function DocumentsView({
         )}
       </div>
 
+      {/* Shared hidden file input for mobile when desktop header is hidden */}
+      {!readOnly && (
+        <input
+          ref={smartImportInputRef}
+          type="file"
+          multiple
+          accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.txt,.csv,.json"
+          onChange={(e) => void handleSmartImportFiles(e.target.files)}
+          className="hidden md:hidden"
+        />
+      )}
+
       {linkImportOpen && !readOnly && (
         <form
           onSubmit={(e) => void handleSmartImportUrl(e)}
-          className="bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-500/40 rounded-xl p-4 space-y-3 shadow-xs dark:shadow-none"
+          className="bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-500/40 rounded-2xl md:rounded-xl p-4 space-y-3 shadow-xs dark:shadow-none"
         >
           <div className="flex items-center justify-between gap-2">
             <div>
-              <h2 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                <Link2 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+              <h2 className="text-sm md:text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                <Link2 className="w-4 h-4 md:w-3.5 md:h-3.5 text-indigo-600 dark:text-indigo-400" />
                 Importa Documento da Link Online
               </h2>
-              <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
-                Incolla un link diretto (PDF scheda tecnica, manuale, Drive, sito produttore): scarica o collega il documento e lo associa automaticamente all&apos;eventuale prodotto corrispondente in Prodotti.
+              <p className="text-xs md:text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+                Incolla un link diretto (PDF scheda tecnica, manuale, link pubblico): scarica o collega il documento e lo abbina al prodotto corrispondente.
               </p>
             </div>
             <button
               type="button"
               onClick={() => setLinkImportOpen(false)}
-              className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+              className="min-w-[40px] min-h-[40px] md:min-w-0 md:min-h-0 flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
               aria-label="Chiudi pannello link"
             >
-              <X className="w-4 h-4" />
+              <X className="w-5 h-5 md:w-4 md:h-4" />
             </button>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2">
+          <div className="flex flex-col sm:flex-row gap-2.5 md:gap-2">
             <input
               type="url"
               required
               disabled={autoImporting}
               value={importLinkUrl}
               onChange={(e) => setImportLinkUrl(e.target.value)}
-              placeholder="https://www.nardioutdoor.com/.../scheda.pdf oppure link Google Drive / manuale..."
-              className="flex-1 min-w-0 px-3 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
+              placeholder="https://... (PDF, manuale o pagina prodotto)"
+              className="flex-1 min-w-0 min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl md:rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
             />
             {researches.length > 0 && (
               <select
@@ -2119,7 +2303,7 @@ export function DocumentsView({
                 disabled={autoImporting}
                 value={importLinkProductChoice}
                 onChange={(e) => setImportLinkProductChoice(e.target.value)}
-                className="sm:w-64 px-2.5 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-800 dark:text-slate-200 [color-scheme:light] dark:[color-scheme:dark] focus:outline-none focus:border-indigo-500"
+                className="sm:w-64 min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl md:rounded-lg text-slate-800 dark:text-slate-200 [color-scheme:light] dark:[color-scheme:dark] focus:outline-none focus:border-indigo-500"
               >
                 <option value="auto">Riconoscimento automatico prodotto</option>
                 <option value="none">Nessun collegamento prodotto</option>
@@ -2134,12 +2318,12 @@ export function DocumentsView({
             <button
               type="submit"
               disabled={autoImporting || !importLinkUrl.trim()}
-              className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold whitespace-nowrap shrink-0 text-white bg-indigo-600 hover:bg-indigo-700 dark:text-slate-950 dark:bg-indigo-400 dark:hover:bg-indigo-300 rounded-lg transition-colors disabled:opacity-60"
+              className="min-h-[44px] md:min-h-0 inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm md:text-xs font-semibold whitespace-nowrap shrink-0 text-white bg-indigo-600 hover:bg-indigo-700 dark:text-slate-950 dark:bg-indigo-400 dark:hover:bg-indigo-300 rounded-xl md:rounded-lg transition-colors disabled:opacity-60"
             >
               {autoImporting ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <Loader2 className="w-4 h-4 md:w-3.5 md:h-3.5 animate-spin" />
               ) : (
-                <Sparkles className="w-3.5 h-3.5" />
+                <Sparkles className="w-4 h-4 md:w-3.5 md:h-3.5" />
               )}
               {autoImporting ? 'Analisi...' : 'Analizza e Importa'}
             </button>
@@ -2159,12 +2343,141 @@ export function DocumentsView({
           'Apri in nuova scheda, Scarica, Condividi o Elimina ogni allegato da qualsiasi dispositivo',
         ]}
         gmailFeatures={[
-          'Archiviazione automatica su Firestore dei PDF bollette ricevuti in INBOX Gmail',
+          'Archiviazione automatica su Firestore / Storage dei PDF bollette ricevuti in INBOX Gmail',
         ]}
       />
 
-      {/* KPI */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* Mobile Collapsible Utilities Accordion (<768px) so real content starts right away */}
+      <div className="md:hidden space-y-2.5">
+        <button
+          type="button"
+          onClick={() => setShowMobileUtilities((prev) => !prev)}
+          aria-expanded={showMobileUtilities}
+          className="w-full min-h-[44px] px-3.5 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl flex items-center justify-between gap-2 text-left"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <Database className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+            <span className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate tabular-nums">
+              Offline {vaultStats.cachedCount}/{vaultStats.totalFiles} ·{' '}
+              {vaultStorageStatus?.configured ? vaultStorageStatus.providerLabel : 'Firestore'}
+            </span>
+          </div>
+          <span className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 dark:text-sky-300 shrink-0">
+            Strumenti
+            <ChevronDown
+              className={`w-4 h-4 transition-transform ${showMobileUtilities ? 'rotate-180' : ''}`}
+            />
+          </span>
+        </button>
+
+        {showMobileUtilities && (
+          <div className="space-y-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-slate-50 dark:bg-slate-950/70 rounded-xl p-2.5">
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">Archivio totale</div>
+                <div className="text-lg font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100">
+                  {allUnifiedDocumentRows.length + totalShareableBillsCount}
+                </div>
+              </div>
+              <div className="bg-slate-50 dark:bg-slate-950/70 rounded-xl p-2.5">
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">Con file</div>
+                <div className="text-lg font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-300">
+                  {attachedDocsCount + totalShareableBillsCount}
+                </div>
+              </div>
+              <div className="bg-slate-50 dark:bg-slate-950/70 rounded-xl p-2.5">
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">In evidenza</div>
+                <div className="text-lg font-bold font-mono tabular-nums text-amber-600 dark:text-amber-400">
+                  {pinnedDocsCount}
+                </div>
+              </div>
+              <div className="bg-slate-50 dark:bg-slate-950/70 rounded-xl p-2.5">
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">Bollette &amp; GSE</div>
+                <div className="text-lg font-bold font-mono tabular-nums text-sky-600 dark:text-sky-300">
+                  {totalShareableBillsCount}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2 border-t border-slate-100 dark:border-slate-800 pt-3">
+              <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                <strong>Storage allegati:</strong>{' '}
+                {vaultStorageStatus?.configured
+                  ? `${vaultStorageStatus.providerLabel} (${vaultStorageStatus.freeQuotaLabel}) — i file vanno fuori da Firestore.`
+                  : 'Firestore compresso (1 GB condiviso). Per 10 GB sempre gratuiti senza carta collega Backblaze B2 (variabili S3_* su Render).'}
+              </div>
+
+              {!readOnly && vaultStats.totalFiles > 0 && (
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    disabled={precachingAll || (quotaExceeded && vaultStats.missingOffline > 0)}
+                    onClick={() => void handlePrecacheAllOffline()}
+                    className="min-h-[44px] w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-xl border border-sky-300 dark:border-sky-500/40 bg-sky-50 text-sky-800 dark:bg-sky-500/15 dark:text-sky-200 disabled:opacity-55"
+                  >
+                    {precachingAll ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Download className="w-4 h-4" />
+                    )}
+                    <span>
+                      {precachingAll
+                        ? `Scarico ${precacheProgress?.completed || 0}/${precacheProgress?.total || 0}...`
+                        : vaultStats.missingOffline === 0
+                          ? 'Tutti i file già salvati offline'
+                          : `Salva ${vaultStats.missingOffline} file offline`}
+                    </span>
+                  </button>
+
+                  {vaultStorageStatus?.configured && vaultStats.legacyFirestoreCount > 0 && (
+                    <button
+                      type="button"
+                      disabled={migratingStorage}
+                      onClick={() => void handleMigrateLegacyStorage()}
+                      className="min-h-[44px] w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-xl border border-emerald-300 dark:border-emerald-500/40 bg-emerald-50 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200 disabled:opacity-55"
+                    >
+                      {migratingStorage ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <HardDrive className="w-4 h-4" />
+                      )}
+                      <span>
+                        {migratingStorage && migrationProgress
+                          ? `Sposto ${migrationProgress.done}/${migrationProgress.total}...`
+                          : `Sposta ${vaultStats.legacyFirestoreCount} PDF su ${vaultStorageStatus.providerLabel}`}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {!readOnly && (
+              <div className="border-t border-slate-100 dark:border-slate-800 pt-3 space-y-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Modelli rapidi casa
+                </div>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {DOCUMENT_STARTER_TEMPLATES.map((tpl) => (
+                    <button
+                      key={tpl.title}
+                      type="button"
+                      onClick={() => openNewForm(tpl)}
+                      className="min-h-[40px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs whitespace-nowrap shrink-0 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 rounded-xl"
+                    >
+                      <Plus className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                      {tpl.title}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Desktop KPI (>=768px) */}
+      <div className="hidden md:grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
           <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
             Totale Archivio Unico
@@ -2199,57 +2512,102 @@ export function DocumentsView({
         </div>
       </div>
 
-      {/* Offline local cache readiness bar */}
-      {(() => {
-        const allVaultKeys = Object.keys(vaultMeta);
-        const totalFiles = allVaultKeys.length;
-        const cachedCount = allVaultKeys.filter((k) => localCachedKeys.has(k)).length;
-        const missingOffline = Math.max(0, totalFiles - cachedCount);
-        return (
-          <div className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-xs dark:shadow-none">
+      {/* Desktop Offline Cache & Dedicated Storage Bar (>=768px) */}
+      <div className="hidden md:block space-y-2.5">
+        <div className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-xs dark:shadow-none">
+          <div className="flex items-start sm:items-center gap-2.5 min-w-0">
+            <Database className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0 mt-0.5 sm:mt-0" />
+            <div className="text-xs text-slate-700 dark:text-slate-300 leading-snug">
+              <span className="font-semibold text-slate-900 dark:text-slate-100">
+                Cache Offline su questo dispositivo:
+              </span>{' '}
+              <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300">
+                {vaultStats.cachedCount} / {vaultStats.totalFiles}
+              </span>{' '}
+              file salvati in locale (i file in cache si aprono e scaricano sempre con{' '}
+              <strong>0 letture Firebase</strong> anche a quota esaurita).
+              {precacheProgress && precacheProgress.total > 0 && (
+                <span className="block text-[11px] text-sky-700 dark:text-sky-300 mt-0.5">
+                  Scaricamento {precacheProgress.completed}/{precacheProgress.total}:{' '}
+                  {precacheProgress.currentFileName}
+                </span>
+              )}
+            </div>
+          </div>
+          {!readOnly && vaultStats.totalFiles > 0 && (
+            <button
+              type="button"
+              disabled={precachingAll || (quotaExceeded && vaultStats.missingOffline > 0)}
+              onClick={() => void handlePrecacheAllOffline()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-sky-300 dark:border-sky-500/40 bg-sky-50 hover:bg-sky-100 text-sky-800 dark:bg-sky-500/15 dark:hover:bg-sky-500/25 dark:text-sky-200 transition-colors whitespace-nowrap shrink-0 disabled:opacity-55"
+            >
+              {precachingAll ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {precachingAll
+                  ? 'Scaricamento...'
+                  : vaultStats.missingOffline === 0
+                    ? 'Tutti già offline'
+                    : `Scarica ${vaultStats.missingOffline} offline`}
+              </span>
+            </button>
+          )}
+        </div>
+
+        {!readOnly && vaultStorageStatus && (
+          <div className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-xs dark:shadow-none">
             <div className="flex items-start sm:items-center gap-2.5 min-w-0">
-              <Database className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0 mt-0.5 sm:mt-0" />
+              <Cloud
+                className={`w-4 h-4 shrink-0 mt-0.5 sm:mt-0 ${
+                  vaultStorageStatus.configured
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-slate-500 dark:text-slate-400'
+                }`}
+              />
               <div className="text-xs text-slate-700 dark:text-slate-300 leading-snug">
-                <span className="font-semibold text-slate-900 dark:text-slate-100">
-                  Cache Offline su questo dispositivo:
-                </span>{' '}
-                <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300">
-                  {cachedCount} / {totalFiles}
-                </span>{' '}
-                file salvati in locale (i file in cache si aprono e scaricano sempre con{' '}
-                <strong>0 letture Firebase</strong> anche a quota esaurita).
-                {precacheProgress && precacheProgress.total > 0 && (
-                  <span className="block text-[11px] text-sky-700 dark:text-sky-300 mt-0.5">
-                    Scaricamento {precacheProgress.completed}/{precacheProgress.total}:{' '}
-                    {precacheProgress.currentFileName}
-                  </span>
+                {vaultStorageStatus.configured ? (
+                  <>
+                    <span className="font-semibold text-slate-900 dark:text-slate-100">
+                      Storage file dedicato attivo: {vaultStorageStatus.providerLabel}
+                    </span>{' '}
+                    ({vaultStorageStatus.freeQuotaLabel}) — i file binari vengono salvati fuori da Firestore ({vaultStats.externalCount} già su storage esterno).
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold text-slate-900 dark:text-slate-100">
+                      Archiviazione compatta su Firestore:
+                    </span>{' '}
+                    attiva <strong>Backblaze B2 (10 GB gratis per sempre senza carta)</strong> impostando{' '}
+                    <code className="font-mono text-[11px]">S3_ENDPOINT / S3_BUCKET</code> su Render.
+                  </>
                 )}
               </div>
             </div>
-            {!readOnly && totalFiles > 0 && (
+            {vaultStorageStatus.configured && vaultStats.legacyFirestoreCount > 0 && (
               <button
                 type="button"
-                disabled={precachingAll || (quotaExceeded && missingOffline > 0)}
-                onClick={() => void handlePrecacheAllOffline()}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-sky-300 dark:border-sky-500/40 bg-sky-50 hover:bg-sky-100 text-sky-800 dark:bg-sky-500/15 dark:hover:bg-sky-500/25 dark:text-sky-200 transition-colors whitespace-nowrap shrink-0 disabled:opacity-55"
+                disabled={migratingStorage}
+                onClick={() => void handleMigrateLegacyStorage()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-emerald-300 dark:border-emerald-500/40 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:hover:bg-emerald-500/25 dark:text-emerald-200 transition-colors whitespace-nowrap shrink-0 disabled:opacity-55"
               >
-                {precachingAll ? (
+                {migratingStorage ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
-                  <Download className="w-3.5 h-3.5" />
+                  <HardDrive className="w-3.5 h-3.5" />
                 )}
                 <span>
-                  {precachingAll
-                    ? 'Scaricamento...'
-                    : missingOffline === 0
-                      ? 'Tutti già offline'
-                      : `Scarica ${missingOffline} offline`}
+                  {migratingStorage && migrationProgress
+                    ? `Migrazione ${migrationProgress.done}/${migrationProgress.total}...`
+                    : `Sposta ${vaultStats.legacyFirestoreCount} PDF su ${vaultStorageStatus.providerLabel}`}
                 </span>
               </button>
             )}
           </div>
-        );
-      })()}
+        )}
+      </div>
 
       {importProgressLabel && (
         <div className="bg-sky-50 dark:bg-sky-500/10 border border-sky-200 dark:border-sky-500/30 rounded-xl px-4 py-2.5 text-xs text-sky-800 dark:text-sky-200 flex items-center gap-2">
@@ -2303,16 +2661,16 @@ export function DocumentsView({
           <button
             type="button"
             onClick={() => setStatusNotice(null)}
-            className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
+            className="min-w-[36px] min-h-[36px] md:min-w-0 md:min-h-0 flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-4 h-4 md:w-3.5 md:h-3.5" />
           </button>
         </div>
       )}
 
-      {/* Quick Starter Templates */}
+      {/* Desktop Quick Starter Templates (>=768px) */}
       {!readOnly && (
-        <section className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-2 shadow-xs dark:shadow-none">
+        <section className="hidden md:block bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-2 shadow-xs dark:shadow-none">
           <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
             Aggiunta rapida documenti essenziali di casa
           </div>
@@ -2332,8 +2690,117 @@ export function DocumentsView({
         </section>
       )}
 
-      {/* Tabs + Origin Filter + Search + List/Grid Toggle */}
-      <div className="space-y-2.5">
+      {/* Mobile Search + Filter Sheet Trigger + Single-Row Category Strip (<768px) */}
+      <div className="md:hidden space-y-2.5">
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1 min-w-0">
+            <Search className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Cerca documento, prodotto o bolletta..."
+              className="w-full h-11 pl-9 pr-9 text-base bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                aria-label="Svuota ricerca"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setMobileFilterSheetOpen(true)}
+            className={`min-h-[44px] px-3.5 inline-flex items-center gap-1.5 text-xs font-semibold rounded-xl border shrink-0 transition-colors ${
+              activeMobileFilterCount > 0
+                ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-400 dark:text-slate-950 dark:border-sky-400'
+                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-800'
+            }`}
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+            <span>Filtri</span>
+            {activeMobileFilterCount > 0 && (
+              <span className="font-mono font-bold tabular-nums">({activeMobileFilterCount})</span>
+            )}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('all');
+              setOriginFilter('all');
+              setProductFilter('all');
+            }}
+            className={`min-h-[40px] px-3 py-1.5 text-xs font-semibold whitespace-nowrap shrink-0 rounded-xl border transition-colors ${
+              activeTab === 'all' && originFilter === 'all' && productFilter === 'all'
+                ? 'bg-brand-600 text-white border-brand-600 dark:bg-brand-400 dark:text-slate-950 dark:border-brand-400'
+                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800'
+            }`}
+          >
+            Tutti ({allUnifiedDocumentRows.length + totalShareableBillsCount})
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('ricerche');
+              setOriginFilter('ricerche');
+            }}
+            className={`min-h-[40px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold whitespace-nowrap shrink-0 rounded-xl border transition-colors ${
+              activeTab === 'ricerche' || originFilter === 'ricerche'
+                ? 'bg-violet-600 text-white border-violet-600 dark:bg-violet-400 dark:text-slate-950 dark:border-violet-400'
+                : 'bg-white dark:bg-slate-900 text-violet-700 dark:text-violet-300 border-slate-200 dark:border-slate-800'
+            }`}
+          >
+            <ShoppingBag className="w-3.5 h-3.5" />
+            Prodotti ({originCounts.ricerche})
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('bollette');
+              setOriginFilter('bollette');
+            }}
+            className={`min-h-[40px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold whitespace-nowrap shrink-0 rounded-xl border transition-colors ${
+              activeTab === 'bollette' || originFilter === 'bollette'
+                ? 'bg-amber-500 text-slate-950 border-amber-500 dark:bg-amber-400 dark:text-slate-950 dark:border-amber-400'
+                : 'bg-white dark:bg-slate-900 text-amber-800 dark:text-amber-300 border-slate-200 dark:border-slate-800'
+            }`}
+          >
+            <Receipt className="w-3.5 h-3.5" />
+            Bollette ({totalShareableBillsCount})
+          </button>
+          {DOCUMENT_CATEGORIES.map((cat) => {
+            const count = allUnifiedDocumentRows.filter((r) => r.doc.category === cat).length;
+            return (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => {
+                  setActiveTab(cat);
+                  if (originFilter === 'bollette') setOriginFilter('all');
+                }}
+                className={`min-h-[40px] px-3 py-1.5 text-xs font-medium whitespace-nowrap shrink-0 rounded-xl border transition-colors ${
+                  activeTab === cat
+                    ? 'bg-brand-600 text-white border-brand-600 dark:bg-brand-400 dark:text-slate-950 dark:border-brand-400'
+                    : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800'
+                }`}
+              >
+                {cat} ({count})
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Desktop Tabs + Origin Filter + Search + List/Grid Toggle (>=768px) */}
+      <div className="hidden md:block space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-1.5">
             <button
@@ -2559,14 +3026,14 @@ export function DocumentsView({
           )}
       </div>
 
-      {/* Add / Edit Modal */}
+      {/* Add / Edit Modal (touch optimized on mobile) */}
       {showForm && !readOnly && (
         <form
           onSubmit={handleSubmit}
-          className="bg-white dark:bg-slate-900 border border-sky-500/40 rounded-xl p-4 sm:p-5 space-y-4 text-xs shadow-sm dark:shadow-none"
+          className="bg-white dark:bg-slate-900 border border-sky-500/40 rounded-2xl md:rounded-xl p-4 sm:p-5 space-y-4 text-sm md:text-xs shadow-sm dark:shadow-none"
         >
           <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
-            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+            <h2 className="text-base md:text-sm font-bold text-slate-900 dark:text-slate-100">
               {editingDoc ? `Modifica "${editingDoc.title}"` : 'Nuovo Documento Utile'}
             </h2>
             <button
@@ -2575,15 +3042,17 @@ export function DocumentsView({
                 setShowForm(false);
                 resetForm();
               }}
-              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
+              className="min-h-[40px] md:min-h-0 px-2 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
             >
               Chiudi
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 md:gap-3">
             <div className="space-y-1">
-              <label className="block text-slate-600 dark:text-slate-400">Titolo documento *</label>
+              <label className="block text-xs text-slate-600 dark:text-slate-400">
+                Titolo documento *
+              </label>
               <input
                 type="text"
                 required
@@ -2591,16 +3060,16 @@ export function DocumentsView({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Es. Contratto Fibra WindTre"
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl md:rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-600 dark:text-slate-400">Categoria *</label>
+              <label className="block text-xs text-slate-600 dark:text-slate-400">Categoria *</label>
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value as HomeDocumentCategory)}
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
+                className="w-full min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl md:rounded-lg text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
               >
                 {DOCUMENT_CATEGORIES.map((c) => (
                   <option key={c} value={c}>
@@ -2611,7 +3080,7 @@ export function DocumentsView({
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-600 dark:text-slate-400">
+              <label className="block text-xs text-slate-600 dark:text-slate-400">
                 Ente / Banca / Fornitore *
               </label>
               <input
@@ -2621,12 +3090,12 @@ export function DocumentsView({
                 value={provider}
                 onChange={(e) => setProvider(e.target.value)}
                 placeholder="Es. WindTre, Intesa Sanpaolo..."
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl md:rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-600 dark:text-slate-400">
+              <label className="block text-xs text-slate-600 dark:text-slate-400">
                 N° Contratto / Pratica / SSID
               </label>
               <input
@@ -2635,12 +3104,12 @@ export function DocumentsView({
                 value={referenceCode}
                 onChange={(e) => setReferenceCode(e.target.value)}
                 placeholder="Es. Cod. cliente o pratica mutuo"
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl md:rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-600 dark:text-slate-400">
+              <label className="block text-xs text-slate-600 dark:text-slate-400">
                 Data stipula / documento
               </label>
               <input
@@ -2649,38 +3118,40 @@ export function DocumentsView({
                 value={issueDate}
                 onChange={(e) => setIssueDate(e.target.value)}
                 placeholder="Es. 15/03/2024"
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl md:rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-600 dark:text-slate-400">Scadenza / Rinnovo</label>
+              <label className="block text-xs text-slate-600 dark:text-slate-400">
+                Scadenza / Rinnovo
+              </label>
               <input
                 type="text"
                 maxLength={20}
                 value={expiryDate}
                 onChange={(e) => setExpiryDate(e.target.value)}
                 placeholder="Es. 15/03/2026"
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl md:rounded-lg font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1 sm:col-span-2">
-              <label className="block text-slate-600 dark:text-slate-400">
-                Link Google Drive / Cloud (opz.)
+              <label className="block text-xs text-slate-600 dark:text-slate-400">
+                Link esterno / Cloud (opz.)
               </label>
               <input
                 type="url"
                 value={cloudUrl}
                 onChange={(e) => setCloudUrl(e.target.value)}
-                placeholder="https://drive.google.com/..."
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+                placeholder="https://..."
+                className="w-full min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl md:rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-slate-600 dark:text-slate-400">In evidenza</label>
-              <label className="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-200 cursor-pointer">
+              <label className="block text-xs text-slate-600 dark:text-slate-400">In evidenza</label>
+              <label className="min-h-[44px] md:min-h-0 flex items-center gap-2.5 px-3 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl md:rounded-lg text-slate-700 dark:text-slate-200 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={pinned}
@@ -2694,13 +3165,13 @@ export function DocumentsView({
             {researches.length > 0 && (
               <>
                 <div className="space-y-1 sm:col-span-2">
-                  <label className="block text-slate-600 dark:text-slate-400">
+                  <label className="block text-xs text-slate-600 dark:text-slate-400">
                     Collega a un Prodotto (opz.)
                   </label>
                   <select
                     value={linkedResearchId}
                     onChange={(e) => setLinkedResearchId(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark] focus:outline-none focus:border-violet-500"
+                    className="w-full min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl md:rounded-lg text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark] focus:outline-none focus:border-violet-500"
                   >
                     <option value="">Nessun prodotto collegato</option>
                     {researches.map((res) => (
@@ -2714,13 +3185,13 @@ export function DocumentsView({
 
                 {linkedResearchId && (
                   <div className="space-y-1">
-                    <label className="block text-slate-600 dark:text-slate-400">
+                    <label className="block text-xs text-slate-600 dark:text-slate-400">
                       Tipo allegato prodotto
                     </label>
                     <select
                       value={linkedDocType}
                       onChange={(e) => setLinkedDocType(e.target.value as ArticleAttachmentType)}
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark] focus:outline-none focus:border-violet-500"
+                      className="w-full min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl md:rounded-lg text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark] focus:outline-none focus:border-violet-500"
                     >
                       {PRODUCT_LINK_TYPE_OPTIONS.map((opt) => (
                         <option key={opt.value} value={opt.value}>
@@ -2734,7 +3205,7 @@ export function DocumentsView({
             )}
 
             <div className="space-y-1 sm:col-span-2 lg:col-span-3">
-              <label className="block text-slate-600 dark:text-slate-400">
+              <label className="block text-xs text-slate-600 dark:text-slate-400">
                 Note / Dati utili (password Wi-Fi, codice migrazione, IBAN, rata mutuo...)
               </label>
               <input
@@ -2743,61 +3214,77 @@ export function DocumentsView({
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Inserisci annotazioni rapide o credenziali utili da trovare subito..."
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
+                className="w-full min-h-[44px] md:min-h-0 px-3 py-2 text-base md:text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl md:rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500"
               />
             </div>
 
             {/* File upload picker */}
-            <div className="sm:col-span-2 lg:col-span-3 bg-slate-50 dark:bg-slate-950/75 border border-dashed border-sky-400/60 dark:border-sky-500/40 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
-              <div className="space-y-0.5">
-                <div className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <Paperclip className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
-                  Allega File (PDF, foto, scansione, documento)
+            <div className="sm:col-span-2 lg:col-span-3 bg-slate-50 dark:bg-slate-950/75 border border-dashed border-sky-400/60 dark:border-sky-500/40 rounded-xl p-3.5 space-y-2.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <Paperclip className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                    Allega File (PDF, foto, scansione, documento)
+                  </div>
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                    {pendingFile
+                      ? `Pronto (${localOnlySave ? 'solo locale' : vaultStorageStatus?.configured ? vaultStorageStatus.providerLabel : 'cloud compresso'}): ${pendingFile.name} (${formatFileSize(pendingFile.size)})`
+                      : editingDoc?.fileName
+                        ? `File attuale: ${editingDoc.fileName} (scegline un altro per sostituirlo)`
+                        : vaultStorageStatus?.configured
+                          ? `Salvato su ${vaultStorageStatus.providerLabel} (fino a ${Math.floor(vaultStorageStatus.maxFileBytes / 1_000_000)} MB) senza consumare spazio su Firestore.`
+                          : 'Salvato su cloud (fino a 6 MB compressi) o solo in locale per risparmiare quota.'}
+                  </div>
                 </div>
-                <div className="text-[11px] text-slate-600 dark:text-slate-400">
-                  {pendingFile
-                    ? `Pronto per Firestore: ${pendingFile.name} (${formatFileSize(pendingFile.size)})`
-                    : editingDoc?.fileName
-                      ? `File attuale: ${editingDoc.fileName} (scegline un altro per sostituirlo)`
-                      : 'Salvato su Firestore (fino a 6 MB) per poterlo scaricare e inviare da tutti i tuoi dispositivi.'}
+
+                <div>
+                  <input
+                    ref={formFileInputRef}
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.txt,.csv,.json"
+                    onChange={(e) => setPendingFile(e.target.files?.[0] || null)}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => formFileInputRef.current?.click()}
+                    className="min-h-[44px] md:min-h-0 w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3.5 py-2 md:py-1.5 text-xs font-semibold text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 hover:bg-sky-100 dark:hover:bg-sky-500/25 border border-sky-200 dark:border-sky-500/35 rounded-xl md:rounded-lg"
+                  >
+                    <Upload className="w-4 h-4 md:w-3.5 md:h-3.5" />
+                    {pendingFile || editingDoc?.fileName ? 'Cambia File' : 'Scegli File'}
+                  </button>
                 </div>
               </div>
 
-              <div>
+              <label className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300 cursor-pointer pt-1 border-t border-slate-200/70 dark:border-slate-800">
                 <input
-                  ref={formFileInputRef}
-                  type="file"
-                  accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.txt,.csv,.json"
-                  onChange={(e) => setPendingFile(e.target.files?.[0] || null)}
-                  className="hidden"
+                  type="checkbox"
+                  checked={localOnlySave}
+                  onChange={(e) => setLocalOnlySave(e.target.checked)}
+                  className="h-4 w-4 rounded accent-sky-600 dark:accent-sky-400"
                 />
-                <button
-                  type="button"
-                  onClick={() => formFileInputRef.current?.click()}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 hover:bg-sky-100 dark:hover:bg-sky-500/25 border border-sky-200 dark:border-sky-500/35 rounded-lg"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  {pendingFile || editingDoc?.fileName ? 'Cambia File' : 'Scegli File'}
-                </button>
-              </div>
+                <span>
+                  Salva allegato solo su questo dispositivo (0 byte cloud e 0 operazioni Firestore)
+                </span>
+              </label>
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+          <div className="sticky bottom-2 md:static flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xs">
             <button
               type="button"
               onClick={() => {
                 setShowForm(false);
                 resetForm();
               }}
-              className="px-3.5 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
+              className="min-h-[44px] md:min-h-0 px-4 py-2 text-sm md:text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
             >
               Annulla
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 font-semibold text-white bg-emerald-600 hover:bg-emerald-700 dark:text-slate-950 dark:bg-emerald-400 dark:hover:bg-emerald-300 rounded-lg"
+              className="min-h-[44px] md:min-h-0 flex-1 md:flex-none px-5 py-2 text-sm md:text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 dark:text-slate-950 dark:bg-emerald-400 dark:hover:bg-emerald-300 rounded-xl md:rounded-lg"
             >
               {saving ? 'Salvataggio...' : editingDoc ? 'Salva modifiche' : 'Salva documento'}
             </button>
@@ -2825,14 +3312,124 @@ export function DocumentsView({
           (showDocsSection && filteredDocumentRows.length > 0) ||
           (showBillsSection && allBillsForSharing.length > 0);
 
+        const renderMobileBillsCards = () => (
+          <div className="md:hidden divide-y divide-slate-200 dark:divide-slate-800">
+            {allBillsForSharing.map((b) => {
+              const localFile = b.fileKey ? vaultMeta[b.fileKey] : undefined;
+              const canOpen = !readOnly && Boolean(localFile);
+              return (
+                <article key={b.id} className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
+                        {b.kind === 'luce' ? (
+                          <Zap className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
+                        ) : b.kind === 'acqua' ? (
+                          <Droplets className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                        ) : b.kind === 'gse' ? (
+                          <Sun className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                        ) : (
+                          <Receipt className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                        )}
+                        <span>{b.label}</span>
+                        <span aria-hidden="true">·</span>
+                        <span className="truncate text-slate-500 dark:text-slate-400 font-normal">
+                          {b.supplier}
+                        </span>
+                      </div>
+                      <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100 leading-snug">
+                        {b.period}
+                      </h3>
+                      <div className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+                        #{b.number}
+                        {b.date ? ` · ${b.date}` : ''}
+                        {localFile ? ` · ${formatStorageBadgeText(localFile)}` : ''}
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <div className="font-mono text-base font-bold tabular-nums text-slate-900 dark:text-slate-100">
+                        {b.kind === 'gse' ? '+' : ''}
+                        {b.amount.toFixed(2).replace('.', ',')} €
+                      </div>
+                    </div>
+                  </div>
+
+                  {!localFile && !readOnly && b.fileKey && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAttachingBillKey(b.fileKey);
+                        billAttachInputRef.current?.click();
+                      }}
+                      className="min-h-[44px] w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-dashed border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200"
+                    >
+                      <FileUp className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+                      Allega PDF originale
+                    </button>
+                  )}
+
+                  <div
+                    className={`grid gap-2 pt-1 ${
+                      canOpen ? 'grid-cols-[1fr_1fr_44px]' : 'grid-cols-[1fr_44px]'
+                    }`}
+                  >
+                    {canOpen && (
+                      <button
+                        type="button"
+                        disabled={openingAttachmentKey === b.fileKey}
+                        onClick={() =>
+                          void handleOpenAttachment(
+                            b.fileKey,
+                            undefined,
+                            localFile?.fileName || `${b.label}-${b.number}.pdf`
+                          )
+                        }
+                        className="min-h-[44px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 border border-sky-200 dark:border-sky-500/35 rounded-xl disabled:opacity-50"
+                      >
+                        {openingAttachmentKey === b.fileKey ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <ExternalLink className="w-4 h-4" />
+                        )}
+                        Apri
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void downloadShareableItem(
+                          readOnly ? { ...b.payload, attachmentKey: undefined } : b.payload
+                        )
+                      }
+                      className="min-h-[44px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
+                    >
+                      <Download className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+                      Scarica
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Altre azioni bolletta"
+                      onClick={() => setMobileActionTarget({ kind: 'bill', bill: b })}
+                      className="min-h-[44px] w-[44px] inline-flex items-center justify-center text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                    >
+                      <MoreHorizontal className="w-4 h-4" />
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        );
+
         const billsSection = showBillsSection && (
-          <section className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
+          <section className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-2xl md:rounded-xl overflow-hidden shadow-xs dark:shadow-none">
             <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  Bollette &amp; GSE dell&apos;Archivio ({allBillsForSharing.length})
+                  Bollette &amp; GSE ({allBillsForSharing.length})
                 </h2>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                <p className="hidden md:block text-[11px] text-slate-500 dark:text-slate-400">
                   {readOnly
                     ? 'Senza accesso puoi scaricare o condividere il riepilogo HTML; i PDF originali restano privati.'
                     : 'Sincronizzate automaticamente con la pagina Bollette: apri in nuova scheda, scarica, condividi o elimina.'}
@@ -2844,7 +3441,11 @@ export function DocumentsView({
               <div className="px-4 py-6 text-center text-xs text-slate-500 dark:text-slate-400">
                 Nessuna bolletta o ricevuta GSE trovata con questo filtro.
               </div>
-            ) : viewMode === 'grid' ? (
+            ) : (
+              <>
+                {renderMobileBillsCards()}
+                <div className="hidden md:block">
+                  {viewMode === 'grid' ? (
               <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
                 {allBillsForSharing.map((b) => {
                   const localFile = b.fileKey ? vaultMeta[b.fileKey] : undefined;
@@ -3146,6 +3747,9 @@ export function DocumentsView({
                   </tbody>
                 </table>
               </div>
+                  )}
+                </div>
+              </>
             )}
           </section>
         );
@@ -3595,6 +4199,147 @@ export function DocumentsView({
           </div>
         );
 
+        const renderMobileDocsCards = (rows: UnifiedDocumentRow[], hideLinkedProduct = false) => (
+          <div className="md:hidden space-y-3">
+            {rows.map((row) => {
+              const { doc, origin, fileKey, sharePayload } = row;
+              const catMeta = CATEGORY_STYLE[doc.category] || CATEGORY_STYLE.Altro;
+              const CatIcon = catMeta.icon;
+              const localFile = fileKey ? vaultMeta[fileKey] : undefined;
+              const canOpen = Boolean((!readOnly && (localFile || doc.fileName)) || doc.cloudUrl);
+              const openBusyKey = fileKey || doc.cloudUrl || doc.id;
+              const displayRefCode =
+                doc.referenceCode &&
+                !doc.referenceCode.startsWith('ART:') &&
+                !doc.referenceCode.startsWith('RES:') &&
+                !doc.referenceCode.startsWith('AUTO:')
+                  ? doc.referenceCode
+                  : '';
+
+              return (
+                <article
+                  key={row.rowKey}
+                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-3 shadow-xs dark:shadow-none"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 min-w-0">
+                      <CatIcon className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0" />
+                      <span className="font-semibold text-slate-700 dark:text-slate-200">
+                        {doc.category}
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span className="truncate">{origin.attachmentTypeLabel || origin.label}</span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {doc.pinned && (
+                        <Star
+                          aria-label="In evidenza"
+                          className="w-4 h-4 fill-amber-500 text-amber-500 shrink-0"
+                        />
+                      )}
+                      {localFile ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 text-[11px] font-medium tabular-nums">
+                          <FileCheck2 className="w-3 h-3" />
+                          {formatStorageBadgeText(localFile)}
+                        </span>
+                      ) : doc.cloudUrl ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-500/30 text-[11px] font-medium">
+                          Link Cloud
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {origin.isApplianceOrArticle && !hideLinkedProduct && (
+                    <div className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
+                      {origin.imageUrl ? (
+                        <img
+                          src={origin.imageUrl}
+                          alt=""
+                          className="w-6 h-6 rounded-md object-cover shrink-0 bg-white border border-slate-200 dark:border-slate-700"
+                        />
+                      ) : (
+                        <ShoppingBag className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+                      )}
+                      <span className="font-semibold truncate">{origin.groupTitle}</span>
+                    </div>
+                  )}
+
+                  <div className="space-y-1">
+                    <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100 leading-snug">
+                      {doc.title}
+                    </h3>
+                    <div className="text-xs text-slate-600 dark:text-slate-400 tabular-nums">
+                      <span className="font-medium text-sky-700 dark:text-sky-300">
+                        {doc.provider}
+                      </span>
+                      {displayRefCode ? ` · #${displayRefCode}` : ''}
+                      {doc.issueDate ? ` · ${doc.issueDate}` : ''}
+                      {doc.expiryDate ? ` · Scad. ${doc.expiryDate}` : ''}
+                    </div>
+                    {doc.notes && (
+                      <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed line-clamp-2 pt-0.5">
+                        {doc.notes}
+                      </p>
+                    )}
+                  </div>
+
+                  <div
+                    className={`grid gap-2 pt-2 border-t border-slate-100 dark:border-slate-800/80 ${
+                      canOpen ? 'grid-cols-[1fr_1fr_44px]' : 'grid-cols-[1fr_44px]'
+                    }`}
+                  >
+                    {canOpen && (
+                      <button
+                        type="button"
+                        disabled={openingAttachmentKey === openBusyKey}
+                        onClick={() =>
+                          void handleOpenAttachment(
+                            readOnly ? undefined : fileKey,
+                            doc.cloudUrl,
+                            doc.fileName || doc.title
+                          )
+                        }
+                        className="min-h-[44px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 border border-sky-200 dark:border-sky-500/35 rounded-xl disabled:opacity-50"
+                      >
+                        {openingAttachmentKey === openBusyKey ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <ExternalLink className="w-4 h-4" />
+                        )}
+                        Apri
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void downloadShareableItem(
+                          readOnly
+                            ? { ...sharePayload, attachmentKey: undefined }
+                            : sharePayload
+                        )
+                      }
+                      className="min-h-[44px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
+                    >
+                      <Download className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+                      Scarica
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Altre azioni documento"
+                      onClick={() => setMobileActionTarget({ kind: 'doc', row })}
+                      className="min-h-[44px] w-[44px] inline-flex items-center justify-center text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                    >
+                      <MoreHorizontal className="w-4 h-4" />
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        );
+
         const useGroupedLayout =
           groupByProduct && linkedProductFilterOptions.items.length > 0 && productFilter === 'all';
 
@@ -3605,20 +4350,18 @@ export function DocumentsView({
               (useGroupedLayout ? (
                 <div className="space-y-5">
                   {groupedDocumentSections.map((section) => (
-                    <section
-                      key={section.groupKey}
-                      className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none"
-                    >
-                      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/50 flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex items-center gap-3 min-w-0">
+                    <section key={section.groupKey} className="space-y-3 md:space-y-0">
+                      {/* Mobile Group Header + Cards (<768px) */}
+                      <div className="md:hidden space-y-2.5">
+                        <div className="flex items-center gap-2.5 px-1">
                           {section.imageUrl ? (
                             <img
                               src={section.imageUrl}
                               alt=""
-                              className="w-9 h-9 rounded-lg object-cover border border-slate-200 dark:border-slate-700 bg-white shrink-0"
+                              className="w-8 h-8 rounded-lg object-cover border border-slate-200 dark:border-slate-700 bg-white shrink-0"
                             />
                           ) : (
-                            <div className="w-9 h-9 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center shrink-0">
+                            <div className="w-8 h-8 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center shrink-0">
                               {section.originKey === 'ricerche' ? (
                                 <ShoppingBag className="w-4 h-4 text-sky-600 dark:text-sky-400" />
                               ) : (
@@ -3634,39 +4377,419 @@ export function DocumentsView({
                               </span>
                             </h2>
                             {section.subtitle && (
-                              <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                              <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                                 {section.subtitle}
                               </p>
                             )}
                           </div>
                         </div>
+                        {renderMobileDocsCards(section.rows, true)}
                       </div>
 
-                      {viewMode === 'list' ? (
-                        renderDocsTable(section.rows, true)
-                      ) : (
-                        <div className="p-4">{renderDocsGrid(section.rows, true)}</div>
-                      )}
+                      {/* Desktop Grouped Table/Grid (>=768px) */}
+                      <div className="hidden md:block bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
+                        <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/50 flex flex-wrap items-center justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            {section.imageUrl ? (
+                              <img
+                                src={section.imageUrl}
+                                alt=""
+                                className="w-9 h-9 rounded-lg object-cover border border-slate-200 dark:border-slate-700 bg-white shrink-0"
+                              />
+                            ) : (
+                              <div className="w-9 h-9 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center shrink-0">
+                                {section.originKey === 'ricerche' ? (
+                                  <ShoppingBag className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+                                ) : (
+                                  <FolderOpen className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                                )}
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
+                                {section.title}{' '}
+                                <span className="font-mono text-xs font-normal text-slate-500 dark:text-slate-400">
+                                  ({section.rows.length})
+                                </span>
+                              </h2>
+                              {section.subtitle && (
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                                  {section.subtitle}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {viewMode === 'list' ? (
+                          renderDocsTable(section.rows, true)
+                        ) : (
+                          <div className="p-4">{renderDocsGrid(section.rows, true)}</div>
+                        )}
+                      </div>
                     </section>
                   ))}
                 </div>
-              ) : viewMode === 'list' ? (
-                <section className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
-                  <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
-                    <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                      Documenti &amp; Allegati dalle Pagine ({filteredDocumentRows.length})
-                    </h2>
-                  </div>
-                  {renderDocsTable(filteredDocumentRows, false)}
-                </section>
               ) : (
-                renderDocsGrid(filteredDocumentRows, false)
+                <>
+                  {renderMobileDocsCards(filteredDocumentRows, false)}
+                  <div className="hidden md:block">
+                    {viewMode === 'list' ? (
+                      <section className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs dark:shadow-none">
+                        <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+                          <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                            Documenti &amp; Allegati dalle Pagine ({filteredDocumentRows.length})
+                          </h2>
+                        </div>
+                        {renderDocsTable(filteredDocumentRows, false)}
+                      </section>
+                    ) : (
+                      renderDocsGrid(filteredDocumentRows, false)
+                    )}
+                  </div>
+                </>
               ))}
 
             {billsSection}
           </div>
         );
       })()}
+
+      {/* Mobile Filter Bottom Sheet (<768px) */}
+      {mobileFilterSheetOpen && (
+        <div
+          className="fixed inset-0 z-50 md:hidden flex items-end bg-slate-950/60 backdrop-blur-xs"
+          onClick={() => setMobileFilterSheetOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-h-[85vh] overflow-y-auto bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 rounded-t-3xl p-5 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                Filtra Archivio Documenti
+              </h2>
+              <button
+                type="button"
+                aria-label="Chiudi filtri"
+                onClick={() => setMobileFilterSheetOpen(false)}
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-500 hover:text-slate-900 dark:hover:text-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                Sezione / Origine
+              </label>
+              <select
+                value={originFilter}
+                onChange={(e) => {
+                  const next = e.target.value as OriginFilter;
+                  setOriginFilter(next);
+                  if (next === 'bollette') {
+                    setActiveTab('bollette');
+                    setProductFilter('all');
+                  } else if (next === 'ricerche') {
+                    setActiveTab('ricerche');
+                  } else if (activeTab === 'bollette' || activeTab === 'ricerche') {
+                    setActiveTab('all');
+                  }
+                }}
+                className="w-full min-h-[44px] px-3 py-2 text-base bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark]"
+              >
+                <option value="all">
+                  Tutte le origini ({allUnifiedDocumentRows.length + totalShareableBillsCount})
+                </option>
+                <option value="documenti">Documenti Casa ({originCounts.documenti})</option>
+                <option value="ricerche">Prodotti ({originCounts.ricerche})</option>
+                <option value="bollette">Bollette &amp; GSE ({totalShareableBillsCount})</option>
+                <option value="macchina">
+                  Macchina {carPlate} ({originCounts.macchina})
+                </option>
+              </select>
+            </div>
+
+            {linkedProductFilterOptions.items.length > 0 &&
+              activeTab !== 'bollette' &&
+              originFilter !== 'bollette' && (
+                <>
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      Prodotto / Elettrodomestico
+                    </label>
+                    <select
+                      value={productFilter}
+                      onChange={(e) => setProductFilter(e.target.value)}
+                      className="w-full min-h-[44px] px-3 py-2 text-base bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark]"
+                    >
+                      <option value="all">Tutti i prodotti ({allUnifiedDocumentRows.length})</option>
+                      {linkedProductFilterOptions.items.map((item) => (
+                        <option key={item.groupKey} value={item.groupKey}>
+                          {item.title} ({item.count})
+                        </option>
+                      ))}
+                      {linkedProductFilterOptions.otherCount > 0 && (
+                        <option value="unlinked">
+                          Solo documenti non collegati ({linkedProductFilterOptions.otherCount})
+                        </option>
+                      )}
+                    </select>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleToggleGroupByProduct}
+                    aria-pressed={groupByProduct}
+                    className={`min-h-[44px] w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border text-xs font-semibold ${
+                      groupByProduct
+                        ? 'bg-sky-50 dark:bg-sky-500/15 border-sky-300 dark:border-sky-500/40 text-sky-800 dark:text-sky-200'
+                        : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <Layers className="w-4 h-4" />
+                      Divisi per prodotto
+                    </span>
+                    <span>{groupByProduct ? 'Attivo' : 'Disattivo'}</span>
+                  </button>
+                </>
+              )}
+
+            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('all');
+                  setOriginFilter('all');
+                  setProductFilter('all');
+                }}
+                className="min-h-[44px] px-4 py-2 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800"
+              >
+                Reimposta
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileFilterSheetOpen(false)}
+                className="min-h-[44px] px-4 py-2 text-xs font-semibold rounded-xl bg-brand-600 text-white dark:bg-brand-400 dark:text-slate-950"
+              >
+                Mostra risultati
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Quick Action Bottom Sheet (<768px) */}
+      {mobileActionTarget && (
+        <div
+          className="fixed inset-0 z-50 md:hidden flex items-end bg-slate-950/60 backdrop-blur-xs"
+          onClick={() => setMobileActionTarget(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 rounded-t-3xl p-4 space-y-2 shadow-2xl"
+          >
+            {mobileActionTarget.kind === 'doc' ? (
+              (() => {
+                const { row } = mobileActionTarget;
+                const { doc, fileKey, sharePayload, editable, deletable } = row;
+                const localFile = fileKey ? vaultMeta[fileKey] : undefined;
+                const canOpen = Boolean((!readOnly && (localFile || doc.fileName)) || doc.cloudUrl);
+                return (
+                  <>
+                    <div className="px-2 pb-2 border-b border-slate-100 dark:border-slate-800">
+                      <div className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
+                        {doc.title}
+                      </div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                        {doc.provider} · {doc.category}
+                      </div>
+                    </div>
+
+                    {canOpen && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMobileActionTarget(null);
+                          void handleOpenAttachment(
+                            readOnly ? undefined : fileKey,
+                            doc.cloudUrl,
+                            doc.fileName || doc.title
+                          );
+                        }}
+                        className="min-h-[48px] w-full flex items-center gap-3 px-3 rounded-xl text-sm font-medium text-sky-700 dark:text-sky-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                      >
+                        <ExternalLink className="w-4 h-4 shrink-0" />
+                        Apri in nuova scheda
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobileActionTarget(null);
+                        void downloadShareableItem(
+                          readOnly
+                            ? { ...sharePayload, attachmentKey: undefined }
+                            : sharePayload
+                        );
+                      }}
+                      className="min-h-[48px] w-full flex items-center gap-3 px-3 rounded-xl text-sm font-medium text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <Download className="w-4 h-4 shrink-0 text-sky-600 dark:text-sky-400" />
+                      Scarica sul telefono
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobileActionTarget(null);
+                        setShareItem(sharePayload);
+                      }}
+                      className="min-h-[48px] w-full flex items-center gap-3 px-3 rounded-xl text-sm font-medium text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <Share2 className="w-4 h-4 shrink-0 text-sky-600 dark:text-sky-400" />
+                      Condividi
+                    </button>
+
+                    {!readOnly && editable && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMobileActionTarget(null);
+                          openEditForm(doc);
+                        }}
+                        className="min-h-[48px] w-full flex items-center gap-3 px-3 rounded-xl text-sm font-medium text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
+                      >
+                        <Pencil className="w-4 h-4 shrink-0 text-slate-500" />
+                        Modifica dettagli / file
+                      </button>
+                    )}
+
+                    {!readOnly && deletable && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMobileActionTarget(null);
+                          setPendingDelete({ type: 'document', doc });
+                        }}
+                        className="min-h-[48px] w-full flex items-center gap-3 px-3 rounded-xl text-sm font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10"
+                      >
+                        <Trash2 className="w-4 h-4 shrink-0" />
+                        Elimina documento
+                      </button>
+                    )}
+                  </>
+                );
+              })()
+            ) : (
+              (() => {
+                const { bill } = mobileActionTarget;
+                const localFile = bill.fileKey ? vaultMeta[bill.fileKey] : undefined;
+                const canOpen = !readOnly && Boolean(localFile);
+                const canDelete = canDeleteUnifiedBill(bill);
+                return (
+                  <>
+                    <div className="px-2 pb-2 border-b border-slate-100 dark:border-slate-800">
+                      <div className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
+                        {bill.label} · {bill.period}
+                      </div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                        {bill.supplier} · #{bill.number}
+                      </div>
+                    </div>
+
+                    {canOpen && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMobileActionTarget(null);
+                          void handleOpenAttachment(
+                            bill.fileKey,
+                            undefined,
+                            localFile?.fileName || `${bill.label}-${bill.number}.pdf`
+                          );
+                        }}
+                        className="min-h-[48px] w-full flex items-center gap-3 px-3 rounded-xl text-sm font-medium text-sky-700 dark:text-sky-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                      >
+                        <ExternalLink className="w-4 h-4 shrink-0" />
+                        Apri PDF in nuova scheda
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobileActionTarget(null);
+                        void downloadShareableItem(
+                          readOnly
+                            ? { ...bill.payload, attachmentKey: undefined }
+                            : bill.payload
+                        );
+                      }}
+                      className="min-h-[48px] w-full flex items-center gap-3 px-3 rounded-xl text-sm font-medium text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <Download className="w-4 h-4 shrink-0 text-sky-600 dark:text-sky-400" />
+                      Scarica sul telefono
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobileActionTarget(null);
+                        setShareItem(bill.payload);
+                      }}
+                      className="min-h-[48px] w-full flex items-center gap-3 px-3 rounded-xl text-sm font-medium text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <Share2 className="w-4 h-4 shrink-0 text-sky-600 dark:text-sky-400" />
+                      Condividi
+                    </button>
+
+                    {!readOnly && bill.fileKey && !localFile && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMobileActionTarget(null);
+                          setAttachingBillKey(bill.fileKey);
+                          billAttachInputRef.current?.click();
+                        }}
+                        className="min-h-[48px] w-full flex items-center gap-3 px-3 rounded-xl text-sm font-medium text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
+                      >
+                        <FileUp className="w-4 h-4 shrink-0 text-sky-600 dark:text-sky-400" />
+                        Allega PDF originale
+                      </button>
+                    )}
+
+                    {canDelete && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMobileActionTarget(null);
+                          setPendingDelete({ type: 'bill', item: bill });
+                        }}
+                        className="min-h-[48px] w-full flex items-center gap-3 px-3 rounded-xl text-sm font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10"
+                      >
+                        <Trash2 className="w-4 h-4 shrink-0" />
+                        Elimina
+                      </button>
+                    )}
+                  </>
+                );
+              })()
+            )}
+
+            <button
+              type="button"
+              onClick={() => setMobileActionTarget(null)}
+              className="min-h-[44px] w-full rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 mt-1"
+            >
+              Annulla
+            </button>
+          </div>
+        </div>
+      )}
 
       {shareItem && (
         <ShareSheetModal
@@ -3678,7 +4801,7 @@ export function DocumentsView({
 
       {pendingDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 dark:bg-black/75 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl md:rounded-xl shadow-2xl p-5 space-y-4">
             <div className="flex items-start gap-3">
               <div className="p-2 rounded-lg bg-rose-50 dark:bg-rose-500/15 text-rose-600 dark:text-rose-400 shrink-0">
                 <AlertTriangle className="w-5 h-5" />
@@ -3701,7 +4824,7 @@ export function DocumentsView({
                 type="button"
                 disabled={deleting}
                 onClick={() => setPendingDelete(null)}
-                className="px-3.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg"
+                className="min-h-[44px] md:min-h-0 px-4 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-xl md:rounded-lg"
               >
                 Annulla
               </button>
@@ -3709,7 +4832,7 @@ export function DocumentsView({
                 type="button"
                 disabled={deleting}
                 onClick={() => void confirmDelete()}
-                className="px-3.5 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded-lg"
+                className="min-h-[44px] md:min-h-0 px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded-xl md:rounded-lg"
               >
                 {deleting ? 'Eliminazione...' : 'Elimina'}
               </button>
