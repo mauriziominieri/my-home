@@ -63,7 +63,6 @@ import {
   DedicatedVaultStorageStatus,
   deleteVaultFile,
   DOCUMENT_CATEGORIES,
-  DOCUMENT_STARTER_TEMPLATES,
   DocumentStarterTemplate,
   downloadShareableItem,
   formatFileSize,
@@ -127,11 +126,37 @@ interface DocumentsViewProps {
 }
 
 type OriginKey = 'documenti' | 'ricerche' | 'macchina' | 'bollette';
-type OriginFilter = 'all' | OriginKey;
+type OriginFilter = 'all' | OriginKey | 'non_bollette';
 type ViewMode = 'list' | 'grid';
 
 const VIEW_MODE_STORAGE_KEY = 'myhome_documents_view_mode_v1';
 const GROUP_BY_PRODUCT_STORAGE_KEY = 'myhome_documents_group_by_product_v1';
+const EXPIRY_SOON_DAYS = 60;
+
+function parseDocExpiryMs(raw?: string): number | null {
+  const s = (raw || '').trim();
+  if (!s) return null;
+  let year: number;
+  let month: number;
+  let day: number;
+  const iso = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (iso) {
+    year = Number(iso[1]);
+    month = Number(iso[2]);
+    day = Number(iso[3]);
+  } else {
+    const it = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+    if (!it) return null;
+    day = Number(it[1]);
+    month = Number(it[2]);
+    year = Number(it[3]);
+  }
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const d = new Date(year, month - 1, day);
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
+  return d.getTime();
+}
 
 interface OriginMeta {
   key: Exclude<OriginKey, 'bollette'>;
@@ -385,6 +410,7 @@ export function DocumentsView({
   const [activeTab, setActiveTab] = useState<'all' | 'bollette' | 'ricerche' | HomeDocumentCategory>('all');
   const [originFilter, setOriginFilter] = useState<OriginFilter>('all');
   const [productFilter, setProductFilter] = useState<string>('all');
+  const [expiryOnlyFilter, setExpiryOnlyFilter] = useState<boolean>(false);
   const [groupByProduct, setGroupByProduct] = useState<boolean>(readInitialGroupByProduct);
   const [viewMode, setViewMode] = useState<ViewMode>(readInitialViewMode);
   const [searchQuery, setSearchQuery] = useState('');
@@ -524,8 +550,8 @@ export function DocumentsView({
         setStatusNotice(
           `Migrazione verso ${res.providerLabel} non riuscita: 0 file trasferiti su ${res.remaining} da spostare${stopHint}.${errHint}`
         );
-      } else if (res.failed > 0) {
-        const errHint = res.firstError ? ` Primo errore: ${res.firstError}` : '';
+      } else if (res.failed > 0 || res.stoppedEarly || res.remaining > 0) {
+        const errHint = res.firstError ? ` Motivo: ${res.firstError}` : '';
         setStatusNotice(
           `Migrazione parziale verso ${res.providerLabel}: ${res.migrated} file trasferiti, ${res.remaining} ancora su Firestore.${errHint}`
         );
@@ -1867,12 +1893,46 @@ export function DocumentsView({
     return { items, otherCount };
   }, [allUnifiedDocumentRows]);
 
+  const expiryStats = useMemo(() => {
+    const now = new Date();
+    const todayStartMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const soonCutoffMs = todayStartMs + EXPIRY_SOON_DAYS * 86_400_000;
+    let expiredCount = 0;
+    let expiringSoonCount = 0;
+    const attentionIds = new Set<string>();
+    const expiryMsById = new Map<string, number>();
+
+    for (const row of allUnifiedDocumentRows) {
+      const ms = parseDocExpiryMs(row.doc.expiryDate);
+      if (ms === null) continue;
+      expiryMsById.set(row.doc.id, ms);
+      if (ms < todayStartMs) {
+        expiredCount += 1;
+        attentionIds.add(row.doc.id);
+      } else if (ms <= soonCutoffMs) {
+        expiringSoonCount += 1;
+        attentionIds.add(row.doc.id);
+      }
+    }
+
+    return {
+      expiredCount,
+      expiringSoonCount,
+      totalAttentionCount: attentionIds.size,
+      attentionIds,
+      expiryMsById,
+    };
+  }, [allUnifiedDocumentRows]);
+
   const filteredDocumentRows = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return [...allUnifiedDocumentRows]
       .filter((row) => {
         if (originFilter === 'bollette') return false;
-        if (originFilter !== 'all' && row.origin.key !== originFilter) return false;
+        if (originFilter !== 'all' && originFilter !== 'non_bollette' && row.origin.key !== originFilter) {
+          return false;
+        }
+        if (expiryOnlyFilter && !expiryStats.attentionIds.has(row.doc.id)) return false;
         if (productFilter === 'unlinked' && row.origin.isApplianceOrArticle) return false;
         if (
           productFilter !== 'all' &&
@@ -1907,10 +1967,15 @@ export function DocumentsView({
           .some((f) => String(f).toLowerCase().includes(q));
       })
       .sort((a, b) => {
+        if (expiryOnlyFilter) {
+          const ma = expiryStats.expiryMsById.get(a.doc.id) ?? Number.MAX_SAFE_INTEGER;
+          const mb = expiryStats.expiryMsById.get(b.doc.id) ?? Number.MAX_SAFE_INTEGER;
+          if (ma !== mb) return ma - mb;
+        }
         if (a.doc.pinned !== b.doc.pinned) return a.doc.pinned ? -1 : 1;
         return a.doc.title.localeCompare(b.doc.title, 'it');
       });
-  }, [allUnifiedDocumentRows, activeTab, originFilter, productFilter, searchQuery]);
+  }, [allUnifiedDocumentRows, activeTab, originFilter, productFilter, expiryOnlyFilter, expiryStats, searchQuery]);
 
   const groupedDocumentSections = useMemo(() => {
     const productBuckets = new Map<
@@ -2077,14 +2142,6 @@ export function DocumentsView({
     searchQuery,
   ]);
 
-  const attachedDocsCount = useMemo(
-    () =>
-      allUnifiedDocumentRows.filter(
-        (r) => (r.fileKey && vaultMeta[r.fileKey]) || r.doc.fileName || r.doc.cloudUrl
-      ).length,
-    [allUnifiedDocumentRows, vaultMeta]
-  );
-
   const originCounts = useMemo(() => {
     const counts = {
       documenti: 0,
@@ -2097,10 +2154,31 @@ export function DocumentsView({
     return counts;
   }, [allUnifiedDocumentRows]);
 
-  const pinnedDocsCount = useMemo(
-    () => documents.filter((d) => d.pinned).length,
-    [documents]
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<HomeDocumentCategory, number>();
+    for (const cat of DOCUMENT_CATEGORIES) {
+      counts.set(cat, 0);
+    }
+    for (const row of allUnifiedDocumentRows) {
+      counts.set(row.doc.category, (counts.get(row.doc.category) || 0) + 1);
+    }
+    return counts;
+  }, [allUnifiedDocumentRows]);
+
+  const visibleCategoryOptions = useMemo(
+    () =>
+      DOCUMENT_CATEGORIES.filter(
+        (cat) => (categoryCounts.get(cat) || 0) > 0 || activeTab === cat
+      ),
+    [categoryCounts, activeTab]
   );
+
+  const hasAnyActiveFilter =
+    activeTab !== 'all' ||
+    originFilter !== 'all' ||
+    productFilter !== 'all' ||
+    expiryOnlyFilter ||
+    searchQuery.trim() !== '';
 
   function canDeleteUnifiedBill(item: UnifiedBillShareItem): boolean {
     if (readOnly) return false;
@@ -2131,7 +2209,8 @@ export function DocumentsView({
   const activeMobileFilterCount =
     (activeTab !== 'all' ? 1 : 0) +
     (originFilter !== 'all' && originFilter !== activeTab ? 1 : 0) +
-    (productFilter !== 'all' ? 1 : 0);
+    (productFilter !== 'all' ? 1 : 0) +
+    (expiryOnlyFilter ? 1 : 0);
 
   function formatStorageBadgeText(localFile?: VaultFileMeta): string {
     if (!localFile) return '';
@@ -2388,30 +2467,88 @@ export function DocumentsView({
         {showMobileUtilities && (
           <div className="space-y-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5">
             <div className="grid grid-cols-2 gap-2">
-              <div className="bg-slate-50 dark:bg-slate-950/70 rounded-xl p-2.5">
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">Archivio totale</div>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('all');
+                  setOriginFilter('all');
+                  setProductFilter('all');
+                  setExpiryOnlyFilter(false);
+                }}
+                className="text-left bg-slate-50 dark:bg-slate-950/70 rounded-xl p-2.5 border border-transparent hover:border-slate-300 dark:hover:border-slate-700"
+              >
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">Archivio Unico</div>
                 <div className="text-lg font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100">
                   {allUnifiedDocumentRows.length + totalShareableBillsCount}
                 </div>
-              </div>
-              <div className="bg-slate-50 dark:bg-slate-950/70 rounded-xl p-2.5">
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">Con file</div>
-                <div className="text-lg font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-300">
-                  {attachedDocsCount + totalShareableBillsCount}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setExpiryOnlyFilter(false);
+                  setProductFilter('all');
+                  if (originFilter === 'non_bollette' && activeTab === 'all') {
+                    setOriginFilter('all');
+                  } else {
+                    setActiveTab('all');
+                    setOriginFilter('non_bollette');
+                  }
+                }}
+                className="text-left bg-slate-50 dark:bg-slate-950/70 rounded-xl p-2.5 border border-transparent hover:border-slate-300 dark:hover:border-slate-700"
+              >
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">Casa, Auto &amp; Prodotti</div>
+                <div className="text-lg font-bold font-mono tabular-nums text-violet-700 dark:text-violet-300">
+                  {allUnifiedDocumentRows.length}
                 </div>
-              </div>
-              <div className="bg-slate-50 dark:bg-slate-950/70 rounded-xl p-2.5">
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">In evidenza</div>
-                <div className="text-lg font-bold font-mono tabular-nums text-amber-600 dark:text-amber-400">
-                  {pinnedDocsCount}
-                </div>
-              </div>
-              <div className="bg-slate-50 dark:bg-slate-950/70 rounded-xl p-2.5">
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setExpiryOnlyFilter(false);
+                  setProductFilter('all');
+                  if (activeTab === 'bollette' || originFilter === 'bollette') {
+                    setActiveTab('all');
+                    setOriginFilter('all');
+                  } else {
+                    setActiveTab('bollette');
+                    setOriginFilter('bollette');
+                  }
+                }}
+                className="text-left bg-slate-50 dark:bg-slate-950/70 rounded-xl p-2.5 border border-transparent hover:border-slate-300 dark:hover:border-slate-700"
+              >
                 <div className="text-[11px] text-slate-500 dark:text-slate-400">Bollette &amp; GSE</div>
-                <div className="text-lg font-bold font-mono tabular-nums text-sky-600 dark:text-sky-300">
+                <div className="text-lg font-bold font-mono tabular-nums text-amber-600 dark:text-amber-300">
                   {totalShareableBillsCount}
                 </div>
-              </div>
+              </button>
+              <button
+                type="button"
+                disabled={expiryStats.totalAttentionCount === 0 && !expiryOnlyFilter}
+                onClick={() => {
+                  const next = !expiryOnlyFilter;
+                  setExpiryOnlyFilter(next);
+                  if (next) {
+                    if (activeTab === 'bollette') setActiveTab('all');
+                    if (originFilter === 'bollette') setOriginFilter('all');
+                  }
+                }}
+                className="text-left bg-slate-50 dark:bg-slate-950/70 rounded-xl p-2.5 border border-transparent hover:border-slate-300 dark:hover:border-slate-700 disabled:opacity-75"
+              >
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Scadenze (≤{EXPIRY_SOON_DAYS} gg)
+                </div>
+                <div
+                  className={`text-lg font-bold font-mono tabular-nums ${
+                    expiryStats.expiredCount > 0
+                      ? 'text-rose-600 dark:text-rose-400'
+                      : expiryStats.expiringSoonCount > 0
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-emerald-600 dark:text-emerald-300'
+                  }`}
+                >
+                  {expiryStats.totalAttentionCount}
+                </div>
+              </button>
             </div>
 
             <div className="space-y-2 border-t border-slate-100 dark:border-slate-800 pt-3">
@@ -2466,65 +2603,155 @@ export function DocumentsView({
                 </div>
               )}
             </div>
-
-            {!readOnly && (
-              <div className="border-t border-slate-100 dark:border-slate-800 pt-3 space-y-2">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  Modelli rapidi casa
-                </div>
-                <div className="flex gap-2 overflow-x-auto pb-1">
-                  {DOCUMENT_STARTER_TEMPLATES.map((tpl) => (
-                    <button
-                      key={tpl.title}
-                      type="button"
-                      onClick={() => openNewForm(tpl)}
-                      className="min-h-[40px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs whitespace-nowrap shrink-0 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 rounded-xl"
-                    >
-                      <Plus className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
-                      {tpl.title}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>
 
       {/* Desktop KPI (>=768px) */}
       <div className="hidden md:grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
-          <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
-            Totale Archivio Unico
-          </div>
-          <div className="text-xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-0.5">
-            {allUnifiedDocumentRows.length + totalShareableBillsCount}
-          </div>
-        </div>
-        <div className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
-          <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
-            Con File Allegato
-          </div>
-          <div className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-300 mt-0.5">
-            {attachedDocsCount + totalShareableBillsCount}
-          </div>
-        </div>
-        <div className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
-          <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
-            In Evidenza
-          </div>
-          <div className="text-xl font-bold font-mono text-amber-600 dark:text-amber-400 mt-0.5">
-            {pinnedDocsCount}
-          </div>
-        </div>
-        <div className="bg-white dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs dark:shadow-none">
-          <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
-            Bollette &amp; GSE
-          </div>
-          <div className="text-xl font-bold font-mono text-sky-600 dark:text-sky-300 mt-0.5">
-            {totalShareableBillsCount}
-          </div>
-        </div>
+        {(() => {
+          const allSelected =
+            activeTab === 'all' &&
+            originFilter === 'all' &&
+            productFilter === 'all' &&
+            !expiryOnlyFilter;
+          const nonBillsSelected =
+            originFilter === 'non_bollette' && activeTab === 'all' && !expiryOnlyFilter;
+          const billsSelected = activeTab === 'bollette' || originFilter === 'bollette';
+          const houseAndCarCount = originCounts.documenti + originCounts.macchina;
+          const expirySubtext =
+            expiryStats.expiredCount > 0 && expiryStats.expiringSoonCount > 0
+              ? `${expiryStats.expiredCount} scaduti · ${expiryStats.expiringSoonCount} in scadenza`
+              : expiryStats.expiredCount > 0
+                ? `${expiryStats.expiredCount} ${expiryStats.expiredCount === 1 ? 'scaduto' : 'scaduti'} da rinnovare`
+                : expiryStats.expiringSoonCount > 0
+                  ? `${expiryStats.expiringSoonCount} entro ${EXPIRY_SOON_DAYS} giorni`
+                  : 'Nessuna scadenza vicina';
+
+          return (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('all');
+                  setOriginFilter('all');
+                  setProductFilter('all');
+                  setExpiryOnlyFilter(false);
+                }}
+                className={`text-left bg-white dark:bg-slate-900/75 border rounded-xl p-3.5 transition-colors shadow-xs dark:shadow-none ${
+                  allSelected
+                    ? 'border-brand-500/60 dark:border-brand-400/50 ring-1 ring-brand-500/20'
+                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                }`}
+              >
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Archivio Unico
+                </div>
+                <div className="text-xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-0.5">
+                  {allUnifiedDocumentRows.length + totalShareableBillsCount}
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                  {allUnifiedDocumentRows.length} file · {totalShareableBillsCount} bollette/GSE
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setExpiryOnlyFilter(false);
+                  setProductFilter('all');
+                  if (nonBillsSelected) {
+                    setOriginFilter('all');
+                  } else {
+                    setActiveTab('all');
+                    setOriginFilter('non_bollette');
+                  }
+                }}
+                className={`text-left bg-white dark:bg-slate-900/75 border rounded-xl p-3.5 transition-colors shadow-xs dark:shadow-none ${
+                  nonBillsSelected
+                    ? 'border-violet-500/60 dark:border-violet-400/50 ring-1 ring-violet-500/20'
+                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                }`}
+              >
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Casa, Auto &amp; Prodotti
+                </div>
+                <div className="text-xl font-bold font-mono text-violet-700 dark:text-violet-300 mt-0.5">
+                  {allUnifiedDocumentRows.length}
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                  {houseAndCarCount} Casa/Auto · {originCounts.ricerche} Prodotti
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setExpiryOnlyFilter(false);
+                  setProductFilter('all');
+                  if (billsSelected) {
+                    setActiveTab('all');
+                    setOriginFilter('all');
+                  } else {
+                    setActiveTab('bollette');
+                    setOriginFilter('bollette');
+                  }
+                }}
+                className={`text-left bg-white dark:bg-slate-900/75 border rounded-xl p-3.5 transition-colors shadow-xs dark:shadow-none ${
+                  billsSelected
+                    ? 'border-amber-500/70 dark:border-amber-400/60 ring-1 ring-amber-500/25'
+                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                }`}
+              >
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Bollette &amp; GSE
+                </div>
+                <div className="text-xl font-bold font-mono text-amber-600 dark:text-amber-300 mt-0.5">
+                  {totalShareableBillsCount}
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                  Luce · Acqua · TARI · GSE
+                </div>
+              </button>
+
+              <button
+                type="button"
+                disabled={expiryStats.totalAttentionCount === 0 && !expiryOnlyFilter}
+                onClick={() => {
+                  const next = !expiryOnlyFilter;
+                  setExpiryOnlyFilter(next);
+                  if (next) {
+                    if (activeTab === 'bollette') setActiveTab('all');
+                    if (originFilter === 'bollette') setOriginFilter('all');
+                  }
+                }}
+                className={`text-left bg-white dark:bg-slate-900/75 border rounded-xl p-3.5 transition-colors shadow-xs dark:shadow-none disabled:opacity-75 disabled:cursor-default ${
+                  expiryOnlyFilter
+                    ? 'border-rose-500/70 dark:border-rose-400/60 ring-1 ring-rose-500/25'
+                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                }`}
+              >
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Scadenze (≤{EXPIRY_SOON_DAYS} gg)
+                </div>
+                <div
+                  className={`text-xl font-bold font-mono mt-0.5 ${
+                    expiryStats.expiredCount > 0
+                      ? 'text-rose-600 dark:text-rose-400'
+                      : expiryStats.expiringSoonCount > 0
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-emerald-600 dark:text-emerald-300'
+                  }`}
+                >
+                  {expiryStats.totalAttentionCount}
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                  {expirySubtext}
+                </div>
+              </button>
+            </>
+          );
+        })()}
       </div>
 
       {/* Desktop Offline Cache & Dedicated Storage Bar (>=768px) */}
@@ -2694,28 +2921,6 @@ export function DocumentsView({
         );
       })()}
 
-      {/* Desktop Quick Starter Templates (>=768px) */}
-      {!readOnly && (
-        <section className="hidden md:block bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-2 shadow-xs dark:shadow-none">
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-            Aggiunta rapida documenti essenziali di casa
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {DOCUMENT_STARTER_TEMPLATES.map((tpl) => (
-              <button
-                key={tpl.title}
-                type="button"
-                onClick={() => openNewForm(tpl)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-950/80 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 hover:border-sky-500/40 text-slate-800 dark:text-slate-200 rounded-lg transition-colors"
-              >
-                <Plus className="w-3 h-3 text-sky-600 dark:text-sky-400" />
-                {tpl.title}
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
-
       {/* Mobile Search + Filter Sheet Trigger + Single-Row Category Strip (<768px) */}
       <div className="md:hidden space-y-2.5">
         <div className="flex items-center gap-2">
@@ -2763,9 +2968,10 @@ export function DocumentsView({
               setActiveTab('all');
               setOriginFilter('all');
               setProductFilter('all');
+              setExpiryOnlyFilter(false);
             }}
             className={`min-h-[40px] px-3 py-1.5 text-xs font-semibold whitespace-nowrap shrink-0 rounded-xl border transition-colors ${
-              activeTab === 'all' && originFilter === 'all' && productFilter === 'all'
+              activeTab === 'all' && originFilter === 'all' && productFilter === 'all' && !expiryOnlyFilter
                 ? 'bg-brand-600 text-white border-brand-600 dark:bg-brand-400 dark:text-slate-950 dark:border-brand-400'
                 : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800'
             }`}
@@ -2775,8 +2981,41 @@ export function DocumentsView({
           <button
             type="button"
             onClick={() => {
+              setOriginFilter('documenti');
+              setExpiryOnlyFilter(false);
+              if (activeTab === 'bollette' || activeTab === 'ricerche') setActiveTab('all');
+            }}
+            className={`min-h-[40px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold whitespace-nowrap shrink-0 rounded-xl border transition-colors ${
+              originFilter === 'documenti'
+                ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-400 dark:text-slate-950 dark:border-sky-400'
+                : 'bg-white dark:bg-slate-900 text-sky-700 dark:text-sky-300 border-slate-200 dark:border-slate-800'
+            }`}
+          >
+            <Building2 className="w-3.5 h-3.5" />
+            Casa ({originCounts.documenti})
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setOriginFilter('macchina');
+              setExpiryOnlyFilter(false);
+              if (activeTab === 'bollette' || activeTab === 'ricerche') setActiveTab('all');
+            }}
+            className={`min-h-[40px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold whitespace-nowrap shrink-0 rounded-xl border transition-colors ${
+              originFilter === 'macchina'
+                ? 'bg-emerald-600 text-white border-emerald-600 dark:bg-emerald-400 dark:text-slate-950 dark:border-emerald-400'
+                : 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-300 border-slate-200 dark:border-slate-800'
+            }`}
+          >
+            <Car className="w-3.5 h-3.5" />
+            Auto ({originCounts.macchina})
+          </button>
+          <button
+            type="button"
+            onClick={() => {
               setActiveTab('ricerche');
               setOriginFilter('ricerche');
+              setExpiryOnlyFilter(false);
             }}
             className={`min-h-[40px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold whitespace-nowrap shrink-0 rounded-xl border transition-colors ${
               activeTab === 'ricerche' || originFilter === 'ricerche'
@@ -2792,6 +3031,8 @@ export function DocumentsView({
             onClick={() => {
               setActiveTab('bollette');
               setOriginFilter('bollette');
+              setProductFilter('all');
+              setExpiryOnlyFilter(false);
             }}
             className={`min-h-[40px] inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold whitespace-nowrap shrink-0 rounded-xl border transition-colors ${
               activeTab === 'bollette' || originFilter === 'bollette'
@@ -2802,254 +3043,209 @@ export function DocumentsView({
             <Receipt className="w-3.5 h-3.5" />
             Bollette ({totalShareableBillsCount})
           </button>
-          {DOCUMENT_CATEGORIES.map((cat) => {
-            const count = allUnifiedDocumentRows.filter((r) => r.doc.category === cat).length;
-            return (
-              <button
-                key={cat}
-                type="button"
-                onClick={() => {
-                  setActiveTab(cat);
-                  if (originFilter === 'bollette') setOriginFilter('all');
-                }}
-                className={`min-h-[40px] px-3 py-1.5 text-xs font-medium whitespace-nowrap shrink-0 rounded-xl border transition-colors ${
-                  activeTab === cat
-                    ? 'bg-brand-600 text-white border-brand-600 dark:bg-brand-400 dark:text-slate-950 dark:border-brand-400'
-                    : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800'
-                }`}
-              >
-                {cat} ({count})
-              </button>
-            );
-          })}
         </div>
       </div>
 
-      {/* Desktop Tabs + Origin Filter + Search + List/Grid Toggle (>=768px) */}
-      <div className="hidden md:block space-y-2.5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-1.5">
+      {/* Desktop Unified Filter & Search Toolbar (>=768px) */}
+      <div className="hidden md:flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('all');
+              setOriginFilter('all');
+              setProductFilter('all');
+              setExpiryOnlyFilter(false);
+            }}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+              activeTab === 'all' && originFilter === 'all' && productFilter === 'all' && !expiryOnlyFilter
+                ? 'bg-brand-600 text-white border-brand-600 dark:bg-brand-400 dark:text-slate-950 dark:border-brand-400'
+                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
+            }`}
+          >
+            Tutti ({allUnifiedDocumentRows.length + totalShareableBillsCount})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setOriginFilter('documenti');
+              setExpiryOnlyFilter(false);
+              if (activeTab === 'bollette' || activeTab === 'ricerche') setActiveTab('all');
+            }}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+              originFilter === 'documenti'
+                ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-400 dark:text-slate-950 dark:border-sky-400'
+                : 'bg-white dark:bg-slate-900 text-sky-700 dark:text-sky-300 border-slate-200 dark:border-slate-800 hover:bg-sky-50 dark:hover:bg-sky-500/10'
+            }`}
+          >
+            <Building2 className="w-3.5 h-3.5" />
+            Casa ({originCounts.documenti})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setOriginFilter('macchina');
+              setExpiryOnlyFilter(false);
+              if (activeTab === 'bollette' || activeTab === 'ricerche') setActiveTab('all');
+            }}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+              originFilter === 'macchina'
+                ? 'bg-emerald-600 text-white border-emerald-600 dark:bg-emerald-400 dark:text-slate-950 dark:border-emerald-400'
+                : 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-300 border-slate-200 dark:border-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-500/10'
+            }`}
+          >
+            <Car className="w-3.5 h-3.5" />
+            Auto ({originCounts.macchina})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('ricerche');
+              setOriginFilter('ricerche');
+              setExpiryOnlyFilter(false);
+            }}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+              activeTab === 'ricerche' || originFilter === 'ricerche'
+                ? 'bg-violet-600 text-white border-violet-600 dark:bg-violet-400 dark:text-slate-950 dark:border-violet-400'
+                : 'bg-white dark:bg-slate-900 text-violet-700 dark:text-violet-300 border-slate-200 dark:border-slate-800 hover:bg-violet-50 dark:hover:bg-violet-500/10'
+            }`}
+          >
+            <ShoppingBag className="w-3.5 h-3.5" />
+            Prodotti ({originCounts.ricerche})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('bollette');
+              setOriginFilter('bollette');
+              setProductFilter('all');
+              setExpiryOnlyFilter(false);
+            }}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+              activeTab === 'bollette' || originFilter === 'bollette'
+                ? 'bg-amber-500 text-slate-950 border-amber-500 dark:bg-amber-400 dark:text-slate-950 dark:border-amber-400'
+                : 'bg-white dark:bg-slate-900 text-amber-800 dark:text-amber-300 border-slate-200 dark:border-slate-800 hover:bg-amber-50 dark:hover:bg-amber-500/10'
+            }`}
+          >
+            <Receipt className="w-3.5 h-3.5" />
+            Bollette ({totalShareableBillsCount})
+          </button>
+
+          {activeTab !== 'bollette' && originFilter !== 'bollette' && visibleCategoryOptions.length > 0 && (
+            <select
+              aria-label="Filtra per categoria documento"
+              value={
+                activeTab !== 'all' && activeTab !== 'ricerche' ? activeTab : 'all'
+              }
+              onChange={(e) => {
+                const next = e.target.value;
+                if (next === 'all') {
+                  setActiveTab(originFilter === 'ricerche' ? 'ricerche' : 'all');
+                } else {
+                  setActiveTab(next as HomeDocumentCategory);
+                }
+              }}
+              className="px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-800 dark:text-slate-200 [color-scheme:light] dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
+            >
+              <option value="all">Tutte le categorie</option>
+              {visibleCategoryOptions.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat} ({categoryCounts.get(cat) || 0})
+                </option>
+              ))}
+            </select>
+          )}
+
+          <div className="relative flex-1 min-w-[180px] max-w-xs">
+            <Search className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Cerca lavatrice, documento, bolletta..."
+              className="w-full pl-8 pr-7 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                aria-label="Svuota ricerca"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {hasAnyActiveFilter && (
             <button
               type="button"
               onClick={() => {
                 setActiveTab('all');
                 setOriginFilter('all');
                 setProductFilter('all');
+                setExpiryOnlyFilter(false);
+                setSearchQuery('');
               }}
-              className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                activeTab === 'all' && originFilter === 'all' && productFilter === 'all'
-                  ? 'bg-brand-600 text-white border-brand-600 dark:bg-brand-400 dark:text-slate-950 dark:border-brand-400'
-                  : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
-              }`}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors"
             >
-              Tutti ({allUnifiedDocumentRows.length + totalShareableBillsCount})
+              <X className="w-3.5 h-3.5" />
+              Azzera
             </button>
-
-            {DOCUMENT_CATEGORIES.map((cat) => {
-              const count = allUnifiedDocumentRows.filter((r) => r.doc.category === cat).length;
-              return (
-                <button
-                  key={cat}
-                  type="button"
-                  onClick={() => {
-                    setActiveTab(cat);
-                    if (originFilter === 'bollette') setOriginFilter('all');
-                  }}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                    activeTab === cat
-                      ? 'bg-brand-600 text-white border-brand-600 dark:bg-brand-400 dark:text-slate-950 dark:border-brand-400'
-                      : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
-                  }`}
-                >
-                  {cat} ({count})
-                </button>
-              );
-            })}
-
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('ricerche');
-                  setOriginFilter('ricerche');
-                }}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
-                  activeTab === 'ricerche' || originFilter === 'ricerche'
-                    ? 'bg-violet-600 text-white border-violet-600 dark:bg-violet-400 dark:text-slate-950 dark:border-violet-400'
-                    : 'bg-violet-50 dark:bg-violet-500/10 text-violet-800 dark:text-violet-300 border-violet-200 dark:border-violet-500/30 hover:bg-violet-100 dark:hover:bg-violet-500/20'
-                }`}
-              >
-                <ShoppingBag className="w-3.5 h-3.5" />
-                Prodotti ({originCounts.ricerche})
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('bollette');
-                  setOriginFilter('bollette');
-                }}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
-                  activeTab === 'bollette' || originFilter === 'bollette'
-                    ? 'bg-amber-500 text-slate-950 border-amber-500 dark:bg-amber-400 dark:text-slate-950 dark:border-amber-400'
-                    : 'bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-500/30 hover:bg-amber-100 dark:hover:bg-amber-500/20'
-                }`}
-              >
-                <Receipt className="w-3.5 h-3.5" />
-                Bollette &amp; GSE ({totalShareableBillsCount})
-              </button>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-              <select
-                aria-label="Filtra per pagina di origine"
-                value={originFilter}
-                onChange={(e) => {
-                  const next = e.target.value as OriginFilter;
-                  setOriginFilter(next);
-                  if (next === 'bollette') {
-                    setActiveTab('bollette');
-                    setProductFilter('all');
-                  } else if (next === 'ricerche') {
-                    setActiveTab('ricerche');
-                  } else if (activeTab === 'bollette' || activeTab === 'ricerche') {
-                    setActiveTab('all');
-                  }
-                }}
-                className="px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-800 dark:text-slate-200 [color-scheme:light] dark:[color-scheme:dark] focus:outline-none focus:border-sky-500"
-              >
-                <option value="all">
-                  Tutte le origini ({allUnifiedDocumentRows.length + totalShareableBillsCount})
-                </option>
-                <option value="documenti">Documenti Casa ({originCounts.documenti})</option>
-                <option value="ricerche">Prodotti ({originCounts.ricerche})</option>
-                <option value="bollette">Bollette &amp; GSE ({totalShareableBillsCount})</option>
-                <option value="macchina">
-                  Macchina {carPlate} ({originCounts.macchina})
-                </option>
-              </select>
-
-            <div className="relative flex-1 sm:w-56">
-              <Search className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Cerca lavatrice, documento, bolletta..."
-                className="w-full pl-8 pr-3 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
-              />
-            </div>
-
-            {linkedProductFilterOptions.items.length > 0 &&
-              activeTab !== 'bollette' &&
-              originFilter !== 'bollette' && (
-                <button
-                  type="button"
-                  onClick={handleToggleGroupByProduct}
-                  aria-pressed={groupByProduct}
-                  title="Raggruppa i documenti per prodotto / elettrodomestico"
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
-                    groupByProduct
-                      ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-400 dark:text-slate-950 dark:border-sky-400'
-                      : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  <Layers className="w-3.5 h-3.5" />
-                  Divisi per prodotto
-                </button>
-              )}
-
-            <div className="inline-flex items-center p-0.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100/80 dark:bg-slate-950/70">
-              <button
-                type="button"
-                onClick={() => handleChangeViewMode('list')}
-                className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
-                  viewMode === 'list'
-                    ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-                }`}
-              >
-                <List className="w-3.5 h-3.5" />
-                Elenco
-              </button>
-              <button
-                type="button"
-                onClick={() => handleChangeViewMode('grid')}
-                className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
-                  viewMode === 'grid'
-                    ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-                }`}
-              >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                Griglia
-              </button>
-            </div>
-          </div>
+          )}
         </div>
 
-        {/* Quick Appliance / Product Filter Bar */}
-        {linkedProductFilterOptions.items.length > 0 &&
-          activeTab !== 'bollette' &&
-          originFilter !== 'bollette' && (
-            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mr-1">
-                Elettrodomestico / Prodotto:
-              </span>
+        <div className="flex items-center gap-2 shrink-0">
+          {linkedProductFilterOptions.items.length > 0 &&
+            activeTab !== 'bollette' &&
+            originFilter !== 'bollette' && (
               <button
                 type="button"
-                onClick={() => setProductFilter('all')}
-                className={`px-2.5 py-1 text-xs font-medium rounded-md border transition-colors ${
-                  productFilter === 'all'
-                    ? 'bg-slate-900 text-white border-slate-900 dark:bg-slate-100 dark:text-slate-950 dark:border-slate-100'
+                onClick={handleToggleGroupByProduct}
+                aria-pressed={groupByProduct}
+                title="Raggruppa i documenti per prodotto / elettrodomestico"
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+                  groupByProduct
+                    ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-400 dark:text-slate-950 dark:border-sky-400'
                     : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
                 }`}
               >
-                Tutti ({allUnifiedDocumentRows.length})
+                <Layers className="w-3.5 h-3.5" />
+                Divisi per prodotto
               </button>
-              {linkedProductFilterOptions.items.map((item) => {
-                const active = productFilter === item.groupKey;
-                return (
-                  <button
-                    key={item.groupKey}
-                    type="button"
-                    onClick={() => {
-                      setProductFilter(active ? 'all' : item.groupKey);
-                      if (originFilter !== 'all' && originFilter !== item.kind) {
-                        setOriginFilter('all');
-                      }
-                    }}
-                    title={item.subtitle ? `${item.title} — ${item.subtitle}` : item.title}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border transition-colors max-w-[260px] ${
-                      active
-                        ? 'bg-sky-600 text-white border-sky-600 dark:bg-sky-400 dark:text-slate-950 dark:border-sky-400'
-                        : 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-800 hover:border-sky-400 dark:hover:border-sky-500/50'
-                    }`}
-                  >
-                    <ShoppingBag className="w-3 h-3 shrink-0 opacity-80" />
-                    <span className="truncate">{item.title}</span>
-                    <span className="font-mono text-[11px] opacity-75 shrink-0">
-                      ({item.count})
-                    </span>
-                  </button>
-                );
-              })}
-              {linkedProductFilterOptions.otherCount > 0 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setProductFilter(productFilter === 'unlinked' ? 'all' : 'unlinked')
-                  }
-                  className={`px-2.5 py-1 text-xs font-medium rounded-md border transition-colors ${
-                    productFilter === 'unlinked'
-                      ? 'bg-slate-800 text-white border-slate-800 dark:bg-slate-200 dark:text-slate-950 dark:border-slate-200'
-                      : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:text-slate-900 dark:hover:text-slate-200'
-                  }`}
-                >
-                  Altri documenti ({linkedProductFilterOptions.otherCount})
-                </button>
-              )}
-            </div>
-          )}
+            )}
+
+          <div className="inline-flex items-center p-0.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100/80 dark:bg-slate-950/70">
+            <button
+              type="button"
+              onClick={() => handleChangeViewMode('list')}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
+                viewMode === 'list'
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              <List className="w-3.5 h-3.5" />
+              Elenco
+            </button>
+            <button
+              type="button"
+              onClick={() => handleChangeViewMode('grid')}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
+                viewMode === 'grid'
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              Griglia
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Add / Edit Modal (touch optimized on mobile) */}
@@ -3330,9 +3526,10 @@ export function DocumentsView({
       {/* Main Content */}
       {(() => {
         const showBillsSection =
-          activeTab === 'bollette' ||
-          originFilter === 'bollette' ||
-          (activeTab === 'all' && originFilter === 'all' && allBillsForSharing.length > 0);
+          !expiryOnlyFilter &&
+          (activeTab === 'bollette' ||
+            originFilter === 'bollette' ||
+            (activeTab === 'all' && originFilter === 'all' && allBillsForSharing.length > 0));
         const showDocsSection = activeTab !== 'bollette' && originFilter !== 'bollette';
         const hasAnyContent =
           (showDocsSection && filteredDocumentRows.length > 0) ||
@@ -3802,7 +3999,7 @@ export function DocumentsView({
                   </button>
                   <button
                     type="button"
-                    onClick={() => openNewForm(DOCUMENT_STARTER_TEMPLATES[0])}
+                    onClick={() => openNewForm()}
                     className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg"
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -4528,6 +4725,9 @@ export function DocumentsView({
                 <option value="all">
                   Tutte le origini ({allUnifiedDocumentRows.length + totalShareableBillsCount})
                 </option>
+                <option value="non_bollette">
+                  Casa, Auto &amp; Prodotti ({allUnifiedDocumentRows.length})
+                </option>
                 <option value="documenti">Documenti Casa ({originCounts.documenti})</option>
                 <option value="ricerche">Prodotti ({originCounts.ricerche})</option>
                 <option value="bollette">Bollette &amp; GSE ({totalShareableBillsCount})</option>
@@ -4536,6 +4736,37 @@ export function DocumentsView({
                 </option>
               </select>
             </div>
+
+            {activeTab !== 'bollette' &&
+              originFilter !== 'bollette' &&
+              visibleCategoryOptions.length > 0 && (
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                    Categoria documento
+                  </label>
+                  <select
+                    value={
+                      activeTab !== 'all' && activeTab !== 'ricerche' ? activeTab : 'all'
+                    }
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (next === 'all') {
+                        setActiveTab(originFilter === 'ricerche' ? 'ricerche' : 'all');
+                      } else {
+                        setActiveTab(next as HomeDocumentCategory);
+                      }
+                    }}
+                    className="w-full min-h-[44px] px-3 py-2 text-base bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-slate-100 [color-scheme:light] dark:[color-scheme:dark]"
+                  >
+                    <option value="all">Tutte le categorie</option>
+                    {visibleCategoryOptions.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat} ({categoryCounts.get(cat) || 0})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
             {linkedProductFilterOptions.items.length > 0 &&
               activeTab !== 'bollette' &&
@@ -4590,6 +4821,7 @@ export function DocumentsView({
                   setActiveTab('all');
                   setOriginFilter('all');
                   setProductFilter('all');
+                  setExpiryOnlyFilter(false);
                 }}
                 className="min-h-[44px] px-4 py-2 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800"
               >
