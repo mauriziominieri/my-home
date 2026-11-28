@@ -6090,7 +6090,7 @@ async function startServer() {
       return;
     }
 
-    const MAX_DOC_BYTES = 6_000_000;
+    const MAX_DOC_BYTES = req.body?.allowLargePdf === true ? 24_000_000 : 6_000_000;
     const reqHeaders: Record<string, string> = {
       'User-Agent':
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -6472,7 +6472,20 @@ async function startServer() {
       };
     }
 
-    if (hay.includes('polizza') || hay.includes('assicuraz') || hay.includes('conte.it') || hay.includes('rca') || hay.includes('sinistr') || hay.includes('garanzia')) {
+    const isProductTechDoc =
+      /etichett[ae]?\s*energetic|energy\s*label|\beprel\b|dichiarazion[ei]?\s*(?:di\s*)?conformit|manual[ei]?\s*(?:utente|d['’]?uso)|istruzion|scheda\s*(?:prodotto|tecnica)/i.test(
+        hay
+      );
+
+    if (
+      !isProductTechDoc &&
+      (hay.includes('polizza') ||
+        hay.includes('assicuraz') ||
+        hay.includes('conte.it') ||
+        hay.includes('rca') ||
+        hay.includes('sinistr') ||
+        /garanzi[ae]?\s*(?:extra|estesa|convenzionale)|estensione\s*(?:di\s*)?garanzia/i.test(hay))
+    ) {
       return {
         target: 'document' as const,
         confidence: 'media' as const,
@@ -6534,13 +6547,20 @@ async function startServer() {
     if (/scontrin|fattur|ricevut|invoice|receipt|ordine|acquisto/.test(h)) {
       return 'scontrino_fattura';
     }
-    if (/garanzi|warranty|estensione|polizza/.test(h)) {
+    if (
+      /garanzi[ae]?\s*(?:extra|estesa|convenzionale)|warranty\s*extension|estensione\s*(?:di\s*)?garanzia|polizza|assicuraz/.test(
+        h
+      )
+    ) {
       return 'garanzia_extra_family';
     }
-    if (/targhett|pnc\b|etichett|seriale|matricola/.test(h)) {
+    if (/etichett[ae]?\s*energetic|energy\s*label|\beprel\b|dichiarazion[ei]?\s*(?:di\s*)?conformit|\bbim\b|\b3d\b/.test(h)) {
+      return 'altro';
+    }
+    if (/targhett|\bpnc\b|seriale|matricola/.test(h)) {
       return 'targhetta_pnc';
     }
-    if (/manual|istruzion|montagg|manutenz|scheda|datasheet|brochure|specif|3d|bim|dwg/.test(h)) {
+    if (/manual|istruzion|montagg|manutenz|scheda|datasheet|brochure|specif/.test(h)) {
       return 'manuale';
     }
     return 'altro';
@@ -6818,6 +6838,7 @@ async function startServer() {
         '- "bill_tari": SOLO avviso di pagamento TARI / tassa sui rifiuti.',
         '- "document": qualsiasi altro documento (contratti luce/internet/mutuo, rogito, polizze, documenti identità, fiscali, manuali/schede prodotto, bonifici GSE, ricevute).',
         'Valori ammessi per "documentCategory": "Mutuo & Casa" | "Internet & Wi-Fi" | "Contratti & Utenze" | "Assicurazioni" | "Fiscale & Identità" | "Altro".',
+        'Nota per prodotti ed elettrodomestici: manuali utente, schede tecniche, etichette energetiche EU e dichiarazioni di conformità CE vanno SEMPRE in "documentCategory": "Altro" (MAI "Assicurazioni", che è solo per polizze/RC/garanzie extra estese).',
         'Valori ammessi per "attachmentType": "manuale" | "scontrino_fattura" | "garanzia_extra_family" | "targhetta_pnc" | "altro".',
         'Valori ammessi per "confidence": "alta" | "media" | "bassa".',
         'Schema JSON:',

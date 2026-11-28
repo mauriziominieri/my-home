@@ -112,6 +112,8 @@ import {
   WaterBillRecord,
 } from './types/home';
 import { diffResearchSpecs, diffVariantOptionLists } from './utils/researchDiff';
+import { formatFileSize, isProductUserManualAttachment } from './utils/documentVault';
+import { autoTrimMultilingualManualPdf } from './utils/pdfItalianExtractor';
 
 function normalizeResearchStatus(raw: unknown): ProductResearchStatus {
   if (raw === 'da_acquistare' || raw === 'acquistato' || raw === 'da_valutare') {
@@ -5050,6 +5052,24 @@ export default function App() {
     cloudUrl?: string,
     options?: { isOlderVersion?: boolean; replacesDocId?: string }
   ) {
+    let effectiveFile = file;
+    let extraNote = '';
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+    const looksLikeManual =
+      docType === 'manuale' ||
+      docType === 'altro' ||
+      /(?:manual|istruzion|guida|libretto|uso\s+e\s+manutenzione|montagg|user\s*guide)/i.test(
+        `${title} ${file.name}`
+      );
+    if (isPdf && looksLikeManual) {
+      const trimmed = await autoTrimMultilingualManualPdf(file);
+      if (trimmed.trimmed && trimmed.extract) {
+        effectiveFile = trimmed.file;
+        extraNote = ` · Solo IT (pag. ${trimmed.extract.rangeText}, ${formatFileSize(
+          trimmed.extract.originalSize
+        )} → ${formatFileSize(trimmed.extract.newSize)})`;
+      }
+    }
     const todayIt = new Date().toLocaleDateString('it-IT');
     await handleUploadLinkedDocument(
       {
@@ -5058,11 +5078,11 @@ export default function App() {
         provider: (provider || 'Prodotti').slice(0, 80),
         referenceCode: buildResearchDocumentRef(researchId, docType),
         issueDate: todayIt,
-        pinned: docType === 'scontrino_fattura' || docType === 'garanzia_extra_family',
+        pinned: isProductUserManualAttachment(docType, title, cloudUrl || effectiveFile.name),
         cloudUrl: cloudUrl?.trim() || undefined,
-        notes: `File allegato a prodotto (${docType})`,
+        notes: `File allegato a prodotto (${docType})${extraNote}`.slice(0, 180),
       },
-      file,
+      effectiveFile,
       options
     );
   }
@@ -5084,7 +5104,7 @@ export default function App() {
         provider: (provider || 'Prodotti').slice(0, 80),
         referenceCode: buildResearchDocumentRef(researchId, docType),
         issueDate: todayIt,
-        pinned: docType === 'scontrino_fattura' || docType === 'garanzia_extra_family',
+        pinned: isProductUserManualAttachment(docType, title, cloudUrl || noteText),
         cloudUrl: cloudUrl.trim(),
         notes: noteText || `Documento ufficiale collegato (${docType})`,
       },
@@ -5105,9 +5125,18 @@ export default function App() {
     await handleUpdateDocument(docId, {
       ...rest,
       attachmentKey: isLinkOnlyDoc ? undefined : existingDoc.attachmentKey,
-      category: docType === 'garanzia_extra_family' ? 'Assicurazioni' : 'Altro',
+      category:
+        docType === 'garanzia_extra_family'
+          ? 'Assicurazioni'
+          : existingDoc.category === 'Assicurazioni' || !existingDoc.category
+            ? 'Altro'
+            : existingDoc.category,
       referenceCode: buildResearchDocumentRef(researchId, docType),
-      pinned: docType === 'scontrino_fattura' || docType === 'garanzia_extra_family',
+      pinned: isProductUserManualAttachment(
+        docType,
+        existingDoc.title,
+        existingDoc.cloudUrl || existingDoc.fileName || existingDoc.notes
+      ),
     });
   }
 
@@ -6788,6 +6817,7 @@ export default function App() {
               onUploadResearchDocument={handleUploadResearchDocument}
               onAddResearchDocumentLink={handleAddResearchDocumentLink}
               onUpdateResearchDocumentType={handleUpdateResearchDocumentType}
+              onUpdateResearchDocument={handleUpdateDocument}
               onDeleteResearchDocument={handleDeleteLinkedDocument}
             />
           )}

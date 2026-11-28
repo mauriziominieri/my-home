@@ -1856,18 +1856,79 @@ function normalizeMatchTokens(raw: string): string {
     .trim();
 }
 
+export function isProductUserManualAttachment(
+  docType?: ArticleAttachmentType,
+  title?: string,
+  urlOrNotes?: string
+): boolean {
+  if (docType !== 'manuale') return false;
+  const hay = `${title || ''} ${urlOrNotes || ''}`.toLowerCase();
+  if (!hay.trim()) return true;
+  if (
+    /(?:etichett[ae]?\s*energetic|energy\s*label|\beprel\b|dichiarazion[ei]?\s*(?:di\s*)?conformit|\bbim\b|\b3d\b|\bcad\b|\bdwg\b|\bdxf\b|\brfa\b|\bifc\b|\bstep\b)/.test(
+      hay
+    )
+  ) {
+    return false;
+  }
+  const hasExplicitManualKeyword =
+    /(?:manual|istruzion|user\s*guide|libretto|uso\s+e\s+manutenzione|guida\s+(?:rapida|utente|all['’]?uso)|montagg)/.test(
+      hay
+    );
+  const isDatasheetOnly =
+    /(?:scheda\s*(?:prodotto|tecnica|informativa)|datasheet|data\s*sheet|brochure|volantino|product\s*fiche|\bfiche\b)/.test(
+      hay
+    );
+  if (isDatasheetOnly && !hasExplicitManualKeyword) {
+    return false;
+  }
+  return true;
+}
+
+export function resolveProductOfficialDocAttachmentType(doc: {
+  title?: string;
+  url?: string;
+  kind?: string;
+}): ArticleAttachmentType {
+  const hay = `${doc.title || ''} ${doc.url || ''}`.toLowerCase();
+  if (/(?:scontrin|fattur|ricevut|invoice|receipt|ordine)/.test(hay)) {
+    return 'scontrino_fattura';
+  }
+  if (/(?:garanzi[ae]|warranty|estension[ei]|polizz|assicuraz)/.test(hay)) {
+    return 'garanzia_extra_family';
+  }
+  if (
+    /(?:etichett[ae]?\s*energetic|energy\s*label|\beprel\b|dichiarazion[ei]?\s*(?:di\s*)?conformit|\bbim\b|\b3d\b|\bcad\b|\bdwg\b|\bdxf\b|\brfa\b|\bifc\b|\bstep\b)/.test(
+      hay
+    ) ||
+    doc.kind === 'bim_3d'
+  ) {
+    return 'altro';
+  }
+  if (/(?:targhett|\bpnc\b|seriale|matricola)/.test(hay)) {
+    return 'targhetta_pnc';
+  }
+  if (doc.kind === 'certificato') {
+    return 'altro';
+  }
+  return 'manuale';
+}
+
 export function inferArticleAttachmentType(hints: string): ArticleAttachmentType {
   const h = hints.toLowerCase();
   if (/scontrin|fattur|ricevut|invoice|receipt|ordine|acquisto/.test(h)) {
     return 'scontrino_fattura';
   }
-  if (/garanzi|warranty|estensione|polizza/.test(h)) {
+  if (/garanzi[ae]?\s*(?:extra|estesa|convenzionale)|warranty\s*extension|estensione\s*garanzia|polizza|assicuraz/.test(h)) {
     return 'garanzia_extra_family';
   }
-  if (/targhett|pnc\b|etichett|seriale|matricola/.test(h)) {
+  if (/(?:etichett[ae]?\s*energetic|energy\s*label|\beprel\b|dichiarazion[ei]?\s*(?:di\s*)?conformit|\bbim\b|\b3d\b)/.test(h)) {
+    return 'altro';
+  }
+  if (/targhett|\bpnc\b|seriale|matricola/.test(h)) {
     return 'targhetta_pnc';
   }
-  if (/manual|istruzion|montagg|manutenz|scheda|datasheet|brochure|specif|3d|bim|dwg/.test(h)) {
+  if (/manual|istruzion|montagg|manutenz|libretto|scheda|datasheet|brochure|specif/.test(h)) {
     return 'manuale';
   }
   return 'altro';

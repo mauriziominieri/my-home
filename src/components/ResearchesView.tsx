@@ -24,6 +24,7 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Scissors,
   Search,
   Share2,
   ShieldCheck,
@@ -60,6 +61,8 @@ import {
   getLocalVaultFile,
   getVaultFile,
   MAX_CLOUD_FILE_BYTES,
+  resolveProductOfficialDocAttachmentType,
+  saveVaultFile,
   ShareableItemPayload,
 } from '../utils/documentVault';
 import {
@@ -88,6 +91,8 @@ import {
 } from '../utils/researchHelpers';
 import { AccessUnlockBanner } from './AccessUnlockBanner';
 import { ShareSheetModal } from './ShareSheetModal';
+import { PdfItalianTrimModal, PdfItalianTrimTarget } from './PdfItalianTrimModal';
+import { autoTrimMultilingualManualPdf, PdfExtractResult } from '../utils/pdfItalianExtractor';
 import {
   hasAvailableBackend,
   isStaticHostingOrigin,
@@ -151,6 +156,10 @@ interface ResearchesViewProps {
     docId: string,
     researchId: string,
     docType: ArticleAttachmentType
+  ) => Promise<void>;
+  onUpdateResearchDocument?: (
+    id: string,
+    docItem: Omit<HomeDocumentRecord, 'id'>
   ) => Promise<void>;
   onDeleteResearchDocument: (docId: string) => Promise<void>;
 }
@@ -1365,8 +1374,13 @@ export function ResearchesView({
   onUploadResearchDocument,
   onAddResearchDocumentLink,
   onUpdateResearchDocumentType,
+  onUpdateResearchDocument,
   onDeleteResearchDocument,
 }: ResearchesViewProps) {
+  const [trimPdfModalDoc, setTrimPdfModalDoc] = useState<{
+    target: PdfItalianTrimTarget;
+    docItem: HomeDocumentRecord;
+  } | null>(null);
   const [linkInput, setLinkInput] = useState('');
   const [inspecting, setInspecting] = useState(false);
   const [savingNew, setSavingNew] = useState(false);
@@ -2396,7 +2410,7 @@ export function ResearchesView({
         ? parseResearchDocumentRef(existingLinkDoc.referenceCode)?.docType
         : undefined;
       const docType: ArticleAttachmentType =
-        existingRefDocType || (docItem.kind === 'certificato' ? 'garanzia_extra_family' : 'manuale');
+        existingRefDocType || resolveProductOfficialDocAttachmentType(docItem);
       const cleanDocTitle = docItem.title.trim().slice(0, 48);
       const cleanProd = productTitle.trim().slice(0, 28);
       const fullTitle = existingLinkDoc?.title?.trim()
@@ -2421,7 +2435,12 @@ export function ResearchesView({
         contentTypeHeader: string,
         rawHeaderName?: string | null
       ): Promise<'uploaded' | 'duplicate' | 'failed'> => {
-        if (blob.size <= 0 || blob.size > MAX_CLOUD_FILE_BYTES) return 'failed';
+        const maxPreTrimBytes =
+          (docType === 'manuale' || docType === 'altro') &&
+          (contentTypeHeader.toLowerCase().includes('pdf') || /\.pdf$/i.test(docItem.url))
+            ? 24_000_000
+            : MAX_CLOUD_FILE_BYTES;
+        if (blob.size <= 0 || blob.size > maxPreTrimBytes) return 'failed';
         const ctLow = contentTypeHeader.toLowerCase();
         if (ctLow.includes('text/html') || ctLow.includes('application/json')) return 'failed';
         const isOpaqueDocFileName = (candidate: string): boolean => {
@@ -2470,9 +2489,21 @@ export function ResearchesView({
           }
           fileName = `${baseNoExt} (${suffix})${resolvedExt}`;
         }
-        const file = new File([blob], fileName, {
+        const rawFile = new File([blob], fileName, {
           type: blob.type || ctLow || 'application/pdf',
         });
+        let file = rawFile;
+        const isPdfCandidate =
+          rawFile.type === 'application/pdf' ||
+          ctLow.includes('pdf') ||
+          /\.pdf$/i.test(rawFile.name);
+        if (isPdfCandidate && (docType === 'manuale' || docType === 'altro')) {
+          const preTrim = await autoTrimMultilingualManualPdf(rawFile);
+          if (preTrim.trimmed) file = preTrim.file;
+        }
+        if (file.size <= 0 || file.size > MAX_CLOUD_FILE_BYTES) {
+          return 'failed';
+        }
         try {
           await onUploadResearchDocument(
             researchId,
@@ -2523,7 +2554,11 @@ export function ResearchesView({
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ url: docItem.url, title: cleanDocTitle }),
+              body: JSON.stringify({
+                url: docItem.url,
+                title: cleanDocTitle,
+                allowLargePdf: docType === 'manuale' || docType === 'altro',
+              }),
             },
             28_000
           );
@@ -2535,7 +2570,11 @@ export function ResearchesView({
             const ct = String(resp.headers.get('content-type') || '').toLowerCase();
             if (resp.ok && !ct.includes('application/json')) {
               const blob = await resp.blob();
-              if (blob.size > MAX_CLOUD_FILE_BYTES) {
+              const preTrimLimit =
+                (docType === 'manuale' || docType === 'altro') && ct.includes('pdf')
+                  ? 24_000_000
+                  : MAX_CLOUD_FILE_BYTES;
+              if (blob.size > preTrimLimit) {
                 fetchFailureReason = 'too_large';
               } else {
                 uploadOutcome = await tryUploadBlobToVault(
@@ -2571,7 +2610,11 @@ export function ResearchesView({
           const directCt = String(directResp.headers.get('content-type') || '').toLowerCase();
           if (directResp.ok && !directCt.includes('text/html')) {
             const directBlob = await directResp.blob();
-            if (directBlob.size > MAX_CLOUD_FILE_BYTES) {
+            const preTrimLimit =
+              (docType === 'manuale' || docType === 'altro') && directCt.includes('pdf')
+                ? 24_000_000
+                : MAX_CLOUD_FILE_BYTES;
+            if (directBlob.size > preTrimLimit) {
               fetchFailureReason = 'too_large';
             } else {
               uploadOutcome = await tryUploadBlobToVault(
@@ -3090,24 +3133,44 @@ export function ResearchesView({
     }
   }
 
-  function handleQueueDraftFiles(event: React.ChangeEvent<HTMLInputElement>) {
+  async function handleQueueDraftFiles(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files || []);
     event.target.value = '';
     if (files.length === 0) return;
     setLinkError(null);
     const valid: QueuedDraftAttachment[] = [];
-    for (const file of files) {
-      if (file.size > MAX_CLOUD_FILE_BYTES) {
+    for (const rawFile of files) {
+      const isPdf = rawFile.type === 'application/pdf' || /\.pdf$/i.test(rawFile.name);
+      const canTrimLarge =
+        isPdf && (draftAttachmentType === 'manuale' || draftAttachmentType === 'altro');
+      const preLimit = canTrimLarge ? 24_000_000 : MAX_CLOUD_FILE_BYTES;
+      if (rawFile.size > preLimit) {
         setLinkError(
-          `Il file "${file.name}" supera il limite di ${Math.floor(MAX_CLOUD_FILE_BYTES / 1_000_000)} MB.`
+          `Il file "${rawFile.name}" supera il limite di ${Math.floor(preLimit / 1_000_000)} MB.`
         );
         continue;
       }
+
+      let fileToQueue = rawFile;
+      if (canTrimLarge) {
+        const preTrim = await autoTrimMultilingualManualPdf(rawFile);
+        if (preTrim.trimmed) {
+          fileToQueue = preTrim.file;
+        }
+      }
+
+      if (fileToQueue.size > MAX_CLOUD_FILE_BYTES) {
+        setLinkError(
+          `Il file "${fileToQueue.name}" supera il limite di ${Math.floor(MAX_CLOUD_FILE_BYTES / 1_000_000)} MB.`
+        );
+        continue;
+      }
+
       valid.push({
         id: `q_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        file,
+        file: fileToQueue,
         docType: draftAttachmentType,
-        label: file.name.replace(/\.[^.]+$/, '').slice(0, 50),
+        label: fileToQueue.name.replace(/\.[^.]+$/, '').slice(0, 50),
       });
     }
     if (valid.length > 0) {
@@ -4819,7 +4882,7 @@ export function ResearchesView({
   }
 
   async function handleCardFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const rawFile = event.target.files?.[0];
     event.target.value = '';
     const targetItem = uploadTargetItemRef.current;
     const overrideDocType = uploadTargetDocTypeRef.current;
@@ -4827,31 +4890,53 @@ export function ResearchesView({
     uploadTargetItemRef.current = null;
     uploadTargetDocTypeRef.current = null;
     replaceLinkDocTargetRef.current = null;
-    if (!file || !targetItem || readOnly) return;
+    if (!rawFile || !targetItem || readOnly) return;
 
-    if (file.size > MAX_CLOUD_FILE_BYTES) {
+    const docType =
+      overrideDocType || cardAttachType[targetItem.id] || 'scontrino_fattura';
+    const isPdf = rawFile.type === 'application/pdf' || /\.pdf$/i.test(rawFile.name);
+    const canTrim =
+      isPdf &&
+      (docType === 'manuale' ||
+        docType === 'altro' ||
+        /(?:manual|istruzion|guida|libretto|uso|manutenzione|montagg)/i.test(rawFile.name));
+    const preLimit = canTrim ? 24_000_000 : MAX_CLOUD_FILE_BYTES;
+    if (rawFile.size > preLimit) {
       setLinkError(
-        `Il file "${file.name}" supera il limite di ${Math.floor(MAX_CLOUD_FILE_BYTES / 1_000_000)} MB su Firestore.`
+        `Il file "${rawFile.name}" supera il limite di ${Math.floor(preLimit / 1_000_000)} MB su Firestore.`
       );
       return;
     }
 
-    const docType =
-      overrideDocType || cardAttachType[targetItem.id] || 'scontrino_fattura';
     const typeLabel = getAttachmentTypeMeta(docType).label;
-    const baseName = file.name.replace(/\.[^.]+$/, '').slice(0, 36);
+    const baseName = rawFile.name.replace(/\.[^.]+$/, '').slice(0, 36);
     const docTitle = replaceLinkDoc?.title
       ? replaceLinkDoc.title.slice(0, 80)
       : `${targetItem.title.slice(0, 36)} · ${baseName || typeLabel}`.slice(0, 80);
     setUploadingResearchId(targetItem.id);
     setLinkError(null);
     try {
+      let fileToUpload = rawFile;
+      let trimmedNote = '';
+      if (canTrim) {
+        const preTrim = await autoTrimMultilingualManualPdf(rawFile);
+        if (preTrim.trimmed && preTrim.extract) {
+          fileToUpload = preTrim.file;
+          trimmedNote = ` (ridotto a solo IT: ${formatFileSize(preTrim.extract.originalSize)} → ${formatFileSize(preTrim.extract.newSize)})`;
+        }
+      }
+      if (fileToUpload.size > MAX_CLOUD_FILE_BYTES) {
+        throw new Error(
+          `Il file "${fileToUpload.name}" supera il limite di ${Math.floor(MAX_CLOUD_FILE_BYTES / 1_000_000)} MB su Firestore.`
+        );
+      }
+
       await onUploadResearchDocument(
         targetItem.id,
         docType,
         docTitle,
         replaceLinkDoc?.provider || targetItem.brand || targetItem.store,
-        file,
+        fileToUpload,
         replaceLinkDoc?.cloudUrl,
         replaceLinkDoc ? { replacesDocId: replaceLinkDoc.id } : undefined
       );
@@ -4866,12 +4951,12 @@ export function ResearchesView({
       const quotaSaved = !writesDisabled && isFirestoreQuotaExceededActive();
       setFeedback(
         replaceLinkDoc
-          ? `File "${file.name}" salvato nell'archivio al posto del link diretto.`
+          ? `File "${fileToUpload.name}" salvato nell'archivio al posto del link diretto${trimmedNote}.`
           : writesDisabled
-            ? `File "${file.name}" allegato a "${targetItem.title}" in locale (in coda per Firestore).`
+            ? `File "${fileToUpload.name}" allegato a "${targetItem.title}" in locale (in coda per Firestore)${trimmedNote}.`
             : quotaSaved
-              ? `Quota Firestore esaurita: file "${file.name}" salvato in locale per "${targetItem.title}" (invio automatico al ripristino).`
-              : `File "${file.name}" allegato a "${targetItem.title}" su Firestore.`
+              ? `Quota Firestore esaurita: file "${fileToUpload.name}" salvato in locale per "${targetItem.title}" (invio automatico al ripristino)${trimmedNote}.`
+              : `File "${fileToUpload.name}" allegato a "${targetItem.title}" su Firestore${trimmedNote}.`
       );
     } catch (err) {
       setLinkError(
@@ -4904,6 +4989,7 @@ export function ResearchesView({
     try {
       let binaryUploaded = false;
       let manualReason = '';
+      const allowLarge = docType === 'manuale' || docType === 'altro';
       const fetchDocApiUrl = resolveApiUrl('/api/researches/fetch-document');
       try {
         const dlResp = fetchDocApiUrl
@@ -4912,7 +4998,11 @@ export function ResearchesView({
               {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: validUrl }),
+                body: JSON.stringify({
+                  url: validUrl,
+                  title: item.title,
+                  allowLargePdf: allowLarge,
+                }),
               },
               28_000
             )
@@ -4920,7 +5010,9 @@ export function ResearchesView({
         const dlCt = (dlResp.headers.get('content-type') || '').toLowerCase();
         if (dlResp.ok && !dlCt.includes('application/json') && !dlCt.includes('text/html')) {
           const blob = await dlResp.blob();
-          if (blob.size > MAX_CLOUD_FILE_BYTES) {
+          const preLimit =
+            allowLarge && dlCt.includes('pdf') ? 24_000_000 : MAX_CLOUD_FILE_BYTES;
+          if (blob.size > preLimit) {
             manualReason = 'too_large';
           } else if (blob.size > 0) {
             const rawHeaderName =
@@ -4949,18 +5041,30 @@ export function ResearchesView({
             }
             const cleanBase = fileName.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').slice(0, 36);
             const docTitle = `${item.title.slice(0, 36)} · ${cleanBase || typeLabel}`.slice(0, 80);
-            const fileObj = new File([blob], fileName, {
+            const rawFileObj = new File([blob], fileName, {
               type: dlCt.split(';')[0] || 'application/pdf',
             });
-            await onUploadResearchDocument(
-              item.id,
-              docType,
-              docTitle,
-              item.brand || item.store,
-              fileObj,
-              validUrl
-            );
-            binaryUploaded = true;
+            let effectiveFileObj = rawFileObj;
+            if (
+              allowLarge &&
+              (rawFileObj.type === 'application/pdf' || /\.pdf$/i.test(rawFileObj.name))
+            ) {
+              const preTrim = await autoTrimMultilingualManualPdf(rawFileObj);
+              if (preTrim.trimmed) effectiveFileObj = preTrim.file;
+            }
+            if (effectiveFileObj.size > MAX_CLOUD_FILE_BYTES) {
+              manualReason = 'too_large';
+            } else {
+              await onUploadResearchDocument(
+                item.id,
+                docType,
+                docTitle,
+                item.brand || item.store,
+                effectiveFileObj,
+                validUrl
+              );
+              binaryUploaded = true;
+            }
             if (writesDisabled) {
               trackQueuedCloudDoc(item.id, {
                 title: docTitle,
@@ -6330,7 +6434,7 @@ export function ResearchesView({
                       type="file"
                       multiple
                       accept="application/pdf,.pdf,image/*,.doc,.docx,.txt"
-                      onChange={handleQueueDraftFiles}
+                      onChange={(e) => void handleQueueDraftFiles(e)}
                       className="hidden"
                     />
                   </label>
@@ -9124,7 +9228,7 @@ export function ResearchesView({
                               <div className={isList ? 'grid grid-cols-1 md:grid-cols-2 gap-1.5' : 'space-y-1.5'}>
                                 {queuedDraftDocs.map((docLink) => {
                                   const mappedDocType: ArticleAttachmentType =
-                                    docLink.kind === 'certificato' ? 'garanzia_extra_family' : 'manuale';
+                                    resolveProductOfficialDocAttachmentType(docLink);
                                   const docMeta = getAttachmentTypeMeta(mappedDocType);
                                   const isOlder = Boolean(docLink.isOlderVersion);
                                   const isExcluded = Boolean(docLink.excluded);
@@ -9490,6 +9594,36 @@ export function ResearchesView({
                                               )}
                                             </button>
                                           )}
+                                          {!readOnly &&
+                                            onUpdateResearchDocument &&
+                                            !isImg &&
+                                            (docItem.fileMime === 'application/pdf' ||
+                                              /\.pdf(?:[?#]|$)/i.test(
+                                                `${docItem.fileName || ''} ${docItem.cloudUrl || ''}`
+                                              )) && (
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setTrimPdfModalDoc({
+                                                    target: {
+                                                      title: docItem.title || cardDocDisplayTitle,
+                                                      fileName:
+                                                        docItem.fileName ||
+                                                        `${cardDocDisplayTitle}.pdf`,
+                                                      fileKey: isLinkOnlyDoc
+                                                        ? undefined
+                                                        : docItem.attachmentKey,
+                                                      cloudUrl: docItem.cloudUrl,
+                                                    },
+                                                    docItem,
+                                                  })
+                                                }
+                                                title="Estrai solo Italiano + copertina (riduci PDF)"
+                                                className="p-1 text-brand-600 hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-slate-800 rounded transition-colors"
+                                              >
+                                                <Scissors className="w-3.5 h-3.5" />
+                                              </button>
+                                            )}
                                           {!readOnly && (
                                             <button
                                               type="button"
@@ -9530,7 +9664,7 @@ export function ResearchesView({
                                   <div className={isList ? 'grid grid-cols-1 md:grid-cols-2 gap-1.5' : 'space-y-1.5'}>
                                     {optionalOlderDocs.map((olderDoc) => {
                                       const mappedDocType: ArticleAttachmentType =
-                                        olderDoc.kind === 'certificato' ? 'garanzia_extra_family' : 'manuale';
+                                        resolveProductOfficialDocAttachmentType(olderDoc);
                                       const docMeta = getAttachmentTypeMeta(mappedDocType);
                                       const isOlder = Boolean(olderDoc.isOlderVersion);
                                       const isAttachingOlder = attachingOptionalDocUrl === olderDoc.url;
@@ -10353,6 +10487,54 @@ export function ResearchesView({
           )}
         </div>
       )}
+      <PdfItalianTrimModal
+        target={trimPdfModalDoc?.target || null}
+        onClose={() => setTrimPdfModalDoc(null)}
+        onSaveTrimmedFile={async (result: PdfExtractResult) => {
+          if (!trimPdfModalDoc || !onUpdateResearchDocument) return;
+          const existingDoc = trimPdfModalDoc.docItem;
+          const targetKey =
+            existingDoc.attachmentKey ||
+            `doc_${existingDoc.id}_${Date.now().toString(36).slice(-4)}`;
+          const stored = await saveVaultFile(
+            targetKey,
+            result.file,
+            result.file.name,
+            'application/pdf',
+            undefined,
+            {
+              actionLabel: 'PDF ridotto a solo Italiano',
+              displayTitle: existingDoc.title,
+              changedDetails: [
+                `Pagine: ${result.rangeText} (${result.pageCount}/${result.originalPageCount})`,
+                `${formatFileSize(result.originalSize)} → ${formatFileSize(result.newSize)}`,
+              ],
+            }
+          );
+          if (!stored.cloudSynced && !stored.savedLocallyOnly) {
+            throw new Error('Impossibile salvare il PDF ridotto sul cloud.');
+          }
+          const { id: _ignoredId, ...rest } = existingDoc;
+          const baseNote = (existingDoc.notes || '')
+            .replace(/\s*·?\s*Solo IT \([^)]+\)/gi, '')
+            .trim();
+          const trimTag = `Solo IT (pag. ${result.rangeText})`;
+          const nextNotes = baseNote ? `${baseNote} · ${trimTag}` : trimTag;
+          await onUpdateResearchDocument(existingDoc.id, {
+            ...rest,
+            attachmentKey: stored.key,
+            fileName: stored.fileName,
+            fileMime: stored.mimeType || 'application/pdf',
+            fileSize: stored.size,
+            notes: nextNotes.slice(0, 180),
+          });
+          setFeedback(
+            `PDF "${existingDoc.title}" ridotto a solo Italiano (pag. ${result.rangeText}): ${formatFileSize(
+              result.originalSize
+            )} → ${formatFileSize(result.newSize)}.`
+          );
+        }}
+      />
     </div>
   );
 }

@@ -10,11 +10,8 @@ services:
         - server.ts
         - package.json
         - package-lock.json
-        - vite.config.ts
-        - tsconfig.json
-        - index.html
+        - render.yaml
         - firebase-applet-config.json
-        - src/**
     healthCheckPath: /api/health
     buildCommand: npm install --include=dev --legacy-peer-deps && npm install --include=dev --legacy-peer-deps react-is && npm run build
     startCommand: npx tsx server.ts

@@ -6,12 +6,10 @@ on:
     paths:
       - 'server.ts'
       - 'package.json'
+      - 'package-lock.json'
       - 'render.yaml'
-      - 'vite.config.ts'
-      - 'tsconfig.json'
-      - 'index.html'
       - 'firebase-applet-config.json'
-      - 'src/**'
+      - '.github/workflows/deploy-render.yml'
   workflow_dispatch:
 
 concurrency:
