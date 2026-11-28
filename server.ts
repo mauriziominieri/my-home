@@ -7120,27 +7120,49 @@ async function startServer() {
     return clean;
   }
 
+  function stripWrappingQuotes(val: string): string {
+    const trimmed = val.trim();
+    if (
+      (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'"))
+    ) {
+      return trimmed.slice(1, -1).trim();
+    }
+    return trimmed;
+  }
+
+  function extractS3XmlError(rawText: string): string {
+    if (!rawText) return '';
+    const codeMatch = rawText.match(/<Code>([^<]+)<\/Code>/i);
+    const msgMatch = rawText.match(/<Message>([^<]+)<\/Message>/i);
+    const code = codeMatch?.[1]?.trim() || '';
+    const msg = msgMatch?.[1]?.trim() || '';
+    if (code && msg) return `${code}: ${msg}`;
+    if (code || msg) return code || msg;
+    return rawText.replace(/\s+/g, ' ').trim().slice(0, 220);
+  }
+
   function getDedicatedVaultConfig(): DedicatedVaultConfig {
-    const s3EndpointRaw = (process.env.S3_ENDPOINT || '').trim().replace(/\/+$/, '');
+    const s3EndpointRaw = stripWrappingQuotes(process.env.S3_ENDPOINT || '').replace(/\/+$/, '');
     const s3Endpoint = s3EndpointRaw
       ? (/^https?:\/\//i.test(s3EndpointRaw) ? s3EndpointRaw : `https://${s3EndpointRaw}`)
       : '';
-    const rawRegion = (process.env.S3_REGION || '').trim();
+    const rawRegion = stripWrappingQuotes(process.env.S3_REGION || '').toLowerCase();
     let s3Region = rawRegion || 'auto';
     if (s3Endpoint) {
       try {
         const epHost = new URL(s3Endpoint).hostname.toLowerCase();
-        const b2Match = epHost.match(/^s3\.([a-z0-9-]+)\.backblazeb2\.com$/);
-        if (b2Match && (!rawRegion || rawRegion.toLowerCase() === 'auto')) {
+        const b2Match = epHost.match(/(?:^|\.)s3\.([a-z0-9-]+)\.backblazeb2\.com$/);
+        if (b2Match) {
           s3Region = b2Match[1];
         }
       } catch {
         // Ignora errori di parsing qui: verranno gestiti in requestS3Signed
       }
     }
-    const s3Bucket = (process.env.S3_BUCKET || '').trim();
-    const s3AccessKeyId = (process.env.S3_ACCESS_KEY_ID || '').trim();
-    const s3SecretAccessKey = (process.env.S3_SECRET_ACCESS_KEY || '').trim();
+    const s3Bucket = stripWrappingQuotes(process.env.S3_BUCKET || '');
+    const s3AccessKeyId = stripWrappingQuotes(process.env.S3_ACCESS_KEY_ID || '');
+    const s3SecretAccessKey = stripWrappingQuotes(process.env.S3_SECRET_ACCESS_KEY || '');
 
     if (s3Endpoint && s3Bucket && s3AccessKeyId && s3SecretAccessKey) {
       const lowerEp = s3Endpoint.toLowerCase();
@@ -7184,11 +7206,26 @@ async function startServer() {
     const parsedEndpoint = new URL(s3Cfg.endpoint);
     const host = parsedEndpoint.host;
     const basePath = parsedEndpoint.pathname.replace(/\/+$/, '');
+    const encodedBucket = encodeURIComponent(s3Cfg.bucket);
     const encodedKey = objectKey
       .split('/')
       .map((seg) => encodeURIComponent(seg))
       .join('/');
-    const canonicalUri = `${basePath}/${encodeURIComponent(s3Cfg.bucket)}/${encodedKey}`.replace(/\/+/g, '/');
+
+    const hostLower = parsedEndpoint.hostname.toLowerCase();
+    const bucketLower = s3Cfg.bucket.toLowerCase();
+    const isVirtualHostedStyle = hostLower.startsWith(`${bucketLower}.`);
+    const basePathHasBucket =
+      basePath === `/${s3Cfg.bucket}` ||
+      basePath === `/${encodedBucket}` ||
+      basePath.startsWith(`/${s3Cfg.bucket}/`) ||
+      basePath.startsWith(`/${encodedBucket}/`);
+
+    const canonicalUri = (
+      isVirtualHostedStyle || basePathHasBucket
+        ? `${basePath}/${encodedKey}`
+        : `${basePath}/${encodedBucket}/${encodedKey}`
+    ).replace(/\/+/g, '/');
 
     const now = new Date();
     const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -7312,10 +7349,11 @@ async function startServer() {
       const upstream = await requestS3Signed(cfg.s3, 'PUT', objectKey, rawBytes, mimeType);
       if (!upstream || !upstream.ok) {
         const errText = upstream ? await upstream.text().catch(() => '') : '';
+        const parsedXmlErr = extractS3XmlError(errText);
         res.status(502).json({
           ok: false,
-          message: `Errore upload storage ${cfg.providerLabel}: HTTP ${upstream?.status || 500}`,
-          details: errText.slice(0, 180),
+          message: `Errore upload storage ${cfg.providerLabel}: HTTP ${upstream?.status || 500}${parsedXmlErr ? ` (${parsedXmlErr})` : ''}`,
+          details: parsedXmlErr || errText.slice(0, 220),
         });
         return;
       }

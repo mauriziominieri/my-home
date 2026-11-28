@@ -722,11 +722,26 @@ async function tryUploadVaultBlobExternal(
   safeFileName: string,
   safeMime: string,
   uid: string,
-  backend: 's3'
+  backend: 's3',
+  options?: { throwOnError?: boolean }
 ): Promise<StoredVaultFile | null> {
+  const throwOnError = Boolean(options?.throwOnError);
   const endpoint = buildVaultApiUrl('/api/vault/upload');
+  if (!endpoint) {
+    if (throwOnError) {
+      throw new Error(
+        'Endpoint backend /api/vault/upload non disponibile. Verifica URL Server Backend in Impostazioni.'
+      );
+    }
+    return null;
+  }
   const token = await getFirebaseAuthToken();
-  if (!endpoint || !token) return null;
+  if (!token) {
+    if (throwOnError) {
+      throw new Error('Token autenticazione Firebase non disponibile: rieffettua il login Google.');
+    }
+    return null;
+  }
 
   try {
     const dataBase64 = await blobToBase64(file);
@@ -744,6 +759,35 @@ async function tryUploadVaultBlobExternal(
       }),
     });
     if (!resp.ok) {
+      let serverMsg = `HTTP ${resp.status}`;
+      try {
+        const rawText = await resp.text();
+        if (rawText) {
+          try {
+            const errJson = JSON.parse(rawText) as {
+              message?: string;
+              details?: string;
+              errorCode?: string;
+            };
+            const parts = [
+              errJson.message,
+              errJson.details && errJson.details !== errJson.message ? errJson.details : '',
+              !errJson.message && errJson.errorCode ? errJson.errorCode : '',
+            ].filter(Boolean);
+            if (parts.length > 0) {
+              serverMsg = `HTTP ${resp.status} — ${parts.join(' · ')}`;
+            }
+          } catch {
+            serverMsg = `HTTP ${resp.status} — ${rawText.slice(0, 180)}`;
+          }
+        }
+      } catch {
+        // ignore body read error
+      }
+      if (throwOnError) {
+        throw new Error(serverMsg);
+      }
+      console.warn(`Upload storage esterno (${backend}) fallito:`, serverMsg);
       return null;
     }
 
@@ -752,22 +796,31 @@ async function tryUploadVaultBlobExternal(
     const metaRef = doc(db, filesColPath, cleanKey);
 
     let prevChunkCount = cloudMetaCache.get(cleanKey)?.chunkCount || 0;
+    let persistedFileKey = cleanKey;
     try {
       const prevSnap = await getDoc(metaRef);
       if (prevSnap.exists()) {
-        const rawCount = Number(prevSnap.data()?.chunkCount || 0);
+        const prevData = prevSnap.data();
+        const rawCount = Number(prevData?.chunkCount || 0);
         if (Number.isFinite(rawCount)) prevChunkCount = rawCount;
+        const existingFk = String(prevData?.fileKey || '').trim();
+        if (existingFk) persistedFileKey = existingFk;
       }
     } catch {
       // ignore pre-check errors
     }
 
+    const boundedFileName =
+      (safeFileName || `${cleanKey}.pdf`).trim().slice(0, 140) || 'documento.pdf';
+    const boundedMime =
+      (safeMime || 'application/pdf').trim().slice(0, 80) || 'application/pdf';
+
     const batch = writeBatch(db);
     batch.set(metaRef, {
       ownerId: uid,
-      fileKey: cleanKey,
-      fileName: safeFileName,
-      mimeType: safeMime,
+      fileKey: persistedFileKey,
+      fileName: boundedFileName,
+      mimeType: boundedMime,
       size: file.size,
       chunkCount: 0,
       storageBackend: backend,
@@ -780,9 +833,9 @@ async function tryUploadVaultBlobExternal(
 
     const syncedAtMs = Date.now();
     cloudMetaCache.set(cleanKey, {
-      fileKey: cleanKey,
-      fileName: safeFileName,
-      mimeType: safeMime,
+      fileKey: persistedFileKey,
+      fileName: boundedFileName,
+      mimeType: boundedMime,
       size: file.size,
       chunkCount: 0,
       storageBackend: backend,
@@ -803,6 +856,14 @@ async function tryUploadVaultBlobExternal(
     notifyVaultUpdated();
     return syncedRecord;
   } catch (err) {
+    if (throwOnError) {
+      if (isPermissionDeniedError(err)) {
+        throw new Error(
+          'Permessi Firestore insufficienti durante l’aggiornamento di vaultFiles (verifica il deploy di firestore.rules).'
+        );
+      }
+      throw err instanceof Error ? err : new Error(String(err));
+    }
     console.warn(`Upload storage esterno (${backend}) non riuscito, uso fallback Firestore:`, err);
     return null;
   }
@@ -1513,7 +1574,14 @@ export async function precacheAllCloudVaultFiles(
 
 export async function migrateFirestoreVaultToDedicatedStorage(
   onProgress?: (done: number, total: number) => void
-): Promise<{ migrated: number; failed: number; providerLabel: string }> {
+): Promise<{
+  migrated: number;
+  failed: number;
+  remaining: number;
+  stoppedEarly: boolean;
+  firstError: string | null;
+  providerLabel: string;
+}> {
   if (isFirestoreWritesDisabled()) {
     throw new Error(
       'Disattiva temporaneamente la Modalità Test Browser in Impostazioni prima di avviare la migrazione su Backblaze B2.'
@@ -1541,14 +1609,55 @@ export async function migrateFirestoreVaultToDedicatedStorage(
   let done = 0;
   let migrated = 0;
   let failed = 0;
+  let consecutiveFailures = 0;
+  let stoppedEarly = false;
+  let firstError: string | null = null;
   const total = legacyKeys.length;
   onProgress?.(0, total);
 
-  for (const key of legacyKeys) {
+  const isSystemicFailure = (msg: string): boolean => {
+    const low = msg.toLowerCase();
+    return (
+      low.includes('quota') ||
+      low.includes('http 401') ||
+      low.includes('http 403') ||
+      low.includes('http 404') ||
+      low.includes('http 502') ||
+      low.includes('http 503') ||
+      low.includes('permessi firestore') ||
+      low.includes('permission-denied') ||
+      low.includes('endpoint backend') ||
+      low.includes('token firebase') ||
+      low.includes('failed to fetch') ||
+      low.includes('networkerror')
+    );
+  };
+
+  for (const rawKey of legacyKeys) {
+    const key = sanitizeVaultFileKey(rawKey);
     try {
+      if (isFirestoreQuotaExceededActive()) {
+        firstError ||=
+          'Quota lettura/scrittura Firestore esaurita durante il trasferimento: riprova dopo il reset alle 09:00 IT.';
+        stoppedEarly = true;
+        break;
+      }
+
       const loaded = await getVaultFile(key, uid);
-      if (!loaded) {
+      if (!loaded || !loaded.blob || loaded.blob.size <= 0) {
         failed++;
+        consecutiveFailures++;
+        if (isFirestoreQuotaExceededActive()) {
+          firstError ||=
+            'Quota lettura Firestore esaurita durante la lettura dei chunk da spostare (riprova dopo il reset alle 09:00 IT).';
+          stoppedEarly = true;
+          break;
+        }
+        firstError ||= `Impossibile leggere i chunk Firestore o la cache locale per "${key}".`;
+      } else if (loaded.blob.size > status.maxFileBytes) {
+        failed++;
+        consecutiveFailures++;
+        firstError ||= `"${loaded.fileName}" supera il limite di ${formatFileSize(status.maxFileBytes)}.`;
       } else {
         const ext = await tryUploadVaultBlobExternal(
           loaded,
@@ -1557,21 +1666,48 @@ export async function migrateFirestoreVaultToDedicatedStorage(
           loaded.fileName,
           loaded.mimeType,
           uid,
-          's3'
+          's3',
+          { throwOnError: true }
         );
-        if (ext) migrated++;
-        else failed++;
+        if (ext) {
+          migrated++;
+          consecutiveFailures = 0;
+        } else {
+          failed++;
+          consecutiveFailures++;
+          firstError ||= `Upload su ${status.providerLabel} non riuscito per "${loaded.fileName}".`;
+        }
       }
-    } catch {
+    } catch (err) {
       failed++;
+      consecutiveFailures++;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!firstError && msg) firstError = msg;
+      if (migrated === 0 && consecutiveFailures >= 2 && isSystemicFailure(msg)) {
+        stoppedEarly = true;
+        done++;
+        onProgress?.(done, total);
+        break;
+      }
     }
     done++;
     onProgress?.(done, total);
+    if (migrated === 0 && consecutiveFailures >= 3 && firstError && isSystemicFailure(firstError)) {
+      stoppedEarly = true;
+      break;
+    }
   }
 
   invalidatePersistedMetaCache(uid);
   notifyVaultUpdated();
-  return { migrated, failed, providerLabel: status.providerLabel };
+  return {
+    migrated,
+    failed,
+    remaining: Math.max(0, total - migrated),
+    stoppedEarly,
+    firstError,
+    providerLabel: status.providerLabel,
+  };
 }
 
 export function formatFileSize(bytes?: number): string {

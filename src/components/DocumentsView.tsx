@@ -518,9 +518,22 @@ export function DocumentsView({
         setMigrationProgress({ done, total });
       });
       await reloadVaultMeta();
-      setStatusNotice(
-        `Migrazione verso ${res.providerLabel} completata: ${res.migrated} file trasferiti da Firestore (${res.failed} errori). Ora puoi risparmiare spazio e quota su Firebase!`
-      );
+      if (res.migrated === 0 && res.failed > 0) {
+        const stopHint = res.stoppedEarly ? ' (migrazione interrotta subito per evitare errori ripetuti)' : '';
+        const errHint = res.firstError ? ` Motivo rilevato: ${res.firstError}` : '';
+        setStatusNotice(
+          `Migrazione verso ${res.providerLabel} non riuscita: 0 file trasferiti su ${res.remaining} da spostare${stopHint}.${errHint}`
+        );
+      } else if (res.failed > 0) {
+        const errHint = res.firstError ? ` Primo errore: ${res.firstError}` : '';
+        setStatusNotice(
+          `Migrazione parziale verso ${res.providerLabel}: ${res.migrated} file trasferiti, ${res.remaining} ancora su Firestore.${errHint}`
+        );
+      } else {
+        setStatusNotice(
+          `Migrazione verso ${res.providerLabel} completata: ${res.migrated} file trasferiti da Firestore (0 errori). Ora puoi risparmiare spazio e quota su Firebase!`
+        );
+      }
     } catch (err) {
       setStatusNotice(
         err instanceof Error ? err.message : 'Errore durante la migrazione verso storage esterno.'
@@ -2656,18 +2669,30 @@ export function DocumentsView({
         </div>
       )}
 
-      {statusNotice && (
-        <div className="bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 rounded-xl px-4 py-2.5 text-xs text-emerald-800 dark:text-emerald-200 flex items-center justify-between gap-2">
-          <span>{statusNotice}</span>
-          <button
-            type="button"
-            onClick={() => setStatusNotice(null)}
-            className="min-w-[36px] min-h-[36px] md:min-w-0 md:min-h-0 flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
-          >
-            <X className="w-4 h-4 md:w-3.5 md:h-3.5" />
-          </button>
-        </div>
-      )}
+      {statusNotice && (() => {
+        const isErrorNotice =
+          /non riuscit|errore|esaurit|mancant|insufficient|disattiva|configura prima/i.test(
+            statusNotice
+          );
+        const isWarningNotice = !isErrorNotice && /parzial|interrott/i.test(statusNotice);
+        const noticeToneClass = isErrorNotice
+          ? 'bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/30 text-rose-800 dark:text-rose-200'
+          : isWarningNotice
+            ? 'bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/30 text-amber-800 dark:text-amber-200'
+            : 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/30 text-emerald-800 dark:text-emerald-200';
+        return (
+          <div className={`border rounded-xl px-4 py-2.5 text-xs flex items-center justify-between gap-2 ${noticeToneClass}`}>
+            <span>{statusNotice}</span>
+            <button
+              type="button"
+              onClick={() => setStatusNotice(null)}
+              className="min-w-[36px] min-h-[36px] md:min-w-0 md:min-h-0 flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
+            >
+              <X className="w-4 h-4 md:w-3.5 md:h-3.5" />
+            </button>
+          </div>
+        );
+      })()}
 
       {/* Desktop Quick Starter Templates (>=768px) */}
       {!readOnly && (
