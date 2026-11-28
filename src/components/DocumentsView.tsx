@@ -54,6 +54,7 @@ import {
   subscribeFirestoreQuotaExceeded,
 } from '../firebase';
 import { resolveApiUrl } from '../utils/apiBase';
+import { useAppSettings } from '../utils/appSettings';
 import {
   buildDocumentSharePayload,
   buildElectricityBillSharePayload,
@@ -380,6 +381,7 @@ export function DocumentsView({
   onDeleteTariBill,
   onDeleteGsePayment,
 }: DocumentsViewProps) {
+  const { settings: appSettings } = useAppSettings();
   const [activeTab, setActiveTab] = useState<'all' | 'bollette' | 'ricerche' | HomeDocumentCategory>('all');
   const [originFilter, setOriginFilter] = useState<OriginFilter>('all');
   const [productFilter, setProductFilter] = useState<string>('all');
@@ -455,7 +457,7 @@ export function DocumentsView({
       return;
     }
     let active = true;
-    void getDedicatedVaultStorageStatus()
+    void getDedicatedVaultStorageStatus(true)
       .then((status) => {
         if (active) setVaultStorageStatus(status);
       })
@@ -465,7 +467,7 @@ export function DocumentsView({
     return () => {
       active = false;
     };
-  }, [readOnly]);
+  }, [readOnly, appSettings.backendApiUrl]);
 
   useEffect(() => {
     void reloadVaultMeta();
@@ -2573,15 +2575,14 @@ export function DocumentsView({
                     <span className="font-semibold text-slate-900 dark:text-slate-100">
                       Storage file dedicato attivo: {vaultStorageStatus.providerLabel}
                     </span>{' '}
-                    ({vaultStorageStatus.freeQuotaLabel}) — i file binari vengono salvati fuori da Firestore ({vaultStats.externalCount} già su storage esterno).
+                    ({vaultStorageStatus.freeQuotaLabel}) — {vaultStats.externalCount} su {vaultStorageStatus.providerLabel} · {vaultStats.legacyFirestoreCount} da spostare da Firestore.
                   </>
                 ) : (
                   <>
                     <span className="font-semibold text-slate-900 dark:text-slate-100">
                       Archiviazione compatta su Firestore:
                     </span>{' '}
-                    attiva <strong>Backblaze B2 (10 GB gratis per sempre senza carta)</strong> impostando{' '}
-                    <code className="font-mono text-[11px]">S3_ENDPOINT / S3_BUCKET</code> su Render.
+                    se hai già configurato <strong>Backblaze B2</strong> (<code className="font-mono text-[11px]">S3_*</code>) su Render, salva l&apos;URL HTTPS di Render in <strong>Impostazioni → Server Backend</strong> (oppure apri l&apos;app da Render) per attivarlo anche qui.
                   </>
                 )}
               </div>

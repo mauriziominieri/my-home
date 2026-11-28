@@ -2653,17 +2653,7 @@ export async function flushSimulatedFirestoreOps(options?: {
 }
 
 function readInitialWritesDisabled(): boolean {
-  if (typeof window === 'undefined') return true;
-  try {
-    const raw = window.localStorage.getItem('myhome_app_settings_v2');
-    if (!raw) return true;
-    const parsed = JSON.parse(raw) as { firestoreWritesDisabled?: unknown };
-    return typeof parsed?.firestoreWritesDisabled === 'boolean'
-      ? parsed.firestoreWritesDisabled
-      : true;
-  } catch {
-    return true;
-  }
+  return true;
 }
 
 let firestoreWriteStats: FirestoreWriteStats = {

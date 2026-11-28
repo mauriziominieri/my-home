@@ -110,11 +110,10 @@ function sanitizeSettings(raw: unknown): AppSettings {
   };
 }
 
-function areSettingsEqual(a: AppSettings, b: AppSettings): boolean {
+function areCloudSyncedSettingsEqual(a: AppSettings, b: AppSettings): boolean {
   return (
     a.theme === b.theme &&
     a.accentPalette === b.accentPalette &&
-    a.firestoreWritesDisabled === b.firestoreWritesDisabled &&
     a.sidebarAlwaysExpanded === b.sidebarAlwaysExpanded &&
     a.compactDensity === b.compactDensity &&
     a.defaultStartSection === b.defaultStartSection &&
@@ -123,12 +122,23 @@ function areSettingsEqual(a: AppSettings, b: AppSettings): boolean {
   );
 }
 
+function areSettingsEqual(a: AppSettings, b: AppSettings): boolean {
+  return (
+    areCloudSyncedSettingsEqual(a, b) &&
+    a.firestoreWritesDisabled === b.firestoreWritesDisabled
+  );
+}
+
 export function loadAppSettings(): AppSettings {
   if (typeof window === 'undefined') return { ...DEFAULT_APP_SETTINGS };
   try {
     const raw = window.localStorage.getItem(APP_SETTINGS_STORAGE_KEY);
     if (!raw) return { ...DEFAULT_APP_SETTINGS };
-    return sanitizeSettings(JSON.parse(raw));
+    return {
+      ...sanitizeSettings(JSON.parse(raw)),
+      // La Modalità Test Browser è sempre attiva di default all'avvio/ricarica.
+      firestoreWritesDisabled: true,
+    };
   } catch {
     return { ...DEFAULT_APP_SETTINGS };
   }
@@ -163,7 +173,8 @@ export function applyThemeToDocument(
 function persistLocalAndApplySideEffects(next: AppSettings): void {
   if (typeof window !== 'undefined') {
     try {
-      window.localStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify(next));
+      const { firestoreWritesDisabled: _runtimeOnly, ...persisted } = next;
+      window.localStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify(persisted));
     } catch {
       // ignore localStorage quota errors
     }
@@ -175,8 +186,7 @@ function persistLocalAndApplySideEffects(next: AppSettings): void {
 
 export function initAppSettings(): AppSettings {
   currentSettings = loadAppSettings();
-  applyThemeToDocument(currentSettings.theme, currentSettings.accentPalette);
-  setFirestoreWritesDisabled(currentSettings.firestoreWritesDisabled);
+  persistLocalAndApplySideEffects(currentSettings);
   return currentSettings;
 }
 
@@ -185,13 +195,16 @@ export function getAppSettings(): AppSettings {
 }
 
 export function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
-  const next = sanitizeSettings({ ...currentSettings, ...patch });
-  if (areSettingsEqual(currentSettings, next)) {
-    return currentSettings;
+  const prev = currentSettings;
+  const next = sanitizeSettings({ ...prev, ...patch });
+  if (areSettingsEqual(prev, next)) {
+    return prev;
   }
   currentSettings = next;
   persistLocalAndApplySideEffects(next);
-  cloudSettingsSaver?.(next);
+  if (!areCloudSyncedSettingsEqual(prev, next)) {
+    cloudSettingsSaver?.(next);
+  }
   return currentSettings;
 }
 
@@ -206,7 +219,11 @@ export function applySyncedAppSettingsFromCloud(
       typeof rawNotes === 'string' && rawNotes.trim()
         ? { ...parsed, backendApiUrl: rawNotes.trim() }
         : parsed;
-    const next = sanitizeSettings(mergedRaw);
+    const next: AppSettings = {
+      ...sanitizeSettings(mergedRaw),
+      // Non sovrascrivere mai lo stato locale della Modalità Test Browser con vecchi dati cloud.
+      firestoreWritesDisabled: currentSettings.firestoreWritesDisabled,
+    };
     if (areSettingsEqual(currentSettings, next)) {
       return false;
     }
@@ -224,7 +241,7 @@ export function buildAppSettingsFirestorePayload(
   createdAt: unknown
 ): Record<string, unknown> {
   const clean = sanitizeSettings(settings);
-  const { backendApiUrl, ...specsOnly } = clean;
+  const { backendApiUrl, firestoreWritesDisabled: _runtimeOnly, ...specsOnly } = clean;
   return {
     ownerId,
     name: 'Impostazioni App',

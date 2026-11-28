@@ -77,6 +77,12 @@ import {
   parseAllBrowserTelemetryFromArticles,
   TelemetryPeriodMode,
 } from '../utils/telemetrySync';
+import {
+  auditFirestoreCleanup,
+  CleanupCandidateCategory,
+  executeFirestoreCleanup,
+  FirestoreCleanupAuditReport,
+} from '../utils/dbCleanup';
 
 const ITALIAN_MONTH_NAMES = [
   'Gennaio',
@@ -306,10 +312,76 @@ export function SettingsView({
         ? selectedTelemetryMonth
         : selectedTelemetryYear;
   const isStaticHost = useMemo(() => isStaticHostingOrigin(), []);
+  const [cleanupAudit, setCleanupAudit] = useState<FirestoreCleanupAuditReport | null>(null);
+  const [selectedCleanupKeys, setSelectedCleanupKeys] = useState<Set<string>>(() => new Set());
+  const [cleanAppSettingsField, setCleanAppSettingsField] = useState(true);
+  const [auditingDb, setAuditingDb] = useState(false);
+  const [cleaningDb, setCleaningDb] = useState(false);
 
   useEffect(() => {
     setBackendUrlInput(settings.backendApiUrl || '');
   }, [settings.backendApiUrl]);
+
+  async function handleRunDbCleanupAudit() {
+    if (auditingDb || readOnly) return;
+    setAuditingDb(true);
+    try {
+      const report = await auditFirestoreCleanup();
+      setCleanupAudit(report);
+      setSelectedCleanupKeys(new Set(report.candidates.map((c) => c.key)));
+      setCleanAppSettingsField(report.legacyAppSettingsFieldPresent);
+      if (report.candidates.length === 0 && !report.legacyAppSettingsFieldPresent) {
+        setFeedback({
+          tone: 'ok',
+          text: `Analisi completata (${report.totalScannedDocs} record verificati): il database Firestore è già pulito e coerente con le sezioni attuali di my-home.`,
+        });
+      }
+    } catch (err) {
+      setFeedback({
+        tone: 'warn',
+        text: err instanceof Error ? err.message : 'Errore durante la scansione del database Firestore.',
+      });
+    } finally {
+      setAuditingDb(false);
+    }
+  }
+
+  async function handleExecuteDbCleanup() {
+    if (!cleanupAudit || cleaningDb || readOnly) return;
+    if (settings.firestoreWritesDisabled) {
+      setFeedback({
+        tone: 'warn',
+        text: 'Disattiva temporaneamente la Modalità Test Browser (interruttore in cima a questa pagina) per poter cancellare i vecchi record da Firestore.',
+      });
+      return;
+    }
+    const chosen = cleanupAudit.candidates.filter((c) => selectedCleanupKeys.has(c.key));
+    const cleanField = cleanupAudit.legacyAppSettingsFieldPresent && cleanAppSettingsField;
+    if (chosen.length === 0 && !cleanField) return;
+    setCleaningDb(true);
+    try {
+      const res = await executeFirestoreCleanup(chosen, {
+        cleanLegacyAppSettingsField: cleanField,
+      });
+      const updatedReport = await auditFirestoreCleanup();
+      setCleanupAudit(updatedReport);
+      setSelectedCleanupKeys(new Set(updatedReport.candidates.map((c) => c.key)));
+      setCleanAppSettingsField(updatedReport.legacyAppSettingsFieldPresent);
+      setFeedback({
+        tone: 'ok',
+        text: `Pulizia Firestore completata: ${res.deletedDocs} record obsoleti eliminati${
+          res.deletedExternalS3Keys > 0 ? ` (+ ${res.deletedExternalS3Keys} file su Backblaze B2)` : ''
+        }${res.updatedSettingsDoc ? ' · impostazioni app ripulite' : ''}.`,
+      });
+    } catch (err) {
+      setFeedback({
+        tone: 'warn',
+        text: err instanceof Error ? err.message : 'Errore durante la pulizia del database Firestore.',
+      });
+    } finally {
+      setCleaningDb(false);
+    }
+  }
 
   const currentDevice = useMemo(() => getBrowserDeviceInfo(), []);
 
@@ -789,7 +861,7 @@ export function SettingsView({
             </div>
 
             <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              Attiva questa opzione quando vuoi fare test nel browser (aggiungere prodotti, cambiare varianti su Prodotti, provare la domotica o caricare allegati) senza consumare la quota giornaliera gratuita di Firebase Firestore. Tutte le operazioni simulate restano salvate e visibili in locale e, dopo tua conferma, vengono inviate a Firestore in un unico blocco batch quando riattivi le scritture.
+              Attiva di default all&apos;avvio per evitare di consumare la quota giornaliera gratuita di Firebase Firestore: tutte le modifiche vengono simulate e salvate in locale. Puoi inviarle a Firestore in un unico blocco batch oppure disattivare temporaneamente la modalità test per salvare subito su database.
             </p>
           </div>
 
@@ -2258,6 +2330,212 @@ export function SettingsView({
             </button>
           )}
         </div>
+      </section>
+
+      {/* 6. Firestore DB Audit & Cleanup (Legacy Articoli / Orphan Chunks & Docs) */}
+      <section className={cardCls}>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div className="space-y-1">
+            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <Trash2 className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+              <span>Pulizia &amp; Coerenza Database Firestore</span>
+            </h2>
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed max-w-3xl">
+              Analizza su richiesta i record reali su Firestore per individuare ed eliminare residui della vecchia pagina{' '}
+              <strong>Articoli</strong> (ormai sostituita da <strong>Prodotti</strong>), allegati orfani di prodotti eliminati e chunk Firestore residui di file già migrati su Backblaze B2. Le sezioni attuali salvate dentro <code className="font-mono text-[11px]">homeArticles</code> (Spesa, Macchina, Documenti, Promemoria, Vinted, Telemetria) non vengono toccate.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            disabled={readOnly || auditingDb || cleaningDb}
+            onClick={() => void handleRunDbCleanupAudit()}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:hover:bg-white dark:text-slate-950 transition-colors disabled:opacity-50 shrink-0"
+          >
+            {auditingDb ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5" />
+            )}
+            <span>{auditingDb ? 'Analisi in corso...' : 'Analizza DB Firestore'}</span>
+          </button>
+        </div>
+
+        {readOnly && (
+          <div className={`${subSurfaceCls} px-3.5 py-2.5 text-xs text-slate-500 dark:text-slate-400`}>
+            Accedi con il tuo account Google proprietario per analizzare e ripulire il database Firestore.
+          </div>
+        )}
+
+        {!readOnly && cleanupAudit && (
+          <div className="space-y-3 mt-3 pt-3 border-t border-slate-200/80 dark:border-slate-800/80">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+              <div className={`${subSurfaceCls} px-3 py-2`}>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">Prodotti attivi</div>
+                <div className="font-bold tabular-nums text-slate-900 dark:text-slate-100">
+                  {cleanupAudit.activeSummary.products}
+                </div>
+              </div>
+              <div className={`${subSurfaceCls} px-3 py-2`}>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">Documenti attivi</div>
+                <div className="font-bold tabular-nums text-slate-900 dark:text-slate-100">
+                  {cleanupAudit.activeSummary.documents}
+                </div>
+              </div>
+              <div className={`${subSurfaceCls} px-3 py-2`}>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">Vault File / Chunk</div>
+                <div className="font-bold tabular-nums text-slate-900 dark:text-slate-100">
+                  {cleanupAudit.activeSummary.vaultFiles} / {cleanupAudit.activeSummary.vaultChunks}
+                </div>
+              </div>
+              <div className={`${subSurfaceCls} px-3 py-2`}>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">Elementi obsoleti trovati</div>
+                <div
+                  className={`font-bold tabular-nums ${
+                    cleanupAudit.candidates.length > 0 || cleanupAudit.legacyAppSettingsFieldPresent
+                      ? 'text-amber-700 dark:text-amber-300'
+                      : 'text-emerald-700 dark:text-emerald-300'
+                  }`}
+                >
+                  {cleanupAudit.candidates.length + (cleanupAudit.legacyAppSettingsFieldPresent ? 1 : 0)}
+                </div>
+              </div>
+            </div>
+
+            {cleanupAudit.candidates.length === 0 && !cleanupAudit.legacyAppSettingsFieldPresent ? (
+              <div className="rounded-lg border border-emerald-200 dark:border-emerald-500/35 bg-emerald-50/70 dark:bg-emerald-950/25 px-3.5 py-2.5 text-xs text-emerald-900 dark:text-emerald-200 flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                <span>
+                  Nessun vecchio Articolo, allegato orfano o chunk residuo trovato: il DB è allineato alle sezioni attuali di my-home.
+                </span>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCleanupKeys(new Set(cleanupAudit.candidates.map((c) => c.key)));
+                        setCleanAppSettingsField(cleanupAudit.legacyAppSettingsFieldPresent);
+                      }}
+                      className="px-2 py-1 rounded border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      Seleziona tutti
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCleanupKeys(new Set());
+                        setCleanAppSettingsField(false);
+                      }}
+                      className="px-2 py-1 rounded border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      Deseleziona tutti
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={
+                      cleaningDb ||
+                      (selectedCleanupKeys.size === 0 &&
+                        !(cleanupAudit.legacyAppSettingsFieldPresent && cleanAppSettingsField))
+                    }
+                    onClick={() => void handleExecuteDbCleanup()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-rose-600 hover:bg-rose-700 text-white dark:bg-rose-500 dark:hover:bg-rose-400 dark:text-slate-950 transition-colors disabled:opacity-50"
+                  >
+                    {cleaningDb ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3.5 h-3.5" />
+                    )}
+                    <span>
+                      {cleaningDb
+                        ? 'Pulizia in corso...'
+                        : `Elimina selezionati dal DB (${
+                            selectedCleanupKeys.size +
+                            (cleanupAudit.legacyAppSettingsFieldPresent && cleanAppSettingsField ? 1 : 0)
+                          })`}
+                    </span>
+                  </button>
+                </div>
+
+                {settings.firestoreWritesDisabled && (
+                  <div className="rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50/80 dark:bg-amber-950/30 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
+                    La <strong>Modalità Test Browser</strong> è attiva: per proteggere la quota, disattivala temporaneamente in cima a questa pagina prima di cliccare <strong>Elimina selezionati dal DB</strong> (poi potrai tornare in Modalità Test Browser con 1 click).
+                  </div>
+                )}
+
+                <div className="max-h-72 overflow-y-auto divide-y divide-slate-200/80 dark:divide-slate-800 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60">
+                  {cleanupAudit.legacyAppSettingsFieldPresent && (
+                    <label className="flex items-start gap-2.5 px-3 py-2 text-xs cursor-pointer hover:bg-slate-100/80 dark:hover:bg-slate-900/70">
+                      <input
+                        type="checkbox"
+                        checked={cleanAppSettingsField}
+                        onChange={(e) => setCleanAppSettingsField(e.target.checked)}
+                        className="mt-0.5 rounded border-slate-300 dark:border-slate-700"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-slate-900 dark:text-slate-100">
+                          Ripulisci campo obsoleto <code className="font-mono text-[11px]">firestoreWritesDisabled</code> su <code className="font-mono text-[11px]">app_settings_state</code>
+                        </div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Aggiorna il documento impostazioni cloud rimuovendo la vecchia proprietà di stato locale.
+                        </div>
+                      </div>
+                    </label>
+                  )}
+
+                  {cleanupAudit.candidates.map((item) => {
+                    const checked = selectedCleanupKeys.has(item.key);
+                    const badgeLabelByCat: Record<CleanupCandidateCategory, string> = {
+                      legacy_article: 'Vecchio Articolo',
+                      legacy_article_doc: 'Allegato Articolo',
+                      orphan_research_doc: 'Allegato orfano',
+                      orphan_vault_chunk: 'Chunk residuo',
+                      legacy_vault_file: 'File Vault obsoleto',
+                    };
+                    return (
+                      <label
+                        key={item.key}
+                        className="flex items-start gap-2.5 px-3 py-2 text-xs cursor-pointer hover:bg-slate-100/80 dark:hover:bg-slate-900/70"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const next = new Set(selectedCleanupKeys);
+                            if (e.target.checked) next.add(item.key);
+                            else next.delete(item.key);
+                            setSelectedCleanupKeys(next);
+                          }}
+                          className="mt-0.5 rounded border-slate-300 dark:border-slate-700"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-200">
+                              {badgeLabelByCat[item.category]}
+                            </span>
+                            <span className="font-semibold text-slate-900 dark:text-slate-100 truncate">
+                              {item.title}
+                            </span>
+                            <span className="font-mono text-[10px] text-slate-400">
+                              {item.collectionName}/{item.docId}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                            {item.subtitle}
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </section>
     </div>
   );

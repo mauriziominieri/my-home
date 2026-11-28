@@ -1984,8 +1984,13 @@ export default function App() {
         const baseList = mapRawHomeArticles(rawDocs);
         const mergedDocs = mergeSimulatedOpsIntoRawDocs(articlesPath, rawDocs);
         setHomeArticles(mapRawHomeArticles(mergedDocs));
-        setHomeArticlesLoaded(true);
+        if (!snap.empty || !snap.metadata.fromCache) {
+          setHomeArticlesLoaded(true);
+        }
         try {
+          if (baseList.some((a) => a.id === MIGRATION_DONE_DOC_ID)) {
+            localStorage.setItem(`myhome_migration_done_${activeUid}`, '1');
+          }
           localStorage.setItem(`myhome_articles_cache_${activeUid}`, JSON.stringify(baseList));
           localStorage.setItem(
             PUBLIC_GROCERY_CACHE_KEY,
@@ -2015,6 +2020,7 @@ export default function App() {
           rawSnapshotsRef.current.homeArticles = rawFallback;
           const mergedDocs = mergeSimulatedOpsIntoRawDocs(articlesPath, rawFallback);
           setHomeArticles(mapRawHomeArticles(mergedDocs));
+          setHomeArticlesLoaded(true);
           return;
         }
         handleFirestoreError(error, OperationType.LIST, articlesPath);
@@ -5105,10 +5111,19 @@ export default function App() {
     });
   }
 
-  const migrationCompleted = useMemo(
-    () => homeArticles.some((a) => a.id === MIGRATION_DONE_DOC_ID),
-    [homeArticles]
-  );
+  const migrationCompleted = useMemo(() => {
+    if (homeArticles.some((a) => a.id === MIGRATION_DONE_DOC_ID)) return true;
+    if (activeUid && typeof window !== 'undefined') {
+      try {
+        if (window.localStorage.getItem(`myhome_migration_done_${activeUid}`) === '1') {
+          return true;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return false;
+  }, [homeArticles, activeUid]);
 
   const telemetryArticles = useMemo(
     () => homeArticles.filter((a) => a.room === SYSTEM_ROOM_TELEMETRY),
@@ -6563,7 +6578,7 @@ export default function App() {
 
         <VaultCloudNotice />
 
-        {user && !readingsLoading && !migrationCompleted && !migrationDismissed && (
+        {user && !readingsLoading && homeArticlesLoaded && !migrationCompleted && !migrationDismissed && (
           <div className="px-5 py-2.5 bg-sky-50 border-b border-sky-200 text-sky-900 dark:bg-sky-500/10 dark:border-sky-500/30 text-xs dark:text-sky-100 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-start sm:items-center gap-2 min-w-0">
               <Database className="w-4 h-4 text-sky-600 dark:text-sky-300 shrink-0 mt-0.5 sm:mt-0" />

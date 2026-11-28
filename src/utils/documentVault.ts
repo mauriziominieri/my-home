@@ -28,6 +28,7 @@ import {
   TariBillRecord,
   WaterBillRecord,
 } from '../types/home';
+import { resolveApiUrl } from './apiBase';
 
 export const SYSTEM_ROOM_DOCUMENTS = '__documenti__';
 
@@ -215,6 +216,7 @@ interface CloudVaultDocMeta {
 
 const cloudMetaCache = new Map<string, CloudVaultDocMeta>();
 let cachedStorageStatus: DedicatedVaultStorageStatus | null = null;
+let cachedStorageStatusEndpoint: string | null = null;
 let inFlightStatusPromise: Promise<DedicatedVaultStorageStatus> | null = null;
 const inFlightMetaListByUid = new Map<string, Promise<Record<string, VaultFileMeta>>>();
 
@@ -359,20 +361,17 @@ async function optimizeVaultImageBlob(
   return { blob: file, fileName, mimeType };
 }
 
-function getApiBaseOrigin(): string {
-  if (typeof window === 'undefined') return '';
-  if (window.location.hostname.endsWith('github.io')) {
-    return (import.meta.env.VITE_API_ORIGIN as string | undefined)?.trim().replace(/\/+$/, '') || '';
-  }
-  return '';
-}
-
 function buildVaultApiUrl(path: string): string | null {
-  const base = getApiBaseOrigin();
-  if (typeof window !== 'undefined' && window.location.hostname.endsWith('github.io') && !base) {
-    return null;
+  const resolved = resolveApiUrl(path);
+  if (resolved) return resolved;
+  const legacyEnvOrigin = (import.meta.env.VITE_API_ORIGIN as string | undefined)
+    ?.trim()
+    .replace(/\/+$/, '');
+  if (legacyEnvOrigin) {
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    return `${legacyEnvOrigin}${cleanPath}`;
   }
-  return `${base}${path}`;
+  return null;
 }
 
 async function getFirebaseAuthToken(): Promise<string | null> {
@@ -397,24 +396,27 @@ export async function getDedicatedVaultStorageStatus(
     checkedAt: Date.now(),
   };
 
+  const endpoint = buildVaultApiUrl('/api/vault/status');
   if (
     !forceRefresh &&
     cachedStorageStatus &&
+    cachedStorageStatusEndpoint === endpoint &&
     Date.now() - cachedStorageStatus.checkedAt < STORAGE_STATUS_TTL_MS
   ) {
     return cachedStorageStatus;
   }
-  if (!forceRefresh && inFlightStatusPromise) {
+  if (!forceRefresh && inFlightStatusPromise && cachedStorageStatusEndpoint === endpoint) {
     return inFlightStatusPromise;
   }
 
-  const endpoint = buildVaultApiUrl('/api/vault/status');
   const token = await getFirebaseAuthToken();
   if (!endpoint || !token) {
+    cachedStorageStatusEndpoint = endpoint;
     cachedStorageStatus = fallback;
     return fallback;
   }
 
+  cachedStorageStatusEndpoint = endpoint;
   inFlightStatusPromise = (async () => {
     try {
       const resp = await fetch(endpoint, {
@@ -1512,6 +1514,11 @@ export async function precacheAllCloudVaultFiles(
 export async function migrateFirestoreVaultToDedicatedStorage(
   onProgress?: (done: number, total: number) => void
 ): Promise<{ migrated: number; failed: number; providerLabel: string }> {
+  if (isFirestoreWritesDisabled()) {
+    throw new Error(
+      'Disattiva temporaneamente la Modalità Test Browser in Impostazioni prima di avviare la migrazione su Backblaze B2.'
+    );
+  }
   const uid = getAuthenticatedUid();
   if (!uid) {
     throw new Error('Autenticazione richiesta per migrare gli allegati.');
