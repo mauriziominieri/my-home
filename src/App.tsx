@@ -6258,110 +6258,41 @@ export default function App() {
           </div>
         </header>
 
-        {(appSettings.firestoreWritesDisabled ||
+        {(!appSettings.firestoreWritesDisabled ||
           simulatedOps.length > 0 ||
           flushState.flushing ||
           flushState.lastResult ||
           firestoreQuotaExceeded) && (
           <div className="sticky top-14 z-30 shadow-xs">
-            {appSettings.firestoreWritesDisabled && (
-              <div
-                onClick={() => {
-                  if (simulatedOps.length > 0) {
-                    setShowSimulatedQueuePanel((prev) => !prev);
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (simulatedOps.length > 0 && (e.key === 'Enter' || e.key === ' ')) {
-                    if (e.target === e.currentTarget) {
-                      e.preventDefault();
-                      setShowSimulatedQueuePanel((prev) => !prev);
-                    }
-                  }
-                }}
-                role={simulatedOps.length > 0 ? 'button' : undefined}
-                tabIndex={simulatedOps.length > 0 ? 0 : undefined}
-                aria-expanded={simulatedOps.length > 0 ? showSimulatedQueuePanel : undefined}
-                title={
-                  simulatedOps.length > 0
-                    ? showSimulatedQueuePanel
-                      ? 'Clicca per nascondere le operazioni in coda'
-                      : 'Clicca per vedere le operazioni in coda'
-                    : undefined
-                }
-                className={`px-4 sm:px-6 py-1.5 sm:py-2 bg-amber-100/95 border-b text-xs text-amber-950 dark:bg-amber-950/95 backdrop-blur-md dark:text-amber-100 flex items-center justify-between gap-2 sm:gap-3 flex-nowrap transition-colors ${
-                  showSimulatedQueuePanel && simulatedOps.length > 0
-                    ? 'border-dashed border-amber-400/90 dark:border-amber-500/55'
-                    : 'border-amber-300 dark:border-amber-500/45'
-                } ${
-                  simulatedOps.length > 0
-                    ? 'cursor-pointer hover:bg-amber-200/70 dark:hover:bg-amber-900/90'
-                    : ''
-                }`}
-              >
+            {!appSettings.firestoreWritesDisabled && (
+              <div className="px-4 sm:px-6 py-1.5 sm:py-2 bg-amber-100/95 border-b border-amber-300 dark:border-amber-500/45 text-xs text-amber-950 dark:bg-amber-950/95 backdrop-blur-md dark:text-amber-100 flex items-center justify-between gap-2 sm:gap-3 flex-nowrap transition-colors">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <FlaskConical className="w-3.5 h-3.5 text-amber-700 dark:text-amber-300 shrink-0" />
+                  <Database className="w-3.5 h-3.5 text-amber-700 dark:text-amber-300 shrink-0" />
                   <span className="truncate">
-                    <strong>Modalità Test Browser attiva:</strong>{' '}
+                    <strong>Scrittura diretta DB attiva:</strong>{' '}
                     <span className="hidden xl:inline">
-                      tutte le modifiche sono salvate in locale con 0 quota consumata{' '}
+                      ogni modifica viene salvata subito su Firestore consumando quota giornaliera.
                     </span>
-                    ({simulatedOps.length}{' '}
-                    {simulatedOps.length === 1
-                      ? 'operazione simulata in coda'
-                      : 'operazioni simulate in coda'}
-                    {writeStats.writesSavedCount > 0
-                      ? ` · ${writeStats.writesSavedCount} scritture risparmiate`
-                      : ''}
-                    ).
+                    <span className="xl:hidden">
+                      le modifiche vengono salvate subito su Firestore.
+                    </span>
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 whitespace-nowrap">
-                  {simulatedOps.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowSimulatedQueuePanel((prev) => !prev);
-                      }}
-                      className="px-2.5 py-1 text-[11px] font-semibold rounded-md border border-amber-300 dark:border-amber-400/50 bg-white/85 hover:bg-white text-amber-900 dark:bg-amber-900/50 dark:hover:bg-amber-900/80 dark:text-amber-100 transition-colors whitespace-nowrap"
-                    >
-                      {showSimulatedQueuePanel ? (
-                        <>
-                          <span className="sm:hidden">Nascondi</span>
-                          <span className="hidden sm:inline">Nascondi operazioni</span>
-                        </>
-                      ) : (
-                        <>
-                          <span className="sm:hidden">Vedi ({simulatedOps.length})</span>
-                          <span className="hidden sm:inline">Vedi operazioni ({simulatedOps.length})</span>
-                        </>
-                      )}
-                    </button>
-                  )}
                   <button
                     type="button"
-                    disabled={flushState.flushing || (simulatedOps.length > 0 && !canEdit)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPendingDbActionModal(simulatedOps.length > 0 ? 'flush' : 'reenable');
-                    }}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-400 dark:hover:bg-emerald-300 dark:text-slate-950 transition-colors whitespace-nowrap disabled:opacity-60"
+                    disabled={flushState.flushing}
+                    onClick={() => updateAppSettings({ firestoreWritesDisabled: true })}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-amber-500 hover:bg-amber-600 text-slate-950 dark:bg-amber-400 dark:hover:bg-amber-300 dark:text-slate-950 transition-colors whitespace-nowrap disabled:opacity-60"
                   >
-                    {simulatedOps.length > 0 ? (
-                      <>
-                        <CloudUpload className="w-3 h-3" />
-                        <span>Salva ({simulatedOps.length})</span>
-                      </>
-                    ) : (
-                      <span>Riattiva scritture DB</span>
-                    )}
+                    <FlaskConical className="w-3 h-3" />
+                    <span>Torna a Test Browser</span>
                   </button>
                 </div>
               </div>
             )}
 
-            {!appSettings.firestoreWritesDisabled && simulatedOps.length > 0 && (
+            {simulatedOps.length > 0 && (
               <div
                 onClick={() => setShowSimulatedQueuePanel((prev) => !prev)}
                 role="button"
@@ -6373,7 +6304,12 @@ export default function App() {
                   }
                 }}
                 aria-expanded={showSimulatedQueuePanel}
-                className={`px-4 sm:px-6 py-1.5 sm:py-2 bg-sky-100/95 border-b text-xs text-sky-900 dark:bg-sky-950/95 backdrop-blur-md dark:text-sky-100 flex items-center justify-between gap-2 sm:gap-3 flex-nowrap cursor-pointer transition-colors ${
+                title={
+                  showSimulatedQueuePanel
+                    ? 'Clicca per nascondere le operazioni in coda'
+                    : 'Clicca per vedere le operazioni in coda'
+                }
+                className={`px-4 sm:px-6 py-1.5 sm:py-2 bg-sky-100/95 border-b text-xs text-sky-900 dark:bg-sky-950/95 backdrop-blur-md dark:text-sky-100 flex items-center justify-between gap-2 sm:gap-3 flex-nowrap cursor-pointer hover:bg-sky-200/70 dark:hover:bg-sky-900/90 transition-colors ${
                   showSimulatedQueuePanel
                     ? 'border-dashed border-sky-400/90 dark:border-sky-500/55'
                     : 'border-sky-200 dark:border-sky-500/35'
@@ -6389,6 +6325,18 @@ export default function App() {
                         {simulatedOps.length === 1
                           ? 'operazione salvata in locale — invio automatico su Firestore al ripristino quota (09:00 IT).'
                           : 'operazioni salvate in locale — invio automatico su Firestore al ripristino quota (09:00 IT).'}
+                      </>
+                    ) : appSettings.firestoreWritesDisabled ? (
+                      <>
+                        <strong>Operazioni simulate in coda:</strong>{' '}
+                        {simulatedOps.length}{' '}
+                        {simulatedOps.length === 1
+                          ? 'operazione salvata in locale (0 quota consumata'
+                          : 'operazioni salvate in locale (0 quota consumata'}
+                        {writeStats.writesSavedCount > 0
+                          ? ` · ${writeStats.writesSavedCount} scritture risparmiate`
+                          : ''}
+                        ).
                       </>
                     ) : (
                       <>
@@ -6429,38 +6377,26 @@ export default function App() {
                       e.stopPropagation();
                       setPendingDbActionModal('flush');
                     }}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-sky-600 hover:bg-sky-700 text-white dark:bg-sky-500 dark:hover:bg-sky-400 dark:text-slate-950 transition-colors whitespace-nowrap disabled:opacity-50"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-400 dark:hover:bg-emerald-300 dark:text-slate-950 transition-colors whitespace-nowrap disabled:opacity-50"
                   >
                     <CloudUpload className="w-3 h-3" />
-                    <span>{quotaPendingOpsCount > 0 ? 'Riprova invio ora' : 'Invia ora su Firestore'}</span>
+                    <span>
+                      {quotaPendingOpsCount > 0
+                        ? 'Riprova invio ora'
+                        : appSettings.firestoreWritesDisabled
+                          ? `Salva (${simulatedOps.length})`
+                          : 'Invia ora su Firestore'}
+                    </span>
                   </button>
                 </div>
               </div>
             )}
 
             {showSimulatedQueuePanel && simulatedOps.length > 0 && (
-              <div
-                className={`px-4 sm:px-6 py-3.5 backdrop-blur-md border-b-2 space-y-2.5 shadow-[0_14px_30px_-8px_rgba(15,23,42,0.28)] dark:shadow-[0_18px_36px_-8px_rgba(0,0,0,0.8)] ${
-                  appSettings.firestoreWritesDisabled
-                    ? 'bg-amber-50/98 dark:bg-[#221706]/95 border-b-amber-400 dark:border-b-amber-500/70'
-                    : 'bg-sky-50/98 dark:bg-[#081a2b]/95 border-b-sky-400 dark:border-b-sky-500/70'
-                }`}
-              >
+              <div className="px-4 sm:px-6 py-3.5 backdrop-blur-md border-b-2 space-y-2.5 shadow-[0_14px_30px_-8px_rgba(15,23,42,0.28)] dark:shadow-[0_18px_36px_-8px_rgba(0,0,0,0.8)] bg-sky-50/98 dark:bg-[#081a2b]/95 border-b-sky-400 dark:border-b-sky-500/70">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div
-                    className={`text-xs font-semibold flex items-center gap-2 ${
-                      appSettings.firestoreWritesDisabled
-                        ? 'text-amber-950 dark:text-amber-100'
-                        : 'text-sky-950 dark:text-sky-100'
-                    }`}
-                  >
-                    <Database
-                      className={`w-3.5 h-3.5 shrink-0 ${
-                        appSettings.firestoreWritesDisabled
-                          ? 'text-amber-700 dark:text-amber-300'
-                          : 'text-sky-600 dark:text-sky-300'
-                      }`}
-                    />
+                  <div className="text-xs font-semibold flex items-center gap-2 text-sky-950 dark:text-sky-100">
+                    <Database className="w-3.5 h-3.5 shrink-0 text-sky-600 dark:text-sky-300" />
                     <span>
                       Operazioni simulate salvate in locale ({simulatedOps.length})
                     </span>
@@ -6470,11 +6406,7 @@ export default function App() {
                       type="button"
                       disabled={flushState.flushing}
                       onClick={() => clearSimulatedFirestoreOps()}
-                      className={`inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors disabled:opacity-50 ${
-                        appSettings.firestoreWritesDisabled
-                          ? 'bg-white/90 hover:bg-white border-amber-300 text-amber-950 dark:bg-amber-950/70 dark:hover:bg-amber-900/80 dark:border-amber-500/40 dark:text-amber-100'
-                          : 'bg-white/90 hover:bg-white border-sky-300 text-sky-950 dark:bg-sky-950/70 dark:hover:bg-sky-900/80 dark:border-sky-500/40 dark:text-sky-100'
-                      }`}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors disabled:opacity-50 bg-white/90 hover:bg-white border-sky-300 text-sky-950 dark:bg-sky-950/70 dark:hover:bg-sky-900/80 dark:border-sky-500/40 dark:text-sky-100"
                     >
                       <Trash2 className="w-3 h-3 text-rose-500" />
                       <span>Svuota coda</span>
@@ -6482,23 +6414,13 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => setShowSimulatedQueuePanel(false)}
-                      className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors ${
-                        appSettings.firestoreWritesDisabled
-                          ? 'text-amber-800 hover:bg-amber-200/70 hover:text-amber-950 dark:text-amber-200 dark:hover:bg-amber-900/60 dark:hover:text-amber-50'
-                          : 'text-sky-800 hover:bg-sky-200/70 hover:text-sky-950 dark:text-sky-200 dark:hover:bg-sky-900/60 dark:hover:text-sky-50'
-                      }`}
+                      className="px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors text-sky-800 hover:bg-sky-200/70 hover:text-sky-950 dark:text-sky-200 dark:hover:bg-sky-900/60 dark:hover:text-sky-50"
                     >
                       Chiudi
                     </button>
                   </div>
                 </div>
-                <div
-                  className={`rounded-xl border p-1 shadow-inner ${
-                    appSettings.firestoreWritesDisabled
-                      ? 'bg-white/95 dark:bg-slate-950/90 border-amber-300/90 dark:border-amber-500/35'
-                      : 'bg-white/95 dark:bg-slate-950/90 border-sky-300/90 dark:border-sky-500/35'
-                  }`}
-                >
+                <div className="rounded-xl border p-1 shadow-inner bg-white/95 dark:bg-slate-950/90 border-sky-300/90 dark:border-sky-500/35">
                   <SimulatedOpsQueueList
                     ops={simulatedOps}
                     context={simulatedQueueContext}

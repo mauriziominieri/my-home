@@ -431,6 +431,16 @@ def parse_csv_content(text: str) -> List[Dict[str, Any]]:
     return results
 
 
+def open_gmail_inbox_imap() -> Optional[imaplib.IMAP4_SSL]:
+    gmail_user = os.environ.get("GMAIL_USER", "").strip()
+    gmail_pass = os.environ.get("GMAIL_APP_PASSWORD", "").strip().replace(" ", "")
+    if not gmail_user or not gmail_pass:
+        return None
+    mail = imaplib.IMAP4_SSL("imap.gmail.com", timeout=30)
+    mail.login(gmail_user, gmail_pass)
+    return mail
+
+
 def imap_search_union(
     mail: imaplib.IMAP4_SSL, queries: List[str], max_results: int = 25
 ) -> List[bytes]:

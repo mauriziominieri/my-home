@@ -567,6 +567,22 @@ export function RemindersView({
  *    "https://www.googleapis.com/auth/script.external_request"
  *    "https://www.googleapis.com/auth/script.send_mail"
  */
+function attivaPromemoriaGiornalieri() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'checkMyHomeRemindersDaily') {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+  ScriptApp.newTrigger('checkMyHomeRemindersDaily')
+    .timeBased()
+    .everyDays(1)
+    .atHour(8)
+    .nearMinute(30)
+    .create();
+  checkMyHomeRemindersDaily();
+}
+
 function checkMyHomeRemindersDaily() {
   var FIREBASE_PROJECT_ID = 'gen-lang-client-0721850501';
   var FIRESTORE_DB_ID = 'ai-studio-30a168e3-8158-474f-b9f2-f717d7220314';
@@ -578,9 +594,13 @@ function checkMyHomeRemindersDaily() {
     '/documents';
 
   var props = PropertiesService.getScriptProperties();
-  var ownerUid = (props.getProperty('FIREBASE_OWNER_UID') || ${JSON.stringify(uidHint)}).trim();
+  var oauthToken = getRemindersFirestoreToken_(props);
+  var ownerUid = (props.getProperty('FIREBASE_OWNER_UID') || props.getProperty('OWNER_UID') || ${JSON.stringify(uidHint)}).trim();
   if (!ownerUid) {
-    var metaResp = UrlFetchApp.fetch(BASE_DOCS_URL + '/appMeta/owner', { muteHttpExceptions: true });
+    var metaResp = UrlFetchApp.fetch(BASE_DOCS_URL + '/appMeta/owner', {
+      headers: { Authorization: 'Bearer ' + oauthToken },
+      muteHttpExceptions: true
+    });
     if (metaResp.getResponseCode() >= 200 && metaResp.getResponseCode() < 300) {
       var metaJson = JSON.parse(metaResp.getContentText() || '{}');
       ownerUid =
@@ -591,7 +611,6 @@ function checkMyHomeRemindersDaily() {
     throw new Error('Impossibile determinare FIREBASE_OWNER_UID da appMeta/owner.');
   }
 
-  var oauthToken = ScriptApp.getOAuthToken();
   var queryUrl = BASE_DOCS_URL + '/users/' + encodeURIComponent(ownerUid) + ':runQuery';
   var queryPayload = {
     structuredQuery: {
@@ -687,7 +706,12 @@ function checkMyHomeRemindersDaily() {
     }
   });
 
-  var EMAIL_TO = (props.getProperty('REMINDERS_EMAIL_TO') || firestoreEmail || '').trim();
+  var sessionEmail = '';
+  try {
+    sessionEmail = (Session.getActiveUser().getEmail() || Session.getEffectiveUser().getEmail() || '').trim();
+  } catch (e) {}
+
+  var EMAIL_TO = (props.getProperty('REMINDERS_EMAIL_TO') || firestoreEmail || sessionEmail || '').trim();
   var WA_PHONE = (props.getProperty('CALLMEBOT_PHONE') || firestorePhone || '').replace(/[^\\d]/g, '');
   var CALLMEBOT_KEY = (props.getProperty('CALLMEBOT_API_KEY') || '').trim();
 
@@ -732,6 +756,7 @@ function checkMyHomeRemindersDaily() {
 
     var isOverdue = diffDays < 0 || isKmOverdue;
     var isInWarningWindow = todayIso >= warningStartIso || isKmWarning || isOverdue;
+    Logger.log('Check "' + r.title + '": due=' + dueIso + ', warningStart=' + warningStartIso + ', inWindow=' + isInWarningWindow);
     if (!isInWarningWindow) return;
 
     var capPct =
@@ -782,11 +807,40 @@ function checkMyHomeRemindersDaily() {
       '&apikey=' +
       encodeURIComponent(CALLMEBOT_KEY);
     var resp = UrlFetchApp.fetch(waUrl, { muteHttpExceptions: true });
-    var code = resp.getResponseCode();
-    if (code < 200 || code >= 300) {
-      Logger.log('Errore CallMeBot HTTP ' + code + ': ' + resp.getContentText());
-    }
+    Logger.log('Risposta CallMeBot HTTP ' + resp.getResponseCode() + ': ' + resp.getContentText());
   }
+}
+
+function getRemindersFirestoreToken_(props) {
+  var saRaw = props.getProperty('FIREBASE_SERVICE_ACCOUNT');
+  if (saRaw && saRaw.trim()) {
+    var sa = JSON.parse(saRaw);
+    var now = Math.floor(Date.now() / 1000);
+    var header = Utilities.base64EncodeWebSafe(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).replace(/=+$/, '');
+    var claim = Utilities.base64EncodeWebSafe(
+      JSON.stringify({
+        iss: sa.client_email,
+        scope: 'https://www.googleapis.com/auth/datastore',
+        aud: 'https://oauth2.googleapis.com/token',
+        exp: now + 3600,
+        iat: now
+      })
+    ).replace(/=+$/, '');
+    var sigBytes = Utilities.computeRsaSha256Signature(header + '.' + claim, sa.private_key);
+    var sig = Utilities.base64EncodeWebSafe(sigBytes).replace(/=+$/, '');
+    var res = UrlFetchApp.fetch('https://oauth2.googleapis.com/token', {
+      method: 'post',
+      payload: {
+        grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        assertion: header + '.' + claim + '.' + sig
+      },
+      muteHttpExceptions: true
+    });
+    var json = JSON.parse(res.getContentText() || '{}');
+    if (json.access_token) return json.access_token;
+    throw new Error('Errore token Service Account: ' + res.getContentText());
+  }
+  return ScriptApp.getOAuthToken();
 }
 
 function normalizeIso_(raw) {

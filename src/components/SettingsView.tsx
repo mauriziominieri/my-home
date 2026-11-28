@@ -747,7 +747,7 @@ export function SettingsView({
       {/* 1. Primary Card: Firestore Write Gate / Browser Test Mode */}
       <section
         className={`rounded-xl p-5 border transition-colors ${
-          settings.firestoreWritesDisabled
+          !settings.firestoreWritesDisabled
             ? 'bg-amber-50/80 border-amber-300 dark:bg-amber-950/25 dark:border-amber-500/40'
             : cardCls
         }`}
@@ -757,7 +757,7 @@ export function SettingsView({
             <div className="flex flex-wrap items-center gap-2">
               <div
                 className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                  settings.firestoreWritesDisabled
+                  !settings.firestoreWritesDisabled
                     ? 'bg-amber-500 text-slate-950 dark:bg-amber-400 dark:text-slate-950'
                     : 'bg-brand-100 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300'
                 }`}
@@ -769,20 +769,20 @@ export function SettingsView({
               </h2>
               <span
                 className={`inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold rounded-md ${
-                  settings.firestoreWritesDisabled
+                  !settings.firestoreWritesDisabled
                     ? 'bg-amber-500 text-slate-950 dark:bg-amber-400 dark:text-slate-950'
                     : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300'
                 }`}
               >
                 {settings.firestoreWritesDisabled ? (
                   <>
-                    <ShieldAlert className="w-3 h-3" />
-                    Scritture DB Disattivate
+                    <ShieldCheck className="w-3 h-3" />
+                    Test Browser Attivo (Default · 0 Quota)
                   </>
                 ) : (
                   <>
-                    <ShieldCheck className="w-3 h-3" />
-                    Scritture DB Attive
+                    <ShieldAlert className="w-3 h-3" />
+                    Scritture DB Dirette Attive
                   </>
                 )}
               </span>

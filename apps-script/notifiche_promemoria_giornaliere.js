@@ -25,6 +25,27 @@
  *    - "https://www.googleapis.com/auth/script.external_request"
  *    - "https://www.googleapis.com/auth/script.send_mail"
  */
+/**
+ * Esegui QUESTA funzione una sola volta su script.google.com per creare il trigger
+ * giornaliero (ogni mattina ~08:30 Europe/Rome) ed eseguire subito un test live.
+ */
+function attivaPromemoriaGiornalieri() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'checkMyHomeRemindersDaily') {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+  ScriptApp.newTrigger('checkMyHomeRemindersDaily')
+    .timeBased()
+    .everyDays(1)
+    .atHour(8)
+    .nearMinute(30)
+    .create();
+  Logger.log('Trigger giornaliero attivato per checkMyHomeRemindersDaily (08:30 Europe/Rome).');
+  checkMyHomeRemindersDaily();
+}
+
 function checkMyHomeRemindersDaily() {
   var FIREBASE_PROJECT_ID = 'gen-lang-client-0721850501';
   var FIRESTORE_DB_ID = 'ai-studio-30a168e3-8158-474f-b9f2-f717d7220314';
@@ -36,9 +57,14 @@ function checkMyHomeRemindersDaily() {
     '/documents';
 
   var props = PropertiesService.getScriptProperties();
-  var ownerUid = (props.getProperty('FIREBASE_OWNER_UID') || "UnFRruOuLTMCgy8ftX8AQEw8I4K3").trim();
+  var oauthToken = getRemindersFirestoreToken_(props);
+
+  var ownerUid = (props.getProperty('FIREBASE_OWNER_UID') || props.getProperty('OWNER_UID') || 'UnFRruOuLTMCgy8ftX8AQEw8I4K3').trim();
   if (!ownerUid) {
-    var metaResp = UrlFetchApp.fetch(BASE_DOCS_URL + '/appMeta/owner', { muteHttpExceptions: true });
+    var metaResp = UrlFetchApp.fetch(BASE_DOCS_URL + '/appMeta/owner', {
+      headers: { Authorization: 'Bearer ' + oauthToken },
+      muteHttpExceptions: true
+    });
     if (metaResp.getResponseCode() >= 200 && metaResp.getResponseCode() < 300) {
       var metaJson = JSON.parse(metaResp.getContentText() || '{}');
       ownerUid =
@@ -49,7 +75,6 @@ function checkMyHomeRemindersDaily() {
     throw new Error('Impossibile determinare FIREBASE_OWNER_UID da appMeta/owner.');
   }
 
-  var oauthToken = ScriptApp.getOAuthToken();
   var queryUrl = BASE_DOCS_URL + '/users/' + encodeURIComponent(ownerUid) + ':runQuery';
   var queryPayload = {
     structuredQuery: {
@@ -81,7 +106,7 @@ function checkMyHomeRemindersDaily() {
     throw new Error(
       'Errore lettura Firestore HTTP ' +
         qCode +
-        '. Verifica che appsscript.json abbia lo scope https://www.googleapis.com/auth/datastore. Dettagli: ' +
+        '. Verifica che il progetto GCP sia 902318210670 (o imposta FIREBASE_SERVICE_ACCOUNT) e che appsscript.json abbia lo scope datastore. Dettagli: ' +
         queryResp.getContentText()
     );
   }
@@ -145,7 +170,12 @@ function checkMyHomeRemindersDaily() {
     }
   });
 
-  var EMAIL_TO = (props.getProperty('REMINDERS_EMAIL_TO') || firestoreEmail || '').trim();
+  var sessionEmail = '';
+  try {
+    sessionEmail = (Session.getActiveUser().getEmail() || Session.getEffectiveUser().getEmail() || '').trim();
+  } catch (e) {}
+
+  var EMAIL_TO = (props.getProperty('REMINDERS_EMAIL_TO') || firestoreEmail || sessionEmail || '').trim();
   var WA_PHONE = (props.getProperty('CALLMEBOT_PHONE') || firestorePhone || '').replace(/[^\d]/g, '');
   var CALLMEBOT_KEY = (props.getProperty('CALLMEBOT_API_KEY') || '').trim();
 
@@ -153,12 +183,31 @@ function checkMyHomeRemindersDaily() {
   var todayParts = todayIso.split('-');
   var todayUtc = Date.UTC(Number(todayParts[0]), Number(todayParts[1]) - 1, Number(todayParts[2]));
 
+  Logger.log(
+    'Promemoria letti da Firestore: ' +
+      liveReminders.length +
+      ' | todayIso=' +
+      todayIso +
+      ' | emailConfig=' +
+      (EMAIL_TO ? 'OK' : 'ASSENTE') +
+      ' | waPhone=' +
+      (WA_PHONE ? 'OK' : 'ASSENTE') +
+      ' | callmebotKey=' +
+      (CALLMEBOT_KEY ? 'OK' : 'ASSENTE')
+  );
+
   var emailAlerts = [];
   var whatsappAlerts = [];
 
   liveReminders.forEach(function (r) {
-    if (!r || r.completed || r.notifyEnabled === false) return;
-    if (r.lastNotifiedDate === todayIso) return;
+    if (!r || r.completed || r.notifyEnabled === false) {
+      if (r && r.title) Logger.log('Saltato "' + r.title + '": completed=' + Boolean(r.completed) + ', notifyEnabled=' + r.notifyEnabled);
+      return;
+    }
+    if (r.lastNotifiedDate === todayIso) {
+      Logger.log('Saltato "' + r.title + '": già notificato oggi (' + todayIso + ').');
+      return;
+    }
 
     var startIso = normalizeIso_(r.startDate) || todayIso;
     var dueIso =
@@ -190,6 +239,22 @@ function checkMyHomeRemindersDaily() {
 
     var isOverdue = diffDays < 0 || isKmOverdue;
     var isInWarningWindow = todayIso >= warningStartIso || isKmWarning || isOverdue;
+    Logger.log(
+      'Check "' +
+        r.title +
+        '": due=' +
+        dueIso +
+        ', warningStart=' +
+        warningStartIso +
+        ', diffDays=' +
+        diffDays +
+        ', inWindow=' +
+        isInWarningWindow +
+        ', notifyEmail=' +
+        (r.notifyEmail !== false) +
+        ', notifyWhatsapp=' +
+        (r.notifyWhatsapp === true)
+    );
     if (!isInWarningWindow) return;
 
     var capPct =
@@ -212,39 +277,82 @@ function checkMyHomeRemindersDaily() {
     if (r.notifyWhatsapp === true) whatsappAlerts.push(line);
   });
 
-  if (emailAlerts.length > 0 && EMAIL_TO) {
-    var emailBody =
-      'Promemoria giornalieri My Home (' +
-      todayIso +
-      '):\n\n' +
-      emailAlerts.join('\n') +
-      '\n\nApri https://mauriziominieri.github.io/my-home/ per rinnovare o completare.';
-    MailApp.sendEmail(EMAIL_TO, '[My Home] ' + emailAlerts.length + ' scadenze in corso', emailBody);
+  if (emailAlerts.length > 0) {
+    if (!EMAIL_TO) {
+      Logger.log('Avviso Email NON inviato: REMINDERS_EMAIL_TO e email Firestore assenti.');
+    } else {
+      var emailBody =
+        'Promemoria giornalieri My Home (' +
+        todayIso +
+        '):\n\n' +
+        emailAlerts.join('\n') +
+        '\n\nApri https://mauriziominieri.github.io/my-home/ per rinnovare o completare.';
+      MailApp.sendEmail(EMAIL_TO, '[My Home] ' + emailAlerts.length + ' scadenze in corso', emailBody);
+      Logger.log('Email promemoria inviata con successo (' + emailAlerts.length + ' voci).');
+    }
+  } else {
+    Logger.log('Nessun promemoria in finestra di avviso per Email oggi.');
   }
 
-  if (whatsappAlerts.length > 0 && WA_PHONE && CALLMEBOT_KEY) {
-    var waBody =
-      '*My Home — Promemoria (' +
-      todayIso +
-      ')*\n\n' +
-      whatsappAlerts.join('\n') +
-      '\n\nhttps://mauriziominieri.github.io/my-home/';
-    if (waBody.length > 1400) {
-      waBody = waBody.slice(0, 1397) + '...';
+  if (whatsappAlerts.length > 0) {
+    if (!WA_PHONE || !CALLMEBOT_KEY) {
+      Logger.log('Avviso WhatsApp NON inviato: CALLMEBOT_PHONE o CALLMEBOT_API_KEY mancanti in Proprietà script.');
+    } else {
+      var waBody =
+        '*My Home — Promemoria (' +
+        todayIso +
+        ')*\n\n' +
+        whatsappAlerts.join('\n') +
+        '\n\nhttps://mauriziominieri.github.io/my-home/';
+      if (waBody.length > 1400) {
+        waBody = waBody.slice(0, 1397) + '...';
+      }
+      var waUrl =
+        'https://api.callmebot.com/whatsapp.php?phone=' +
+        encodeURIComponent(WA_PHONE) +
+        '&text=' +
+        encodeURIComponent(waBody) +
+        '&apikey=' +
+        encodeURIComponent(CALLMEBOT_KEY);
+      var resp = UrlFetchApp.fetch(waUrl, { muteHttpExceptions: true });
+      var code = resp.getResponseCode();
+      Logger.log('Risposta CallMeBot HTTP ' + code + ': ' + resp.getContentText());
     }
-    var waUrl =
-      'https://api.callmebot.com/whatsapp.php?phone=' +
-      encodeURIComponent(WA_PHONE) +
-      '&text=' +
-      encodeURIComponent(waBody) +
-      '&apikey=' +
-      encodeURIComponent(CALLMEBOT_KEY);
-    var resp = UrlFetchApp.fetch(waUrl, { muteHttpExceptions: true });
-    var code = resp.getResponseCode();
-    if (code < 200 || code >= 300) {
-      Logger.log('Errore CallMeBot HTTP ' + code + ': ' + resp.getContentText());
-    }
+  } else {
+    Logger.log('Nessun promemoria in finestra di avviso per WhatsApp oggi.');
   }
+}
+
+function getRemindersFirestoreToken_(props) {
+  var saRaw = props.getProperty('FIREBASE_SERVICE_ACCOUNT');
+  if (saRaw && saRaw.trim()) {
+    var sa = JSON.parse(saRaw);
+    var now = Math.floor(Date.now() / 1000);
+    var header = Utilities.base64EncodeWebSafe(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).replace(/=+$/, '');
+    var claim = Utilities.base64EncodeWebSafe(
+      JSON.stringify({
+        iss: sa.client_email,
+        scope: 'https://www.googleapis.com/auth/datastore',
+        aud: 'https://oauth2.googleapis.com/token',
+        exp: now + 3600,
+        iat: now
+      })
+    ).replace(/=+$/, '');
+    var sigBytes = Utilities.computeRsaSha256Signature(header + '.' + claim, sa.private_key);
+    var sig = Utilities.base64EncodeWebSafe(sigBytes).replace(/=+$/, '');
+    var res = UrlFetchApp.fetch('https://oauth2.googleapis.com/token', {
+      method: 'post',
+      payload: {
+        grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        assertion: header + '.' + claim + '.' + sig
+      },
+      muteHttpExceptions: true
+    });
+    var json = JSON.parse(res.getContentText() || '{}');
+    if (json.access_token) return json.access_token;
+    throw new Error('Errore token Service Account: ' + res.getContentText());
+  }
+  return ScriptApp.getOAuthToken();
 }
 
 function normalizeIso_(raw) {
